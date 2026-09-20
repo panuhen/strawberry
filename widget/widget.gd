@@ -12,6 +12,7 @@ const Bubble = preload("res://bubble.gd")
 const Badge = preload("res://badge.gd")
 const Reactions = preload("res://reactions.gd")
 const SpeechPlayer = preload("res://speech_player.gd")
+const Menu = preload("res://menu.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
 const STATE_CLIPS := {
@@ -38,6 +39,7 @@ var bubble: Label3D
 var badge: Sprite3D
 var reactions: Node
 var speech: AudioStreamPlayer
+var menu: PopupMenu
 var ws: Node
 var blink_controller: Node
 var claw_controller: Node
@@ -46,6 +48,11 @@ var one_shots_played := 0
 var window_hops := 0
 
 var skin_id := "strawberry"
+# Preferences (right-click menu, persisted in user://widget.cfg).
+var muted := false
+var quiet_until := 0.0          # unix time; > now means "quiet for a while" is on
+var voice_volume := 1.0
+var always_on_top := true
 var state := "idle"
 var rest_state := "idle"
 var one_shot := ""
@@ -62,6 +69,7 @@ func _ready() -> void:
 	setup_controllers()
 	setup_reactions()
 	setup_bubble()
+	setup_menu()
 	setup_ws()
 	set_state("idle")
 	call_deferred("update_passthrough")
@@ -121,8 +129,61 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif dragging:
 			dragging = false
 			save_settings()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		menu.open_at(event.position)
 	elif event is InputEventMouseMotion and dragging:
 		DisplayServer.window_set_position(DisplayServer.mouse_get_position() - drag_offset)
+
+# --- right-click menu and preferences --------------------------------------------
+
+func setup_menu() -> void:
+	menu = Menu.new()
+	add_child(menu)
+	menu.setup(self)
+	# The menu is drawn inside our transparent window, mostly outside the crab's silhouette,
+	# so the whole window must take clicks while it is open.
+	menu.about_to_popup.connect(func(): if not is_headless(): get_window().mouse_passthrough_polygon = PackedVector2Array())
+	menu.popup_hide.connect(update_passthrough)
+
+func is_quiet() -> bool:
+	return muted or Time.get_unix_time_from_system() < quiet_until
+
+func set_muted(value: bool) -> void:
+	muted = value
+	if is_quiet() and speech.playing:
+		speech.stop()
+	save_settings()
+
+func set_quiet_until(unix_time: float) -> void:
+	quiet_until = unix_time
+	if is_quiet() and speech.playing:
+		speech.stop()
+	save_settings()
+
+func set_voice_volume(value: float) -> void:
+	voice_volume = clampf(value, 0.0, 1.0)
+	speech.volume_db = linear_to_db(maxf(voice_volume, 0.001))
+	save_settings()
+
+func set_always_on_top(value: bool) -> void:
+	always_on_top = value
+	if not is_headless():
+		get_window().always_on_top = value
+	save_settings()
+
+func set_skin(id: String) -> void:
+	if SkinPalettes.SKINS.has(id):
+		skin_id = id
+		apply_appearance()
+		save_settings()
+
+func reset_position() -> void:
+	if is_headless():
+		return
+	var usable := DisplayServer.screen_get_usable_rect()
+	var size := DisplayServer.window_get_size()
+	DisplayServer.window_set_position(usable.position + usable.size - size - Vector2i(24, 24))
+	save_settings()
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
@@ -185,6 +246,7 @@ func setup_reactions() -> void:
 	speech = SpeechPlayer.new()
 	add_child(speech)
 	speech.setup(model)
+	speech.volume_db = linear_to_db(maxf(voice_volume, 0.001))
 
 func setup_bubble() -> void:
 	bubble = Bubble.new()
@@ -276,7 +338,7 @@ func perform(data: Dictionary) -> void:
 	var audio := str(data.get("audio", ""))
 	# With audio the bubble is timed to the wav; without it, to the text length (§6).
 	var duration := 0.0
-	if audio != "":
+	if audio != "" and not is_quiet():
 		duration = speech.play_file(audio)
 	elif speech.playing:
 		speech.stop()
@@ -352,8 +414,13 @@ func restore_settings() -> void:
 		var saved_skin: Variant = config.get_value("appearance", "skin", "strawberry")
 		if saved_skin is String and SkinPalettes.SKINS.has(saved_skin):
 			skin_id = saved_skin
+		muted = bool(config.get_value("audio", "muted", false))
+		quiet_until = float(config.get_value("audio", "quiet_until", 0.0))
+		voice_volume = clampf(float(config.get_value("audio", "volume", 1.0)), 0.0, 1.0)
+		always_on_top = bool(config.get_value("window", "always_on_top", true))
 	if is_headless():
 		return
+	get_window().always_on_top = always_on_top
 	# Best effort: X11 honours this, a Wayland compositor may not (WIRING.md §13).
 	var usable := DisplayServer.screen_get_usable_rect()
 	var size := DisplayServer.window_get_size()
@@ -372,6 +439,10 @@ func save_settings() -> void:
 	var config := ConfigFile.new()
 	config.load(SETTINGS_PATH)
 	config.set_value("appearance", "skin", skin_id)
+	config.set_value("audio", "muted", muted)
+	config.set_value("audio", "quiet_until", quiet_until)
+	config.set_value("audio", "volume", voice_volume)
+	config.set_value("window", "always_on_top", always_on_top)
 	if not is_headless():
 		var pos := DisplayServer.window_get_position()
 		config.set_value("window", "x", pos.x)

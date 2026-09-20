@@ -248,6 +248,33 @@ func run() -> void:
 	check(widget.state == widget.rest_state, "she should rest after a spoken line")
 	var bad_audio := await post("/perform", {"state": "talking", "text": "x", "audio": "/nonexistent/line.wav"})
 	check(bad_audio[1] == 400, "missing audio file should be a 400")
+
+	# 12. Right-click menu exists; mute keeps the bubble but drops the sound.
+	check(widget.menu != null and widget.menu.item_count >= 8, "menu should have its items")
+	report["menu_items"] = widget.menu.item_count if widget.menu else 0
+	var ids := {}
+	for i in widget.menu.item_count:
+		if not widget.menu.is_item_separator(i):
+			ids[widget.menu.get_item_id(i)] = true
+	check(ids.size() == widget.menu.item_count - 2, "menu item ids should be unique")
+	widget.menu._refresh()
+	check(widget.menu.is_item_checked(widget.menu.get_item_index(widget.menu.ALWAYS_ON_TOP)), "always-on-top row should show checked")
+	check(widget.menu.get_item_text(widget.menu.get_item_index(widget.menu.ALWAYS_ON_TOP)) == "Always on top", "check mark should be on the right row")
+	widget.set_muted(true)
+	await post("/perform", {"state": "talking", "text": "Muted line.", "audio": wav_path})
+	await wait(0.4)
+	check(widget.bubble.speaking, "muted: bubble should still show")
+	check(not widget.speech.playing, "muted: wav should not play")
+	widget.set_muted(false)
+	widget.set_quiet_until(Time.get_unix_time_from_system() + 60.0)
+	await post("/perform", {"state": "talking", "text": "Quiet line.", "audio": wav_path})
+	await wait(0.4)
+	check(not widget.speech.playing, "quiet hour: wav should not play")
+	widget.set_quiet_until(0.0)
+	widget.set_voice_volume(0.5)
+	check(absf(widget.speech.volume_db - linear_to_db(0.5)) < 0.01, "voice volume should set the player's dB")
+	widget.set_voice_volume(1.0)
+	await wait_speech_end()
 	DirAccess.remove_absolute(wav_path)
 
 	finish()
