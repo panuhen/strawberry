@@ -166,11 +166,12 @@ Two things the hooks take care of:
 
 The reply text goes **two places at once**: to Piper (wav) and into the blob's `text`.
 
-- **Piper:** daemon shells out to Piper → wav in `/tmp`, path goes in `audio`. CPU-only, keeps the GPU for Qwen.
+- **Piper (`strawberryd/speech.py`):** `Daemon.perform()` hands any line without `audio` to `Speaker.say()`, which runs the `piper-tts` Python package (onnxruntime, CPU) in a worker thread and writes a wav into a per-daemon temp dir; the path goes in `audio`. A medium voice loads in ~0.9 s at startup and voices a line in 60–150 ms, so the bubble lands a tenth of a second later than silent mode. The last three wavs are kept so a widget still playing one is not cut off. Silence is never an error: speech off, quiet hours, no voice installed, or a synthesis failure all mean "send the blob without `audio`", and `/health` says why under `speech.reason`. A caller that supplies its own `audio` keeps it. Emoji and dashes are stripped before synthesis; the bubble still shows them.
+- **Voices** are Piper `.onnx` files in `~/.local/share/strawberry/voices/`. `bin/strawberry voices` lists them, `bin/strawberry voices en_US-amy-medium` downloads one (catalogue: rhasspy.github.io/piper-samples), `bin/strawberry audition` plays a sample line in each, `strawberryd --say TEXT [--voice V]` writes a wav for one. Installed: `en_GB-jenny_dioco-medium` (default, warmer), `en_US-amy-medium` (brighter).
 - **Bubble:** a `Label3D` billboarded above the crab (`widget/bubble.gd`). Reveals characters over time, timed to the **audio duration** if `audio` present, or a text-length heuristic if silent (≈18 chars/s, clamped 1.6–9 s). Holds, fades, auto-hides, and signals `finished`. Tinted by `emotion`.
-- **Audio-reactive claws:** play the wav on an `AudioStreamPlayer` whose bus carries an `AudioEffectSpectrumAnalyzer`. Each frame, read the magnitude, normalise 0–1, write it to `claw_open_L` and `claw_open_R` blend shapes. Zero them when not talking. **The wav must play through Godot**; that's the only way the analyser sees it. Don't also send it to the system mixer.
+- **Audio-reactive claws (`widget/speech_player.gd`):** an `AudioStreamPlayer` on its own `Speech` bus carrying an `AudioEffectSpectrumAnalyzer`. Each frame it reads the 90–4000 Hz magnitude, maps −52…−16 dB to 0…1 through an envelope follower (fast attack, slower release), and writes it to the `claw_open_L/R` blend shapes at process priority 160, after the reaction recipes. When playback ends it writes 0 once and stops writing, so the claw controller's dance/think gestures own the morphs again. **The wav must play through Godot**; that's the only way the analyser sees it. Don't also send it to the system mixer. Godot's dummy audio driver still mixes, so the headless acceptance check measures the clack (0.78 mid-tone, 0 after).
 
-**Silent mode falls out for free:** omit `audio` and you get a talking crab with a bubble and no sound. The model still writes the line. This is "quiet hours," and it's the mode built **first** (§10).
+**Silent mode falls out for free:** omit `audio` and you get a talking crab with a bubble and no sound. The model still writes the line. This is "quiet hours" (`speech.quiet_hours = "22:00-08:00"` in config, or `speech.enabled = false`), and it's the mode built **first** (§10).
 
 ---
 
@@ -214,7 +215,7 @@ materials:        mat_shell  mat_shell_dark  mat_claw  mat_cream  mat_eye  mat_i
 1. **Contract + transport.** ✅ Daemon skeleton: HTTP intake + ws server + `perform()` that only forwards. Godot widget as ws client in a transparent always-on-top window. Test: `curl` a blob → crab changes state. No brain, no audio.
 2. **Reaction path, silent.** ✅ git `post-commit` → `/event` → Ollama one-liner + emotion → blob with `text`, no `audio` → **bubble appears above the crab on commit.** Proves event → brain → face end to end with zero audio risk.
 3. **Notifications doorway.** ✅ D-Bus monitor → same intake. Anything that notifies (including WhatsApp/Messenger) makes her react.
-4. **TTS.** Add Piper → `audio` field → Godot plays it through the analysed bus → claws clack in time.
+4. **TTS.** ✅ Piper → `audio` field → Godot plays it through the analysed bus → claws clack in time. `[speech]` in config turns it on.
 5. **Voice in.** Hotkey → faster-whisper → transcript. Route to plain Ollama first to prove capture.
 6. **MCP actions.** Wire the Python MCP client; voice commands start *doing* things (skip track, log to re:call).
 
@@ -225,14 +226,14 @@ Stop after any phase and you still have something that works.
 ## 11. Acceptance criteria
 
 - [x] `curl` posting a contract blob to the daemon makes Godot change state / play a one-shot. (`scripts/check_phase1.sh`)
-- [x] Bubble reveal is timed to text length when silent, and auto-hides. (Audio timing lands with Phase 4.)
+- [x] Bubble reveal is timed to text length when silent, to the wav length when spoken, and auto-hides.
 - [x] Speech ends → crab returns to `idle` with no follow-up message from the daemon.
 - [x] A `/event` round-trips through the reactor to the widget. (Canned reactor; model in Phase 2.)
 - [x] Play/pause in any MPRIS media player makes her dance/idle; a track change shows a "Now playing" bubble and she returns to dancing. (`doorways/mpris_watch.py`)
 - [x] Browser origins are refused on HTTP and `/ws`; POSTs need the JSON content type.
 - [x] A git commit makes Strawberry show a model-written bubble (silent). (`gemma3:1b` via `OllamaReactor`)
 - [x] A desktop notification (any app) triggers a reaction. (`notify-send -a WhatsApp James "…"` → Gemma line in the bubble)
-- [ ] With TTS on, the wav plays through Godot and the claws clack to the audio; `claw_open_*` is 0 when idle.
+- [x] With TTS on, the wav plays through Godot and the claws clack to the audio; `claw_open_*` is 0 when idle. (`check_phase1.sh` step 11: 0 → 0.78 → 0; a missing wav is a 400)
 - [ ] A voice command routed through MCP successfully calls one real tool (e.g. Spotify skip).
 
 ---
@@ -315,6 +316,13 @@ only_apps = []
 min_urgency = "low"
 include_body = true              # false: "message from James", never what James wrote
 coalesce_s = 2.0
+
+[speech]
+enabled = false                  # true: Piper reads every line aloud (CPU)
+voice = "en_GB-jenny_dioco-medium"   # a name in voices_dir, or a path to an .onnx
+speed = 1.0                      # 1.25 = a quarter faster
+volume = 1.0
+quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 ```
 
 `bin/strawberry config` creates the file from a commented template (`strawberryd --init-config`) and opens it in `$EDITOR`; `bin/strawberry restart` applies it. `STRAWBERRYD_PORT` still overrides the port for scripts. The widget's own preferences (skin, window position) stay in Godot's `user://widget.cfg` for now.
@@ -323,11 +331,11 @@ coalesce_s = 2.0
 
 ```
 WIRING.md                this document
-strawberryd/             Python daemon (uv project): contract, events/reactor, hub, server, tests
-widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, validate_widget.gd
+strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), hub, server, tests
+widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, validate_widget.gd
                          + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
 doorways/                event producers: mpris_watch.py (any MPRIS media player), notify_watch.py (desktop notifications via D-Bus monitor), git/ (global post-commit + pre-push hooks)
-bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend
+bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend; say / voices / audition
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
 scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless widget; it must reconnect
 v2/                      the asset: Blender build scripts, GLB, evidence, preview project

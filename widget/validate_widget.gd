@@ -222,7 +222,55 @@ func run() -> void:
 	var bad_reaction := await post("/perform", {"state": "idle", "reaction": "backflip"})
 	check(bad_reaction[1] == 400, "unknown reaction should be a 400")
 
+	# 11. Audio: a wav plays through the analysed bus, the claws open to it, and close after.
+	var wav_path := make_test_wav(1.6)
+	var claw_idle: float = widget.speech.claw_value()
+	check(absf(claw_idle) < 0.01, "claw_open should be 0 before speech, was %.2f" % claw_idle)
+	await post("/perform", {"state": "talking", "text": "Testing, one two three.", "audio": wav_path})
+	await wait(0.6)
+	check(widget.speech.playing, "speech wav should be playing")
+	var claw_mid: float = widget.speech.claw_value()
+	report["speech_claw_mid"] = snappedf(claw_mid, 0.01)
+	report["speech_level_mid"] = snappedf(widget.speech.level, 0.01)
+	check(claw_mid > 0.05, "claw_open should follow the audio, was %.2f" % claw_mid)
+	# The bubble reveal is timed to the wav (1.6 s), so it is still revealing at 1.2 s
+	# where the text-length heuristic (1.9 s for this line) would also be; check the length
+	# the widget used instead.
+	report["speech_wav_seconds"] = snappedf(widget.speech.stream.get_length(), 0.01)
+	check(absf(widget.speech.stream.get_length() - 1.6) < 0.02, "widget should read the wav length")
+	await wait(1.4)
+	check(not widget.speech.playing, "speech wav should have finished")
+	await wait(0.1)
+	var claw_end: float = widget.speech.claw_value()
+	check(absf(claw_end) < 0.01, "claw_open should return to 0 after speech, was %.2f" % claw_end)
+	report["speech_peak_level"] = snappedf(widget.speech.peak_level, 0.01)
+	await wait_speech_end()
+	check(widget.state == widget.rest_state, "she should rest after a spoken line")
+	var bad_audio := await post("/perform", {"state": "talking", "text": "x", "audio": "/nonexistent/line.wav"})
+	check(bad_audio[1] == 400, "missing audio file should be a 400")
+	DirAccess.remove_absolute(wav_path)
+
 	finish()
+
+## A 1 kHz tone with a syllable-like 5 Hz amplitude wobble, saved where the daemon can see it.
+func make_test_wav(seconds: float) -> String:
+	var rate := 22050
+	var frames := int(seconds * rate)
+	var bytes := PackedByteArray()
+	bytes.resize(frames * 2)
+	for i in frames:
+		var t := float(i) / rate
+		var envelope := 0.55 + 0.45 * sin(TAU * 5.0 * t)
+		var sample := int(0.6 * envelope * sin(TAU * 1000.0 * t) * 32767.0)
+		bytes.encode_s16(i * 2, sample)
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = rate
+	stream.stereo = false
+	stream.data = bytes
+	var path := OS.get_user_data_dir().path_join("check_tone.wav")
+	stream.save_to_wav(path)
+	return path
 
 func finish() -> void:
 	report["failures"] = failures

@@ -20,6 +20,9 @@ def main() -> None:
     parser.add_argument("--init-config", action="store_true", help="write a commented default config file and exit")
     parser.add_argument("--print-config", action="store_true", help="print the effective settings as JSON and exit")
     parser.add_argument("--print-port", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--say", metavar="TEXT", default=None, help="synthesise TEXT with the configured voice to a wav, print its path, exit")
+    parser.add_argument("--voice", default=None, help="with --say: override speech.voice")
+    parser.add_argument("--out", type=Path, default=None, help="with --say: wav path (default: a temp file)")
     parser.add_argument("--version", action="version", version=f"strawberryd {__version__}")
     args = parser.parse_args()
 
@@ -51,6 +54,8 @@ def main() -> None:
     if args.print_config:
         print(json.dumps(config.to_dict(), indent=2, ensure_ascii=False))
         return
+    if args.say is not None:
+        sys.exit(say(config, args.say, args.voice, args.out))
 
     logging.basicConfig(
         level=config.daemon.log_level.upper(),
@@ -58,6 +63,37 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
     run(config)
+
+
+def say(config, text: str, voice: str | None, out: Path | None) -> int:
+    """`strawberryd --say "..."`: one wav with the configured (or given) voice, for auditioning."""
+    import asyncio
+    import shutil
+    import tempfile
+    from dataclasses import replace
+
+    from .speech import Speaker, wav_seconds
+
+    speech = replace(config.speech, enabled=True, quiet_hours="", voice=voice or config.speech.voice)
+    speaker = Speaker(speech)
+
+    async def run_once() -> int:
+        await speaker.start()
+        if not speaker.ready:
+            print(f"cannot speak: {speaker.disabled_reason}", file=sys.stderr)
+            return 3
+        path = await speaker.say(text)
+        if not path:
+            print("nothing to say", file=sys.stderr)
+            return 3
+        target = out or Path(tempfile.gettempdir()) / f"strawberry-{Path(speech.voice).stem}.wav"
+        shutil.copyfile(path, target)
+        await speaker.close()
+        print(f"{target}\t{wav_seconds(target):.2f}s\t{speaker.last_ms:.0f}ms", file=sys.stderr)
+        print(target)
+        return 0
+
+    return asyncio.run(run_once())
 
 
 if __name__ == "__main__":

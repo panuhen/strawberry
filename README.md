@@ -5,6 +5,7 @@ A local desktop AI mascot: a cel-shaded crab that lives on the desktop and react
 - **`WIRING.md`** — the harness spec: message contract, `strawberryd`, doorways, build order, widget shell. Start here.
 - **`strawberryd/`** — Python daemon (HTTP intake + websocket to the widget). `uv sync && uv run pytest`.
 - **`widget/`** — Godot 4.7 desktop widget: transparent, always-on-top, click-through. Run with `bin/strawberry`.
+- **Voice** — Piper TTS, on when `[speech] enabled = true` in `~/.config/strawberry/config.toml`. `bin/strawberry voices` lists or downloads voices, `bin/strawberry audition` compares them, `bin/strawberry say "…"` makes her talk.
 - **`v2/`** — the current 3D asset (`strawberry_v2.glb`), its Blender build, and the cel preview project. See `v2/README.md`.
 - Below: the original v1 asset notes, kept for the build/validation history.
 

@@ -11,6 +11,7 @@ const WsClient = preload("res://ws_client.gd")
 const Bubble = preload("res://bubble.gd")
 const Badge = preload("res://badge.gd")
 const Reactions = preload("res://reactions.gd")
+const SpeechPlayer = preload("res://speech_player.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
 const STATE_CLIPS := {
@@ -36,6 +37,7 @@ var camera: Camera3D
 var bubble: Label3D
 var badge: Sprite3D
 var reactions: Node
+var speech: AudioStreamPlayer
 var ws: Node
 var blink_controller: Node
 var claw_controller: Node
@@ -180,6 +182,9 @@ func setup_reactions() -> void:
 	reactions = Reactions.new()
 	add_child(reactions)
 	reactions.setup(model, blink_controller)
+	speech = SpeechPlayer.new()
+	add_child(speech)
+	speech.setup(model)
 
 func setup_bubble() -> void:
 	bubble = Bubble.new()
@@ -269,9 +274,12 @@ func perform(data: Dictionary) -> void:
 
 	var text := str(data.get("text", "")).strip_edges()
 	var audio := str(data.get("audio", ""))
+	# With audio the bubble is timed to the wav; without it, to the text length (§6).
+	var duration := 0.0
 	if audio != "":
-		# Phase 4 (WIRING.md §6): play through the analysed bus and drive claw_open_*.
-		push_warning("audio not wired yet (Phase 4); performing silently: " + audio)
+		duration = speech.play_file(audio)
+	elif speech.playing:
+		speech.stop()
 
 	var icon := str(data.get("icon", ""))
 	if icon != "" and text != "":
@@ -280,7 +288,11 @@ func perform(data: Dictionary) -> void:
 		badge.hide_icon()
 
 	if text != "":
-		bubble.speak(text, emotion)
+		bubble.speak(text, emotion, duration)
+	elif duration > 0.0:
+		# Audio with nothing to show: hold the talking pose until the sound ends.
+		var timer := get_tree().create_timer(duration + 0.3)
+		timer.timeout.connect(func(): if state == "talking" and not bubble.speaking: set_state(rest_state))
 	elif new_state == "talking":
 		# Talking with nothing to say: don't mouth forever.
 		var timer := get_tree().create_timer(1.0)

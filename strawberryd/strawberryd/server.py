@@ -92,6 +92,7 @@ async def health(request: web.Request) -> web.Response:
             "performed": daemon.performed,
             "uptime_s": round(daemon.uptime, 1),
             "brain": daemon.brain_stats(),
+            "speech": daemon.speaker.stats(),
         }
     )
 

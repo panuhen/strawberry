@@ -69,11 +69,24 @@ class NotificationsConfig:
 
 
 @dataclass
+class SpeechConfig:
+    enabled: bool = False                                   # true: Piper reads every line aloud (Phase 4)
+    voice: str = "en_GB-jenny_dioco-medium"                 # Piper voice name in voices_dir, or a path to an .onnx
+    voices_dir: str = ""                                    # default ~/.local/share/strawberry/voices
+    speed: float = 1.0                                      # 1.25 = a quarter faster
+    volume: float = 1.0
+    quiet_hours: str = ""                                   # e.g. "22:00-08:00": bubble only, no sound
+    max_chars: int = 400                                    # longer lines are cut before synthesis
+    keep_files: int = 3                                     # recent wavs kept so a playing one is not deleted
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
     media: MediaConfig = field(default_factory=MediaConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    speech: SpeechConfig = field(default_factory=SpeechConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -82,12 +95,19 @@ class Config:
             "brain": asdict(self.brain),
             "media": asdict(self.media),
             "notifications": asdict(self.notifications),
+            "speech": asdict(self.speech),
         }
         out["path"] = str(self.path) if self.path else None
         return out
 
 
-_SECTIONS = {"daemon": DaemonConfig, "brain": BrainConfig, "media": MediaConfig, "notifications": NotificationsConfig}
+_SECTIONS = {
+    "daemon": DaemonConfig,
+    "brain": BrainConfig,
+    "media": MediaConfig,
+    "notifications": NotificationsConfig,
+    "speech": SpeechConfig,
+}
 
 
 def _apply(section_name: str, target: Any, values: dict[str, Any]) -> None:
@@ -127,6 +147,18 @@ def _validate(config: Config) -> None:
         raise ConfigError("notifications.coalesce_s must be >= 0")
     if not (1 <= config.daemon.port <= 65535):
         raise ConfigError("daemon.port must be 1-65535")
+    if not (0.25 <= config.speech.speed <= 4.0):
+        raise ConfigError("speech.speed must be between 0.25 and 4")
+    if config.speech.volume < 0:
+        raise ConfigError("speech.volume must be >= 0")
+    if config.speech.keep_files < 1:
+        raise ConfigError("speech.keep_files must be >= 1")
+    from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
+
+    try:
+        parse_quiet_hours(config.speech.quiet_hours)
+    except ValueError as exc:
+        raise ConfigError(f"speech.{exc}") from exc
 
 
 def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
@@ -160,6 +192,7 @@ def default_toml() -> str:
     b = BrainConfig()
     d = DaemonConfig()
     n = NotificationsConfig()
+    s = SpeechConfig()
     lines = [
         "# Strawberry settings. Every key is optional; these are the defaults.",
         "# Restart the daemon after editing: bin/strawberry stop && bin/strawberry daemon",
@@ -194,6 +227,16 @@ def default_toml() -> str:
         f"max_body_chars = {n.max_body_chars}",
         f"ignore_replacements = {str(n.ignore_replacements).lower()}  # progress-bar style updates to an existing notification",
         f"coalesce_s = {n.coalesce_s}            # several within this window become one \"N notifications\" event",
+        "",
+        "[speech]",
+        f"enabled = {str(s.enabled).lower()}             # true: she reads every line aloud (Piper, CPU)",
+        f'voice = "{s.voice}"   # a name in voices_dir, or a path to an .onnx',
+        '# voices_dir = "~/.local/share/strawberry/voices"',
+        "# Install a voice:  strawberry voices en_US-amy-medium    (list at rhasspy.github.io/piper-samples)",
+        f"speed = {s.speed}                 # 1.25 = a quarter faster",
+        f"volume = {s.volume}",
+        f'quiet_hours = "{s.quiet_hours}"           # e.g. "22:00-08:00": bubble only, no sound',
+        f"max_chars = {s.max_chars}",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

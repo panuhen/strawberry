@@ -3,7 +3,10 @@ name = "strawberryd"
 version = "0.1.0"
 description = "Strawberry mascot daemon: event intake, brain, TTS, and the single websocket to the Godot widget"
 requires-python = ">=3.12"
-dependencies = ["aiohttp>=3.10"]
+dependencies = [
+    "aiohttp>=3.10",
+    "piper-tts>=1.8.0",
+]
 
 [project.scripts]
 strawberryd = "strawberryd.__main__:main"

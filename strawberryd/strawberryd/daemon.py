@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import replace
 from typing import Any
 
 from .config import Config
@@ -11,15 +12,17 @@ from .contract import Performance
 from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
 from .reactions import decorate
+from .speech import Speaker
 
 log = logging.getLogger("strawberryd")
 
 
 class Daemon:
-    def __init__(self, reactor: Reactor | None = None, config: Config | None = None) -> None:
+    def __init__(self, reactor: Reactor | None = None, config: Config | None = None, speaker: Speaker | None = None) -> None:
         self.config = config or Config()
         self.hub = WidgetHub()
         self.reactor: Reactor = reactor or self._default_reactor()
+        self.speaker = speaker or Speaker(self.config.speech)
         self.started = time.monotonic()
         self.performed = 0
 
@@ -40,18 +43,28 @@ class Daemon:
         start = getattr(self.reactor, "start", None)
         if start:
             await start()
+        await self.speaker.start()
 
     async def close(self) -> None:
         close = getattr(self.reactor, "close", None)
         if close:
             await close()
+        await self.speaker.close()
 
     def brain_stats(self) -> dict[str, Any]:
         stats = getattr(self.reactor, "stats", None)
         return stats() if stats else {"model": None, "canned": True}
 
     async def perform(self, performance: Performance) -> int:
-        """Send one performance to the widget. TTS (Phase 4) slots in here, before send."""
+        """Send one performance to the widget, voicing the line first when speech is on (§6).
+
+        A caller that already supplies `audio` keeps it; a line with no audio gets Piper's wav,
+        or stays silent when speech is off, quiet, or failing. The bubble shows either way.
+        """
+        if performance.text and not performance.audio:
+            audio = await self.speaker.say(performance.text)
+            if audio:
+                performance = replace(performance, audio=audio)
         payload = performance.to_dict()
         sent = await self.hub.send(payload)
         self.performed += 1
