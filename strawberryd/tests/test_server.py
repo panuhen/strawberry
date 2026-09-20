@@ -82,6 +82,21 @@ async def test_perform_reaches_connected_widget(client):
     await ws.close()
 
 
+async def test_widget_connecting_during_music_is_told_to_dance(client):
+    await client.post("/perform", json={"state": "dancing"})            # music started, no widget yet
+    await client.post("/perform", json={"state": "talking", "text": "Now playing: something"})
+    assert (await (await client.get("/health")).json())["rest_state"] == "dancing"
+    ws = await client.ws_connect("/ws")
+    assert await ws.receive_json(timeout=2) == {"state": "dancing"}     # first thing it hears
+    await client.post("/perform", json={"state": "idle"})               # paused
+    assert (await ws.receive_json(timeout=2))["state"] == "idle"
+    await ws.close()
+    late = await client.ws_connect("/ws")                                # idle needs no catch-up
+    await client.post("/perform", json={"state": "thinking"})
+    assert (await late.receive_json(timeout=2))["state"] == "thinking"
+    await late.close()
+
+
 async def test_health_counts_connected_widget(client):
     ws = await client.ws_connect("/ws")
     await ws.send_json({"type": "hello", "client": "test"})

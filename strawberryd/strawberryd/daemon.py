@@ -16,6 +16,8 @@ from .speech import Speaker
 
 log = logging.getLogger("strawberryd")
 
+PERSISTENT_STATES = ("idle", "dancing")  # mirrors widget.gd PERSISTENT (WIRING.md §1)
+
 
 class Daemon:
     def __init__(self, reactor: Reactor | None = None, config: Config | None = None, speaker: Speaker | None = None) -> None:
@@ -25,6 +27,9 @@ class Daemon:
         self.speaker = speaker or Speaker(self.config.speech)
         self.started = time.monotonic()
         self.performed = 0
+        # Her resting state (idle|dancing) outlives any one widget: a widget that (re)connects
+        # while music plays gets it on arrival instead of standing still until the next pause.
+        self.rest_state = "idle"
 
     def _default_reactor(self) -> Reactor:
         canned = CannedReactor()
@@ -65,6 +70,8 @@ class Daemon:
             audio = await self.speaker.say(performance.text)
             if audio:
                 performance = replace(performance, audio=audio)
+        if performance.state in PERSISTENT_STATES:
+            self.rest_state = performance.state
         payload = performance.to_dict()
         sent = await self.hub.send(payload)
         self.performed += 1

@@ -93,6 +93,7 @@ async def health(request: web.Request) -> web.Response:
             "uptime_s": round(daemon.uptime, 1),
             "brain": daemon.brain_stats(),
             "speech": daemon.speaker.stats(),
+            "rest_state": daemon.rest_state,
         }
     )
 
@@ -130,6 +131,9 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
     await ws.prepare(request)
     daemon.hub.add(ws)
     log.info("widget connected (%d open)", daemon.hub.count)
+    if daemon.rest_state != "idle":
+        # Catch the newcomer up: a fresh widget assumes idle, but the music may already be on.
+        await ws.send_str(json.dumps({"state": daemon.rest_state}))
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:

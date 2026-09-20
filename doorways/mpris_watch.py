@@ -40,6 +40,7 @@ PROPS_IFACE = "org.freedesktop.DBus.Properties"
 DBUS_NAME = "org.freedesktop.DBus"
 DBUS_PATH = "/org/freedesktop/DBus"
 DEBOUNCE_MS = 400  # players emit several PropertiesChanged per track change
+RETRY_MS = 2000    # re-post a dance/idle state the daemon could not take (it may be restarting)
 
 
 class Player:
@@ -160,8 +161,16 @@ class Watcher:
         playing = bool(playing_players)
 
         if playing != self.playing_sent:
-            self.post("/perform", {"state": "dancing" if playing else "idle"})
-            self.playing_sent = playing
+            if self.post("/perform", {"state": "dancing" if playing else "idle"}):
+                self.playing_sent = playing
+            else:
+                # The daemon is down or still starting (systemd restarts both of us at once).
+                # Her dance state must not be lost: try again shortly. Track announcements are
+                # not retried; re-announcing a song she already named would be noise.
+                for player in playing_players:
+                    player.announced_track = player.track_id
+                self.flush_id = GLib.timeout_add(RETRY_MS, self.flush)
+                return False
 
         # Announce a track once, only while it is actually playing. Remembering it while
         # paused means un-pausing the same song is not an announcement.
@@ -183,7 +192,8 @@ class Watcher:
             return f"{artist} — {title}"
         return title or artist
 
-    def post(self, path: str, payload: dict) -> None:
+    def post(self, path: str, payload: dict) -> bool:
+        """True when the daemon answered (even with a rejection); False when it was unreachable."""
         body = json.dumps(payload).encode()
         request = urllib.request.Request(
             self.daemon + path, data=body, headers={"Content-Type": "application/json"}, method="POST"
@@ -192,10 +202,13 @@ class Watcher:
             with urllib.request.urlopen(request, timeout=2) as response:
                 reply = json.loads(response.read() or b"{}")
             log.info("%s %s -> %s widget(s)", path, payload, reply.get("sent", "?"))
+            return True
         except urllib.error.HTTPError as exc:
             log.warning("%s rejected %s: %s", path, payload, exc.read().decode(errors="replace")[:200])
+            return True
         except (urllib.error.URLError, TimeoutError) as exc:
-            log.warning("strawberryd unreachable at %s (%s); will keep watching", self.daemon, exc)
+            log.warning("strawberryd unreachable at %s (%s); retrying in %ds", self.daemon, exc, RETRY_MS // 1000)
+            return False
 
 
 def csv_set(value: str) -> set[str]:

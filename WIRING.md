@@ -135,7 +135,7 @@ Any player that speaks MPRIS (Spotify, VLC, Rhythmbox, browser tabs with media) 
 | nothing playing / player quits | `POST /perform {"state":"idle"}` |
 | a playing player changes track | `POST /event {"source":"media","app":"<player Identity>","title":"Artist — Title"}` |
 
-Changes are debounced 400 ms (players fire several property updates per track), a track is announced once per player, and un-pausing the same song is not an announcement. `--only spotify,vlc` or `--ignore firefox` narrow it. `bin/strawberry` starts the watcher next to the daemon. This is why the widget returns to `dancing` rather than `idle` after a line (§1): the music context outlives the reaction.
+Changes are debounced 400 ms (players fire several property updates per track), a track is announced once per player, and un-pausing the same song is not an announcement. A dance/idle post the daemon could not take (it restarts at the same moment as the watcher under systemd) is retried every 2 s until it lands; track announcements are not. The daemon in turn remembers her resting state (`idle`|`dancing`, shown in `/health`) and sends it to any widget the moment it connects, so a relaunched widget does not stand still while the music plays. `--only spotify,vlc` or `--ignore firefox` narrow it. `bin/strawberry` starts the watcher next to the daemon. This is why the widget returns to `dancing` rather than `idle` after a line (§1): the music context outlives the reaction.
 
 ---
 
