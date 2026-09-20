@@ -12,7 +12,11 @@ const TINTS := {
 	"angry": Color("ffb3a7"),
 }
 const INK := Color("201318")
+const BASE_FONT_SIZE := 44
+const MIN_FONT_SIZE := 28
 
+## World-unit height available above the anchor; the widget sets it from the camera view.
+var max_height := 0.7
 var speaking := false
 var line := ""
 var tween: Tween
@@ -21,7 +25,7 @@ func _ready() -> void:
 	billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	no_depth_test = true
 	pixel_size = 0.0022
-	font_size = 44
+	font_size = BASE_FONT_SIZE
 	outline_size = 18
 	outline_modulate = INK
 	modulate = TINTS.neutral
@@ -41,6 +45,7 @@ func speak(new_line: String, emotion := "neutral", duration := 0.0, hold := 0.9)
 	if tween and tween.is_valid():
 		tween.kill()
 	line = new_line
+	fit_font(new_line)
 	text = ""
 	modulate = TINTS.get(emotion, TINTS.neutral)
 	outline_modulate = INK
@@ -53,6 +58,28 @@ func speak(new_line: String, emotion := "neutral", duration := 0.0, hold := 0.9)
 	tween.tween_property(self, "modulate:a", 0.0, 0.35).set_ease(Tween.EASE_IN)
 	tween.parallel().tween_property(self, "outline_modulate:a", 0.0, 0.35)
 	tween.tween_callback(_done)
+
+## Lay the text out the way Label3D will (same font, width and word wrapping) and shrink
+## the font until the block fits in max_height. A long line reads better small than cut off.
+func fit_font(for_text: String) -> void:
+	font_size = BASE_FONT_SIZE
+	while font_size > MIN_FONT_SIZE and measured_height(for_text, font_size) > max_height:
+		font_size -= 2
+
+## Height in world units of the wrapped text at `size`, outline included.
+func measured_height(for_text: String, size: int) -> float:
+	var paragraph := layout(for_text, size)
+	return (paragraph.get_size().y + outline_size) * pixel_size
+
+func estimate_lines(for_text: String, size: int) -> int:
+	return layout(for_text, size).get_line_count()
+
+func layout(for_text: String, size: int) -> TextParagraph:
+	var paragraph := TextParagraph.new()
+	paragraph.width = width
+	paragraph.break_flags = TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE
+	paragraph.add_string(for_text, font if font != null else ThemeDB.fallback_font, size)
+	return paragraph
 
 func _reveal(count: int) -> void:
 	# Label3D has no visible_characters, so reveal by growing the string.

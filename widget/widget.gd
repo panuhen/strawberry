@@ -148,9 +148,9 @@ func setup_scene() -> void:
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.keep_aspect = Camera3D.KEEP_WIDTH
 	camera.size = 1.25
-	# Crab in the lower part of the window, room for the bubble above.
-	camera.position = Vector3(0, 0.55, -3)
-	camera.look_at(Vector3(0, 0.55, 0), Vector3.UP)
+	# Crab in the lower part of the window, room for a five-line bubble above (view spans y -0.14..1.70).
+	camera.position = Vector3(0, 0.78, -3)
+	camera.look_at(Vector3(0, 0.78, 0), Vector3.UP)
 	camera.current = true
 
 	var light := DirectionalLight3D.new()
@@ -186,9 +186,19 @@ func setup_bubble() -> void:
 	bubble.position = Vector3(0, 0.98, 0)
 	add_child(bubble)
 	bubble.finished.connect(_on_speech_finished)
+	# Everything from the anchor to the top edge of the view, minus a small margin.
+	bubble.max_height = view_top() - bubble.position.y - 0.04
 	badge = Badge.new()
-	badge.position = Vector3(0.5, 1.08, 0)  # +X is the viewer's left with this camera
+	# Between the eyes and the bubble's bottom line, viewer's left (+X with this camera),
+	# so the text can grow upward as far as it likes without running into it.
+	badge.position = Vector3(0.5, 0.86, 0)
 	add_child(badge)
+
+## World-space y of the top edge of the orthographic view (KEEP_WIDTH: height follows the aspect).
+func view_top() -> float:
+	var w := float(ProjectSettings.get_setting("display/window/size/viewport_width"))
+	var h := float(ProjectSettings.get_setting("display/window/size/viewport_height"))
+	return camera.position.y + camera.size * h / w / 2.0
 
 ## The window itself jumps: a real X11 window bouncing on the desktop, not a sprite in a box.
 func hop_window() -> void:
@@ -364,8 +374,9 @@ func capture() -> void:
 	# Evidence shot: a message performance so the wave, the badge and the bubble are in frame.
 	await get_tree().create_timer(0.4).timeout
 	var icon := ProjectSettings.globalize_path("res://capture_phase1.png")
-	perform({"state": "talking", "reaction": "wave", "icon": icon, "text": "James wants to know about tonight!", "emotion": "happy"})
-	await get_tree().create_timer(0.75).timeout
+	perform({"state": "talking", "reaction": "wave", "icon": icon, "emotion": "happy",
+		"text": "James wants to know if you are still on for tonight, and whether you remembered the cake!"})
+	await get_tree().create_timer(3.6).timeout
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()
 	var err := image.save_png(capture_path)

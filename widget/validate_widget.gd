@@ -42,6 +42,14 @@ func get_json(path: String) -> Array:
 func wait(seconds: float) -> void:
 	await create_timer(seconds).timeout
 
+## Bounded: a script error inside the widget must fail the run, not hang it.
+func wait_speech_end(timeout := 15.0) -> void:
+	var waited := 0.0
+	while widget.bubble.speaking and waited < timeout:
+		await wait(0.1)
+		waited += 0.1
+	check(not widget.bubble.speaking, "speech should end within %.0fs" % timeout)
+
 func run() -> void:
 	widget = (load("res://widget.tscn") as PackedScene).instantiate()
 	root.add_child(widget)
@@ -88,6 +96,7 @@ func run() -> void:
 	while widget.bubble.speaking and spoke < expected_speech + 3.0:
 		await wait(0.1)
 		spoke += 0.1
+	check(not widget.bubble.speaking, "speech should have ended by now")
 	report["observed_speech_seconds"] = snappedf(spoke + alert_length + 0.55, 0.1)
 	check(not widget.bubble.speaking and not widget.bubble.visible, "bubble should hide when speech ends")
 	await wait(0.3)
@@ -143,6 +152,27 @@ func run() -> void:
 	await wait(0.2)
 	check(widget.rest_state == "idle", "idle should reset the rest state")
 
+	# 7b. A long line must stay inside the window: the bubble grows upward from y 0.98 and
+	#     the camera view must contain its top edge.
+	var long_line := "James wants to know if you are still on for tonight, and whether you remembered the cake, the candles and the good plates!"
+	await post("/perform", {"state": "talking", "text": long_line, "emotion": "happy"})
+	await wait(float(widget.bubble.heuristic_duration(long_line)) + 0.2)  # fully revealed
+	var view_top: float = widget.view_top()
+	var bubble_top: float = (widget.bubble.global_transform * widget.bubble.get_aabb()).end.y
+	report["bubble_lines"] = widget.bubble.estimate_lines(long_line, widget.bubble.font_size)
+	report["bubble_measured_height"] = snappedf(widget.bubble.measured_height(long_line, widget.bubble.font_size), 0.01)
+	report["bubble_actual_height"] = snappedf(bubble_top - widget.bubble.global_position.y, 0.01)
+	report["bubble_font_size"] = widget.bubble.font_size
+	report["bubble_top_y"] = snappedf(bubble_top, 0.01)
+	report["view_top_y"] = snappedf(view_top, 0.01)
+	check(bubble_top <= view_top, "bubble top %.2f must be inside the view (top %.2f)" % [bubble_top, view_top])
+	check(widget.bubble.font_size >= widget.bubble.MIN_FONT_SIZE, "font must not shrink below the minimum")
+	await wait_speech_end()
+	await post("/perform", {"state": "talking", "text": "Short.", "emotion": "neutral"})
+	await wait(0.2)
+	check(widget.bubble.font_size == widget.bubble.BASE_FONT_SIZE, "a short line should use the base font size again")
+	await wait_speech_end()
+
 	# 8. A message: wave recipe layered on the clip, app icon badge, window hop (no-op headless).
 	var skeleton := widget.model.find_child("Skeleton3D", true, false) as Skeleton3D
 	var claw_i := skeleton.find_bone("claw_arm_L")
@@ -168,8 +198,7 @@ func run() -> void:
 	var residual := rad_to_deg((claw_before.inverse() * claw_after).get_angle())
 	report["wave_claw_residual_deg"] = snappedf(residual, 0.1)
 	check(residual < 8.0, "claw should settle back after the wave, residual %.1f" % residual)
-	while widget.bubble.speaking:
-		await wait(0.1)
+	await wait_speech_end()
 	await wait(0.2)
 	check(not widget.badge.visible, "badge should hide with the bubble")
 
@@ -180,8 +209,7 @@ func run() -> void:
 	await wait(hop_len * 2.0 + 0.6)
 	check(widget.one_shots_played == shots_before + 2, "double_hop should play notify_perk twice, played %d" % (widget.one_shots_played - shots_before))
 	check(widget.one_shot == "", "one-shots should be done after the double hop")
-	while widget.bubble.speaking:
-		await wait(0.1)
+	await wait_speech_end()
 
 	# 10. Every recipe runs and finishes without error.
 	for name in ["peek", "shiver", "nod"]:
