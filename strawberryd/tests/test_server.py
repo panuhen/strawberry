@@ -97,6 +97,26 @@ async def test_widget_connecting_during_music_is_told_to_dance(client):
     await late.close()
 
 
+TEMPO = {"bpm": 128.0, "period_s": 0.469, "confidence": 0.8, "next_beat": 1_800_000_000.5,
+         "evenness": 0.7, "low_ratio": 0.45, "density": 3.2, "loudness_db": -18.0}
+
+
+async def test_tempo_is_forwarded_validated_and_remembered(client):
+    ws = await client.ws_connect("/ws")
+    response = await client.post("/tempo", json=TEMPO)
+    assert response.status == 200 and (await response.json())["sent"] == 1
+    assert await ws.receive_json(timeout=2) == {"tempo": TEMPO}
+    assert (await (await client.get("/health")).json())["tempo"] == TEMPO
+    late = await client.ws_connect("/ws")                       # a newcomer hears the fresh beat
+    assert await late.receive_json(timeout=2) == {"tempo": TEMPO}
+    assert (await client.post("/tempo", json={"silent": True})).status == 200
+    assert await ws.receive_json(timeout=2) == {"tempo": {"silent": True}}
+    for bad in ({"bpm": 128.0}, {**TEMPO, "bpm": 900}, {**TEMPO, "extra": 1}, {**TEMPO, "confidence": "high"}, [1]):
+        assert (await client.post("/tempo", json=bad)).status == 400, bad
+    await ws.close()
+    await late.close()
+
+
 async def test_health_counts_connected_widget(client):
     ws = await client.ws_connect("/ws")
     await ws.send_json({"type": "hello", "client": "test"})

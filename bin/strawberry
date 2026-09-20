@@ -37,12 +37,13 @@ wait_daemon() {
 }
 
 # Doorways run as background watchers on the system python3 (they need PyGObject, which Ubuntu ships).
-DOORWAYS=(mpris_watch notify_watch)
+DOORWAYS=(mpris_watch notify_watch beat_watch)
 
 # --- start on login (systemd --user + XDG autostart) --------------------------------
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/strawberry.desktop"
-UNITS=(strawberryd.service strawberry-mpris_watch.service strawberry-notify_watch.service)
+UNITS=(strawberryd.service); for w in "${DOORWAYS[@]}"; do UNITS+=("strawberry-$w.service"); done
+WATCHER_UNITS="${UNITS[*]:1}"
 managed() { systemctl --user is-enabled strawberryd.service >/dev/null 2>&1; }
 
 write_units() {
@@ -51,7 +52,7 @@ write_units() {
 [Unit]
 Description=Strawberry mascot daemon (event intake, brain, voice, websocket to the widget)
 After=graphical-session.target
-Wants=strawberry-mpris_watch.service strawberry-notify_watch.service
+Wants=$WATCHER_UNITS
 
 [Service]
 ExecStart=$D --port $PORT

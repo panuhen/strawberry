@@ -303,6 +303,40 @@ func run() -> void:
 	await wait(0.6)
 	check(widget.gaze.gaze.length() < 0.05, "headless with no cursor: gaze should relax to centre")
 
+	# 14. Beat-driven dance styles: /tempo picks a style while dancing, the clip runs at the
+	# music's speed, moves land on the beat, and everything resets when the beat is gone.
+	await post("/perform", {"state": "dancing"})
+	await wait(0.3)
+	var now := Time.get_unix_time_from_system()
+	var techno := {"bpm": 130.0, "period_s": 60.0 / 130.0, "confidence": 0.8, "next_beat": now + 0.4,
+		"evenness": 0.7, "low_ratio": 0.45, "density": 3.0, "loudness_db": -18.0}
+	await post("/tempo", techno)
+	await post("/tempo", techno)
+	await wait(0.3)
+	check(widget.dance.style == "rave", "130 bpm even kick should be rave, got %s" % widget.dance.style)
+	check(absf(widget.player.speed_scale - 130.0 / 119.0) < 0.02, "clip should run at the music's speed, got %.2f" % widget.player.speed_scale)
+	report["dance_speed_rave"] = snappedf(widget.player.speed_scale, 0.01)
+	check(widget.dance.applied, "rave should be layering moves")
+	var groove := {"bpm": 92.0, "period_s": 60.0 / 92.0, "confidence": 0.7, "next_beat": now + 0.5,
+		"evenness": 0.4, "low_ratio": 0.35, "density": 2.0, "loudness_db": -20.0}
+	await post("/tempo", groove)
+	check(widget.dance.style == "rave", "one estimate should not flip the style yet")
+	await post("/tempo", groove)
+	await wait(0.2)
+	check(widget.dance.style == "groove", "92 bpm with low end should be groove, got %s" % widget.dance.style)
+	var rules := {"sway": {"bpm": 70.0, "confidence": 0.9, "evenness": 0.5, "low_ratio": 0.3, "density": 2.0, "loudness_db": -20.0},
+		"headbang": {"bpm": 160.0, "confidence": 0.6, "evenness": 0.3, "low_ratio": 0.2, "density": 5.0, "loudness_db": -12.0},
+		"bounce": {"bpm": 112.0, "confidence": 0.6, "evenness": 0.3, "low_ratio": 0.15, "density": 3.0, "loudness_db": -16.0},
+		"rave": {"bpm": 140.0, "confidence": 0.9, "evenness": 0.8, "low_ratio": 0.5, "density": 4.0, "loudness_db": -10.0}}
+	for name in rules:
+		check(widget.dance.choose(rules[name]) == name, "rule table: expected %s" % name)
+	await post("/tempo", {"silent": true})
+	await wait(0.2)
+	check(not widget.dance.applied, "silence should stop the layers")
+	check(absf(widget.player.speed_scale - 1.0) < 0.001, "clip speed should return to 1")
+	report["dance_styles_seen"] = widget.dance.styles_seen.keys()
+	await post("/perform", {"state": "idle"})
+
 	finish()
 
 ## A 1 kHz tone with a syllable-like 5 Hz amplitude wobble, saved where the daemon can see it.

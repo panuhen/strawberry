@@ -14,6 +14,7 @@ const Reactions = preload("res://reactions.gd")
 const SpeechPlayer = preload("res://speech_player.gd")
 const Menu = preload("res://menu.gd")
 const Gaze = preload("res://gaze.gd")
+const DanceStyle = preload("res://dance_style.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
 const STATE_CLIPS := {
@@ -34,6 +35,7 @@ const PASSTHROUGH_PADDING := 18.0
 var ws_url := "ws://127.0.0.1:8770/ws"
 var capture_path := ""
 var look_at := Vector2(-1, -1)   # --look=x,y pins the cursor position (captures, headless checks)
+var capture_dance := ""          # --dance=rave: capture that style mid-beat instead of the wave
 
 var model: Node3D
 var player: AnimationPlayer
@@ -44,6 +46,7 @@ var reactions: Node
 var speech: AudioStreamPlayer
 var menu: PopupMenu
 var gaze: Node
+var dance: Node
 var ws: Node
 var blink_controller: Node
 var claw_controller: Node
@@ -90,6 +93,8 @@ func parse_args() -> void:
 			var parts := arg.trim_prefix("--look=").split(",")
 			if parts.size() == 2:
 				look_at = Vector2(float(parts[0]), float(parts[1]))
+		elif arg.begins_with("--dance="):
+			capture_dance = arg.trim_prefix("--dance=")
 
 func is_headless() -> bool:
 	return DisplayServer.get_name() == "headless"
@@ -259,6 +264,9 @@ func setup_reactions() -> void:
 	add_child(gaze)
 	gaze.setup(model, camera)
 	gaze.look_override = look_at
+	dance = DanceStyle.new()
+	add_child(dance)
+	dance.setup(self, player, model, blink_controller)
 
 func setup_bubble() -> void:
 	bubble = Bubble.new()
@@ -317,6 +325,9 @@ func cycle_skin() -> void:
 func _on_message(data: Dictionary) -> void:
 	if data.has("command"):
 		run_command(data)
+		return
+	if data.has("tempo") and data.tempo is Dictionary:
+		dance.set_tempo(data.tempo)
 		return
 	if not data.has("state"):
 		push_warning("ignoring message without state: " + JSON.stringify(data))
@@ -473,10 +484,23 @@ func save_settings() -> void:
 func capture() -> void:
 	# Evidence shot: a message performance so the wave, the badge and the bubble are in frame.
 	await get_tree().create_timer(0.4).timeout
-	var icon := ProjectSettings.globalize_path("res://capture_phase1.png")
-	perform({"state": "talking", "reaction": "wave", "icon": icon, "emotion": "happy",
-		"text": "James wants to know if you are still on for tonight, and whether you remembered the cake!"})
-	await get_tree().create_timer(3.6).timeout
+	if capture_dance != "":
+		# A style frozen just after a beat: bpm/features that the rule table maps to it.
+		var by_style := {"rave": [130.0, 0.8, 0.7, 0.45, 3.0], "headbang": [160.0, 0.6, 0.3, 0.2, 5.0],
+			"groove": [92.0, 0.7, 0.4, 0.35, 2.0], "bounce": [112.0, 0.6, 0.3, 0.15, 3.0], "sway": [70.0, 0.9, 0.5, 0.3, 2.0]}
+		var f: Array = by_style.get(capture_dance, by_style.rave)
+		perform({"state": "dancing"})
+		var now := Time.get_unix_time_from_system()
+		var t := {"bpm": f[0], "period_s": 60.0 / f[0], "confidence": f[1], "next_beat": now + 1.9,
+			"evenness": f[2], "low_ratio": f[3], "density": f[4], "loudness_db": -16.0}
+		dance.set_tempo(t)
+		dance.set_tempo(t)
+		await get_tree().create_timer(2.0).timeout  # ~0.1 s after the beat: the pulse is near its peak
+	else:
+		var icon := ProjectSettings.globalize_path("res://capture_phase1.png")
+		perform({"state": "talking", "reaction": "wave", "icon": icon, "emotion": "happy",
+			"text": "James wants to know if you are still on for tonight, and whether you remembered the cake!"})
+		await get_tree().create_timer(3.6).timeout
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()
 	var err := image.save_png(capture_path)

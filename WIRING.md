@@ -139,6 +139,29 @@ Changes are debounced 400 ms (players fire several property updates per track), 
 
 ---
 
+## 4c. Doorway: the beat — `doorways/beat_watch.py` + `doorways/beat_track.py`
+
+MPRIS says *that* music plays; this says *how it goes*. The watcher captures the player's own PipeWire output stream (`pw-record --target <node>`: never the microphone, never the whole mixer, so her voice, calls and system sounds stay out) and feeds it to a pure-numpy beat tracker: spectral-flux onset envelope at ~43 frames/s, autocorrelation over the last 8 s for the period (60–190 BPM, mild prior around 120), a comb filter over the last 4 s for the phase, with kick-band onsets leading the phase search so she lands on the kick rather than the hi-hats. Every 2 s it posts to `POST /tempo`:
+
+```json
+{"bpm": 128.4, "period_s": 0.467, "confidence": 0.71, "next_beat": 1789935826.592,
+ "evenness": 0.62, "low_ratio": 0.55, "density": 4.1, "loudness_db": -18.0}
+```
+
+or `{"silent": true}`. `next_beat` is wall-clock, so the widget computes the beat phase itself every frame. `evenness` (autocorrelation at 1, 2 and 4 periods: four-on-the-floor scores high), `low_ratio` (energy below 150 Hz), `density` (onsets/s) and loudness are the style features. The daemon validates ranges, forwards `{"tempo": {...}}` to the widgets, shows the fresh estimate in `/health`, and hands it to a widget that connects while it is fresh (6 s). Stream discovery is automatic (a running `Stream/Output/Audio` node from a known player, else any running stream that is not ours) or pinned with `[beat].target`.
+
+**Dance styles (`widget/dance_style.gd`).** While she is dancing with a fresh estimate the node runs `dance_loop` at the music's tempo (one leg lift per beat: the clip's natural rate is 119 BPM, halved or doubled to stay within 0.65–1.6×) and layers beat-locked moves over it, the same bone-offset-after-the-AnimationPlayer technique as the reactions. The rule table, in order:
+
+| style | when | moves |
+|---|---|---|
+| `sway` | confidence < 0.3, or < 76 BPM, or quieter than −38 dB | slow roll, clip at 0.75×, happy eyes; no beat lock |
+| `rave` | ≥ 118 BPM, evenness ≥ 0.45, low_ratio ≥ 0.25 (techno, house, trance, hardstyle) | stomp squash on every beat, arms pump alternately, eyes wide |
+| `headbang` | ≥ 132 BPM, density ≥ 4 (rock, metal) | forward nod on the beat, claws half up, squint |
+| `groove` | ≤ 108 BPM, low_ratio ≥ 0.2 (hip hop, funk) | two-beat roll, claw pumps on alternate beats |
+| `bounce` | everything else with a beat | squash and a small nod on the beat |
+
+A new style must win two estimates in a row (4 s) before she switches, so borderline songs do not flicker. Silence or a stale estimate resets speed and layers. The thresholds are constants at the top of the script and the watcher logs the same features per song, so tuning is: play the song, read the journal, adjust. First live reading: Schrotthagen at 161 BPM, evenness 0.5, low 0.77 → rave. Not built yet: a build-up/drop detector for rave (energy rising over bars, then a crouch and a drop back in) and a genre hint from the brain.
+
 ## 5. Doorway: git — `doorways/git/`
 
 Global by construction: hooks run inside the `git` binary when the commit or push happens, so a terminal, Claude Code, Codex, opencode, or an IDE all fire the same hook. One line makes them apply to every repo on the machine, present and future:
@@ -230,6 +253,7 @@ Stop after any phase and you still have something that works.
 - [x] Speech ends → crab returns to `idle` with no follow-up message from the daemon.
 - [x] A `/event` round-trips through the reactor to the widget. (Canned reactor; model in Phase 2.)
 - [x] Play/pause in any MPRIS media player makes her dance/idle; a track change shows a "Now playing" bubble and she returns to dancing. (`doorways/mpris_watch.py`)
+- [x] The beat of the playing music picks a dance style and the clip runs at its tempo; synthetic 128/92/168 BPM drums are tracked to within 2 BPM with the phase on the kick. (`doorways/beat_watch.py`, `check_phase1.sh` step 14, `tests/test_beat_track.py`)
 - [x] Browser origins are refused on HTTP and `/ws`; POSTs need the JSON content type.
 - [x] A git commit makes Strawberry show a model-written bubble (silent). (`gemma3:1b` via `OllamaReactor`)
 - [x] A desktop notification (any app) triggers a reaction. (`notify-send -a WhatsApp James "…"` → Gemma line in the bubble)
@@ -338,9 +362,9 @@ quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 ```
 WIRING.md                this document
 strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), hub, server, tests
-widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, gaze.gd, menu.gd, validate_widget.gd
+widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, gaze.gd, menu.gd, validate_widget.gd
                          + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
-doorways/                event producers: mpris_watch.py (any MPRIS media player), notify_watch.py (desktop notifications via D-Bus monitor), git/ (global post-commit + pre-push hooks)
+doorways/                event producers: mpris_watch.py (any MPRIS media player), notify_watch.py (desktop notifications via D-Bus monitor), beat_watch.py + beat_track.py (tempo from the player's audio), git/ (global post-commit + pre-push hooks)
 bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend; say / voices / audition / install (start on login)
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
 scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless widget; it must reconnect

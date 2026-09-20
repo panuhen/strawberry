@@ -12,7 +12,11 @@ dependencies = [
 strawberryd = "strawberryd.__main__:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-aiohttp>=1.0"]
+dev = [
+    "numpy>=1.26",
+    "pytest>=8",
+    "pytest-aiohttp>=1.0",
+]
 
 [build-system]
 requires = ["hatchling"]

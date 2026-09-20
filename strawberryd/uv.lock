@@ -733,6 +733,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "numpy" },
     { name = "pytest" },
     { name = "pytest-aiohttp" },
 ]
@@ -745,6 +746,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "numpy", specifier = ">=1.26" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-aiohttp", specifier = ">=1.0" },
 ]

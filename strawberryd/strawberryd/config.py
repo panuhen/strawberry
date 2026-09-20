@@ -58,6 +58,13 @@ class MediaConfig:
 
 
 @dataclass
+class BeatConfig:
+    enabled: bool = True          # listen to the player's audio stream for the beat (doorways/beat_watch.py)
+    target: str = ""              # PipeWire node or application name; empty = the running player, auto
+    interval_s: float = 2.0       # how often the estimate goes to the widget
+
+
+@dataclass
 class NotificationsConfig:
     ignore_apps: list[str] = field(default_factory=lambda: ["Spotify"])  # MPRIS already covers music
     only_apps: list[str] = field(default_factory=list)      # non-empty: forward these apps only
@@ -87,6 +94,7 @@ class Config:
     media: MediaConfig = field(default_factory=MediaConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     speech: SpeechConfig = field(default_factory=SpeechConfig)
+    beat: BeatConfig = field(default_factory=BeatConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -96,6 +104,7 @@ class Config:
             "media": asdict(self.media),
             "notifications": asdict(self.notifications),
             "speech": asdict(self.speech),
+            "beat": asdict(self.beat),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -107,6 +116,7 @@ _SECTIONS = {
     "media": MediaConfig,
     "notifications": NotificationsConfig,
     "speech": SpeechConfig,
+    "beat": BeatConfig,
 }
 
 
@@ -237,6 +247,11 @@ def default_toml() -> str:
         f"volume = {s.volume}",
         f'quiet_hours = "{s.quiet_hours}"           # e.g. "22:00-08:00": bubble only, no sound',
         f"max_chars = {s.max_chars}",
+        "",
+        "[beat]",
+        "enabled = true                 # listen to the player's own audio stream and dance to its beat",
+        'target = ""                    # PipeWire node/app name; empty = whichever player is running',
+        "interval_s = 2.0",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

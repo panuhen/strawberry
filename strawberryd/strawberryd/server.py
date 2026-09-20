@@ -2,6 +2,7 @@
 
   POST /event    {source, app, title, body, urgency}  <- what the hooks hit
   POST /perform  a raw contract blob                  <- curl / tests / future TTS-less callers
+  POST /tempo    a beat estimate                      <- doorways/beat_watch.py (§4c)
   GET  /health
   GET  /ws       the Godot widget connects here and stays connected
 """
@@ -36,6 +37,7 @@ def create_app(daemon: Daemon) -> web.Application:
             web.get("/config", config),
             web.post("/perform", perform),
             web.post("/event", event),
+            web.post("/tempo", tempo),
             web.get("/ws", websocket),
         ]
     )
@@ -94,6 +96,7 @@ async def health(request: web.Request) -> web.Response:
             "brain": daemon.brain_stats(),
             "speech": daemon.speaker.stats(),
             "rest_state": daemon.rest_state,
+            "tempo": daemon.fresh_tempo(),
         }
     )
 
@@ -112,6 +115,48 @@ async def perform(request: web.Request) -> web.Response:
         return _error(str(exc))
     sent = await daemon.perform(performance)
     return web.json_response({"sent": sent, "performance": performance.to_dict()})
+
+
+TEMPO_FIELDS = {
+    "bpm": (30.0, 300.0),
+    "period_s": (0.2, 2.0),
+    "confidence": (0.0, 1.0),
+    "next_beat": (0.0, 1e11),
+    "evenness": (0.0, 1.0),
+    "low_ratio": (0.0, 1.0),
+    "density": (0.0, 60.0),
+    "loudness_db": (-120.0, 10.0),
+}
+
+
+def parse_tempo(data: Any) -> dict[str, Any]:
+    """Either {"silent": true} or every TEMPO_FIELDS number within range; nothing else."""
+    if not isinstance(data, dict):
+        raise ContractError("tempo must be an object")
+    if data.get("silent") is True:
+        return {"silent": True}
+    unknown = set(data) - set(TEMPO_FIELDS)
+    if unknown:
+        raise ContractError(f"unknown tempo fields: {sorted(unknown)}")
+    out: dict[str, Any] = {}
+    for key, (low, high) in TEMPO_FIELDS.items():
+        value = data.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ContractError(f"tempo.{key} must be a number")
+        if not (low <= value <= high):
+            raise ContractError(f"tempo.{key} out of range")
+        out[key] = float(value)
+    return out
+
+
+async def tempo(request: web.Request) -> web.Response:
+    daemon = request.app[DAEMON]
+    try:
+        estimate = parse_tempo(await _body(request))
+    except ContractError as exc:
+        return _error(str(exc))
+    sent = await daemon.set_tempo(estimate)
+    return web.json_response({"sent": sent})
 
 
 async def event(request: web.Request) -> web.Response:
@@ -134,6 +179,9 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
     if daemon.rest_state != "idle":
         # Catch the newcomer up: a fresh widget assumes idle, but the music may already be on.
         await ws.send_str(json.dumps({"state": daemon.rest_state}))
+    fresh = daemon.fresh_tempo()
+    if fresh is not None:
+        await ws.send_str(json.dumps({"tempo": fresh}))
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:

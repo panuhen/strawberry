@@ -30,6 +30,9 @@ class Daemon:
         # Her resting state (idle|dancing) outlives any one widget: a widget that (re)connects
         # while music plays gets it on arrival instead of standing still until the next pause.
         self.rest_state = "idle"
+        # Latest beat estimate from doorways/beat_watch.py and when it arrived (§4c).
+        self.tempo: dict[str, Any] | None = None
+        self.tempo_at = 0.0
 
     def _default_reactor(self) -> Reactor:
         canned = CannedReactor()
@@ -80,6 +83,19 @@ class Daemon:
         else:
             log.info("perform -> %d widget(s): %s", sent, payload)
         return sent
+
+    TEMPO_FRESH_S = 6.0
+
+    def fresh_tempo(self) -> dict[str, Any] | None:
+        if self.tempo is None or time.monotonic() - self.tempo_at > self.TEMPO_FRESH_S:
+            return None
+        return self.tempo
+
+    async def set_tempo(self, tempo: dict[str, Any]) -> int:
+        """Forward one beat estimate to the widgets as {"tempo": {...}} and remember it."""
+        self.tempo = tempo
+        self.tempo_at = time.monotonic()
+        return await self.hub.send({"tempo": tempo})
 
     async def handle_event(self, event: Event) -> tuple[Performance, int]:
         log.info("event %s app=%r title=%r urgency=%s", event.source, event.app, event.title, event.urgency)
