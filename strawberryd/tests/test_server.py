@@ -123,6 +123,25 @@ async def test_event_requires_source(client):
     assert "source is required" in (await response.json())["error"]
 
 
+async def test_widget_ping_gets_a_pong(client):
+    ws = await client.ws_connect("/ws")
+    await ws.send_json({"type": "ping"})
+    assert await ws.receive_json(timeout=2) == {"type": "pong"}
+    await ws.close()
+
+
+async def test_shutdown_closes_widgets_with_going_away(aiohttp_client, daemon):
+    from aiohttp import WSCloseCode, WSMsgType
+
+    client = await aiohttp_client(create_app(daemon))
+    ws = await client.ws_connect("/ws")
+    await client.server.app.shutdown()
+    msg = await ws.receive(timeout=2)
+    assert msg.type == WSMsgType.CLOSE
+    assert msg.data == WSCloseCode.GOING_AWAY
+    assert daemon.hub.count == 0
+
+
 async def test_hub_forgets_a_closed_widget(client):
     ws = await client.ws_connect("/ws")
     await ws.close()

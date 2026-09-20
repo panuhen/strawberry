@@ -26,6 +26,7 @@ DAEMON = web.AppKey("daemon", Daemon)
 def create_app(daemon: Daemon) -> web.Application:
     app = web.Application()
     app[DAEMON] = daemon
+    app.on_shutdown.append(_close_widgets)
     app.add_routes(
         [
             web.get("/health", health),
@@ -35,6 +36,12 @@ def create_app(daemon: Daemon) -> web.Application:
         ]
     )
     return app
+
+
+async def _close_widgets(app: web.Application) -> None:
+    closed = await app[DAEMON].hub.close_all()
+    if closed:
+        log.info("closed %d widget socket(s) for shutdown", closed)
 
 
 def _error(message: str, status: int = 400) -> web.Response:
@@ -101,7 +108,7 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
-                _on_widget_message(msg.data)
+                await _on_widget_message(ws, msg.data)
             elif msg.type == WSMsgType.ERROR:
                 log.warning("widget socket error: %s", ws.exception())
     finally:
@@ -110,15 +117,18 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-def _on_widget_message(raw: str) -> None:
-    # The widget only talks back to introduce itself; anything else is logged, not acted on.
+async def _on_widget_message(ws: web.WebSocketResponse, raw: str) -> None:
+    # The widget introduces itself and pings for liveness; anything else is logged, not acted on.
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
         log.debug("widget sent non-JSON: %r", raw[:200])
         return
-    if isinstance(data, dict) and data.get("type") == "hello":
+    kind = data.get("type") if isinstance(data, dict) else None
+    if kind == "hello":
         log.info("widget hello: %s", {k: v for k, v in data.items() if k != "type"})
+    elif kind == "ping":
+        await ws.send_str('{"type": "pong"}')
     else:
         log.debug("widget message: %s", data)
 
@@ -127,4 +137,5 @@ def run(host: str, port: int) -> None:
     daemon = Daemon()
     app = create_app(daemon)
     log.info("strawberryd listening on http://%s:%d (ws at /ws)", host, port)
-    web.run_app(app, host=host, port=port, print=None)
+    # Short shutdown: widgets are closed explicitly in on_shutdown, nothing else is long-lived.
+    web.run_app(app, host=host, port=port, print=None, shutdown_timeout=2.0)

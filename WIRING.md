@@ -51,7 +51,9 @@ Optional fields are omitted on the wire, never sent as `null`. Unknown fields, u
 
 **Godot's behaviour on receipt:** apply `state` (crossfade to its loop); if `anim` present, fire it as a one-shot and resume the state's loop when it ends; if `text`, show the bubble; if `audio`, play it through the analysed bus (§6). When speech/bubble finishes and the state was `talking`, **auto-return to her resting state**: `dancing` if she was dancing before the line, otherwise `idle`. The daemon doesn't send a follow-up. `listening`/`thinking` are pipeline transients and are not remembered; `dancing` persists until the next `idle`.
 
-**Transport:** the **daemon is the websocket server**, Godot is a **client** that connects out and auto-reconnects with backoff. localhost only. One port carries both HTTP and the websocket (`/ws`).
+**Transport:** the **daemon is the websocket server**, Godot is a **client** that connects out and auto-reconnects with backoff (1 s doubling to 8 s). localhost only. One port carries both HTTP and the websocket (`/ws`).
+
+**Liveness, both ends.** On shutdown the daemon closes every widget socket with `1001 going away` and exits within 2 s, so a restart is noticed immediately (aiohttp would otherwise hold the handler for up to 60 s and the widget would sit on a dead socket). The widget also sends `{"type":"ping"}` every 5 s, gets `{"type":"pong"}`, and drops and reconnects after 12 s of silence, covering a half-open socket after sleep/wake. `scripts/check_reconnect.sh` (and `SIGNAL=KILL …`) proves both paths: drop noticed at 0.0 s, reconnected in 2.6 s.
 
 Source of truth: `strawberryd/strawberryd/contract.py` and the constants at the top of `widget/widget.gd`.
 
@@ -253,6 +255,7 @@ widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubb
 doorways/                short-lived event producers: mpris_watch.py (any MPRIS media player), git/ (global post-commit + pre-push hooks); notification listener to come
 bin/strawberry           launcher: daemon + media watcher up, then widget on the X11 backend
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
+scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless widget; it must reconnect
 v2/                      the asset: Blender build scripts, GLB, evidence, preview project
 v1/ (top level)          the earlier deliverable
 ```

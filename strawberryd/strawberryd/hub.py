@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any
 
-from aiohttp import web
+from aiohttp import WSCloseCode, web
 
 log = logging.getLogger("strawberryd.hub")
 
@@ -28,6 +28,21 @@ class WidgetHub:
 
     def discard(self, ws: web.WebSocketResponse) -> None:
         self._sockets.discard(ws)
+
+    async def close_all(self, reason: str = "strawberryd shutting down") -> int:
+        """Tell every widget we are going away so it reconnects at once instead of
+        waiting for TCP to notice (WIRING.md §1)."""
+        closed = 0
+        for ws in list(self._sockets):
+            self._sockets.discard(ws)
+            if ws.closed:
+                continue
+            try:
+                await ws.close(code=WSCloseCode.GOING_AWAY, message=reason.encode())
+                closed += 1
+            except (ConnectionResetError, RuntimeError):
+                pass
+        return closed
 
     async def send(self, payload: dict[str, Any]) -> int:
         """Push one JSON object to every open widget. Returns how many received it."""
