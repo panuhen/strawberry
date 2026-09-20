@@ -78,7 +78,7 @@ class NotificationsConfig:
 @dataclass
 class SpeechConfig:
     enabled: bool = False                                   # true: Piper reads every line aloud (Phase 4)
-    voice: str = "en_GB-jenny_dioco-medium"                 # Piper voice name in voices_dir, or a path to an .onnx
+    voice: str = "en_GB-alba-medium"                        # Piper voice name in voices_dir, or a path to an .onnx
     voices_dir: str = ""                                    # default ~/.local/share/strawberry/voices
     speed: float = 1.0                                      # 1.25 = a quarter faster
     volume: float = 1.0
