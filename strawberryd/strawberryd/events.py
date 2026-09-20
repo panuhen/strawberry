@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from .contract import ContractError, Performance, anim_for
 
-SOURCES = ("notification", "git", "voice", "manual")
+SOURCES = ("notification", "git", "voice", "media", "manual")
 URGENCIES = ("low", "normal", "critical")
 MAX_BODY = 2000
 MAX_LINE = 140
@@ -65,6 +65,8 @@ class CannedReactor:
 
     async def react(self, event: Event) -> Performance:
         emotion = "alert" if event.urgency == "critical" else "neutral"
+        if event.source == "media":
+            emotion = "happy"
         line = self._line(event)
         return Performance(state="talking", anim=anim_for(emotion), text=line[:MAX_LINE], emotion=emotion)
 
@@ -78,6 +80,8 @@ class CannedReactor:
             who = event.app or "Something"
             what = event.title or event.body
             return f"{who}: {what}" if what else f"{who} wants your attention."
+        if event.source == "media":
+            return f"Now playing: {event.title or event.body}" if (event.title or event.body) else "Music!"
         if event.source == "voice":
             return f"You said: {event.body or event.title}" if (event.body or event.title) else "I heard you."
         return event.title or event.body or "Something happened."

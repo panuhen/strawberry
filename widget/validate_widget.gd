@@ -126,7 +126,22 @@ func run() -> void:
 	check(widget.one_shot == "", "one-shot should finish on its own")
 	check(widget.player.assigned_animation == "dance_loop", "dancing should play dance_loop after the one-shot, was " + widget.player.assigned_animation)
 	report["one_shot_then_dance_seconds"] = snappedf(shot_wait, 0.1)
+
+	# 7. Talking while dancing returns to dancing, not idle (the media doorway relies on this).
+	var short_line := "Nice track."
+	await post("/perform", {"state": "talking", "text": short_line, "emotion": "happy"})
+	await wait(0.2)
+	check(widget.state == "talking" and widget.rest_state == "dancing", "rest state should stay dancing while she talks")
+	var back := 0.0
+	while widget.bubble.speaking and back < 6.0:
+		await wait(0.1)
+		back += 0.1
+	await wait(0.3)
+	check(widget.state == "dancing", "after talking she should return to dancing, was " + widget.state)
+	check(widget.player.assigned_animation == "dance_loop", "clip should be dance_loop again, was " + widget.player.assigned_animation)
 	await post("/perform", {"state": "idle"})
+	await wait(0.2)
+	check(widget.rest_state == "idle", "idle should reset the rest state")
 
 	finish()
 

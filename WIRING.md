@@ -49,7 +49,7 @@ Daemon → Godot, one JSON object per performance:
 
 Optional fields are omitted on the wire, never sent as `null`. Unknown fields, unknown states, and missing audio files are rejected by the daemon with a 400 and a reason.
 
-**Godot's behaviour on receipt:** apply `state` (crossfade to its loop); if `anim` present, fire it as a one-shot and resume the state's loop when it ends; if `text`, show the bubble; if `audio`, play it through the analysed bus (§6). When speech/bubble finishes and the state was `talking`, **auto-return to `idle`**. The daemon doesn't send a follow-up. `listening`/`thinking`/`dancing` persist until the next message.
+**Godot's behaviour on receipt:** apply `state` (crossfade to its loop); if `anim` present, fire it as a one-shot and resume the state's loop when it ends; if `text`, show the bubble; if `audio`, play it through the analysed bus (§6). When speech/bubble finishes and the state was `talking`, **auto-return to her resting state**: `dancing` if she was dancing before the line, otherwise `idle`. The daemon doesn't send a follow-up. `listening`/`thinking` are pipeline transients and are not remembered; `dancing` persists until the next `idle`.
 
 **Transport:** the **daemon is the websocket server**, Godot is a **client** that connects out and auto-reconnects with backoff. localhost only. One port carries both HTTP and the websocket (`/ws`).
 
@@ -76,6 +76,8 @@ Emotion → animation is **owned by the daemon**, so the model never has to name
 | happy | `notify_perk` |
 | neutral | `notify_perk` |
 
+**Local tools only.** Requests carrying a browser `Origin` header are refused (403) on every route including `/ws`, and POSTs must be `Content-Type: application/json` (415 otherwise). Godot, curl, and the doorways never send `Origin`; browsers always do. Without this a web page could make her talk, or open `/ws` and read notification text as it goes past.
+
 Run: `strawberryd/.venv/bin/strawberryd [--port 8770]` (after `uv sync`), or `bin/strawberry daemon`.
 
 ---
@@ -91,16 +93,25 @@ The daemon exposes this as a `Reactor` (`strawberryd/events.py`): `async react(e
 
 ---
 
-## 4. Doorway: notifications (dunst)
+## 4. Doorway: notifications
 
-Add a rule to `dunstrc` that runs a script on every notification (dunst still displays it normally; the script is additive):
+**On this machine the notification daemon is GNOME Shell, not dunst**, and dunst cannot run beside it (both claim `org.freedesktop.Notifications`). So the dunst `script =` rule from the original plan is out. Same doorway, different plumbing: a small listener **eavesdrops on the session bus** for `org.freedesktop.Notifications.Notify` method calls (a `GDBusConnection` monitor, or `busctl --user monitor` piped to a script), pulls app name, summary, body, and urgency hint out of each, and POSTs them to `/event` with `source=notification`. GNOME still shows the notification normally; the listener is additive.
 
-```ini
-[strawberry]
-    script = /path/to/strawberry-notify.sh
-```
+If a machine does run dunst, the `[strawberry] script = …` rule in `dunstrc` is the simpler equivalent and posts the same event.
 
-The script receives app name, summary, body, urgency as arguments; it just POSTs them to `/event` with `source=notification`. This is also how WhatsApp / Messenger reach Strawberry: you react to the **desktop notification**, never their APIs.
+This is also how WhatsApp / Messenger reach Strawberry: you react to the **desktop notification**, never their APIs.
+
+## 4b. Doorway: media (MPRIS) — `doorways/mpris_watch.py`
+
+Any player that speaks MPRIS (Spotify, VLC, Rhythmbox, browser tabs with media) registers as `org.mpris.MediaPlayer2.<name>` on the session bus. The watcher follows **all of them at once** with PyGObject/Gio, no extra tools, and reacts to the union:
+
+| Change | Daemon call |
+|---|---|
+| any player → Playing | `POST /perform {"state":"dancing"}` |
+| nothing playing / player quits | `POST /perform {"state":"idle"}` |
+| a playing player changes track | `POST /event {"source":"media","app":"<player Identity>","title":"Artist — Title"}` |
+
+Changes are debounced 400 ms (players fire several property updates per track), a track is announced once per player, and un-pausing the same song is not an announcement. `--only spotify,vlc` or `--ignore firefox` narrow it. `bin/strawberry` starts the watcher next to the daemon. This is why the widget returns to `dancing` rather than `idle` after a line (§1): the music context outlives the reaction.
 
 ---
 
@@ -182,6 +193,8 @@ Stop after any phase and you still have something that works.
 - [x] Bubble reveal is timed to text length when silent, and auto-hides. (Audio timing lands with Phase 4.)
 - [x] Speech ends → crab returns to `idle` with no follow-up message from the daemon.
 - [x] A `/event` round-trips through the reactor to the widget. (Canned reactor; model in Phase 2.)
+- [x] Play/pause in any MPRIS media player makes her dance/idle; a track change shows a "Now playing" bubble and she returns to dancing. (`doorways/mpris_watch.py`)
+- [x] Browser origins are refused on HTTP and `/ws`; POSTs need the JSON content type.
 - [ ] A git commit makes Strawberry show a model-written bubble (silent).
 - [ ] A desktop notification (any app) triggers a reaction.
 - [ ] With TTS on, the wav plays through Godot and the claws clack to the audio; `claw_open_*` is 0 when idle.
@@ -226,7 +239,8 @@ WIRING.md                this document
 strawberryd/             Python daemon (uv project): contract, events/reactor, hub, server, tests
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, validate_widget.gd
                          + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
-bin/strawberry           launcher: daemon up, then widget on the X11 backend
+doorways/                short-lived event producers: mpris_watch.py (any MPRIS media player); git hook + notification listener to come
+bin/strawberry           launcher: daemon + media watcher up, then widget on the X11 backend
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
 v2/                      the asset: Blender build scripts, GLB, evidence, preview project
 v1/ (top level)          the earlier deliverable
@@ -235,6 +249,10 @@ v1/ (top level)          the earlier deliverable
 **Run it:** `bin/strawberry`. Then, from anywhere:
 
 ```bash
-curl -s localhost:8770/perform -d '{"state":"talking","anim":"alert_snap","text":"Did someone say my name?","emotion":"alert"}'
-curl -s localhost:8770/event   -d '{"source":"git","title":"strawberry","body":"Add websocket"}'
+curl -s -H 'Content-Type: application/json' localhost:8770/perform \
+  -d '{"state":"talking","anim":"alert_snap","text":"Did someone say my name?","emotion":"alert"}'
+curl -s -H 'Content-Type: application/json' localhost:8770/event \
+  -d '{"source":"git","title":"strawberry","body":"Add websocket"}'
 ```
+
+Or press play in any media player: the MPRIS watcher (§4b) does the rest.

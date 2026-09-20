@@ -41,7 +41,23 @@ def _error(message: str, status: int = 400) -> web.Response:
     return web.json_response({"error": message}, status=status)
 
 
+def _reject_browsers(request: web.Request) -> None:
+    """Local tools only. Browsers always send Origin; Godot, curl, and the doorways never do.
+
+    Without this a web page could POST performances at her, or open /ws and read what
+    she is about to say, which will include notification text (WIRING.md §2).
+    """
+    if "Origin" in request.headers:
+        raise web.HTTPForbidden(text=json.dumps({"error": "browser origins are not accepted"}), content_type="application/json")
+
+
 async def _body(request: web.Request) -> Any:
+    _reject_browsers(request)
+    # Requiring the JSON content type also forces a CORS preflight, which nobody answers.
+    if request.content_type != "application/json":
+        raise web.HTTPUnsupportedMediaType(
+            text=json.dumps({"error": "Content-Type must be application/json"}), content_type="application/json"
+        )
     try:
         return await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -76,6 +92,7 @@ async def event(request: web.Request) -> web.Response:
 
 
 async def websocket(request: web.Request) -> web.WebSocketResponse:
+    _reject_browsers(request)
     daemon = request.app[DAEMON]
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)

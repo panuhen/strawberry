@@ -20,6 +20,8 @@ const STATE_CLIPS := {
 }
 const ONE_SHOTS := ["alert_snap", "notify_perk"]
 const LOOPING := ["idle_loop", "listen_loop", "think_loop", "talk_base", "dance_loop"]
+# States she settles back into after talking. listening/thinking are pipeline transients.
+const PERSISTENT := ["idle", "dancing"]
 const SETTINGS_PATH := "user://widget.cfg"
 const PASSTHROUGH_PADDING := 18.0
 
@@ -36,6 +38,7 @@ var claw_controller: Node
 
 var skin_id := "strawberry"
 var state := "idle"
+var rest_state := "idle"
 var one_shot := ""
 var performances := 0
 var dragging := false
@@ -227,7 +230,7 @@ func perform(data: Dictionary) -> void:
 	elif new_state == "talking":
 		# Talking with nothing to say: don't mouth forever.
 		var timer := get_tree().create_timer(1.0)
-		timer.timeout.connect(func(): if state == "talking" and not bubble.speaking: set_state("idle"))
+		timer.timeout.connect(func(): if state == "talking" and not bubble.speaking: set_state(rest_state))
 
 func run_command(data: Dictionary) -> void:
 	match str(data.get("command", "")):
@@ -244,6 +247,8 @@ func run_command(data: Dictionary) -> void:
 
 func set_state(new_state: String) -> void:
 	state = new_state
+	if new_state in PERSISTENT:
+		rest_state = new_state
 	if one_shot == "":
 		play_clip(STATE_CLIPS[state])
 
@@ -261,9 +266,10 @@ func _on_animation_finished(clip_name: StringName) -> void:
 		play_clip(STATE_CLIPS[state])
 
 func _on_speech_finished() -> void:
-	# The daemon never sends a follow-up; speech ending is what returns her to idle (§1).
+	# The daemon never sends a follow-up; speech ending returns her to what she was
+	# doing: dancing if music is on, otherwise idle (§1).
 	if state == "talking":
-		set_state("idle")
+		set_state(rest_state)
 
 # --- settings -------------------------------------------------------------------
 

@@ -33,9 +33,25 @@ async def test_perform_rejects_bad_blob_with_reason(client):
 
 
 async def test_perform_rejects_non_json(client):
-    response = await client.post("/perform", data=b"not json")
+    response = await client.post("/perform", data=b"not json", headers={"Content-Type": "application/json"})
     assert response.status == 400
     assert (await response.json())["error"] == "body must be JSON"
+
+
+async def test_perform_requires_json_content_type(client):
+    response = await client.post("/perform", data=b'{"state":"idle"}', headers={"Content-Type": "text/plain"})
+    assert response.status == 415
+
+
+async def test_browser_origins_are_refused_on_http(client):
+    response = await client.post("/perform", json={"state": "idle"}, headers={"Origin": "https://evil.example"})
+    assert response.status == 403
+
+
+async def test_browser_origins_are_refused_on_websocket(client):
+    response = await client.get("/ws", headers={"Origin": "https://evil.example", "Connection": "Upgrade", "Upgrade": "websocket"})
+    assert response.status == 403
+    assert (await (await client.get("/health")).json())["widgets"] == 0
 
 
 async def test_perform_without_widget_is_accepted_but_reaches_nobody(client):
@@ -81,6 +97,15 @@ async def test_critical_notification_reacts_as_alert(client):
     performance = (await response.json())["performance"]
     assert performance["emotion"] == "alert"
     assert performance["anim"] == "alert_snap"
+
+
+async def test_media_event_is_a_happy_now_playing_line(client):
+    response = await client.post("/event", json={"source": "media", "app": "Spotify", "title": "Daft Punk — Around the World"})
+    performance = (await response.json())["performance"]
+    assert performance["state"] == "talking"
+    assert performance["emotion"] == "happy"
+    assert performance["anim"] == "notify_perk"
+    assert performance["text"] == "Now playing: Daft Punk — Around the World"
 
 
 async def test_event_requires_source(client):

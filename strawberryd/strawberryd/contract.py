@@ -87,7 +87,7 @@ class Performance:
             if not isinstance(audio, str):
                 raise ContractError("audio must be a file path string")
             if not os.path.isfile(audio):
-                raise ContractError(f"audio file not found: {audio}")
+                raise ContractError("audio file not found")
 
         return cls(state=state, anim=anim, text=text, audio=audio, emotion=emotion)
 
