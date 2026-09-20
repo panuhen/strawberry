@@ -202,11 +202,30 @@ def csv_set(value: str) -> set[str]:
     return {item.strip().lower() for item in value.split(",") if item.strip()}
 
 
+def settings() -> dict:
+    """[media] and [daemon] from ~/.config/strawberry/config.toml, if present (WIRING.md §15)."""
+    import os
+    import tomllib
+    from pathlib import Path
+
+    path = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "strawberry" / "config.toml"
+    if not path.exists():
+        return {}
+    try:
+        return tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        log.warning("could not read %s (%s); using defaults", path, exc)
+        return {}
+
+
 def main() -> None:
+    cfg = settings()
+    media = cfg.get("media", {}) if isinstance(cfg.get("media"), dict) else {}
+    port = cfg.get("daemon", {}).get("port", 8770) if isinstance(cfg.get("daemon"), dict) else 8770
     parser = argparse.ArgumentParser(description="MPRIS media players -> strawberryd doorway")
-    parser.add_argument("--daemon", default="http://127.0.0.1:8770")
-    parser.add_argument("--only", default="", help="comma-separated player names to follow (default: all), e.g. spotify,vlc")
-    parser.add_argument("--ignore", default="", help="comma-separated player names to skip, e.g. firefox,chromium")
+    parser.add_argument("--daemon", default=f"http://127.0.0.1:{port}")
+    parser.add_argument("--only", default=",".join(media.get("only", [])), help="comma-separated player names to follow (default: all), e.g. spotify,vlc")
+    parser.add_argument("--ignore", default=",".join(media.get("ignore", [])), help="comma-separated player names to skip, e.g. firefox,chromium")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")

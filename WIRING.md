@@ -65,7 +65,8 @@ Long-running Python (asyncio, aiohttp). One port, default **8770**:
 
 - `POST /event` — accepts `{source, app, title, body, urgency}`. This is what the hooks hit. `source` ∈ `notification|git|voice|manual`; `urgency` is normalised from dunst's `LOW|NORMAL|CRITICAL`.
 - `POST /perform` — accepts a raw contract blob. For `curl`, tests, and callers that already know what they want.
-- `GET /health` — `{ok, widgets, performed, uptime_s}`.
+- `GET /health` — `{ok, widgets, performed, uptime_s, brain: {model, loaded, calls, fallbacks, last_latency_s}}`.
+- `GET /config` — the effective settings (§15).
 - `GET /ws` — the widget connects here.
 - **Core function:** `Daemon.perform(performance)` builds the blob, (Phase 4) runs TTS, and sends to Godot. Everything routes through it.
 
@@ -86,12 +87,14 @@ Run: `strawberryd/.venv/bin/strawberryd [--port 8770]` (after `uv sync`), or `bi
 
 ## 3. The brain — two paths, don't conflate them
 
-- **Reaction path (no tools):** a notification or commit needs a fast one-liner, not tool use. Daemon calls Ollama directly (`POST /api/chat`), system prompt: *"You are Strawberry, a crab. React to this in one short sentence. End with an emotion tag: [neutral|happy|alert|angry]."* Strip the tag → `emotion`. Quick.
-- **Action path (tools):** a voice command like "skip the track" or "log this to re:call" must call an MCP. This path runs the tool loop against your MCP servers (§8).
+- **Reaction path (no tools):** a notification or commit needs a fast one-liner, not tool use. `OllamaReactor` (`strawberryd/brain.py`) calls `POST /api/chat` on a **small, always-resident model** with the persona as system prompt, five example exchanges, and the output **forced to a JSON schema** `{"line": str, "emotion": neutral|happy|alert|angry}`. Thinking mode off, 1.5 s timeout, then the canned line instead. The model is loaded at daemon start with `keep_alive = -1` so the first event never waits for a cold load.
+- **Action path (tools):** a voice command like "skip the track" or "log this to re:call" must call an MCP. This path runs the tool loop against your MCP servers (§8) on the big model, loaded on demand.
 
-Both paths end by calling `perform(...)`. Route notifications/git → reaction path; voice → action path.
+Both paths end by calling `perform(...)`. Route notifications/git/media → reaction path; voice → action path.
 
-The daemon exposes this as a `Reactor` (`strawberryd/events.py`): `async react(event) -> Performance`. Phase 1 ships `CannedReactor` (fixed line per source, no model) so the path is testable; the Ollama reactor replaces it behind the same interface.
+**Model choice (bake-off, `scripts/reactor_bakeoff.py`, results in `scripts/bakeoff_*.json`).** The reflex needs speed and residency, not intelligence: the 27B would cold-load for 10–20 s after a quiet half hour and hog the GPU. Among ~1B models on the Ollama library, **`gemma3:1b`** won: 815 MB, ~0.5 s warm, 0/32 schema misses, short lines (median 7 words), emotions right, and it does not invent details. `qwen3.5:0.8b` was as fast and livelier but hallucinated specifics ("Dinner Friday at 7 PM" for "dinner on Sunday?"), leaked the examples, and ran long. For a mascot reading your real notifications, saying less beats saying wrong. The decisive lever was **few-shot examples**: with the description alone Gemma answered "Interesting…" to everything; with five example exchanges it became a crab. The examples live in config (§15), so her voice is tunable without code.
+
+The interface is `Reactor` (`strawberryd/events.py`): `async react(event) -> Performance`. `CannedReactor` (fixed line per source, no model) remains as the fallback and as `brain.enabled = false`.
 
 ---
 
@@ -190,7 +193,7 @@ materials:        mat_shell  mat_shell_dark  mat_claw  mat_cream  mat_eye  mat_i
 ## 10. Build order (each phase independently testable)
 
 1. **Contract + transport.** ✅ Daemon skeleton: HTTP intake + ws server + `perform()` that only forwards. Godot widget as ws client in a transparent always-on-top window. Test: `curl` a blob → crab changes state. No brain, no audio.
-2. **Reaction path, silent.** git `post-commit` → `/event` → Ollama one-liner + `[emotion]` → blob with `text`, no `audio` → **bubble appears above the crab on commit.** Proves event → brain → face end to end with zero audio risk.
+2. **Reaction path, silent.** ✅ git `post-commit` → `/event` → Ollama one-liner + emotion → blob with `text`, no `audio` → **bubble appears above the crab on commit.** Proves event → brain → face end to end with zero audio risk.
 3. **Notifications doorway.** dunst script → same intake. Anything that notifies (including WhatsApp/Messenger) makes her react.
 4. **TTS.** Add Piper → `audio` field → Godot plays it through the analysed bus → claws clack in time.
 5. **Voice in.** Hotkey → faster-whisper → transcript. Route to plain Ollama first to prove capture.
@@ -208,7 +211,7 @@ Stop after any phase and you still have something that works.
 - [x] A `/event` round-trips through the reactor to the widget. (Canned reactor; model in Phase 2.)
 - [x] Play/pause in any MPRIS media player makes her dance/idle; a track change shows a "Now playing" bubble and she returns to dancing. (`doorways/mpris_watch.py`)
 - [x] Browser origins are refused on HTTP and `/ws`; POSTs need the JSON content type.
-- [ ] A git commit makes Strawberry show a model-written bubble (silent).
+- [x] A git commit makes Strawberry show a model-written bubble (silent). (`gemma3:1b` via `OllamaReactor`)
 - [ ] A desktop notification (any app) triggers a reaction.
 - [ ] With TTS on, the wav plays through Godot and the claws clack to the audio; `claw_open_*` is 0 when idle.
 - [ ] A voice command routed through MCP successfully calls one real tool (e.g. Spotify skip).
@@ -244,6 +247,37 @@ Strawberry lives on the desktop as a pet: a **frameless, transparent, always-on-
 **Layout.** 380×460 window, orthographic camera (`KEEP_WIDTH`, size 1.25) centred at y 0.55 so the crab sits low and the bubble has room above at y 0.98. `run/max_fps=60`, `gl_compatibility` renderer (same as the v2 preview).
 
 ---
+
+## 15. Settings
+
+One file, `~/.config/strawberry/config.toml` (`$XDG_CONFIG_HOME` respected). Defaults live in code (`strawberryd/config.py`), so the file only needs the lines you change. Read by the daemon at start and by the media watcher; `GET /config` shows the effective result. Unknown keys warn; wrong types refuse to start with the key named.
+
+```toml
+[daemon]
+port = 8770
+
+[brain]
+enabled = true
+reaction_model = "gemma3:1b"     # the reflex (one line per event, resident)
+action_model = "qwen3.8:27b"     # the thinker (voice + tools, later)
+ollama_url = "http://127.0.0.1:11434"
+timeout_s = 1.5
+temperature = 0.8
+max_words = 15
+keep_alive = -1                  # seconds; -1 = stay in VRAM, or "10m" to unload when idle
+# persona = """..."""           # her system prompt
+
+[[brain.examples]]               # replaces the built-in five; the real lever on her voice
+event = "source: git\napp: post-commit\ntitle: kaelon\nbody: Fix flaky login test"
+line = "A fix! Did that wobbly login test finally stop wiggling?"
+emotion = "happy"
+
+[media]
+only = []                        # e.g. ["spotify"]
+ignore = []                      # e.g. ["firefox"]
+```
+
+`bin/strawberry config` creates the file from a commented template (`strawberryd --init-config`) and opens it in `$EDITOR`; `bin/strawberry restart` applies it. `STRAWBERRYD_PORT` still overrides the port for scripts. The widget's own preferences (skin, window position) stay in Godot's `user://widget.cfg` for now.
 
 ## 14. Repository map
 

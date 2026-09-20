@@ -14,6 +14,7 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
+from .config import Config
 from .contract import ContractError, Performance
 from .daemon import Daemon
 from .events import Event
@@ -26,16 +27,27 @@ DAEMON = web.AppKey("daemon", Daemon)
 def create_app(daemon: Daemon) -> web.Application:
     app = web.Application()
     app[DAEMON] = daemon
+    app.on_startup.append(_start_daemon)
     app.on_shutdown.append(_close_widgets)
+    app.on_cleanup.append(_close_daemon)
     app.add_routes(
         [
             web.get("/health", health),
+            web.get("/config", config),
             web.post("/perform", perform),
             web.post("/event", event),
             web.get("/ws", websocket),
         ]
     )
     return app
+
+
+async def _start_daemon(app: web.Application) -> None:
+    await app[DAEMON].start()
+
+
+async def _close_daemon(app: web.Application) -> None:
+    await app[DAEMON].close()
 
 
 async def _close_widgets(app: web.Application) -> None:
@@ -74,8 +86,20 @@ async def _body(request: web.Request) -> Any:
 async def health(request: web.Request) -> web.Response:
     daemon = request.app[DAEMON]
     return web.json_response(
-        {"ok": True, "widgets": daemon.hub.count, "performed": daemon.performed, "uptime_s": round(daemon.uptime, 1)}
+        {
+            "ok": True,
+            "widgets": daemon.hub.count,
+            "performed": daemon.performed,
+            "uptime_s": round(daemon.uptime, 1),
+            "brain": daemon.brain_stats(),
+        }
     )
+
+
+async def config(request: web.Request) -> web.Response:
+    """The effective settings: defaults merged with the file and env (WIRING.md §15)."""
+    _reject_browsers(request)
+    return web.json_response(request.app[DAEMON].config.to_dict())
 
 
 async def perform(request: web.Request) -> web.Response:
@@ -133,9 +157,10 @@ async def _on_widget_message(ws: web.WebSocketResponse, raw: str) -> None:
         log.debug("widget message: %s", data)
 
 
-def run(host: str, port: int) -> None:
-    daemon = Daemon()
+def run(config: Config) -> None:
+    daemon = Daemon(config=config)
     app = create_app(daemon)
-    log.info("strawberryd listening on http://%s:%d (ws at /ws)", host, port)
+    log.info("strawberryd listening on http://%s:%d (ws at /ws); config %s",
+             config.daemon.host, config.daemon.port, config.path or "defaults")
     # Short shutdown: widgets are closed explicitly in on_shutdown, nothing else is long-lived.
-    web.run_app(app, host=host, port=port, print=None, shutdown_timeout=2.0)
+    web.run_app(app, host=config.daemon.host, port=config.daemon.port, print=None, shutdown_timeout=2.0)

@@ -5,13 +5,17 @@
 #   strawberry daemon     start the daemon + watcher only (idempotent)
 #   strawberry status     daemon health, watcher state
 #   strawberry stop       stop the daemon and watcher
+#   strawberry restart    stop + daemon (after editing the config)
+#   strawberry config     create ~/.config/strawberry/config.toml if missing, then open it in $EDITOR
 #
-# STRAWBERRYD_PORT overrides the port (default 8770).
+# Settings live in ~/.config/strawberry/config.toml (WIRING.md §15); STRAWBERRYD_PORT still overrides.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/strawberry"
-PORT="${STRAWBERRYD_PORT:-8770}"
+D="$ROOT/strawberryd/.venv/bin/strawberryd"
+[ -x "$D" ] || (cd "$ROOT/strawberryd" && uv sync --quiet)
+PORT="${STRAWBERRYD_PORT:-$("$D" --print-port 2>/dev/null || echo 8770)}"
 HEALTH="http://127.0.0.1:$PORT/health"
 PIDFILE="$STATE_DIR/strawberryd.pid"
 LOG="$STATE_DIR/strawberryd.log"
@@ -39,7 +43,7 @@ start_daemon() {
   if daemon_up; then return; fi
   (cd "$ROOT/strawberryd" && uv sync --quiet)
   echo "starting strawberryd on :$PORT (log: $LOG)"
-  nohup "$ROOT/strawberryd/.venv/bin/strawberryd" --port "$PORT" >>"$LOG" 2>&1 &
+  nohup "$D" --port "$PORT" >>"$LOG" 2>&1 &
   echo $! >"$PIDFILE"
   for _ in $(seq 1 50); do daemon_up && return; sleep 0.1; done
   echo "strawberryd did not come up; see $LOG" >&2
@@ -67,5 +71,11 @@ case "${1:-widget}" in
   stop)
     stop_pidfile "$WATCH_PIDFILE" "mpris watcher"
     stop_pidfile "$PIDFILE" "strawberryd" ;;
+  restart)
+    "$0" stop; sleep 0.5; "$0" daemon ;;
+  config)
+    CFG="${XDG_CONFIG_HOME:-$HOME/.config}/strawberry/config.toml"
+    [ -f "$CFG" ] || "$D" --init-config
+    if [ -n "${EDITOR:-}" ]; then "$EDITOR" "$CFG"; else echo "$CFG"; echo "(set \$EDITOR to open it automatically; restart with: strawberry restart)"; fi ;;
   *) sed -n '2,10p' "$0"; exit 2 ;;
 esac

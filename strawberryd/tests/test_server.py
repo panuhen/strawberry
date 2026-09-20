@@ -9,7 +9,10 @@ from strawberryd.server import create_app
 
 @pytest.fixture
 def daemon():
-    return Daemon()
+    # Plumbing tests run against the canned reactor; the model path has its own tests.
+    from strawberryd.events import CannedReactor
+
+    return Daemon(reactor=CannedReactor())
 
 
 @pytest.fixture
@@ -24,6 +27,16 @@ async def test_health_reports_no_widgets_at_start(client):
     assert body["ok"] is True
     assert body["widgets"] == 0
     assert body["performed"] == 0
+    assert body["brain"] == {"model": None, "canned": True}
+
+
+async def test_config_endpoint_shows_effective_settings(client):
+    response = await client.get("/config")
+    assert response.status == 200
+    body = await response.json()
+    assert body["brain"]["reaction_model"] == "gemma3:1b"
+    assert body["daemon"]["port"] == 8770
+    assert (await client.get("/config", headers={"Origin": "https://evil.example"})).status == 403
 
 
 async def test_perform_rejects_bad_blob_with_reason(client):

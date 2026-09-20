@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 
+from .config import Config
 from .contract import Performance
 from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
@@ -13,15 +15,39 @@ log = logging.getLogger("strawberryd")
 
 
 class Daemon:
-    def __init__(self, reactor: Reactor | None = None) -> None:
+    def __init__(self, reactor: Reactor | None = None, config: Config | None = None) -> None:
+        self.config = config or Config()
         self.hub = WidgetHub()
-        self.reactor: Reactor = reactor or CannedReactor()
+        self.reactor: Reactor = reactor or self._default_reactor()
         self.started = time.monotonic()
         self.performed = 0
+
+    def _default_reactor(self) -> Reactor:
+        canned = CannedReactor()
+        if not self.config.brain.enabled:
+            log.info("brain disabled in config; canned reactions")
+            return canned
+        from .brain import OllamaReactor  # local import keeps tests of the plumbing model-free
+
+        return OllamaReactor(self.config.brain, fallback=canned)
 
     @property
     def uptime(self) -> float:
         return time.monotonic() - self.started
+
+    async def start(self) -> None:
+        start = getattr(self.reactor, "start", None)
+        if start:
+            await start()
+
+    async def close(self) -> None:
+        close = getattr(self.reactor, "close", None)
+        if close:
+            await close()
+
+    def brain_stats(self) -> dict[str, Any]:
+        stats = getattr(self.reactor, "stats", None)
+        return stats() if stats else {"model": None, "canned": True}
 
     async def perform(self, performance: Performance) -> int:
         """Send one performance to the widget. TTS (Phase 4) slots in here, before send."""
