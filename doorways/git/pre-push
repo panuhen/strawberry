@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Strawberry global pre-push hook (WIRING.md §5). Args: <remote name> <remote url>.
+# stdin: one "<local ref> <local sha> <remote ref> <remote sha>" line per ref being pushed.
+here="$(dirname "$(readlink -f "$0")")"
+remote="${1:-origin}"
+zero="0000000000000000000000000000000000000000"
+
+# Read stdin once; the repo's own hook (if any) needs the same lines afterwards.
+input="$(cat)"
+
+count=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ -z "$local_sha" ] && continue
+  if [ "$local_sha" = "$zero" ]; then
+    continue  # deleting a remote branch
+  elif [ "$remote_sha" = "$zero" ]; then
+    n="$(git rev-list --count "$local_sha" 2>/dev/null || echo 0)"  # new branch: everything
+  else
+    n="$(git rev-list --count "$remote_sha..$local_sha" 2>/dev/null || echo 0)"
+  fi
+  count=$((count + n))
+done <<<"$input"
+
+if [ "$count" -gt 0 ]; then
+  "$here/strawberry-git-event" pre-push "$remote" "$count"
+fi
+
+repo_hook="$(git rev-parse --git-common-dir 2>/dev/null)/hooks/pre-push"
+if [ -x "$repo_hook" ] && [ "$(readlink -f "$repo_hook")" != "$(readlink -f "$0")" ]; then
+  printf '%s\n' "$input" | exec "$repo_hook" "$@"
+fi
+exit 0

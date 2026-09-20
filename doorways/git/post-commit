@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Strawberry global post-commit hook (WIRING.md §5). Installed via core.hooksPath, so it
+# fires for every commit on this machine no matter which tool ran `git commit`.
+here="$(dirname "$(readlink -f "$0")")"
+
+"$here/strawberry-git-event" post-commit
+
+# core.hooksPath replaces a repo's own .git/hooks, so hand over to it if it has one.
+repo_hook="$(git rev-parse --git-common-dir 2>/dev/null)/hooks/post-commit"
+if [ -x "$repo_hook" ] && [ "$(readlink -f "$repo_hook")" != "$(readlink -f "$0")" ]; then
+  exec "$repo_hook" "$@"
+fi
+exit 0

@@ -99,6 +99,15 @@ async def test_critical_notification_reacts_as_alert(client):
     assert performance["anim"] == "alert_snap"
 
 
+async def test_pre_push_event_is_a_happy_push_line(client):
+    response = await client.post(
+        "/event", json={"source": "git", "app": "pre-push", "title": "strawberry", "body": "pushing 2 commits on main to origin"}
+    )
+    performance = (await response.json())["performance"]
+    assert performance["emotion"] == "happy"
+    assert performance["text"] == "strawberry: pushing 2 commits on main to origin"
+
+
 async def test_media_event_is_a_happy_now_playing_line(client):
     response = await client.post("/event", json={"source": "media", "app": "Spotify", "title": "Daft Punk — Around the World"})
     performance = (await response.json())["performance"]

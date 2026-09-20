@@ -65,7 +65,7 @@ class CannedReactor:
 
     async def react(self, event: Event) -> Performance:
         emotion = "alert" if event.urgency == "critical" else "neutral"
-        if event.source == "media":
+        if event.source == "media" or (event.source == "git" and event.app == "pre-push"):
             emotion = "happy"
         line = self._line(event)
         return Performance(state="talking", anim=anim_for(emotion), text=line[:MAX_LINE], emotion=emotion)
@@ -73,6 +73,9 @@ class CannedReactor:
     @staticmethod
     def _line(event: Event) -> str:
         if event.source == "git":
+            # app carries the hook name: post-commit, pre-push, ...
+            if event.app == "pre-push":
+                return f"{event.title or 'A repo'}: {event.body or 'pushing'}"
             if event.title and event.body:
                 return f"Commit in {event.title}: {event.body}"
             return f"Something got committed in {event.title or 'a repo'}."

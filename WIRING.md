@@ -115,15 +115,26 @@ Changes are debounced 400 ms (players fire several property updates per track), 
 
 ---
 
-## 5. Doorway: git
+## 5. Doorway: git — `doorways/git/`
 
-Shared hooks dir so it applies to every repo, not per-clone:
+Global by construction: hooks run inside the `git` binary when the commit or push happens, so a terminal, Claude Code, Codex, opencode, or an IDE all fire the same hook. One line makes them apply to every repo on the machine, present and future:
 
 ```bash
-git config --global core.hooksPath ~/.config/git/hooks
+doorways/git/install.sh        # symlinks the hooks into ~/.config/git/hooks and sets core.hooksPath
+doorways/git/install.sh --remove
 ```
 
-`~/.config/git/hooks/post-commit` (and `post-merge` if wanted): a few lines of bash + curl that POST `{source:"git", title:"<repo>", body:"<commit subject>"}` to `/event`. CI pass/fail arrives free through the notification doorway.
+| Hook | Event posted |
+|---|---|
+| `post-commit` | `{source:"git", app:"post-commit", title:"<repo>", body:"<commit subject>"}` |
+| `pre-push` | `{source:"git", app:"pre-push", title:"<repo>", body:"pushing N commits on <branch> to <remote>"}` (skipped for branch deletions) |
+
+`app` carries the hook name so the reactor can shade the reaction. Both go through `strawberry-git-event`, which builds the JSON with `jq`, detaches the `curl` with `setsid`, gives up after one second, and always exits 0: a hook must never slow or break git, and a stopped daemon just means she doesn't react.
+
+Two things the hooks take care of:
+
+- **A global `core.hooksPath` replaces per-repo `.git/hooks`**, so each hook ends by handing over to the repo's own hook of the same name if one exists (pre-push replays its stdin to it). Repos that set `core.hooksPath` locally (husky-style) win over the global one; add a call to `strawberry-git-event` in their hook if you want her there too.
+- **Only this machine's git fires.** Commits elsewhere, GitHub web merges, and CI results reach her through the notification doorway (§4). `post-merge`/`post-rewrite` are deliberately not installed for now; they'd make her chatty.
 
 ---
 
@@ -239,7 +250,7 @@ WIRING.md                this document
 strawberryd/             Python daemon (uv project): contract, events/reactor, hub, server, tests
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, validate_widget.gd
                          + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
-doorways/                short-lived event producers: mpris_watch.py (any MPRIS media player); git hook + notification listener to come
+doorways/                short-lived event producers: mpris_watch.py (any MPRIS media player), git/ (global post-commit + pre-push hooks); notification listener to come
 bin/strawberry           launcher: daemon + media watcher up, then widget on the X11 backend
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
 v2/                      the asset: Blender build scripts, GLB, evidence, preview project
