@@ -1,3 +1,17 @@
+# Strawberry
+
+A local desktop AI mascot: a cel-shaded crab that lives on the desktop and reacts to what happens on the machine.
+
+- **`WIRING.md`** — the harness spec: message contract, `strawberryd`, doorways, build order, widget shell. Start here.
+- **`strawberryd/`** — Python daemon (HTTP intake + websocket to the widget). `uv sync && uv run pytest`.
+- **`widget/`** — Godot 4.7 desktop widget: transparent, always-on-top, click-through. Run with `bin/strawberry`.
+- **`v2/`** — the current 3D asset (`strawberry_v2.glb`), its Blender build, and the cel preview project. See `v2/README.md`.
+- Below: the original v1 asset notes, kept for the build/validation history.
+
+Phase 1 evidence: `scripts/check_phase1.sh` → `widget/widget_checks.json`, `widget/capture_phase1.png`.
+
+---
+
 # Strawberry v1
 
 Main deliverable: `strawberry_v1.glb` (about 431 KiB). Editable source: `strawberry_v1.blend`.

@@ -1,0 +1,240 @@
+# Strawberry — Harness & Wiring Spec
+
+**Target:** the glue that makes the finished crab react. OS notifications, git events, and voice all flow through one backend into a Godot desktop widget, which speaks (TTS), listens (STT), and shows a speech bubble the local model writes.
+
+**For:** an agent (Claude Code / Codex) and the human running it.
+
+**Assumes done:** `v2/strawberry_v2.glb` — rig, seven clips, morphs, cel shader, verified in Godot 4.7.2 (see `v2/README.md`). This spec references those names in §9; they must match.
+
+**Assumes running:** Ollama serving Qwen3.8 on `127.0.0.1:11434`; dunst as the notification daemon; faster-whisper and Piper installed. (As of Phase 1 only Ollama is present on the machine.)
+
+---
+
+## 0. The one idea
+
+Every feature is the same shape: **an event becomes one JSON message to Godot.** Notifications, git, voice: different doorways into the same hallway. Build the message path once; everything else plugs in.
+
+There are **two hops**, and the common mistake is skipping the first:
+
+```
+short-lived event scripts ──HTTP──▶  strawberryd (daemon)  ──websocket──▶  Godot widget
+(dunst script, git hook)             (brain, TTS, STT, orchestration)      (the performer)
+```
+
+Event scripts are short-lived. They must **not** each open a websocket to Godot. They fire a quick HTTP POST at the always-running daemon. The daemon holds the single Godot connection.
+
+---
+
+## 1. The message contract (built first, both sides implement it)
+
+Daemon → Godot, one JSON object per performance:
+
+```json
+{
+  "state": "talking",
+  "anim": "notify_perk",
+  "text": "Someone pushed to main again…",
+  "audio": "/tmp/strawberry_line.wav",
+  "emotion": "alert"
+}
+```
+
+| Field | Req | Meaning |
+|---|---|---|
+| `state` | yes | `idle` \| `listening` \| `thinking` \| `talking` \| `dancing` → the five loops |
+| `anim` | no | one-shot reaction played over the state: `alert_snap` \| `notify_perk` |
+| `text` | no | speech-bubble text (omit = no bubble) |
+| `audio` | no | path to a wav; **present** = play + drive claws, **absent** = silent mode |
+| `emotion` | no | `neutral` \| `happy` \| `alert` \| `angry` — tints bubble / picks `anim` |
+
+Optional fields are omitted on the wire, never sent as `null`. Unknown fields, unknown states, and missing audio files are rejected by the daemon with a 400 and a reason.
+
+**Godot's behaviour on receipt:** apply `state` (crossfade to its loop); if `anim` present, fire it as a one-shot and resume the state's loop when it ends; if `text`, show the bubble; if `audio`, play it through the analysed bus (§6). When speech/bubble finishes and the state was `talking`, **auto-return to `idle`**. The daemon doesn't send a follow-up. `listening`/`thinking`/`dancing` persist until the next message.
+
+**Transport:** the **daemon is the websocket server**, Godot is a **client** that connects out and auto-reconnects with backoff. localhost only. One port carries both HTTP and the websocket (`/ws`).
+
+Source of truth: `strawberryd/strawberryd/contract.py` and the constants at the top of `widget/widget.gd`.
+
+---
+
+## 2. Backend daemon — `strawberryd`
+
+Long-running Python (asyncio, aiohttp). One port, default **8770**:
+
+- `POST /event` — accepts `{source, app, title, body, urgency}`. This is what the hooks hit. `source` ∈ `notification|git|voice|manual`; `urgency` is normalised from dunst's `LOW|NORMAL|CRITICAL`.
+- `POST /perform` — accepts a raw contract blob. For `curl`, tests, and callers that already know what they want.
+- `GET /health` — `{ok, widgets, performed, uptime_s}`.
+- `GET /ws` — the widget connects here.
+- **Core function:** `Daemon.perform(performance)` builds the blob, (Phase 4) runs TTS, and sends to Godot. Everything routes through it.
+
+Emotion → animation is **owned by the daemon**, so the model never has to name a clip:
+
+| emotion | anim |
+|---|---|
+| alert | `alert_snap` |
+| angry | `alert_snap` |
+| happy | `notify_perk` |
+| neutral | `notify_perk` |
+
+Run: `strawberryd/.venv/bin/strawberryd [--port 8770]` (after `uv sync`), or `bin/strawberry daemon`.
+
+---
+
+## 3. The brain — two paths, don't conflate them
+
+- **Reaction path (no tools):** a notification or commit needs a fast one-liner, not tool use. Daemon calls Ollama directly (`POST /api/chat`), system prompt: *"You are Strawberry, a crab. React to this in one short sentence. End with an emotion tag: [neutral|happy|alert|angry]."* Strip the tag → `emotion`. Quick.
+- **Action path (tools):** a voice command like "skip the track" or "log this to re:call" must call an MCP. This path runs the tool loop against your MCP servers (§8).
+
+Both paths end by calling `perform(...)`. Route notifications/git → reaction path; voice → action path.
+
+The daemon exposes this as a `Reactor` (`strawberryd/events.py`): `async react(event) -> Performance`. Phase 1 ships `CannedReactor` (fixed line per source, no model) so the path is testable; the Ollama reactor replaces it behind the same interface.
+
+---
+
+## 4. Doorway: notifications (dunst)
+
+Add a rule to `dunstrc` that runs a script on every notification (dunst still displays it normally; the script is additive):
+
+```ini
+[strawberry]
+    script = /path/to/strawberry-notify.sh
+```
+
+The script receives app name, summary, body, urgency as arguments; it just POSTs them to `/event` with `source=notification`. This is also how WhatsApp / Messenger reach Strawberry: you react to the **desktop notification**, never their APIs.
+
+---
+
+## 5. Doorway: git
+
+Shared hooks dir so it applies to every repo, not per-clone:
+
+```bash
+git config --global core.hooksPath ~/.config/git/hooks
+```
+
+`~/.config/git/hooks/post-commit` (and `post-merge` if wanted): a few lines of bash + curl that POST `{source:"git", title:"<repo>", body:"<commit subject>"}` to `/event`. CI pass/fail arrives free through the notification doorway.
+
+---
+
+## 6. TTS + speech bubble (Godot side)
+
+The reply text goes **two places at once**: to Piper (wav) and into the blob's `text`.
+
+- **Piper:** daemon shells out to Piper → wav in `/tmp`, path goes in `audio`. CPU-only, keeps the GPU for Qwen.
+- **Bubble:** a `Label3D` billboarded above the crab (`widget/bubble.gd`). Reveals characters over time, timed to the **audio duration** if `audio` present, or a text-length heuristic if silent (≈18 chars/s, clamped 1.6–9 s). Holds, fades, auto-hides, and signals `finished`. Tinted by `emotion`.
+- **Audio-reactive claws:** play the wav on an `AudioStreamPlayer` whose bus carries an `AudioEffectSpectrumAnalyzer`. Each frame, read the magnitude, normalise 0–1, write it to `claw_open_L` and `claw_open_R` blend shapes. Zero them when not talking. **The wav must play through Godot**; that's the only way the analyser sees it. Don't also send it to the system mixer.
+
+**Silent mode falls out for free:** omit `audio` and you get a talking crab with a bubble and no sound. The model still writes the line. This is "quiet hours," and it's the mode built **first** (§10).
+
+---
+
+## 7. Doorway: voice (STT)
+
+- Hotkey → capture mic → **faster-whisper** (kept resident, model loaded once, CPU) → transcript.
+- Transcript goes to the **action path** (§8) so speech can do things, not just chat.
+- While capturing, send `{state:"listening"}`; while transcribing + thinking, `{state:"thinking"}`.
+- The hotkey is bound as a **GNOME custom keyboard shortcut** that runs a one-line script POSTing to the daemon. GNOME owns the key, so it is identical on X11 and Wayland and the daemon never grabs keys itself.
+
+---
+
+## 8. Action path — MCP (last, and a real fork)
+
+MCPHost is a good **interactive** pane for typing at the model, but the daemon needs to drive tool-calls **programmatically**. Two options:
+
+- **Recommended:** run the tool loop inside the daemon with the **Python MCP SDK**. The daemon is already Python, and this keeps the whole action path in one process. MCPHost stays as the separate human terminal.
+- Alternative: shell out to MCPHost if/when it exposes a non-interactive mode.
+
+Either way, the servers are the existing MCPs unchanged (Spotify today, re:call/arxiv later). The loop: transcript → Ollama with tools → if tool call, run the MCP, feed result back → final text → `perform(...)`.
+
+---
+
+## 9. Naming contract (must match the GLB — do not rename)
+
+```
+states → clips:   idle→idle_loop  listening→listen_loop  thinking→think_loop
+                  talking→talk_base  dancing→dance_loop
+one-shots:        alert_snap   notify_perk
+shape keys:       blink  squint  eye_wide  happy  claw_open_L  claw_open_R  squash  leg_tuck
+bones:            root  body  eyestalk_L  eyestalk_R  claw_arm_L  claw_arm_R
+materials:        mat_shell  mat_shell_dark  mat_claw  mat_cream  mat_eye  mat_ink
+```
+
+`talk_base` is the neutral talking pose; the clack is driven live via `claw_open_*`, **not** baked into the clip. The widget reuses the v2 runtime controllers (`blink_controller.gd`, `claw_controller.gd`, `cel_style.gd`, `skin_palettes.gd`) unchanged.
+
+---
+
+## 10. Build order (each phase independently testable)
+
+1. **Contract + transport.** ✅ Daemon skeleton: HTTP intake + ws server + `perform()` that only forwards. Godot widget as ws client in a transparent always-on-top window. Test: `curl` a blob → crab changes state. No brain, no audio.
+2. **Reaction path, silent.** git `post-commit` → `/event` → Ollama one-liner + `[emotion]` → blob with `text`, no `audio` → **bubble appears above the crab on commit.** Proves event → brain → face end to end with zero audio risk.
+3. **Notifications doorway.** dunst script → same intake. Anything that notifies (including WhatsApp/Messenger) makes her react.
+4. **TTS.** Add Piper → `audio` field → Godot plays it through the analysed bus → claws clack in time.
+5. **Voice in.** Hotkey → faster-whisper → transcript. Route to plain Ollama first to prove capture.
+6. **MCP actions.** Wire the Python MCP client; voice commands start *doing* things (skip track, log to re:call).
+
+Stop after any phase and you still have something that works.
+
+---
+
+## 11. Acceptance criteria
+
+- [x] `curl` posting a contract blob to the daemon makes Godot change state / play a one-shot. (`scripts/check_phase1.sh`)
+- [x] Bubble reveal is timed to text length when silent, and auto-hides. (Audio timing lands with Phase 4.)
+- [x] Speech ends → crab returns to `idle` with no follow-up message from the daemon.
+- [x] A `/event` round-trips through the reactor to the widget. (Canned reactor; model in Phase 2.)
+- [ ] A git commit makes Strawberry show a model-written bubble (silent).
+- [ ] A desktop notification (any app) triggers a reaction.
+- [ ] With TTS on, the wav plays through Godot and the claws clack to the audio; `claw_open_*` is 0 when idle.
+- [ ] A voice command routed through MCP successfully calls one real tool (e.g. Spotify skip).
+
+---
+
+## 12. Notes for the human (Panu)
+
+- **Two hops, not one.** Hooks hit the daemon over HTTP; only the daemon talks to Godot. Don't let a git hook open a websocket.
+- **Godot is the ws client**, daemon is the server. Simpler, and it reconnects cleanly if you restart either side while iterating.
+- **Silent-first** is the whole de-risking trick: you can prove the entire loop before touching audio.
+- **One audio rule:** Piper's wav plays *through Godot*, or the analyser is blind and the clack dies.
+- **CPU/GPU split:** whisper + Piper on CPU, Qwen keeps the 3090.
+- **The MCP fork (§8)** is the one open design decision. Recommend the Python-SDK-in-daemon route so the action path stays in one process.
+
+---
+
+## 13. Desktop widget shell (Godot project `widget/`)
+
+Strawberry lives on the desktop as a pet: a **frameless, transparent, always-on-top** window with **click-through** outside her silhouette. Four properties, set in `project.godot` and again in `widget.gd::setup_window()`:
+
+| Property | Godot | Why |
+|---|---|---|
+| Transparent | `display/window/size/transparent`, `per_pixel_transparency/allowed`, viewport `transparent_bg`, clear colour alpha 0 | Only the crab is drawn |
+| Borderless | `Window.borderless` | No frame or title bar |
+| Always-on-top | `Window.always_on_top` | Floats over other windows |
+| Click-through | `Window.mouse_passthrough_polygon` = padded convex hull of her meshes | Clicks beside her reach the desktop; clicks on her drag the window |
+
+**X11 pin.** `bin/strawberry` launches Godot with `--display-driver x11`. On the current X11/GNOME session that is native. On a Wayland session it runs under XWayland, where Mutter still acts as the X window manager and honours the keep-above and position hints. Native Wayland clients on GNOME get neither (no layer-shell, no client positioning), so we don't take that path. Always-on-top and remembered position are treated as **best effort**: if a compositor ignores them she degrades to a normal frameless window, nothing breaks.
+
+**Interaction.** Drag her body to move the window; the position is remembered in `user://widget.cfg` along with the skin, and clamped to the screen's usable area on restore. `Q` quits, `C` cycles skins. Cel shading and the ink outline are always on in the widget (the v2 preview's `O` toggle was a review aid, not a feature). The daemon can also send `{"command": "quit"}` or `{"command": "skin", "value": "mint"}`.
+
+**Layout.** 380×460 window, orthographic camera (`KEEP_WIDTH`, size 1.25) centred at y 0.55 so the crab sits low and the bubble has room above at y 0.98. `run/max_fps=60`, `gl_compatibility` renderer (same as the v2 preview).
+
+---
+
+## 14. Repository map
+
+```
+WIRING.md                this document
+strawberryd/             Python daemon (uv project): contract, events/reactor, hub, server, tests
+widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, validate_widget.gd
+                         + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
+bin/strawberry           launcher: daemon up, then widget on the X11 backend
+scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
+v2/                      the asset: Blender build scripts, GLB, evidence, preview project
+v1/ (top level)          the earlier deliverable
+```
+
+**Run it:** `bin/strawberry`. Then, from anywhere:
+
+```bash
+curl -s localhost:8770/perform -d '{"state":"talking","anim":"alert_snap","text":"Did someone say my name?","emotion":"alert"}'
+curl -s localhost:8770/event   -d '{"source":"git","title":"strawberry","body":"Add websocket"}'
+```

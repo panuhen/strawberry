@@ -3,3 +3,9 @@
 
 # Blender autosave backups
 *.blend1
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
