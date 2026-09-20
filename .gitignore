@@ -1,0 +1,5 @@
+# Godot editor cache (regenerated on import)
+.godot/
+
+# Blender autosave backups
+*.blend1
