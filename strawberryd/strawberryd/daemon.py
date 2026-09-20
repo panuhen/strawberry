@@ -10,6 +10,7 @@ from .config import Config
 from .contract import Performance
 from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
+from .reactions import decorate
 
 log = logging.getLogger("strawberryd")
 
@@ -62,6 +63,6 @@ class Daemon:
 
     async def handle_event(self, event: Event) -> tuple[Performance, int]:
         log.info("event %s app=%r title=%r urgency=%s", event.source, event.app, event.title, event.urgency)
-        performance = await self.reactor.react(event)
+        performance = decorate(event, await self.reactor.react(event))
         sent = await self.perform(performance)
         return performance, sent

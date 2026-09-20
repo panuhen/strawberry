@@ -110,6 +110,21 @@ async def test_critical_notification_reacts_as_alert(client):
     performance = (await response.json())["performance"]
     assert performance["emotion"] == "alert"
     assert performance["anim"] == "alert_snap"
+    assert performance["reaction"] == "shiver"
+
+
+async def test_message_notification_waves_hops_and_carries_the_icon(client, tmp_path):
+    icon = tmp_path / "whatsapp.png"
+    icon.write_bytes(b"\x89PNG")
+    response = await client.post(
+        "/event",
+        json={"source": "notification", "app": "WhatsApp", "title": "James", "body": "hi", "category": "im.received", "icon": str(icon)},
+    )
+    performance = (await response.json())["performance"]
+    assert performance["reaction"] == "wave"
+    assert performance["hop"] is True
+    assert performance["icon"] == str(icon)
+    assert "anim" not in performance
 
 
 async def test_pre_push_event_is_a_happy_push_line(client):
@@ -126,7 +141,7 @@ async def test_media_event_is_a_happy_now_playing_line(client):
     performance = (await response.json())["performance"]
     assert performance["state"] == "talking"
     assert performance["emotion"] == "happy"
-    assert performance["anim"] == "notify_perk"
+    assert performance["reaction"] == "nod" and "anim" not in performance  # she is dancing; a hop would break it
     assert performance["text"] == "Now playing: Daft Punk — Around the World"
 
 

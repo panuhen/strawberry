@@ -25,6 +25,8 @@ class Event:
     title: str = ""
     body: str = ""
     urgency: str = "normal"
+    category: str = ""   # freedesktop notification category, e.g. im.received
+    icon: str = ""       # path to the app's icon, resolved by the doorway
 
     @classmethod
     def from_dict(cls, data: Any) -> Event:
@@ -49,7 +51,8 @@ class Event:
         urgency = text("urgency").lower() or "normal"
         if urgency not in URGENCIES:
             urgency = "normal"
-        return cls(source=source, app=text("app"), title=text("title"), body=text("body"), urgency=urgency)
+        return cls(source=source, app=text("app"), title=text("title"), body=text("body"), urgency=urgency,
+                   category=text("category"), icon=text("icon"))
 
 
 class Reactor(Protocol):

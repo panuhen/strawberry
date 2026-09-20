@@ -4,10 +4,15 @@ extends Node
 @export var maximum_pause := 10.0
 @export var enabled := true
 var held_closed := false
+# Reaction recipes (reactions.gd) raise these; they are combined with the clip-driven values.
+var extra_wide := 0.0
+var extra_happy := 0.0
+var extra_squint := 0.0
 var eyes: Array[MeshInstance3D] = []
 var indices: Array[int] = []
 var wide_indices: Array[int] = []
 var happy_indices: Array[int] = []
+var squint_indices: Array[int] = []
 var happy_values := Vector2.ZERO
 var player: AnimationPlayer
 var wide_value := 0.0
@@ -33,6 +38,7 @@ func setup(model: Node, animation_player: AnimationPlayer = null) -> void:
 		indices.append(eye.find_blend_shape_by_name("blink"))
 		wide_indices.append(eye.find_blend_shape_by_name("eye_wide"))
 		happy_indices.append(eye.find_blend_shape_by_name("happy"))
+		squint_indices.append(eye.find_blend_shape_by_name("squint"))
 	remaining = rng.randf_range(minimum_pause, maximum_pause)
 
 func _process(delta: float) -> void:
@@ -87,6 +93,8 @@ func advance_blink(delta: float) -> void:
 	for i in eyes.size():
 		eyes[i].set_blend_shape_value(indices[i], value)
 		if wide_indices[i] >= 0:
-			eyes[i].set_blend_shape_value(wide_indices[i], wide_value)
+			eyes[i].set_blend_shape_value(wide_indices[i], maxf(wide_value, extra_wide))
 		if happy_indices[i] >= 0:
-			eyes[i].set_blend_shape_value(happy_indices[i], happy_values[i])
+			eyes[i].set_blend_shape_value(happy_indices[i], maxf(happy_values[i], extra_happy))
+		if squint_indices[i] >= 0:
+			eyes[i].set_blend_shape_value(squint_indices[i], extra_squint)

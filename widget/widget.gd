@@ -9,6 +9,8 @@ const CelStyle = preload("res://cel_style.gd")
 const SkinPalettes = preload("res://skin_palettes.gd")
 const WsClient = preload("res://ws_client.gd")
 const Bubble = preload("res://bubble.gd")
+const Badge = preload("res://badge.gd")
+const Reactions = preload("res://reactions.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
 const STATE_CLIPS := {
@@ -32,9 +34,14 @@ var model: Node3D
 var player: AnimationPlayer
 var camera: Camera3D
 var bubble: Label3D
+var badge: Sprite3D
+var reactions: Node
 var ws: Node
 var blink_controller: Node
 var claw_controller: Node
+var pending_hops := 0
+var one_shots_played := 0
+var window_hops := 0
 
 var skin_id := "strawberry"
 var state := "idle"
@@ -51,6 +58,7 @@ func _ready() -> void:
 	restore_settings()
 	apply_appearance()
 	setup_controllers()
+	setup_reactions()
 	setup_bubble()
 	setup_ws()
 	set_state("idle")
@@ -168,11 +176,32 @@ func setup_controllers() -> void:
 	claw_controller.setup(model, player)
 	add_child(claw_controller)
 
+func setup_reactions() -> void:
+	reactions = Reactions.new()
+	add_child(reactions)
+	reactions.setup(model, blink_controller)
+
 func setup_bubble() -> void:
 	bubble = Bubble.new()
 	bubble.position = Vector3(0, 0.98, 0)
 	add_child(bubble)
 	bubble.finished.connect(_on_speech_finished)
+	badge = Badge.new()
+	badge.position = Vector3(0.5, 1.08, 0)  # +X is the viewer's left with this camera
+	add_child(badge)
+
+## The window itself jumps: a real X11 window bouncing on the desktop, not a sprite in a box.
+func hop_window() -> void:
+	if is_headless() or dragging:
+		return
+	window_hops += 1
+	var base := DisplayServer.window_get_position()
+	var tween := create_tween()
+	tween.tween_method(func(y: float): DisplayServer.window_set_position(Vector2i(base.x, base.y - int(y))), 0.0, 26.0, 0.14).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	tween.tween_method(func(y: float): DisplayServer.window_set_position(Vector2i(base.x, base.y - int(y))), 26.0, 0.0, 0.16).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+	tween.tween_method(func(y: float): DisplayServer.window_set_position(Vector2i(base.x, base.y - int(y))), 0.0, 7.0, 0.08).set_ease(Tween.EASE_OUT)
+	tween.tween_method(func(y: float): DisplayServer.window_set_position(Vector2i(base.x, base.y - int(y))), 7.0, 0.0, 0.09).set_ease(Tween.EASE_IN)
+	tween.tween_callback(func(): DisplayServer.window_set_position(base))
 
 func setup_ws() -> void:
 	ws = WsClient.new()
@@ -219,11 +248,26 @@ func perform(data: Dictionary) -> void:
 		else:
 			push_warning("unknown anim %s; ignored" % anim)
 
+	var reaction := str(data.get("reaction", ""))
+	if reaction != "":
+		if reaction == "double_hop":
+			play_one_shot("notify_perk")
+			pending_hops = 1
+		reactions.play(reaction)
+	if bool(data.get("hop", false)):
+		hop_window()
+
 	var text := str(data.get("text", "")).strip_edges()
 	var audio := str(data.get("audio", ""))
 	if audio != "":
 		# Phase 4 (WIRING.md §6): play through the analysed bus and drive claw_open_*.
 		push_warning("audio not wired yet (Phase 4); performing silently: " + audio)
+
+	var icon := str(data.get("icon", ""))
+	if icon != "" and text != "":
+		badge.show_icon(icon)
+	else:
+		badge.hide_icon()
 
 	if text != "":
 		bubble.speak(text, emotion)
@@ -258,16 +302,22 @@ func play_clip(clip_name: String, blend := 0.2) -> void:
 
 func play_one_shot(clip_name: String) -> void:
 	one_shot = clip_name
+	one_shots_played += 1
 	player.play(clip_name, 0.1)
 
 func _on_animation_finished(clip_name: StringName) -> void:
 	if String(clip_name) == one_shot:
+		if pending_hops > 0:
+			pending_hops -= 1
+			play_one_shot(one_shot)
+			return
 		one_shot = ""
 		play_clip(STATE_CLIPS[state])
 
 func _on_speech_finished() -> void:
 	# The daemon never sends a follow-up; speech ending returns her to what she was
 	# doing: dancing if music is on, otherwise idle (§1).
+	badge.hide_icon()
 	if state == "talking":
 		set_state(rest_state)
 
@@ -311,10 +361,11 @@ func save_settings() -> void:
 # --- evidence -------------------------------------------------------------------
 
 func capture() -> void:
-	# Evidence shot: a talking performance so the bubble and a one-shot are in frame.
+	# Evidence shot: a message performance so the wave, the badge and the bubble are in frame.
 	await get_tree().create_timer(0.4).timeout
-	perform({"state": "talking", "anim": "alert_snap", "text": "Did someone say my name?", "emotion": "alert"})
-	await get_tree().create_timer(1.6).timeout
+	var icon := ProjectSettings.globalize_path("res://capture_phase1.png")
+	perform({"state": "talking", "reaction": "wave", "icon": icon, "text": "James wants to know about tonight!", "emotion": "happy"})
+	await get_tree().create_timer(0.75).timeout
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()
 	var err := image.save_png(capture_path)

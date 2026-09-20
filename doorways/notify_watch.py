@@ -55,7 +55,7 @@ def clean(text: str, limit: int) -> str:
 
 def parse_notify(args: tuple | list, max_body_chars: int = 200) -> dict[str, Any]:
     """Turn the Notify() argument tuple into a flat dict."""
-    app_name, replaces_id, _icon, summary, body, _actions, hints, _timeout = args
+    app_name, replaces_id, app_icon, summary, body, _actions, hints, _timeout = args
     hints = dict(hints or {})
     urgency_raw = hints.get("urgency", 1)
     try:
@@ -71,6 +71,7 @@ def parse_notify(args: tuple | list, max_body_chars: int = 200) -> dict[str, Any
         "urgency": urgency,
         "category": str(hints.get("category", "") or ""),
         "replaces_id": int(replaces_id or 0),
+        "app_icon": str(app_icon or ""),
     }
 
 
@@ -116,7 +117,80 @@ def to_event(n: dict[str, Any], cfg: NotificationsConfig) -> dict[str, str]:
     event = {"source": "notification", "app": n["app"], "title": n["title"], "urgency": n["urgency"]}
     if cfg.include_body and n["body"]:
         event["body"] = n["body"]
+    if n.get("category"):
+        event["category"] = n["category"]
+    if n.get("icon"):
+        event["icon"] = n["icon"]
     return event
+
+
+# --- app icons ------------------------------------------------------------------
+
+ICON_EXTS = (".svg", ".png")
+ICON_SIZES = ("scalable", "512x512", "256x256", "128x128", "96x96", "64x64", "48x48")
+
+
+def icon_search_dirs() -> list[Path]:
+    home = Path.home()
+    dirs: list[Path] = []
+    for base in (home / ".local/share/icons", Path("/usr/share/icons"), Path("/var/lib/snapd/desktop/icons")):
+        for theme in ("hicolor", "Yaru", "Adwaita"):
+            for size in ICON_SIZES:
+                dirs.append(base / theme / size / "apps")
+        dirs.append(base)
+    dirs.append(Path("/usr/share/pixmaps"))
+    return dirs
+
+
+def resolve_icon(app_icon: str, desktop_entry: str, app_name: str, search_dirs: list[Path] | None = None,
+                 desktop_icon: Any = None) -> str | None:
+    """Best-effort path to the notifying app's icon, or None.
+
+    app_icon may already be a path (notify-send -i /x.png). Otherwise try the name the
+    .desktop file declares, then the desktop-entry id, then the app name, across the
+    usual icon directories. Without Gtk we do the theme walk by hand.
+    """
+    if app_icon:
+        raw = app_icon[7:] if app_icon.startswith("file://") else app_icon
+        if raw.startswith("/") and Path(raw).is_file():
+            return raw
+    declared = desktop_icon(desktop_entry) if desktop_icon and desktop_entry else None
+    if declared and declared.startswith("/"):
+        return declared if Path(declared).is_file() else None  # snaps declare a full path in Icon=
+    names: list[str] = []
+    for candidate in (app_icon, declared, desktop_entry, app_name.lower(), app_name.lower().replace(" ", "-")):
+        if candidate and "/" not in candidate and candidate not in names:
+            names.append(candidate)
+    for directory in search_dirs if search_dirs is not None else icon_search_dirs():
+        if not directory.is_dir():
+            continue
+        for name in names:
+            for ext in ICON_EXTS:
+                path = directory / f"{name}{ext}"
+                if path.is_file():
+                    return str(path)
+    return None
+
+
+def desktop_icon_name(desktop_entry: str) -> str | None:
+    """The Icon= of an app's .desktop file, via Gio (PyGObject)."""
+    try:
+        from gi.repository import Gio
+
+        info = Gio.DesktopAppInfo.new(f"{desktop_entry}.desktop")
+        if info is None:
+            return None
+        icon = info.get_icon()
+        if icon is None:
+            return None
+        if hasattr(icon, "get_names"):
+            names = icon.get_names()
+            return names[0] if names else None
+        if hasattr(icon, "get_file"):
+            return icon.get_file().get_path()
+    except Exception:  # noqa: BLE001 - any failure just means no badge
+        return None
+    return None
 
 
 def summarise(batch: list[dict[str, Any]], cfg: NotificationsConfig) -> dict[str, str]:
@@ -134,8 +208,12 @@ def summarise(batch: list[dict[str, Any]], cfg: NotificationsConfig) -> dict[str
     if len(batch) > 5:
         items.append(f"and {len(batch) - 5} more")
     if len(distinct) == 1:
-        return {"source": "notification", "app": distinct[0], "title": f"{len(batch)} notifications from {distinct[0]}",
-                "body": " · ".join(items), "urgency": urgency}
+        event = {"source": "notification", "app": distinct[0], "title": f"{len(batch)} notifications from {distinct[0]}",
+                 "body": " · ".join(items), "urgency": urgency}
+        icon = next((n.get("icon") for n in batch if n.get("icon")), None)
+        if icon:
+            event["icon"] = icon
+        return event
     return {"source": "notification", "app": "several apps", "title": f"{len(batch)} notifications",
             "body": " · ".join(items), "urgency": urgency}
 
@@ -208,7 +286,8 @@ class Watcher:
         if reason:
             log.debug("dropped %r/%r: %s", n["app"], n["title"], reason)
             return False
-        log.info("notification app=%r title=%r urgency=%s", n["app"], n["title"], n["urgency"])
+        n["icon"] = resolve_icon(n["app_icon"], n["desktop_entry"], n["app"], desktop_icon=desktop_icon_name)
+        log.info("notification app=%r title=%r urgency=%s icon=%s", n["app"], n["title"], n["urgency"], n["icon"] or "-")
         self.batch.append(n)
         if self.flush_id:
             self.GLib.source_remove(self.flush_id)

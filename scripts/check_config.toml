@@ -1,0 +1,4 @@
+# Settings for the acceptance scripts: canned reactions so the expected lines are
+# deterministic. The model path has its own unit tests (tests/test_brain.py).
+[brain]
+enabled = false

@@ -143,6 +143,57 @@ func run() -> void:
 	await wait(0.2)
 	check(widget.rest_state == "idle", "idle should reset the rest state")
 
+	# 8. A message: wave recipe layered on the clip, app icon badge, window hop (no-op headless).
+	var skeleton := widget.model.find_child("Skeleton3D", true, false) as Skeleton3D
+	var claw_i := skeleton.find_bone("claw_arm_L")
+	var claw_before: Quaternion = skeleton.get_bone_global_pose(claw_i).basis.get_rotation_quaternion()
+	var icon := ProjectSettings.globalize_path("res://capture_phase1.png")
+	var wave := await post("/perform", {"state": "talking", "reaction": "wave", "hop": true, "icon": icon, "text": "James says hi", "emotion": "happy"})
+	check(wave[1] == 200, "/perform with reaction/icon/hop should be accepted")
+	await wait(0.6)
+	check(widget.reactions.recipe == "wave", "wave should be active, was %s" % widget.reactions.recipe)
+	check(widget.reactions.applied_frames > 0, "the skeleton modifier should be running")
+	var claw_now: Quaternion = skeleton.get_bone_global_pose(claw_i).basis.get_rotation_quaternion()
+	var lift := rad_to_deg((claw_before.inverse() * claw_now).get_angle())
+	report["wave_claw_lift_deg"] = snappedf(lift, 0.1)
+	check(lift > 20.0, "wave should lift claw_arm_L by more than 20 degrees, got %.1f" % lift)
+	check(widget.badge.visible and widget.badge.texture != null, "badge should show the app icon")
+	var wide := 0.0
+	for eye in widget.blink_controller.eyes:
+		wide = maxf(wide, eye.get_blend_shape_value(eye.find_blend_shape_by_name("eye_wide")))
+	check(wide > 0.3, "wave should widen the eyes, got %.2f" % wide)
+	await wait(1.2)
+	check(widget.reactions.recipe == "", "wave should finish on its own")
+	var claw_after: Quaternion = skeleton.get_bone_global_pose(claw_i).basis.get_rotation_quaternion()
+	var residual := rad_to_deg((claw_before.inverse() * claw_after).get_angle())
+	report["wave_claw_residual_deg"] = snappedf(residual, 0.1)
+	check(residual < 8.0, "claw should settle back after the wave, residual %.1f" % residual)
+	while widget.bubble.speaking:
+		await wait(0.1)
+	await wait(0.2)
+	check(not widget.badge.visible, "badge should hide with the bubble")
+
+	# 9. A burst: double hop plays notify_perk twice.
+	var shots_before: int = widget.one_shots_played
+	await post("/perform", {"state": "talking", "reaction": "double_hop", "text": "Seven pings!", "emotion": "alert"})
+	var hop_len: float = widget.player.get_animation("notify_perk").length
+	await wait(hop_len * 2.0 + 0.6)
+	check(widget.one_shots_played == shots_before + 2, "double_hop should play notify_perk twice, played %d" % (widget.one_shots_played - shots_before))
+	check(widget.one_shot == "", "one-shots should be done after the double hop")
+	while widget.bubble.speaking:
+		await wait(0.1)
+
+	# 10. Every recipe runs and finishes without error.
+	for name in ["peek", "shiver", "nod"]:
+		await post("/perform", {"state": "idle", "reaction": name})
+		await wait(0.3)
+		check(widget.reactions.recipe == name, "%s should be active" % name)
+		await wait(float(widget.reactions.DURATIONS[name]) + 0.3)
+		check(widget.reactions.recipe == "", "%s should finish" % name)
+	report["reactions_completed"] = widget.reactions.completed
+	var bad_reaction := await post("/perform", {"state": "idle", "reaction": "backflip"})
+	check(bad_reaction[1] == 400, "unknown reaction should be a 400")
+
 	finish()
 
 func finish() -> void:

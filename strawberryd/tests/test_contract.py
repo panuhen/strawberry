@@ -46,6 +46,28 @@ def test_bad_blobs_are_rejected_with_a_reason(blob, fragment):
         Performance.from_dict(blob)
 
 
+def test_reaction_icon_and_hop_round_trip(tmp_path):
+    icon = tmp_path / "app.png"
+    icon.write_bytes(b"\x89PNG")
+    data = {"state": "talking", "text": "Hi", "emotion": "happy", "reaction": "wave", "icon": str(icon), "hop": True}
+    assert Performance.from_dict(data).to_dict() == data
+    assert "hop" not in Performance(state="idle").to_dict()
+
+
+@pytest.mark.parametrize(
+    "blob, fragment",
+    [
+        ({"state": "idle", "reaction": "backflip"}, "reaction must be one of"),
+        ({"state": "idle", "icon": "/nope.png"}, "icon file not found"),
+        ({"state": "idle", "icon": 3}, "icon must be a file path"),
+        ({"state": "idle", "hop": "yes"}, "hop must be true or false"),
+    ],
+)
+def test_bad_reaction_fields_are_rejected(blob, fragment):
+    with pytest.raises(ContractError, match=fragment):
+        Performance.from_dict(blob)
+
+
 def test_blank_text_becomes_none():
     assert Performance.from_dict({"state": "idle", "text": "  "}).text is None
 

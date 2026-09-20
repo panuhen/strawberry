@@ -29,8 +29,38 @@ def test_parse_maps_the_notify_tuple():
     n = parse_notify(notify(category="im.received", **{"desktop-entry": "whatsapp"}))
     assert n == {
         "app": "WhatsApp", "desktop_entry": "whatsapp", "title": "James", "body": "Are we still on for tonight?",
-        "urgency": "normal", "category": "im.received", "replaces_id": 0,
+        "urgency": "normal", "category": "im.received", "replaces_id": 0, "app_icon": "",
     }
+
+
+def test_event_carries_category_and_icon_when_present():
+    n = parse_notify(notify(category="im.received"))
+    n["icon"] = "/tmp/whatsapp.png"
+    event = to_event(n, NotificationsConfig())
+    assert event["category"] == "im.received" and event["icon"] == "/tmp/whatsapp.png"
+    assert "icon" not in to_event(parse_notify(notify()), NotificationsConfig())
+
+
+def test_resolve_icon_prefers_a_path_then_walks_the_theme(tmp_path):
+    resolve_icon = notify_watch.resolve_icon
+    direct = tmp_path / "direct.png"
+    direct.write_bytes(b"x")
+    assert resolve_icon(str(direct), "", "", search_dirs=[]) == str(direct)
+    assert resolve_icon(f"file://{direct}", "", "", search_dirs=[]) == str(direct)
+    apps = tmp_path / "hicolor" / "scalable" / "apps"
+    apps.mkdir(parents=True)
+    (apps / "whatsapp.svg").write_bytes(b"<svg/>")
+    (apps / "com.slack.Slack.png").write_bytes(b"x")
+    dirs = [apps]
+    assert resolve_icon("whatsapp", "", "", search_dirs=dirs) == str(apps / "whatsapp.svg")
+    assert resolve_icon("", "com.slack.Slack", "Slack", search_dirs=dirs) == str(apps / "com.slack.Slack.png")
+    assert resolve_icon("", "", "WhatsApp", search_dirs=dirs) == str(apps / "whatsapp.svg")  # lower-cased app name
+    assert resolve_icon("", "org.example.Nothing", "Nothing", search_dirs=dirs) is None
+    # the .desktop file's declared icon wins over the id
+    assert resolve_icon("", "org.slack", "x", search_dirs=dirs, desktop_icon=lambda de: "whatsapp") == str(apps / "whatsapp.svg")
+    # snaps declare a full path in Icon=; use it directly (and only if it exists)
+    assert resolve_icon("", "spotify_spotify", "Spotify", search_dirs=dirs, desktop_icon=lambda de: str(direct)) == str(direct)
+    assert resolve_icon("", "spotify_spotify", "Spotify", search_dirs=dirs, desktop_icon=lambda de: "/gone/icon.png") is None
 
 
 @pytest.mark.parametrize("raw, name", [(0, "low"), (1, "normal"), (2, "critical"), (7, "normal"), ("x", "normal")])
@@ -92,10 +122,12 @@ def test_single_notification_passes_through_unsummarised():
 def test_burst_from_one_app_becomes_one_event():
     cfg = NotificationsConfig()
     batch = [parse_notify(notify(app="Slack", summary=f"#chan{i}", body="x")) for i in range(7)]
+    batch[2]["icon"] = "/tmp/slack.png"
     event = summarise(batch, cfg)
     assert event["app"] == "Slack"
     assert event["title"] == "7 notifications from Slack"
     assert event["body"] == "#chan0 · #chan1 · #chan2 · #chan3 · #chan4 · and 2 more"
+    assert event["icon"] == "/tmp/slack.png"
 
 
 def test_burst_across_apps_keeps_the_highest_urgency():

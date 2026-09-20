@@ -46,6 +46,9 @@ Daemon → Godot, one JSON object per performance:
 | `text` | no | speech-bubble text (omit = no bubble) |
 | `audio` | no | path to a wav; **present** = play + drive claws, **absent** = silent mode |
 | `emotion` | no | `neutral` \| `happy` \| `alert` \| `angry` — tints bubble / picks `anim` |
+| `reaction` | no | procedural recipe layered over the clip: `wave` \| `peek` \| `shiver` \| `double_hop` \| `nod` (§13) |
+| `icon` | no | path to an image shown as a badge beside the bubble (the notifying app's icon) |
+| `hop` | no | `true`: the window itself bounces on the desktop |
 
 Optional fields are omitted on the wire, never sent as `null`. Unknown fields, unknown states, and missing audio files are rejected by the daemon with a 400 and a reason.
 
@@ -70,14 +73,18 @@ Long-running Python (asyncio, aiohttp). One port, default **8770**:
 - `GET /ws` — the widget connects here.
 - **Core function:** `Daemon.perform(performance)` builds the blob, (Phase 4) runs TTS, and sends to Godot. Everything routes through it.
 
-Emotion → animation is **owned by the daemon**, so the model never has to name a clip:
+**What she does is owned by the daemon**, so the model never names a clip or a recipe; it only picks the emotion. `strawberryd/reactions.py` maps *(source, app/category, urgency, emotion)* to a one-shot clip, a recipe (§13), and whether the window hops:
 
-| emotion | anim |
-|---|---|
-| alert | `alert_snap` |
-| angry | `alert_snap` |
-| happy | `notify_perk` |
-| neutral | `notify_perk` |
+| Event | anim | reaction | hop |
+|---|---|---|---|
+| notification from a messaging app (`im.*`/`email.*` category, or WhatsApp/Telegram/Slack/Thunderbird/…) | – | `wave` | yes |
+| notification, critical urgency or `angry` | `alert_snap` | `shiver` | – |
+| coalesced burst ("N notifications…") | – | `double_hop` | – |
+| other notification, `alert` / `happy` / `neutral` | – / `notify_perk` / – | `peek` / – / `nod` | – |
+| git `post-commit` | `notify_perk` (`alert_snap` if angry) | – | – |
+| git `pre-push`, media track change, voice | – | `nod` | – |
+
+Critical beats message (a critical WhatsApp still shivers). The app icon resolved by the doorway rides along as `icon`.
 
 **Local tools only.** Requests carrying a browser `Origin` header are refused (403) on every route including `/ws`, and POSTs must be `Content-Type: application/json` (415 otherwise). Godot, curl, and the doorways never send `Origin`; browsers always do. Without this a web page could make her talk, or open `/ws` and read notification text as it goes past.
 
@@ -102,7 +109,7 @@ The interface is `Reactor` (`strawberryd/events.py`): `async react(event) -> Per
 
 **On this machine the notification daemon is GNOME Shell, not dunst**, and dunst cannot run beside it (both claim `org.freedesktop.Notifications`). So there is no script hook. Instead the watcher opens a private **monitor connection** to the session bus (`org.freedesktop.DBus.Monitoring.BecomeMonitor`, unprivileged for the user's own bus) with a match on `Notify` method calls, and sees every notification as it goes past. GNOME still shows it normally; the watcher only listens.
 
-`Notify(app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout)` becomes `{source: "notification", app, title: summary, body, urgency}`; urgency comes from the `urgency` hint byte (0/1/2 → low/normal/critical), markup and entities are stripped from the body, and `desktop-entry` stands in when an app sends no name.
+`Notify(app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout)` becomes `{source: "notification", app, title: summary, body, urgency, category, icon}`; urgency comes from the `urgency` hint byte (0/1/2 → low/normal/critical), markup and entities are stripped from the body, and `desktop-entry` stands in when an app sends no name. `icon` is the app's icon resolved on disk: `app_icon` if it is a path, else the `.desktop` file's `Icon=`, the desktop-entry id, or the app name, looked up under `~/.local/share/icons`, `/usr/share/icons/{hicolor,Yaru,Adwaita}`, `/var/lib/snapd/desktop/icons` and `/usr/share/pixmaps` (SVG or PNG). No icon found means no badge, nothing else changes.
 
 **What gets forwarded** is `[notifications]` in the config (§15):
 
@@ -257,6 +264,20 @@ Strawberry lives on the desktop as a pet: a **frameless, transparent, always-on-
 **Interaction.** Drag her body to move the window; the position is remembered in `user://widget.cfg` along with the skin, and clamped to the screen's usable area on restore. `Q` quits, `C` cycles skins. Cel shading and the ink outline are always on in the widget (the v2 preview's `O` toggle was a review aid, not a feature). The daemon can also send `{"command": "quit"}` or `{"command": "skin", "value": "mint"}`.
 
 **Layout.** 380×460 window, orthographic camera (`KEEP_WIDTH`, size 1.25) centred at y 0.55 so the crab sits low and the bubble has room above at y 0.98. `run/max_fps=60`, `gl_compatibility` renderer (same as the v2 preview).
+
+**Reaction recipes (`widget/reactions.gd`).** A node at process priority 150 layers short procedural poses over whatever clip is playing, after the AnimationPlayer has written the frame, the same way the blink and claw controllers layer their morphs. Each recipe is an envelope (ease in, hold, ease out) on a few bone offsets and morphs; nothing is baked into the GLB, so a recipe is a dozen tunable lines. Bone axes from the rig: claw lift = local +X (`alert_snap` uses 37°), eyestalk sway = Z, body pitch = X, roll = Z. Every bone touched has a track in all seven clips, so the mixer resets it each frame and offsets never compound. (`SkeletonModifier3D` renders the same result, but its changes are invisible to `get_bone_global_pose()`, which the acceptance check uses to prove the lift; the plain node's are measurable: 48.5° during a wave, 0.7° after.)
+
+| recipe | length | what moves |
+|---|---|---|
+| `wave` | 1.5 s | left claw arm lifts 48°, claw opens and closes twice, eyes wide |
+| `peek` | 1.4 s | eyestalks stretch 35%, body leans 7° toward the viewer, eyes half wide |
+| `shiver` | 0.9 s | body rolls ±3° at 18 Hz, shell squash jitters, squint |
+| `double_hop` | 1.6 s | `notify_perk` played twice back to back, eyes wide throughout |
+| `nod` | 1.1 s | body pitches ±10° twice, happy eyes |
+
+Eye morphs go through `blink_controller` (`extra_wide` / `extra_happy` / `extra_squint`, combined with the clip-driven values) so the blink logic keeps ownership; claw and squash morphs are written directly at a later process priority and cleared when the recipe ends.
+
+**Badge (`widget/badge.gd`).** A billboarded `Sprite3D` at the bubble's upper left showing the `icon` image (PNG/JPG, or SVG rasterised at load), visible while she talks, hidden with the bubble. **Window hop.** `hop: true` tweens the X11 window 26 px up and back with a small second bounce (0.47 s total); skipped while dragging or headless.
 
 ---
 

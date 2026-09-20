@@ -16,7 +16,7 @@ if [ ! -d "$ROOT/widget/.godot" ]; then
 fi
 
 echo "== starting strawberryd on :$PORT"
-"$ROOT/strawberryd/.venv/bin/strawberryd" --port "$PORT" &
+"$ROOT/strawberryd/.venv/bin/strawberryd" --port "$PORT" --config "$ROOT/scripts/check_config.toml" &
 DPID=$!
 cleanup() { kill "$DPID" 2>/dev/null || true; wait "$DPID" 2>/dev/null || true; }
 trap cleanup EXIT
