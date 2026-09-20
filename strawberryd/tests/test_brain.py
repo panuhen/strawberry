@@ -118,6 +118,8 @@ async def test_unreachable_ollama_still_reacts():
 
 def test_tidy_collapses_and_caps():
     assert tidy('  "Hello,\n  crab!"  ', 15) == "Hello, crab!"
+    assert tidy("**Good.**", 15) == "Good."
+    assert tidy("_Claws_ up, `friend`!", 15) == "Claws up, friend!"
     long = " ".join(f"w{i}" for i in range(30))
     capped = tidy(long, 15)
     assert capped.endswith("…") and len(capped.split()) == 15

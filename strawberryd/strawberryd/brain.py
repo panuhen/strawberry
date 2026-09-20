@@ -47,7 +47,8 @@ def describe(event: Event) -> str:
 
 
 def tidy(line: str, max_words: int) -> str:
-    """One clean sentence: collapse whitespace, strip quotes, cap the length gently."""
+    """One clean sentence: no markdown, collapsed whitespace, no wrapping quotes, length capped gently."""
+    line = re.sub(r"[*_`#~]+", "", line)  # a 1B model likes **bold**; the bubble would show the asterisks
     line = re.sub(r"\s+", " ", line).strip().strip('"“”')
     words = line.split()
     if len(words) > max_words + 5:
