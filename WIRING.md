@@ -98,13 +98,25 @@ The interface is `Reactor` (`strawberryd/events.py`): `async react(event) -> Per
 
 ---
 
-## 4. Doorway: notifications
+## 4. Doorway: notifications — `doorways/notify_watch.py`
 
-**On this machine the notification daemon is GNOME Shell, not dunst**, and dunst cannot run beside it (both claim `org.freedesktop.Notifications`). So the dunst `script =` rule from the original plan is out. Same doorway, different plumbing: a small listener **eavesdrops on the session bus** for `org.freedesktop.Notifications.Notify` method calls (a `GDBusConnection` monitor, or `busctl --user monitor` piped to a script), pulls app name, summary, body, and urgency hint out of each, and POSTs them to `/event` with `source=notification`. GNOME still shows the notification normally; the listener is additive.
+**On this machine the notification daemon is GNOME Shell, not dunst**, and dunst cannot run beside it (both claim `org.freedesktop.Notifications`). So there is no script hook. Instead the watcher opens a private **monitor connection** to the session bus (`org.freedesktop.DBus.Monitoring.BecomeMonitor`, unprivileged for the user's own bus) with a match on `Notify` method calls, and sees every notification as it goes past. GNOME still shows it normally; the watcher only listens.
 
-If a machine does run dunst, the `[strawberry] script = …` rule in `dunstrc` is the simpler equivalent and posts the same event.
+`Notify(app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout)` becomes `{source: "notification", app, title: summary, body, urgency}`; urgency comes from the `urgency` hint byte (0/1/2 → low/normal/critical), markup and entities are stripped from the body, and `desktop-entry` stands in when an app sends no name.
 
-This is also how WhatsApp / Messenger reach Strawberry: you react to the **desktop notification**, never their APIs.
+**What gets forwarded** is `[notifications]` in the config (§15):
+
+| Setting | Default | Effect |
+|---|---|---|
+| `ignore_apps` | `["Spotify"]` | music is already covered by the media doorway |
+| `only_apps` | `[]` | non-empty: forward these apps only |
+| `min_urgency` | `"low"` | drop anything below |
+| `include_body` | `true` | `false`: she knows *who* wrote, not *what* ("message from James", body never reaches the model) |
+| `max_body_chars` | `200` | |
+| `ignore_replacements` | `true` | updates to an existing notification (download progress) |
+| `coalesce_s` | `2.0` | several inside the window become one event: "7 notifications from Slack" / "3 notifications", highest urgency wins |
+
+Her own notifications (app `strawberry`) are always ignored. This is also how WhatsApp / Messenger reach her: you react to the **desktop notification**, never their APIs. A machine running dunst could post the same event from a `dunstrc` `script =` rule.
 
 ## 4b. Doorway: media (MPRIS) — `doorways/mpris_watch.py`
 
@@ -194,7 +206,7 @@ materials:        mat_shell  mat_shell_dark  mat_claw  mat_cream  mat_eye  mat_i
 
 1. **Contract + transport.** ✅ Daemon skeleton: HTTP intake + ws server + `perform()` that only forwards. Godot widget as ws client in a transparent always-on-top window. Test: `curl` a blob → crab changes state. No brain, no audio.
 2. **Reaction path, silent.** ✅ git `post-commit` → `/event` → Ollama one-liner + emotion → blob with `text`, no `audio` → **bubble appears above the crab on commit.** Proves event → brain → face end to end with zero audio risk.
-3. **Notifications doorway.** dunst script → same intake. Anything that notifies (including WhatsApp/Messenger) makes her react.
+3. **Notifications doorway.** ✅ D-Bus monitor → same intake. Anything that notifies (including WhatsApp/Messenger) makes her react.
 4. **TTS.** Add Piper → `audio` field → Godot plays it through the analysed bus → claws clack in time.
 5. **Voice in.** Hotkey → faster-whisper → transcript. Route to plain Ollama first to prove capture.
 6. **MCP actions.** Wire the Python MCP client; voice commands start *doing* things (skip track, log to re:call).
@@ -212,7 +224,7 @@ Stop after any phase and you still have something that works.
 - [x] Play/pause in any MPRIS media player makes her dance/idle; a track change shows a "Now playing" bubble and she returns to dancing. (`doorways/mpris_watch.py`)
 - [x] Browser origins are refused on HTTP and `/ws`; POSTs need the JSON content type.
 - [x] A git commit makes Strawberry show a model-written bubble (silent). (`gemma3:1b` via `OllamaReactor`)
-- [ ] A desktop notification (any app) triggers a reaction.
+- [x] A desktop notification (any app) triggers a reaction. (`notify-send -a WhatsApp James "…"` → Gemma line in the bubble)
 - [ ] With TTS on, the wav plays through Godot and the claws clack to the audio; `claw_open_*` is 0 when idle.
 - [ ] A voice command routed through MCP successfully calls one real tool (e.g. Spotify skip).
 
@@ -275,6 +287,13 @@ emotion = "happy"
 [media]
 only = []                        # e.g. ["spotify"]
 ignore = []                      # e.g. ["firefox"]
+
+[notifications]
+ignore_apps = ["Spotify"]
+only_apps = []
+min_urgency = "low"
+include_body = true              # false: "message from James", never what James wrote
+coalesce_s = 2.0
 ```
 
 `bin/strawberry config` creates the file from a commented template (`strawberryd --init-config`) and opens it in `$EDITOR`; `bin/strawberry restart` applies it. `STRAWBERRYD_PORT` still overrides the port for scripts. The widget's own preferences (skin, window position) stay in Godot's `user://widget.cfg` for now.
@@ -286,8 +305,8 @@ WIRING.md                this document
 strawberryd/             Python daemon (uv project): contract, events/reactor, hub, server, tests
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, validate_widget.gd
                          + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
-doorways/                short-lived event producers: mpris_watch.py (any MPRIS media player), git/ (global post-commit + pre-push hooks); notification listener to come
-bin/strawberry           launcher: daemon + media watcher up, then widget on the X11 backend
+doorways/                event producers: mpris_watch.py (any MPRIS media player), notify_watch.py (desktop notifications via D-Bus monitor), git/ (global post-commit + pre-push hooks)
+bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
 scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless widget; it must reconnect
 v2/                      the asset: Blender build scripts, GLB, evidence, preview project

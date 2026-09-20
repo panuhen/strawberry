@@ -11,6 +11,20 @@ def test_defaults_when_no_file(tmp_path):
     assert config.brain.reaction_model == "gemma3:1b"
     assert config.brain.examples == persona.EXAMPLES
     assert config.media.only == []
+    assert config.notifications.ignore_apps == ["Spotify"]
+    assert config.notifications.include_body is True
+
+
+def test_notification_settings_validate(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[notifications]\ninclude_body = false\nmin_urgency = "normal"\nignore_apps = []\n')
+    config = load(path, env={})
+    assert config.notifications.include_body is False
+    assert config.notifications.min_urgency == "normal"
+    assert config.notifications.ignore_apps == []
+    path.write_text('[notifications]\nmin_urgency = "loud"\n')
+    with pytest.raises(ConfigError, match="min_urgency"):
+        load(path, env={})
 
 
 def test_file_overrides_only_what_it_names(tmp_path):

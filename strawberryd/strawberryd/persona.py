@@ -30,6 +30,11 @@ EXAMPLES = [
         "emotion": "happy",
     },
     {
+        "event": "source: notification\napp: WhatsApp\ntitle: James\nbody: Are we still on for tonight?",
+        "line": "James wants to know about tonight. Don't leave him hanging!",
+        "emotion": "happy",
+    },
+    {
         "event": "source: notification\napp: GitHub\ntitle: CI failed on main\nbody: 3 tests failed",
         "line": "Three tests down on main. Somebody is getting pinched.",
         "emotion": "angry",

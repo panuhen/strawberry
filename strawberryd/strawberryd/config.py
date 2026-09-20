@@ -8,6 +8,7 @@ wrong types are fatal with the key named, because a silently ignored setting is 
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import tomllib
@@ -57,19 +58,36 @@ class MediaConfig:
 
 
 @dataclass
+class NotificationsConfig:
+    ignore_apps: list[str] = field(default_factory=lambda: ["Spotify"])  # MPRIS already covers music
+    only_apps: list[str] = field(default_factory=list)      # non-empty: forward these apps only
+    min_urgency: str = "low"                                # low | normal | critical
+    include_body: bool = True                               # false: she knows who wrote, not what
+    max_body_chars: int = 200
+    ignore_replacements: bool = True                        # updates to an existing notification (progress bars)
+    coalesce_s: float = 2.0                                 # several within this window become one event
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
     media: MediaConfig = field(default_factory=MediaConfig)
+    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        out = {"daemon": asdict(self.daemon), "brain": asdict(self.brain), "media": asdict(self.media)}
+        out = {
+            "daemon": asdict(self.daemon),
+            "brain": asdict(self.brain),
+            "media": asdict(self.media),
+            "notifications": asdict(self.notifications),
+        }
         out["path"] = str(self.path) if self.path else None
         return out
 
 
-_SECTIONS = {"daemon": DaemonConfig, "brain": BrainConfig, "media": MediaConfig}
+_SECTIONS = {"daemon": DaemonConfig, "brain": BrainConfig, "media": MediaConfig, "notifications": NotificationsConfig}
 
 
 def _apply(section_name: str, target: Any, values: dict[str, Any]) -> None:
@@ -103,6 +121,10 @@ def _validate(config: Config) -> None:
             raise ConfigError(f"brain.examples emotion {example['emotion']!r} is not one of neutral/happy/alert/angry")
     if config.brain.timeout_s <= 0:
         raise ConfigError("brain.timeout_s must be positive")
+    if config.notifications.min_urgency not in ("low", "normal", "critical"):
+        raise ConfigError("notifications.min_urgency must be low, normal, or critical")
+    if config.notifications.coalesce_s < 0:
+        raise ConfigError("notifications.coalesce_s must be >= 0")
     if not (1 <= config.daemon.port <= 65535):
         raise ConfigError("daemon.port must be 1-65535")
 
@@ -137,6 +159,7 @@ def default_toml() -> str:
     """A commented template with every default, for `strawberryd --init-config`."""
     b = BrainConfig()
     d = DaemonConfig()
+    n = NotificationsConfig()
     lines = [
         "# Strawberry settings. Every key is optional; these are the defaults.",
         "# Restart the daemon after editing: bin/strawberry stop && bin/strawberry daemon",
@@ -162,6 +185,15 @@ def default_toml() -> str:
         "[media]",
         "only = []      # e.g. [\"spotify\"] to follow one player; empty = every MPRIS player",
         "ignore = []    # e.g. [\"firefox\"]",
+        "",
+        "[notifications]",
+        f"ignore_apps = {json.dumps(n.ignore_apps)}   # music is covered by the media doorway",
+        "only_apps = []              # non-empty: forward only these apps",
+        f'min_urgency = "{n.min_urgency}"         # low | normal | critical',
+        f"include_body = {str(n.include_body).lower()}         # false: she knows who wrote, not what they wrote",
+        f"max_body_chars = {n.max_body_chars}",
+        f"ignore_replacements = {str(n.ignore_replacements).lower()}  # progress-bar style updates to an existing notification",
+        f"coalesce_s = {n.coalesce_s}            # several within this window become one \"N notifications\" event",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]
