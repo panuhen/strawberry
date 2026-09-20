@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 import time
+from collections import deque
 from typing import Any
 
 import aiohttp
@@ -46,6 +48,37 @@ def describe(event: Event) -> str:
     return "\n".join(parts)
 
 
+STOPWORDS = frozenset("""
+that this with have from your they them then than what when were will would could should there their
+about just like into over some more very much such only also been being does done into onto
+""".split())
+RECENT_LINES = 8
+
+
+def content_words(line: str) -> list[str]:
+    """Lower-cased words of four letters or more that carry flavour (not stopwords)."""
+    return [w for w in re.findall(r"[a-zA-Z']{4,}", line.lower()) if w not in STOPWORDS]
+
+
+def stale_words(line: str, recent: list[str]) -> list[str]:
+    """Words in `line` she has already used in two or more recent lines, plus a repeated opener.
+
+    A small model finds a pet adjective and puts it in every line ("lovely" twelve times in an
+    evening). Catching the repeat lets the reactor ask once more with those words banned.
+    """
+    if not recent:
+        return []
+    counts: dict[str, int] = {}
+    for old in recent:
+        for w in set(content_words(old)):
+            counts[w] = counts.get(w, 0) + 1
+    stale = [w for w in dict.fromkeys(content_words(line)) if counts.get(w, 0) >= 2]
+    opener = line.split()[0].lower().strip(",.!?") if line.split() else ""
+    if opener and sum(1 for old in recent[-3:] if old.split() and old.split()[0].lower().strip(",.!?") == opener) >= 2:
+        stale.append(opener)
+    return stale
+
+
 def tidy(line: str, max_words: int) -> str:
     """One clean sentence: no markdown, collapsed whitespace, no wrapping quotes, length capped gently."""
     line = re.sub(r"[*_`#~]+", "", line)  # a 1B model likes **bold**; the bubble would show the asterisks
@@ -63,8 +96,11 @@ class OllamaReactor:
         self.session: aiohttp.ClientSession | None = None
         self.calls = 0
         self.fallbacks = 0
+        self.retries = 0
         self.last_latency: float | None = None
         self.loaded = False
+        self.recent: deque[str] = deque(maxlen=RECENT_LINES)
+        self.rng = random.Random()
 
     def stats(self) -> dict[str, Any]:
         return {
@@ -72,6 +108,7 @@ class OllamaReactor:
             "loaded": self.loaded,
             "calls": self.calls,
             "fallbacks": self.fallbacks,
+            "retries": self.retries,
             "last_latency_s": round(self.last_latency, 3) if self.last_latency is not None else None,
         }
 
@@ -104,24 +141,30 @@ class OllamaReactor:
             log.warning("brain: could not load %s (%s); reacting with canned lines until it answers",
                         self.brain.reaction_model, exc)
 
-    def _messages(self, event_text: str) -> list[dict[str, str]]:
+    def _messages(self, event_text: str, avoid: list[str] | None = None) -> list[dict[str, str]]:
         out = [{"role": "system", "content": self.brain.persona}]
-        for example in self.brain.examples:
+        # Example order is shuffled per call: a fixed order makes the last example the template
+        # for everything, and the same opener comes back every time.
+        examples = list(self.brain.examples)
+        self.rng.shuffle(examples)
+        for example in examples:
             out.append({"role": "user", "content": example["event"]})
             out.append({"role": "assistant", "content": json.dumps({"line": example["line"], "emotion": example["emotion"]})})
+        if avoid:
+            event_text += "\n(Say it differently this time. Do not use these words: " + ", ".join(avoid) + ".)"
         out.append({"role": "user", "content": event_text})
         return out
 
-    async def _ask(self, event_text: str) -> dict[str, Any]:
+    async def _ask(self, event_text: str, avoid: list[str] | None = None, temperature: float | None = None) -> dict[str, Any]:
         assert self.session
         payload = {
             "model": self.brain.reaction_model,
-            "messages": self._messages(event_text),
+            "messages": self._messages(event_text, avoid),
             "format": SCHEMA,
             "think": False,
             "stream": False,
             "keep_alive": self.brain.keep_alive,
-            "options": {"temperature": self.brain.temperature, "num_predict": 80},
+            "options": {"temperature": temperature if temperature is not None else self.brain.temperature, "num_predict": 80},
         }
         async with self.session.post(
             "/api/chat", json=payload, timeout=aiohttp.ClientTimeout(total=self.brain.timeout_s)
@@ -149,12 +192,27 @@ class OllamaReactor:
             self.fallbacks += 1
             log.warning("brain: fallback after %.2fs (%s)", time.perf_counter() - started, exc)
             return await self.fallback.react(event)
-        self.last_latency = time.perf_counter() - started
         self.loaded = True
         line = tidy(data["line"], self.brain.max_words)
+        emotion = data["emotion"]
+        stale = stale_words(line, list(self.recent))
+        elapsed = time.perf_counter() - started
+        # Repeating herself? One more go with the tired words banned and a hotter sample, if
+        # there is time left in the budget. Keep the second line unless it is no better.
+        if line and stale and elapsed < self.brain.timeout_s * 0.6:
+            self.retries += 1
+            try:
+                again = await self._ask(describe(event), avoid=stale, temperature=min(self.brain.temperature + 0.3, 1.5))
+                second = tidy(again["line"], self.brain.max_words)
+                if second and len(stale_words(second, list(self.recent))) < len(stale):
+                    log.info("brain: reworded (avoided %s): %r -> %r", stale, line, second)
+                    line, emotion = second, again["emotion"]
+            except (aiohttp.ClientError, asyncio.TimeoutError, BrainError) as exc:
+                log.debug("brain: retry failed (%s); keeping the first line", exc)
+        self.last_latency = time.perf_counter() - started
         if not line:
             self.fallbacks += 1
             return await self.fallback.react(event)
-        emotion = data["emotion"]
+        self.recent.append(line)
         log.info("brain: %.2fs [%s] %s", self.last_latency, emotion, line)
         return Performance(state="talking", anim=anim_for(emotion), text=line, emotion=emotion)

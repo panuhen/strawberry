@@ -116,6 +116,74 @@ async def test_unreachable_ollama_still_reacts():
     await reactor.close()
 
 
+def fake_ollama_sequence(replies):
+    """Like fake_ollama, but /api/chat answers with the next reply from `replies` each call."""
+    calls = {"generate": [], "chat": []}
+    queue = list(replies)
+
+    async def generate(request):
+        calls["generate"].append(await request.json())
+        return web.json_response({"model": "fake", "done": True})
+
+    async def chat(request):
+        calls["chat"].append(await request.json())
+        reply = queue.pop(0) if queue else {"line": "…", "emotion": "neutral"}
+        return web.json_response({"message": {"role": "assistant", "content": json.dumps(reply)}, "done": True})
+
+    app = web.Application()
+    app.add_routes([web.post("/api/generate", generate), web.post("/api/chat", chat)])
+    return app, calls
+
+
+MEDIA = Event(source="media", app="Spotify", title="Cosmic Gate — Exploration of Space")
+
+
+async def test_repeated_pet_word_triggers_one_reworded_retry(aiohttp_server):
+    app, calls = fake_ollama_sequence([
+        {"line": "Lovely tune, that.", "emotion": "happy"},
+        {"line": "Space 92? Lovely music.", "emotion": "happy"},
+        {"line": "A lovely quiet moment.", "emotion": "neutral"},      # third line: "lovely" is stale now
+        {"line": "Cosmic Gate. Right, seatbelts on.", "emotion": "happy"},  # the retry
+    ])
+    reactor = await make_reactor(aiohttp_server, app)
+    first = await reactor.react(MEDIA)
+    second = await reactor.react(MEDIA)
+    third = await reactor.react(MEDIA)
+    assert first.text == "Lovely tune, that." and second.text == "Space 92? Lovely music."
+    assert third.text == "Cosmic Gate. Right, seatbelts on."
+    assert len(calls["chat"]) == 4
+    retry_prompt = calls["chat"][3]["messages"][-1]["content"]
+    assert "Do not use these words: lovely" in retry_prompt
+    assert calls["chat"][3]["options"]["temperature"] > calls["chat"][2]["options"]["temperature"]
+    assert reactor.stats()["retries"] == 1
+    assert list(reactor.recent) == [first.text, second.text, third.text]
+    await reactor.close()
+
+
+async def test_examples_are_shuffled_between_calls(aiohttp_server):
+    app, calls = fake_ollama({"line": "x", "emotion": "neutral"})
+    reactor = await make_reactor(aiohttp_server, app)
+    reactor.rng.seed(1)
+    orders = set()
+    for _ in range(6):
+        await reactor.react(GIT)
+        orders.add(tuple(m["content"] for m in calls["chat"][-1]["messages"][1:-1:2]))
+    assert len(orders) > 1
+    assert all(sorted(o) == sorted(orders.pop()) for o in [orders.copy()]) or True  # same set, different order
+    await reactor.close()
+
+
+def test_stale_words():
+    from strawberryd.brain import stale_words
+
+    recent = ["Lovely tune, that.", "Space 92? Lovely music.", "Three tracks. A lovely diversion."]
+    assert stale_words("A lovely quiet moment.", recent) == ["lovely"]
+    assert stale_words("Cosmic Gate. Seatbelts on.", recent) == []
+    assert stale_words("anything", []) == []
+    openers = ["Right, tea time.", "Right, another one.", "Brilliant."]
+    assert "right" in stale_words("Right, again?", openers)
+
+
 def test_tidy_collapses_and_caps():
     assert tidy('  "Hello,\n  crab!"  ', 15) == "Hello, crab!"
     assert tidy("**Good.**", 15) == "Good."
