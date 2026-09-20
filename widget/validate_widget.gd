@@ -224,6 +224,8 @@ func run() -> void:
 
 	# 11. Audio: a wav plays through the analysed bus, the claws open to it, and close after.
 	var wav_path := make_test_wav(1.6)
+	widget.set_muted(false)
+	widget.set_quiet_until(0.0)
 	var claw_idle: float = widget.speech.claw_value()
 	check(absf(claw_idle) < 0.01, "claw_open should be 0 before speech, was %.2f" % claw_idle)
 	await post("/perform", {"state": "talking", "text": "Testing, one two three.", "audio": wav_path})
@@ -236,8 +238,9 @@ func run() -> void:
 	# The bubble reveal is timed to the wav (1.6 s), so it is still revealing at 1.2 s
 	# where the text-length heuristic (1.9 s for this line) would also be; check the length
 	# the widget used instead.
-	report["speech_wav_seconds"] = snappedf(widget.speech.stream.get_length(), 0.01)
-	check(absf(widget.speech.stream.get_length() - 1.6) < 0.02, "widget should read the wav length")
+	var wav_len: float = widget.speech.stream.get_length() if widget.speech.stream else 0.0
+	report["speech_wav_seconds"] = snappedf(wav_len, 0.01)
+	check(absf(wav_len - 1.6) < 0.02, "widget should read the wav length")
 	await wait(1.4)
 	check(not widget.speech.playing, "speech wav should have finished")
 	await wait(0.1)
@@ -276,6 +279,29 @@ func run() -> void:
 	widget.set_voice_volume(1.0)
 	await wait_speech_end()
 	DirAccess.remove_absolute(wav_path)
+
+	# 13. Pupils follow the cursor: the pupil shader sits on both eyes' ink surface and the
+	# gaze swings with a pinned cursor position, opposite ways for the two window edges.
+	for side in ["L", "R"]:
+		var mat := widget.gaze.meshes[side].get_surface_override_material(1) as ShaderMaterial
+		check(mat != null and mat.shader == widget.gaze.PupilShader, "eye %s should carry the pupil shader" % side)
+	widget.gaze.look_override = Vector2(0.0, 300.0)
+	await wait(0.6)
+	var gaze_left: Vector2 = widget.gaze.gaze
+	widget.gaze.look_override = Vector2(380.0, 300.0)
+	await wait(0.6)
+	var gaze_right: Vector2 = widget.gaze.gaze
+	widget.gaze.look_override = Vector2(190.0, 0.0)
+	await wait(0.6)
+	var gaze_up: Vector2 = widget.gaze.gaze
+	report["gaze_left"] = [snappedf(gaze_left.x, 0.01), snappedf(gaze_left.y, 0.01)]
+	report["gaze_right"] = [snappedf(gaze_right.x, 0.01), snappedf(gaze_right.y, 0.01)]
+	report["gaze_up"] = [snappedf(gaze_up.x, 0.01), snappedf(gaze_up.y, 0.01)]
+	check(absf(gaze_left.x) > 0.15 and signf(gaze_left.x) == -signf(gaze_right.x), "gaze yaw should swing opposite ways for the two edges")
+	check(gaze_up.y > 0.2, "gaze pitch should rise for a cursor above her, was %.2f" % gaze_up.y)
+	widget.gaze.look_override = Vector2(-1, -1)
+	await wait(0.6)
+	check(widget.gaze.gaze.length() < 0.05, "headless with no cursor: gaze should relax to centre")
 
 	finish()
 

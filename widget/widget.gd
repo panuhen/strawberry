@@ -13,6 +13,7 @@ const Badge = preload("res://badge.gd")
 const Reactions = preload("res://reactions.gd")
 const SpeechPlayer = preload("res://speech_player.gd")
 const Menu = preload("res://menu.gd")
+const Gaze = preload("res://gaze.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
 const STATE_CLIPS := {
@@ -27,10 +28,12 @@ const LOOPING := ["idle_loop", "listen_loop", "think_loop", "talk_base", "dance_
 # States she settles back into after talking. listening/thinking are pipeline transients.
 const PERSISTENT := ["idle", "dancing"]
 const SETTINGS_PATH := "user://widget.cfg"
+const HEADLESS_SETTINGS_PATH := "user://widget_headless.cfg"  # acceptance runs never touch the live prefs
 const PASSTHROUGH_PADDING := 18.0
 
 var ws_url := "ws://127.0.0.1:8770/ws"
 var capture_path := ""
+var look_at := Vector2(-1, -1)   # --look=x,y pins the cursor position (captures, headless checks)
 
 var model: Node3D
 var player: AnimationPlayer
@@ -40,6 +43,7 @@ var badge: Sprite3D
 var reactions: Node
 var speech: AudioStreamPlayer
 var menu: PopupMenu
+var gaze: Node
 var ws: Node
 var blink_controller: Node
 var claw_controller: Node
@@ -82,6 +86,10 @@ func parse_args() -> void:
 			ws_url = arg.trim_prefix("--ws=")
 		elif arg.begins_with("--capture="):
 			capture_path = arg.trim_prefix("--capture=")
+		elif arg.begins_with("--look="):
+			var parts := arg.trim_prefix("--look=").split(",")
+			if parts.size() == 2:
+				look_at = Vector2(float(parts[0]), float(parts[1]))
 
 func is_headless() -> bool:
 	return DisplayServer.get_name() == "headless"
@@ -247,6 +255,10 @@ func setup_reactions() -> void:
 	add_child(speech)
 	speech.setup(model)
 	speech.volume_db = linear_to_db(maxf(voice_volume, 0.001))
+	gaze = Gaze.new()
+	add_child(gaze)
+	gaze.setup(model, camera)
+	gaze.look_override = look_at
 
 func setup_bubble() -> void:
 	bubble = Bubble.new()
@@ -291,6 +303,8 @@ func setup_ws() -> void:
 func apply_appearance() -> void:
 	# Cel shading and the ink outline are part of her look, not options.
 	CelStyle.apply(model, true, true, SkinPalettes.colors(skin_id))
+	if gaze:
+		gaze.apply_materials()  # CelStyle just replaced the pupil material
 
 func cycle_skin() -> void:
 	var index: int = SkinPalettes.ORDER.find(skin_id)
@@ -407,9 +421,12 @@ func _on_speech_finished() -> void:
 
 # --- settings -------------------------------------------------------------------
 
+func settings_path() -> String:
+	return HEADLESS_SETTINGS_PATH if is_headless() else SETTINGS_PATH
+
 func restore_settings() -> void:
 	var config := ConfigFile.new()
-	var have := config.load(SETTINGS_PATH) == OK
+	var have := config.load(settings_path()) == OK
 	if have:
 		var saved_skin: Variant = config.get_value("appearance", "skin", "strawberry")
 		if saved_skin is String and SkinPalettes.SKINS.has(saved_skin):
@@ -437,7 +454,7 @@ func restore_settings() -> void:
 
 func save_settings() -> void:
 	var config := ConfigFile.new()
-	config.load(SETTINGS_PATH)
+	config.load(settings_path())
 	config.set_value("appearance", "skin", skin_id)
 	config.set_value("audio", "muted", muted)
 	config.set_value("audio", "quiet_until", quiet_until)
@@ -447,7 +464,7 @@ func save_settings() -> void:
 		var pos := DisplayServer.window_get_position()
 		config.set_value("window", "x", pos.x)
 		config.set_value("window", "y", pos.y)
-	var err := config.save(SETTINGS_PATH)
+	var err := config.save(settings_path())
 	if err != OK:
 		push_warning("could not save widget settings: " + error_string(err))
 
