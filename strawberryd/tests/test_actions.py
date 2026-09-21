@@ -214,8 +214,8 @@ async def test_voice_to_skip_end_to_end_through_the_daemon(aiohttp_client):
 async def test_vocabulary_comes_from_the_library_in_order_of_likelihood():
     spotify, toolbox, actor = make()
     names = await actor.vocabulary()
-    # now playing, favourites, saved (a listing far longer than tools.result_chars), playlists; no emoji
-    assert names == ["Nina Simone", "Daft Punk", "New Order", "Erik Satie", "Acid Techno"]
+    # now playing, playlists (no emoji), favourites, saved (a listing far longer than tools.result_chars)
+    assert names == ["Nina Simone", "Acid Techno", "Daft Punk", "New Order", "Erik Satie"]
     assert await actor.situation("music") == "Now playing on Spotify: Feeling Good by Nina Simone (album: I Put a Spell on You)."
     await toolbox.close()
 
@@ -230,8 +230,8 @@ async def test_daemon_merges_config_vocabulary_with_the_library(aiohttp_client):
     await daemon.start()
     assert daemon.vocabulary_task is None  # voice is off: no background refresh
     await daemon.refresh_vocabulary()
-    assert daemon.vocabulary == ["Kaelon", "Daft Punk", "Nina Simone", "New Order", "Erik Satie", "Acid Techno"]
-    assert daemon.hotwords() == "Kaelon, Daft Punk, Nina Simone, New Order, Erik Satie, Acid Techno"
+    assert daemon.vocabulary == ["Kaelon", "Daft Punk", "Nina Simone", "Acid Techno", "New Order", "Erik Satie"]
+    assert daemon.hotwords() == "Kaelon, Daft Punk, Nina Simone, Acid Techno, New Order, Erik Satie"
     config.voice.max_hotwords = 2
     assert daemon.hotwords() == "Kaelon, Daft Punk"
     assert (await (await client.get("/health")).json())["voice"]["hotwords"] == 6

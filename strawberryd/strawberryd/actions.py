@@ -182,6 +182,13 @@ async def spotify_vocabulary(toolbox: Toolbox, server: str) -> list[str]:
     if now.ok:
         add(*(data.get("track") or {}).get("artists", []))
     whole = 500_000  # these listings are parsed here, not read by a model: no truncation
+    # Playlists next: you ask for them by name ("play Acid Techno") and they are few.
+    playlists = await toolbox.call(server, "get_playlists", {"limit": 50}, result_chars=whole)
+    if playlists.ok:
+        for item in _json(playlists).get("playlists", []):
+            name = item.get("name", "")
+            if any(ch.isalpha() for ch in name):  # emoji-only playlist names help nobody
+                add(name)
     favourites = await toolbox.call(server, "get_favorites", result_chars=whole)
     if favourites.ok:
         for item in _json(favourites).get("favorites", []):
@@ -190,12 +197,6 @@ async def spotify_vocabulary(toolbox: Toolbox, server: str) -> list[str]:
     if saved.ok:
         for item in _json(saved).get("tracks", []):
             add(*item.get("artists", []))
-    playlists = await toolbox.call(server, "get_playlists", {"limit": 50}, result_chars=whole)
-    if playlists.ok:
-        for item in _json(playlists).get("playlists", []):
-            name = item.get("name", "")
-            if any(ch.isalpha() for ch in name):  # emoji-only playlist names help nobody
-                add(name)
     return names
 
 
