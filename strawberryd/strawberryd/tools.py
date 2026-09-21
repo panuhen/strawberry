@@ -105,7 +105,9 @@ def looks_like_error(text: str) -> bool:
         data = json.loads(text)
     except json.JSONDecodeError:
         return False
-    return isinstance(data, dict) and "error" in data and len(data) <= 2
+    if not isinstance(data, dict) or "error" not in data:
+        return False
+    return set(data) <= {"error", "status", "details", "code", "message"}
 
 
 class Server:
@@ -116,6 +118,9 @@ class Server:
         self.name = name
         self.config = config
         self.topic: str = config.get("topic", "other")
+        # Tools with consequences (saving, removing, changing playlists): withheld from the thinker
+        # unless the sentence asks for such a change (systemone.WANTS_LIBRARY_CHANGE).
+        self.careful: frozenset[str] = frozenset(config.get("careful", []))
         self.connect = connect
         self.connect_timeout_s = connect_timeout_s
         self.call_timeout_s = call_timeout_s
@@ -298,8 +303,9 @@ class Toolbox:
     async def close(self) -> None:
         await asyncio.gather(*(s.close() for s in self.servers.values()), return_exceptions=True)
 
-    async def tools_for(self, topic: str) -> list[ToolSpec]:
-        """The connected tools for a topic; servers that fail are skipped with a warning."""
+    async def tools_for(self, topic: str, careful: bool = True) -> list[ToolSpec]:
+        """The connected tools for a topic; servers that fail are skipped with a warning.
+        `careful=False` leaves out each server's careful tools (see Server.careful)."""
         chosen = [s for s in self.servers.values() if s.topic == topic]
         results = await asyncio.gather(*(s.ensure() for s in chosen), return_exceptions=True)
         specs: list[ToolSpec] = []
@@ -307,7 +313,7 @@ class Toolbox:
             if isinstance(outcome, Exception):
                 log.warning("tools: %s unavailable for %s: %s", server.name, topic, outcome)
                 continue
-            specs += server.tools
+            specs += [t for t in server.tools if careful or t.name not in server.careful]
         names = [s.name for s in specs]
         resolved = [
             ToolSpec(s.server, s.name, s.description, s.schema, s.name if names.count(s.name) == 1 else f"{s.server}_{s.name}")

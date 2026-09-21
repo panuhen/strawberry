@@ -242,7 +242,7 @@ class Daemon:
             situation = await self.actor.situation(route.topic)
             if self.vocabulary:
                 situation = f"{situation} Names in the user's library: {self.hotwords()}.".strip()
-            return await self.thinker.run(text, route.topic, situation)
+            return await self.thinker.run(text, route.topic, situation, careful=route.library_change >= 0.5)
         finally:
             reminder.cancel()
 

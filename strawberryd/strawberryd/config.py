@@ -138,9 +138,12 @@ class ToolsConfig:
     result_chars: int = 2000       # a tool result is cut here before any model reads it
     connect_timeout_s: float = 20.0
     call_timeout_s: float = 20.0
-    # name -> {topic, command, args, env, cwd}; topic is one of the gate's (music, calendar, notes, system)
+    # name -> {topic, command, args, env, cwd, careful}; topic is one of the gate's (music, calendar, notes,
+    # system); careful lists tools with consequences, offered to the thinker only when you ask for such a change
     servers: dict[str, dict[str, Any]] = field(default_factory=lambda: {
-        "spotify": {"topic": "music", "command": "spotify-mcp"},
+        "spotify": {"topic": "music", "command": "spotify-mcp",
+                    "careful": ["save_tracks", "remove_saved_tracks", "add_to_playlist", "favorite_current",
+                                "remove_favorite", "clear_favorites"]},
     })
 
 
@@ -293,7 +296,9 @@ def _validate(config: Config) -> None:
         env = server.get("env", {})
         if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
             raise ConfigError(f"tools.servers.{name}.env must be a table of strings")
-        unknown = set(server) - {"topic", "command", "args", "env", "cwd"}
+        if not all(isinstance(t, str) for t in server.get("careful", [])):
+            raise ConfigError(f"tools.servers.{name}.careful must be a list of tool names")
+        unknown = set(server) - {"topic", "command", "args", "env", "cwd", "careful"}
         if unknown:
             raise ConfigError(f"tools.servers.{name}: unknown keys {sorted(unknown)}")
     if config.tools.result_chars < 100:
@@ -422,6 +427,7 @@ def default_toml() -> str:
         'command = "spotify-mcp"        # or a full path, e.g. ~/spotify-mcp/.venv/bin/spotify-mcp',
         "# args = []",
         "# env = {}",
+        '# careful = ["save_tracks", "remove_saved_tracks", "add_to_playlist", "favorite_current", "remove_favorite", "clear_favorites"]',
         "",
         "[actions]",
         "enabled = true                 # act on requests: skip, pause, what's playing… (needs [tools] and [gate])",

@@ -41,7 +41,8 @@ SYSTEM = (
     "several matches, pick the most likely one. If a name in the sentence resembles one of the user's library names "
     "given below, or a well-known artist or track, assume that is what they said and search for that. Prefer a "
     "well-known interpretation of an odd phrase over a literal search of it. Never play a result just because its "
-    "title happens to contain the misheard words; when nothing well-known fits, do nothing and say what you heard. 'This song', 'this', 'it' mean whatever is playing now (given "
+    "title happens to contain the misheard words; when nothing well-known fits, do nothing and say what you heard. "
+    "Do only what was asked: 'play' means play, never save, like, remove or change a playlist unless told to. 'This song', 'this', 'it' mean whatever is playing now (given "
     "below when known; otherwise look it up first). When done, answer with ONE plain factual sentence for the "
     "user, in plain English, stating what you did and the result (name the track, artist, number). No "
     "preamble, no markdown, no questions. If it cannot be done, say so in one sentence and why."
@@ -134,13 +135,14 @@ class Thinker:
         log.info("thinker: %r (knowledge) -> %r in %.1fs", text, outcome.fact, self.last_s)
         return outcome
 
-    async def run(self, text: str, topic: str, context: str = "") -> Outcome:
-        """One request, start to finish. Never raises: a failure is an Outcome with ok=False."""
+    async def run(self, text: str, topic: str, context: str = "", careful: bool = False) -> Outcome:
+        """One request, start to finish. Never raises: a failure is an Outcome with ok=False.
+        `careful`: offer the servers' careful tools too (the sentence asked for such a change)."""
         self.calls += 1
         started = time.perf_counter()
         calls: list[ToolResult] = []
         try:
-            outcome = await asyncio.wait_for(self._run(text, topic, context, calls), self.config.timeout_s)
+            outcome = await asyncio.wait_for(self._run(text, topic, context, calls, careful), self.config.timeout_s)
         except asyncio.TimeoutError:
             outcome = Outcome("thought about it too long", "I tried, but my thinking took too long. Sorry.", False, tuple(calls))
         except ThinkerError as exc:
@@ -156,8 +158,8 @@ class Thinker:
         log.info("thinker: %r (%s) -> %s -> %r in %.1fs", text, topic, outcome.did, outcome.fact, self.last_s)
         return outcome
 
-    async def _run(self, text: str, topic: str, context: str, calls: list[ToolResult]) -> Outcome:
-        specs = await self.toolbox.tools_for(topic)
+    async def _run(self, text: str, topic: str, context: str, calls: list[ToolResult], careful: bool) -> Outcome:
+        specs = await self.toolbox.tools_for(topic, careful=careful)
         if not specs:
             return Outcome("looked for tools", f"I have nothing to do that with; no {topic} tools are answering.", False)
         tools = [s.for_ollama() for s in specs]

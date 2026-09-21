@@ -298,6 +298,24 @@
       "text": "who painted the Mona Lisa",
       "kind": "question",
       "topic": "other"
+    },
+    {
+      "text": "play it please",
+      "kind": "request",
+      "topic": "music",
+      "tool": "resume"
+    },
+    {
+      "text": "skip please",
+      "kind": "request",
+      "topic": "music",
+      "tool": "skip"
+    },
+    {
+      "text": "save this song",
+      "kind": "request",
+      "topic": "music",
+      "tool": "other"
     }
   ]
 }

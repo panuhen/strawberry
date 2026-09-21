@@ -41,8 +41,9 @@ class FakeQwen:
 
 def make(script: list, config: ThinkerConfig | None = None, tools: list[FakeTool] | None = None, handler=None):
     spotify = FakeSpotify()
-    session = FakeSession(tools or TOOLS + [FakeTool("search")], handler or spotify.handle)
-    toolbox = Toolbox(ToolsConfig(servers={"spotify": {"topic": "music", "command": "spotify"}}, preconnect=False),
+    session = FakeSession(tools or TOOLS + [FakeTool("search"), FakeTool("save_tracks")], handler or spotify.handle)
+    toolbox = Toolbox(ToolsConfig(servers={"spotify": {"topic": "music", "command": "spotify", "careful": ["save_tracks"]}},
+                                  preconnect=False),
                       connect=make_connect({"spotify": session}))
     qwen = FakeQwen(script)
     thinker = Thinker(config or ThinkerConfig(), toolbox, "qwen-test", chat=qwen)
@@ -81,6 +82,7 @@ async def test_tool_rounds_then_a_fact():
     assert "Feeling Good" in last["messages"][3]["content"]
     assert last["think"] is False and last["keep_alive"] == "10m" and last["options"]["num_ctx"] == 8192
     assert {t["function"]["name"] for t in last["tools"]} >= {"search", "play", "next"}
+    assert "save_tracks" not in {t["function"]["name"] for t in last["tools"]}  # careful, and nobody asked
     assert thinker.stats()["calls"] == 1 and thinker.stats()["last"]["fact"] == outcome.fact
     await toolbox.close()
 
@@ -215,3 +217,12 @@ async def test_daemon_sends_a_clear_question_without_tools_to_memory(aiohttp_cli
     # A request (not a question) for a topic without tools still falls through to chat.
     assert not thinker.can_handle("other")
     await daemon.close()
+
+
+async def test_careful_tools_appear_only_when_the_sentence_asks_for_a_library_change():
+    _, toolbox, qwen, thinker = make(["Saved.", "Played."])
+    await thinker.run("save this song", "music", careful=True)
+    assert "save_tracks" in {t["function"]["name"] for t in qwen.payloads[-1]["tools"]}
+    await thinker.run("play some jazz", "music", careful=False)
+    assert "save_tracks" not in {t["function"]["name"] for t in qwen.payloads[-1]["tools"]}
+    await toolbox.close()

@@ -260,6 +260,7 @@ KIND = Choice("kind", (
         "turn the volume down a bit", "make it louder", "set a timer for ten minutes",
         "remind me to call mum at five", "add this to my notes", "write down: buy milk",
         "open my email", "mute the music", "play something calmer", "queue up some Daft Punk",
+        "save this song", "like this track", "add this to my favourites", "put this on my running playlist",
     )),
     Option("question", "wants a fact looked up or read out", (
         "what song is this", "who sings this", "what's on my calendar tomorrow", "when is my next meeting",
@@ -274,7 +275,7 @@ KIND = Choice("kind", (
         "hello there", "good morning strawberry", "how was your night", "how are you doing today",
         "you're adorable", "you look lovely today", "I had a rough day", "I'm so tired today",
         "what do you think of this music", "do you like techno", "thanks strawberry", "good night",
-        "you're a menace", "I love this song",
+        "you're a menace", "I love this song", "that one's a banger", "this track is great", "what a tune",
     )),
     Option("other", "not aimed at her: a fragment, noise, someone else in the room", (
         "um", "hello hello testing", "is this thing on", "testing testing one two", "one two three",
@@ -359,12 +360,25 @@ HAS_ARGUMENT = Noul(
     )),
     no=Option("no", "a plain command with nothing to fill in", (
         "skip this", "pause", "next song", "what song is this", "turn it down a bit", "louder", "resume",
-        "who sings this", "stop the music", "lock the screen",
+        "who sings this", "stop the music", "lock the screen", "play it please", "skip please", "next one please",
+        "pause please", "can you play it", "music on please",
+    )),
+)
+
+WANTS_LIBRARY_CHANGE = Noul(
+    "wants_library_change",
+    yes=Option("yes", "asks to save, like, favourite, remove or add something to a playlist", (
+        "save this song", "like this one", "add this to my favourites", "put this on my running playlist",
+        "remove this from my liked songs", "favourite this track", "add it to the queue and save it",
+    )),
+    no=Option("no", "playing, skipping, pausing, volume, asking about the music", (
+        "play some Nina Simone", "skip this", "what song is this", "turn it down", "queue up Blue Monday",
+        "play my running playlist", "pause", "who sings this",
     )),
 )
 
 TOOL_QUESTIONS: dict[str, Choice] = {"music": MUSIC_TOOL}
-ROUTING: tuple[Question, ...] = (KIND, TOPIC, IS_URGENT, IS_ABOUT_HER, HAS_ARGUMENT, *TOOL_QUESTIONS.values())
+ROUTING: tuple[Question, ...] = (KIND, TOPIC, IS_URGENT, IS_ABOUT_HER, HAS_ARGUMENT, WANTS_LIBRARY_CHANGE, *TOOL_QUESTIONS.values())
 ACTIONABLE = ("request", "question")
 
 
@@ -380,6 +394,7 @@ class Route:
     tool: str = ""             # the topic's tool question, when there is one: "skip", "now_playing", "other"…
     tool_confidence: float = 0.0
     has_argument: float = 0.0  # p(yes): something to fill in that needs the thinker
+    library_change: float = 0.0  # p(yes): asks to save/like/remove/add to a playlist (careful tools)
     answers: dict[str, Answer] = field(default_factory=dict, compare=False)
     ms: float = 0.0
 
@@ -395,6 +410,7 @@ class Route:
             "tool": self.tool,
             "tool_confidence": round(self.tool_confidence, 4),
             "has_argument": round(self.has_argument, 4),
+            "library_change": round(self.library_change, 4),
             "ms": round(self.ms, 1),
             "answers": {k: v.to_dict() for k, v in self.answers.items()},
         }
@@ -495,6 +511,7 @@ class Gate:
             tool=(tool.choice or "") if tool else "",
             tool_confidence=tool.confidence if tool else 0.0,
             has_argument=answers["has_argument"].score or 0.0,
+            library_change=answers["wants_library_change"].score or 0.0,
             answers=answers,
             ms=ms,
         )

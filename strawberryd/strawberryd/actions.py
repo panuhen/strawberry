@@ -76,9 +76,16 @@ def _track(data: dict[str, Any]) -> str:
 
 
 def _failed(verb: str, result: ToolResult) -> Outcome:
-    detail = (_json(result).get("error") or result.text.strip().splitlines()[0][:160]) if result.text else "no answer"
+    data = _json(result)
+    detail = (data.get("error") or result.text.strip().splitlines()[0][:160]) if result.text else "no answer"
     detail = str(detail).removeprefix("error: ")
-    return Outcome(f"tried to {verb}", f"I tried to {verb}, but Spotify said: {detail}.", False, (result,))
+    if "Restriction violated" in str(data.get("details", "")):
+        said = "Spotify won't do that right now (already doing it, or the device refuses)"
+    elif data.get("status") == 403:
+        said = "Spotify says that's not allowed for this app"
+    else:
+        said = f"Spotify said: {detail}"
+    return Outcome(f"tried to {verb}", f"I tried to {verb}, but {said}.", False, (result,))
 
 
 async def _current(toolbox: Toolbox, server: str) -> tuple[str, dict[str, Any], ToolResult]:
@@ -124,6 +131,9 @@ async def spotify_pause(toolbox: Toolbox, server: str) -> Outcome:
 
 
 async def spotify_resume(toolbox: Toolbox, server: str) -> Outcome:
+    track, data, now = await _current(toolbox, server)
+    if now.ok and track and data.get("playing", False):
+        return Outcome("checked the player", f"It's already playing: {track}.", True, (now,))  # play() would 403
     return await _spotify_step(toolbox, server, "play", "resume", "started the music again", "Playing again:")
 
 

@@ -107,6 +107,7 @@ def test_result_text_and_soft_errors():
     assert result_text(FakeResult([], structured_content={"x": 1})) == '{"x": 1}'
     assert looks_like_error('{"error": "bad"}')
     assert looks_like_error('{"error": "bad", "code": 401}')
+    assert looks_like_error('{"error": "Permission denied. Check app scopes.", "status": 403, "details": "Restriction violated"}')
     assert not looks_like_error('{"error": "bad", "track": "x", "artist": "y"}')  # a record that happens to mention an error
     assert not looks_like_error("Skipped.")
     assert not looks_like_error("{not json")
@@ -256,4 +257,12 @@ async def test_real_server_that_exits_is_reported():
     box = Toolbox(config)
     assert await box.tools_for("test") == []
     assert box.servers["echo"].state == "failed" and box.servers["echo"].failed
+    await box.close()
+
+
+async def test_careful_tools_are_withheld_unless_asked():
+    session = FakeSession([FakeTool("play"), FakeTool("save_tracks"), FakeTool("clear_favorites")], echo_handler)
+    box = toolbox({"spotify": {"topic": "music", "command": "music", "careful": ["save_tracks", "clear_favorites"]}}, {"music": session})
+    assert [s.name for s in await box.tools_for("music", careful=False)] == ["play"]
+    assert [s.name for s in await box.tools_for("music")] == ["play", "save_tracks", "clear_favorites"]
     await box.close()

@@ -35,6 +35,9 @@ class FakeSpotify:
 
     async def handle(self, name: str, arguments: dict) -> FakeResult:
         self.log.append(name)
+        if self.broken == "restricted":
+            return FakeResult([FakeContent(json.dumps({"error": "Permission denied. Check app scopes.", "status": 403,
+                                                       "details": "http status: 403 ... Player command failed: Restriction violated, reason: UNKNOWN"}))])
         if self.broken:
             return FakeResult([FakeContent(json.dumps({"error": "error: no active device"}))])
         if name == "next":
@@ -130,6 +133,8 @@ async def test_every_spotify_reflex():
     assert pause.fact == "Paused." and spotify.playing is False
     resume = await actor.act("resume", route("resume", "resume"))
     assert spotify.playing is True and resume.fact == "Playing again: Feeling Good by Nina Simone."
+    again = await actor.act("play it please", route("play it please", "resume"))
+    assert again.ok and again.fact == "It's already playing: Feeling Good by Nina Simone." and spotify.log[-1] == "get_current_track"
     prev = await actor.act("previous", route("previous", "previous"))
     assert prev.did == "went back to the previous track" and prev.fact == "Back to Blue Monday by New Order."
     down = await actor.act("quieter", route("quieter", "volume_down"))
@@ -152,6 +157,10 @@ async def test_failures_become_a_failed_action_event():
     canned = await CannedReactor().react(outcome.event("skip this song"))
     assert canned.emotion == "alert" and not canned.text  # nothing to add to the fact
     await toolbox.close()
+    _, toolbox2, restricted = make(broken="restricted")
+    outcome = await restricted.act("skip", route("skip", "skip"))
+    assert outcome.fact == "I tried to skip, but Spotify won't do that right now (already doing it, or the device refuses)."
+    await toolbox2.close()
 
 
 async def test_when_the_reflex_does_not_apply_she_answers_as_chat():
