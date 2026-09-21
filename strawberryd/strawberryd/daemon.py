@@ -162,14 +162,16 @@ class Daemon:
             # else, including `offer` for now, she answers as chat.
             route = await self.route(event.title)
             if route is not None:
-                if route.decision == "act" and route.topic == "music":
+                armed = route.decision == "act" and route.topic == "music"
+                if armed:
                     # Set before acting: the MPRIS doorway reports the new track while the skip
                     # is still confirming it, and that reaction would come out ahead of hers.
                     self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
                 outcome = await self.actor.act(event.title, route)
                 if outcome is not None:
                     return await self.report(outcome.event(event.title), outcome.ok)
-                self.quiet_media_until = 0.0  # nothing was done; the music is not hers to explain
+                if armed:
+                    self.quiet_media_until = 0.0  # nothing was done; the music is not hers to explain
         performance = decorate(event, await self.reactor.react(event))
         sent = await self.perform(performance)
         return performance, sent
