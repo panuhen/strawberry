@@ -44,7 +44,7 @@ def make_daemon(transcript: str = "hello there", recording: Recording | None = N
     rec = recording or fake_recording()
     listener = Listener(
         config.voice,
-        transcriber_factory=lambda cfg: (lambda audio: transcript),
+        transcriber_factory=lambda cfg: (lambda audio, hotwords="": transcript),
         recorder=recorder or (lambda *args, **kwargs: rec),
         source_picker=lambda preferred: source,
     )
@@ -196,7 +196,7 @@ async def test_bluetooth_profile_is_switched_and_restored_around_recording():
     config.gate.enabled = False
     config.tools.enabled = False
     config.thinker.enabled = False
-    listener = Listener(VoiceConfig(enabled=True), transcriber_factory=lambda cfg: (lambda a: "hi"),
+    listener = Listener(VoiceConfig(enabled=True), transcriber_factory=lambda cfg: (lambda a, hotwords="": "hi"),
                         recorder=recorder, microphone=microphone)
     daemon = Daemon(reactor=CannedReactor(), config=config, listener=listener)
     await daemon.start()
@@ -223,3 +223,26 @@ async def test_pokes_are_debounced():
 def test_dbfs():
     assert dbfs(np.zeros(160, np.float32)) == pytest.approx(-120.0)
     assert dbfs(np.full(160, 0.1, np.float32)) == pytest.approx(-20.0, abs=0.01)
+
+
+async def test_the_recogniser_gets_the_daemons_hotwords():
+    heard = {}
+
+    def transcriber(audio, hotwords=""):
+        heard["hotwords"] = hotwords
+        return "play some daft punk"
+
+    config = Config()
+    config.brain.enabled = config.speech.enabled = config.gate.enabled = config.tools.enabled = config.thinker.enabled = False
+    config.voice = VoiceConfig(enabled=True, vocabulary=["Daft Punk", "Kaelon"])
+    listener = Listener(config.voice, transcriber_factory=lambda cfg: transcriber, recorder=lambda *a, **k: fake_recording(),
+                        source_picker=lambda preferred: "alsa_input.test")
+    daemon = Daemon(reactor=CannedReactor(), config=config, listener=listener)
+    await daemon.start()
+    assert daemon.hotwords() == "Daft Punk, Kaelon"
+    daemon.listen()
+    await daemon.listen_task
+    assert heard["hotwords"] == "Daft Punk, Kaelon"
+    config.voice.hotwords = False
+    assert daemon.hotwords() == ""
+    await daemon.close()

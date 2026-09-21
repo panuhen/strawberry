@@ -72,6 +72,12 @@ class VoiceConfig:
     min_speech_s: float = 0.4
     level_db: float = -50.0       # speech must be louder than this (and than the room + 12 dB); webcam mics are quiet
     beam_size: int = 1
+    # Names the recogniser should know. Yours here; artists and playlists come from the music
+    # server on their own (hotwords), refreshed now and then. "Daft Punk" is not a common word.
+    vocabulary: list[str] = field(default_factory=list)
+    hotwords: bool = True
+    max_hotwords: int = 60
+    vocabulary_refresh_s: float = 600.0
 
 
 @dataclass
@@ -264,6 +270,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("voice.max_seconds and voice.silence_s must be positive")
     if config.voice.device not in ("cpu", "cuda", "auto"):
         raise ConfigError("voice.device must be cpu, cuda, or auto")
+    if not all(isinstance(w, str) for w in config.voice.vocabulary):
+        raise ConfigError("voice.vocabulary must be a list of strings")
     if config.gate.temperature <= 0:
         raise ConfigError("gate.temperature must be positive")
     if config.gate.neighbours < 1:
@@ -395,6 +403,7 @@ def default_toml() -> str:
         "bluetooth = true               # auto prefers a Bluetooth headset mic (its profile is switched while she listens)",
         "max_seconds = 15.0",
         "silence_s = 1.1                # quiet after speech that ends the recording",
+        'vocabulary = []                # names she should recognise, e.g. ["Kaelon", "Panu"]; artists come from Spotify',
         "",
         "[gate]",
         "enabled = true                 # sorts what you said: chat, or a request/question for the action path",

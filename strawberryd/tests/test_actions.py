@@ -57,10 +57,18 @@ class FakeSpotify:
         if name == "set_volume":
             self.volume = arguments["volume"]
             return FakeResult([FakeContent(json.dumps({"success": True}))])
+        if name == "get_favorites":
+            return FakeResult([FakeContent(json.dumps({"favorites": [{"name": "Around the World", "artists": ["Daft Punk"]}]}))])
+        if name == "get_saved_tracks":
+            return FakeResult([FakeContent(json.dumps({"tracks": [{"name": "Blue Monday", "artists": ["New Order"]},
+                                                                  {"name": "Feeling Good", "artists": ["Nina Simone"]}]}))])
+        if name == "get_playlists":
+            return FakeResult([FakeContent(json.dumps({"playlists": [{"name": "Acid Techno"}, {"name": "🥲"}]}))])
         raise KeyError(name)
 
 
-TOOLS = [FakeTool(n) for n in ("next", "previous", "pause", "play", "get_current_track", "get_devices", "set_volume")]
+TOOLS = [FakeTool(n) for n in ("next", "previous", "pause", "play", "get_current_track", "get_devices", "set_volume",
+                               "get_favorites", "get_saved_tracks", "get_playlists")]
 
 
 def make(broken: bool = False, actions: ActionsConfig | None = None):
@@ -199,4 +207,30 @@ async def test_voice_to_skip_end_to_end_through_the_daemon(aiohttp_client):
     daemon.quiet_media_until = 0.0
     response = await client.post("/event", json={"source": "media", "app": "Spotify", "title": "Nina Simone — Feeling Good"})
     assert daemon.performed == performed + 1
+    await daemon.close()
+
+
+async def test_vocabulary_comes_from_the_library_in_order_of_likelihood():
+    spotify, toolbox, actor = make()
+    names = await actor.vocabulary()
+    assert names == ["Nina Simone", "Daft Punk", "New Order", "Acid Techno"]  # now playing, favourites, saved, playlists; no emoji
+    assert await actor.situation("music") == "Now playing on Spotify: Feeling Good by Nina Simone (album: I Put a Spell on You)."
+    await toolbox.close()
+
+
+async def test_daemon_merges_config_vocabulary_with_the_library(aiohttp_client):
+    config = Config()
+    config.brain.enabled = config.speech.enabled = config.voice.enabled = config.gate.enabled = config.thinker.enabled = False
+    config.voice.vocabulary = ["Kaelon", "Daft Punk"]
+    spotify, toolbox, actor = make()
+    daemon = Daemon(reactor=CannedReactor(), config=config, toolbox=toolbox, actor=actor)
+    client = await aiohttp_client(create_app(daemon))
+    await daemon.start()
+    assert daemon.vocabulary_task is None  # voice is off: no background refresh
+    await daemon.refresh_vocabulary()
+    assert daemon.vocabulary == ["Kaelon", "Daft Punk", "Nina Simone", "New Order", "Acid Techno"]
+    assert daemon.hotwords() == "Kaelon, Daft Punk, Nina Simone, New Order, Acid Techno"
+    config.voice.max_hotwords = 2
+    assert daemon.hotwords() == "Kaelon, Daft Punk"
+    assert (await (await client.get("/health")).json())["voice"]["hotwords"] == 5
     await daemon.close()

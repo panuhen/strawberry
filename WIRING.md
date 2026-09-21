@@ -213,6 +213,8 @@ One session (`Listener.session`):
 
 `/health` shows `voice` (model, ready, phase, sessions, empty, last_transcript, last_ms). If whisper cannot load (no model, no network for the first download), voice is disabled with the reason and the rest of the daemon is unaffected. `scripts/check_config.toml` disables voice for the acceptance run; the flow is unit-tested with fake recorder and transcriber (`tests/test_voice.py`).
 
+**Names.** Whisper `small` hears "Daft Punk" as Dothpunk, Duff Punk, Dove Punk (2026-09-21, three tries; the thinker then played a real artist called Dovepunk). faster-whisper's `hotwords` biases decoding toward given names, so the daemon keeps a vocabulary: `[voice] vocabulary` from the config (your own names) plus what the music server knows, in order of likelihood: the artist playing now, favourites, the last 50 saved tracks' artists, playlist names (`actions.spotify_vocabulary`, refreshed every `vocabulary_refresh_s` = 10 min, first 2 s after start). The first `max_hotwords` (60) go to every transcription. An artist you have never saved gets no help from this; `[voice] model = "medium"` is the next lever, about three times slower on the CPU. `/health.voice.hotwords` is the count.
+
 **Hotkey.** `bin/strawberry hotkey [COMBO]` writes a GNOME custom keyboard shortcut (`gsettings`, default `<Super><Shift>space`; `<Super><Alt>s` is GNOME's screen-reader toggle) that runs `bin/strawberry listen`, i.e. `curl -X POST /listen`. GNOME owns the key, so it is identical on X11 and Wayland and the daemon never grabs keyboard input. `--remove` undoes it. Phase 6 routes voice through the action model with tools; today it goes to the reaction path like everything else.
 
 ---

@@ -164,6 +164,44 @@ Situation = Callable[[Toolbox, str], Awaitable[str]]
 SITUATIONS: dict[str, Situation] = {"spotify": spotify_situation}
 
 
+async def spotify_vocabulary(toolbox: Toolbox, server: str) -> list[str]:
+    """Names whisper should know: what is playing, favourites, recent saves, playlists.
+
+    'Daft Punk' came through as Dothpunk, Duff Punk and Dove Punk before the recogniser was
+    told the names; the third one played a real artist called Dovepunk. Order matters: the
+    list is cut to voice.max_hotwords, so the most likely names come first.
+    """
+    names: list[str] = []
+
+    def add(*values: Any) -> None:
+        for value in values:
+            if isinstance(value, str) and value.strip() and value not in names and len(value) <= 40:
+                names.append(value.strip())
+
+    track, data, now = await _current(toolbox, server)
+    if now.ok:
+        add(*(data.get("track") or {}).get("artists", []))
+    favourites = await toolbox.call(server, "get_favorites")
+    if favourites.ok:
+        for item in _json(favourites).get("favorites", []):
+            add(*item.get("artists", []))
+    saved = await toolbox.call(server, "get_saved_tracks", {"limit": 50})
+    if saved.ok:
+        for item in _json(saved).get("tracks", []):
+            add(*item.get("artists", []))
+    playlists = await toolbox.call(server, "get_playlists", {"limit": 50})
+    if playlists.ok:
+        for item in _json(playlists).get("playlists", []):
+            name = item.get("name", "")
+            if any(ch.isalpha() for ch in name):  # emoji-only playlist names help nobody
+                add(name)
+    return names
+
+
+Vocabulary = Callable[[Toolbox, str], Awaitable[list[str]]]
+VOCABULARIES: dict[str, Vocabulary] = {"spotify": spotify_vocabulary}
+
+
 REFLEXES: dict[str, dict[str, Reflex]] = {
     "spotify": {
         "skip": spotify_skip,
@@ -243,6 +281,19 @@ class Actor:
                 if line:
                     lines.append(line)
         return " ".join(lines)
+
+    async def vocabulary(self) -> list[str]:
+        """Names from every server that can offer them, for the speech recogniser."""
+        names: list[str] = []
+        for name in self.toolbox.servers:
+            if name in VOCABULARIES:
+                try:
+                    for word in await asyncio.wait_for(VOCABULARIES[name](self.toolbox, name), 20.0):
+                        if word not in names:
+                            names.append(word)
+                except asyncio.TimeoutError:
+                    log.warning("actions: %s vocabulary timed out", name)
+        return names
 
     def stats(self) -> dict[str, Any]:
         return {"enabled": self.config.enabled, "acted": self.acted, "failed": self.failed, "deferred": self.deferred,

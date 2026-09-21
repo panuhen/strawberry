@@ -54,6 +54,11 @@ class Daemon:
         # After she changes the music herself, the MPRIS doorway reports the new track; her
         # account of the action already covers it, so that one reaction is swallowed.
         self.quiet_media_until = 0.0
+        # Names for the speech recogniser: yours from the config, plus what the music server
+        # knows (artists, playlists), refreshed in the background (voice.vocabulary_refresh_s).
+        self.vocabulary: list[str] = list(self.config.voice.vocabulary)
+        self.vocabulary_task: asyncio.Task | None = None
+        self.vocabulary_at = 0.0
 
     def _default_reactor(self) -> Reactor:
         canned = CannedReactor()
@@ -77,6 +82,8 @@ class Daemon:
         await self.gate.start()
         await self.toolbox.start()
         await self.thinker.start()
+        if self.config.voice.enabled and self.config.voice.hotwords and self.toolbox.servers:
+            self.vocabulary_task = asyncio.get_running_loop().create_task(self._vocabulary_loop())
 
     async def close(self) -> None:
         close = getattr(self.reactor, "close", None)
@@ -87,6 +94,8 @@ class Daemon:
         await self.gate.close()
         await self.toolbox.close()
         await self.thinker.close()
+        if self.vocabulary_task and not self.vocabulary_task.done():
+            self.vocabulary_task.cancel()
         if self.listen_task and not self.listen_task.done():
             self.listen_task.cancel()
 
@@ -149,6 +158,30 @@ class Daemon:
         self.tempo_at = time.monotonic()
         return await self.hub.send({"tempo": tempo})
 
+    async def refresh_vocabulary(self) -> None:
+        names = list(self.config.voice.vocabulary)
+        for word in await self.actor.vocabulary():
+            if word not in names:
+                names.append(word)
+        self.vocabulary = names
+        self.vocabulary_at = time.monotonic()
+        log.info("voice: %d names for the recogniser (%s…)", len(names), ", ".join(names[:5]))
+
+    async def _vocabulary_loop(self) -> None:
+        await asyncio.sleep(2.0)  # let the servers preconnect
+        while True:
+            try:
+                await self.refresh_vocabulary()
+            except Exception as exc:  # a library call failing must not end the loop
+                log.warning("voice: vocabulary refresh failed (%s)", exc)
+            await asyncio.sleep(self.config.voice.vocabulary_refresh_s)
+
+    def hotwords(self) -> str:
+        """The recogniser's hint: the first max_hotwords names, comma separated."""
+        if not self.config.voice.hotwords:
+            return ""
+        return ", ".join(self.vocabulary[: self.config.voice.max_hotwords])
+
     async def route(self, text: str) -> Route | None:
         """The gate's reading of a spoken sentence (WIRING.md §8a); None means "treat as chat"."""
         return await self.gate.route(text)
@@ -178,6 +211,9 @@ class Daemon:
                 if outcome is None and route.decision == "act" and self.thinker.can_handle(route.topic):
                     outcome = await self.think(event.title, route)
                 if outcome is not None:
+                    if armed:
+                        # Again after the action: the thinker can take longer than the window.
+                        self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
                     return await self.report(outcome.event(event.title), outcome.ok)
                 if armed:
                     self.quiet_media_until = 0.0  # nothing was done; the music is not hers to explain

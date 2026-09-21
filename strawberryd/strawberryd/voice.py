@@ -240,10 +240,11 @@ def whisper_transcriber(voice: VoiceConfig) -> Transcriber:
 
     model = WhisperModel(voice.model, device=voice.device, compute_type=voice.compute_type)
 
-    def transcribe(audio: np.ndarray) -> str:
+    def transcribe(audio: np.ndarray, hotwords: str = "") -> str:
+        # `hotwords` biases decoding toward these names without asserting they were said.
         segments, _info = model.transcribe(
             audio, language=voice.language or None, beam_size=voice.beam_size, vad_filter=True,
-            condition_on_previous_text=False,
+            condition_on_previous_text=False, hotwords=hotwords or None,
         )
         return " ".join(seg.text.strip() for seg in segments).strip()
 
@@ -351,7 +352,8 @@ class Listener:
             await daemon.perform(Performance(state="thinking"))
             text = ""
             if rec.speech_seconds > 0.0 and self.transcriber is not None:
-                text = await asyncio.to_thread(self.transcriber, rec.audio)
+                hotwords = daemon.hotwords() if hasattr(daemon, "hotwords") else ""
+                text = await asyncio.to_thread(self.transcriber, rec.audio, hotwords)
             text = " ".join(text.split())[:500]
             self.last_ms = (time.perf_counter() - started) * 1000
             self.last_transcript = text or None

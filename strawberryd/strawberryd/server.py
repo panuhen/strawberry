@@ -97,7 +97,7 @@ async def health(request: web.Request) -> web.Response:
             "uptime_s": round(daemon.uptime, 1),
             "brain": daemon.brain_stats(),
             "speech": daemon.speaker.stats(),
-            "voice": daemon.listener.stats(),
+            "voice": daemon.listener.stats() | {"hotwords": len(daemon.vocabulary)},
             "gate": daemon.gate.stats(),
             "tools": daemon.toolbox.stats(),
             "actions": daemon.actor.stats(),
