@@ -28,6 +28,7 @@ def main() -> None:
     parser.add_argument("--tool", metavar=("SERVER", "NAME"), nargs=2, default=None, help="call one MCP tool and print its result, exit")
     parser.add_argument("--args", metavar="JSON", default="{}", help="with --tool: the arguments as a JSON object")
     parser.add_argument("--think", metavar="TEXT", default=None, help="run TEXT through the thinker with the topic's tools (WIRING §8b), exit")
+    parser.add_argument("--talk", action="store_true", help="type to her: each line goes through the running daemon as if spoken; shows the routing")
     parser.add_argument("--topic", default="music", help="with --think: which tools (default music)")
     parser.add_argument("--version", action="version", version=f"strawberryd {__version__}")
     args = parser.parse_args()
@@ -68,6 +69,8 @@ def main() -> None:
         sys.exit(tools(config, args.tools, args.tool, args.args))
     if args.think is not None:
         sys.exit(think(config, args.think, args.topic))
+    if args.talk:
+        sys.exit(talk(config))
 
     logging.basicConfig(
         level=config.daemon.log_level.upper(),
@@ -141,6 +144,62 @@ def tools(config, topic: str | None, call: list[str] | None, arguments: str) -> 
             await toolbox.close()
 
     return asyncio.run(run_once())
+
+
+def talk(config) -> int:
+    """`strawberryd --talk`: a terminal mouth. Each line is posted to the running daemon as a voice
+    event, so the gate, the reflexes and the thinker treat it exactly like a spoken sentence and
+    she answers on the desktop as well as here. After each reply the routing is shown."""
+    import urllib.error
+    import urllib.request
+
+    base = f"http://{config.daemon.host}:{config.daemon.port}"
+
+    def get(path: str):
+        with urllib.request.urlopen(base + path, timeout=5) as response:
+            return json.loads(response.read())
+
+    def post(path: str, body: dict):
+        request = urllib.request.Request(base + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return json.loads(response.read())
+
+    try:
+        health = get("/health")
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"strawberryd is not answering at {base} ({exc}); start it with: strawberry daemon", file=sys.stderr)
+        return 1
+    print(f"talking to strawberryd at {base}; gate {'ready' if health['gate']['ready'] else 'off'}, "
+          f"thinker {health['thinker']['model'] or 'off'}. Empty line or Ctrl-D to leave.")
+    while True:
+        try:
+            line = input("you: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if not line:
+            return 0
+        try:
+            reply = post("/event", {"source": "voice", "title": line})
+            health = get("/health")
+        except (urllib.error.URLError, OSError) as exc:
+            print(f"  (daemon error: {exc})", file=sys.stderr)
+            continue
+        print(f"she: {reply['performance'].get('text', '')}")
+        route = health["gate"].get("last_route") or {}
+        if route.get("text") == line:
+            tool = f" tool {route['tool']} {route['tool_confidence']:.2f}" if route.get("tool") else ""
+            print(f"     [{route['kind']}/{route['topic']} {route['confidence']:.2f} -> {route['decision']}{tool} arg {route['has_argument']:.2f}]")
+        action = health["actions"].get("last") or {}
+        if action.get("asked") == line:
+            calls = ", ".join(f"{c['server']}.{c['name']}" for c in action.get("calls", []))
+            print(f"     [reflex {action['tool']}: {calls} in {action['ms']:.0f} ms]")
+        thought = health["thinker"].get("last") or {}
+        if thought.get("asked") == line:
+            calls = ", ".join(f"{c['server']}.{c['name']}" for c in thought.get("calls", [])) or "no tools"
+            print(f"     [thinker: {calls} in {thought['s']:.1f} s]")
+        if health["offers"].get("open"):
+            print("     [offer open: answer yes or no]")
 
 
 def think(config, text: str, topic: str) -> int:

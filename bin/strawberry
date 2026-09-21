@@ -15,6 +15,7 @@
 #   strawberry tools [TOPIC]         list the MCP tools she can reach
 #   strawberry tool SERVER NAME [JSON]  call one MCP tool by hand, e.g. strawberry tool spotify next
 #   strawberry think TEXT [TOPIC]    run TEXT through the thinker (Qwen + the topic's tools) by hand
+#   strawberry talk                  type to her: each line goes through the daemon as if spoken, routing shown
 #   strawberry hotkey [COMBO|--remove]  GNOME shortcut for `listen` (default <Super><Shift>space)
 #   strawberry install    start on login: systemd user units for daemon + watchers, autostart for the widget
 #   strawberry uninstall  undo install (she only runs when you launch her)
@@ -241,6 +242,8 @@ PY
     exec "$D" --route "$*" ;;
   tools)
     shift; exec "$D" --tools ${1:+"$1"} ;;
+  talk)
+    exec "$D" --talk ;;
   think)
     shift; [ $# -ge 1 ] || { echo "usage: strawberry think TEXT [TOPIC]" >&2; exit 2; }
     exec "$D" --think "$1" --topic "${2:-music}" ;;
