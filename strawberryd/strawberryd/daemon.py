@@ -302,11 +302,14 @@ class Daemon:
             reminder.cancel()
 
     QUIP_WORDS = 10
+    QUIP_UNTIL_CHARS = 200   # a fact this long is a paragraph already; no quip after it
 
     async def report(self, event: Event, ok: bool) -> tuple[Performance, int]:
         """Say what she did: the fact (event.body, written by code) and the reactor's quip after it."""
         performance = decorate(event, await self.reactor.react(event))
         quip = " ".join((performance.text or "").split()[: self.QUIP_WORDS]).strip()
+        if len(event.body) > self.QUIP_UNTIL_CHARS:
+            quip = ""
         text = f"{event.body} {quip}".strip() if quip else event.body
         performance = replace(performance, text=text, emotion=performance.emotion if ok else "alert")
         sent = await self.perform(performance)

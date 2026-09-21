@@ -224,6 +224,10 @@ def tidy_sentence(text: str, limit: int = 380) -> str:
     line = re.sub(r"[*_`#>]+", "", text.strip().split("\n")[0])
     line = " ".join(line.split())
     if len(line) > limit:
-        cut = line[:limit].rsplit(" ", 1)[0]
-        line = cut.rstrip(",;:") + "…"
+        # Cut at the last sentence end that fits; only when there is none, at a word.
+        ends = [m.end() for m in re.finditer(r"[.!?][\"')]?(?=\s)", line[:limit])]
+        if ends and ends[-1] > limit // 3:
+            line = line[: ends[-1]].strip()
+        else:
+            line = line[:limit].rsplit(" ", 1)[0].rstrip(",;:") + "…"
     return line

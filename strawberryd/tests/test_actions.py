@@ -245,3 +245,22 @@ async def test_daemon_merges_config_vocabulary_with_the_library(aiohttp_client):
     assert daemon.hotwords() == "Kaelon, Daft Punk"
     assert (await (await client.get("/health")).json())["voice"]["hotwords"] == 6
     await daemon.close()
+
+
+async def test_no_quip_after_a_paragraph_long_fact():
+    from strawberryd.contract import Performance
+
+    class Quipper:
+        async def react(self, event, context=""):
+            return Performance(state="talking", text="Frankly an upgrade.", emotion="happy")
+
+    config = Config()
+    config.brain.enabled = config.speech.enabled = config.voice.enabled = config.gate.enabled = False
+    config.tools.enabled = config.thinker.enabled = False
+    daemon = Daemon(reactor=Quipper(), config=config)
+    short = Outcome("skipped", "Skipped. Now Blue Monday by New Order.", True).event("skip")
+    performance, _ = await daemon.report(short, True)
+    assert performance.text == "Skipped. Now Blue Monday by New Order. Frankly an upgrade."
+    long = Outcome("answered", "Led Zeppelin were a British rock band formed in London in 1968. " * 4, True).event("tell me")
+    performance, _ = await daemon.report(long, True)
+    assert performance.text == long.body and "upgrade" not in performance.text

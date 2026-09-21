@@ -55,6 +55,9 @@ def test_tidy_sentence():
     assert tidy_sentence("  spaced   out  ") == "spaced out"
     long = tidy_sentence("word " * 100, limit=40)
     assert long.endswith("…") and len(long) <= 42
+    prose = "Led Zeppelin were a British rock band. They formed in London in 1968. Their fourth album sold very well indeed."
+    assert tidy_sentence(prose, limit=80) == "Led Zeppelin were a British rock band. They formed in London in 1968."
+    assert tidy_sentence('She said "yes." Then she left the room quietly.', limit=20) == 'She said "yes."'
 
 
 async def test_tool_rounds_then_a_fact():
