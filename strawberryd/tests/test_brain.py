@@ -233,3 +233,14 @@ async def test_timeout_schedules_a_background_rewarm(monkeypatch):
     await reactor.react(Event(source="git", title="repo", body="another"))
     assert not warmed.is_set()
     reactor.rewarm.cancel()
+
+
+def test_describe_adds_the_ledger_to_a_voice_event_only():
+    from strawberryd.brain import describe
+    from strawberryd.events import Event
+
+    voice = Event(source="voice", title="the other one")
+    assert describe(voice, "Recent exchanges:\n- x").endswith("said: the other one\nRecent exchanges:\n- x")
+    assert describe(voice) == "source: voice (the user is talking to you; reply to them)\nsaid: the other one"
+    media = Event(source="media", app="Spotify", title="x")
+    assert describe(media, "ignored") == describe(media)

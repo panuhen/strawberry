@@ -14,6 +14,7 @@ from .config import Config
 from .contract import Performance
 from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
+from .ledger import Ledger
 from .reactions import decorate
 from .speech import Speaker
 from .systemone import Gate, Route
@@ -59,6 +60,11 @@ class Daemon:
         self.vocabulary: list[str] = list(self.config.voice.vocabulary)
         self.vocabulary_task: asyncio.Task | None = None
         self.vocabulary_at = 0.0
+        # Her memory across turns (§8b), and an open offer ("Want me to do that?") awaiting a yes.
+        self.ledger = Ledger(self.config.actions.ledger_turns, self.config.actions.ledger_age_s)
+        self.offer: tuple[str, Route, float] | None = None   # (sentence, its route, expires at monotonic)
+        self.offers = 0
+        self.offers_taken = 0
 
     def _default_reactor(self) -> Reactor:
         canned = CannedReactor()
@@ -197,32 +203,77 @@ class Daemon:
             # Posted by hand (or by a future doorway that did something): body is the fact.
             return await self.report(event, event.category != "failed")
         if event.source == "voice" and event.title:
-            # A spoken sentence goes through the gate (§8a); a clear request she can act on is
-            # done first, and what she says is her account of the outcome (§8b). Everything
-            # else, including `offer` for now, she answers as chat.
-            route = await self.route(event.title)
-            if route is not None:
-                armed = route.decision == "act" and route.topic == "music"
-                if armed:
-                    # Set before acting: the MPRIS doorway reports the new track while the skip
-                    # is still confirming it, and that reaction would come out ahead of hers.
-                    self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
-                outcome = await self.actor.act(event.title, route)
-                if outcome is None and route.decision == "act":
-                    if self.thinker.can_handle(route.topic):
-                        outcome = await self.think(event.title, route)
-                    elif route.kind == "question" and self.thinker.enabled:
-                        # No tools for this topic, but a clear question: Qwen answers from memory.
-                        outcome = await self.think(event.title, route, knowledge=True)
-                if outcome is not None:
-                    if armed:
-                        # Again after the action: the thinker can take longer than the window.
-                        self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
-                    return await self.report(outcome.event(event.title), outcome.ok)
-                if armed:
-                    self.quiet_media_until = 0.0  # nothing was done; the music is not hers to explain
+            return await self.handle_voice(event)
         performance = decorate(event, await self.reactor.react(event))
         sent = await self.perform(performance)
+        return performance, sent
+
+    async def handle_voice(self, event: Event) -> tuple[Performance, int]:
+        """A spoken sentence: the gate (§8a), then act / think / offer / chat (§8b), then the ledger."""
+        text = event.title
+        route = await self.route(text)
+        if route is None:
+            return await self.chat(event)
+        # An open offer: is this the yes (or the no) to it?
+        if self.offer is not None:
+            pending_text, pending_route, expires = self.offer
+            self.offer = None
+            if time.monotonic() <= expires and route.is_yes == "yes":
+                self.offers_taken += 1
+                log.info("offer taken: %r", pending_text)
+                route = replace(pending_route, decision="act")
+                text = pending_text
+            elif time.monotonic() <= expires and route.is_yes == "no":
+                performance = Performance(state="talking", text="Right, leaving it.", emotion="neutral", reaction="nod")
+                sent = await self.perform(performance)
+                self.ledger.record(event.title, performance.text or "")
+                return performance, sent
+        armed = route.decision == "act" and route.topic == "music"
+        if armed:
+            # Set before acting: the MPRIS doorway reports the new track while the skip is still
+            # confirming it, and that reaction would come out ahead of hers.
+            self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
+        outcome = await self.actor.act(text, route)
+        if outcome is None and route.decision == "act":
+            if self.thinker.can_handle(route.topic):
+                outcome = await self.think(text, route)
+            elif route.kind == "question" and self.thinker.enabled:
+                # No tools for this topic, but a clear question: Qwen answers from memory.
+                outcome = await self.think(text, route, knowledge=True)
+        if outcome is not None:
+            if armed:
+                # Again after the action: the thinker can take longer than the window.
+                self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
+            performance, sent = await self.report(outcome.event(text), outcome.ok)
+            self.ledger.record(text, performance.text or "", did=outcome.did)
+            return performance, sent
+        if armed:
+            self.quiet_media_until = 0.0  # nothing was done; the music is not hers to explain
+        offering = route.decision == "offer" and self.can_act_on(route)
+        performance, sent = await self.chat(event, offer=offering)
+        if offering:
+            self.offer = (text, route, time.monotonic() + self.config.actions.offer_window_s)
+            self.offers += 1
+        return performance, sent
+
+    def can_act_on(self, route: Route) -> bool:
+        """Would `act` do anything for this route? (Otherwise an offer would be an empty promise.)"""
+        if self.actor.reflex_for(replace(route, decision="act")) is not None:
+            return True
+        if self.thinker.can_handle(route.topic):
+            return True
+        return route.kind == "question" and self.thinker.enabled
+
+    async def chat(self, event: Event, offer: bool = False) -> tuple[Performance, int]:
+        """Gemma answers, with the recent exchanges for context; `offer` adds the offer line."""
+        context = self.ledger.context(limit=3) if event.source == "voice" else ""
+        performance = decorate(event, await self.reactor.react(event, context))
+        if offer:
+            text = f"{(performance.text or '').strip()} {self.config.actions.offer_line}".strip()
+            performance = replace(performance, text=text)
+        sent = await self.perform(performance)
+        if event.source == "voice":
+            self.ledger.record(event.title, performance.text or "")
         return performance, sent
 
     async def think(self, text: str, route: Route, knowledge: bool = False):
@@ -237,11 +288,15 @@ class Daemon:
 
         reminder = asyncio.get_running_loop().create_task(still_on_it())
         try:
+            recent = self.ledger.context()
             if knowledge:
-                return await self.thinker.answer(text, time.strftime("Today is %A %d %B %Y, %H:%M local time."))
+                today = time.strftime("Today is %A %d %B %Y, %H:%M local time.")
+                return await self.thinker.answer(text, f"{today}\n{recent}".strip())
             situation = await self.actor.situation(route.topic)
             if self.vocabulary:
                 situation = f"{situation} Names in the user's library: {self.hotwords()}.".strip()
+            if recent:
+                situation = f"{situation}\n{recent}"
             return await self.thinker.run(text, route.topic, situation, careful=route.library_change >= 0.5)
         finally:
             reminder.cancel()

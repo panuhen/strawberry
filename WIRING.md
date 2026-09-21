@@ -278,7 +278,7 @@ Cover for the wait: `Daemon.think` performs a random acknowledgement from `[thin
 
 **Knowledge questions** (built the same day): a clear `question` whose topic has no tools ("who was the president of the United States in 1960") goes to Qwen with no tools at all and the date, `Thinker.answer`: one plain sentence from what it knows, with the same acknowledgement and thinking pose. It has no internet and says so when a question depends on recent events; a `request` for a topic without tools still falls through to chat.
 
-Still to build in this section: the **ledger** (a rolling six-turn, ten-minute list of what you said and what she did, given to both models so "skip this one too" and a "yes" to an offer work) and the **offer** decision itself, which today is answered as chat.
+**The ledger and the offer (built the same day).** `strawberryd/ledger.py` is her only memory across turns: the last `[actions] ledger_turns` (6) exchanges no older than `ledger_age_s` (10 min), each "the user said …; you did … and said …". Gemma gets the last three lines on every voice reply, Qwen gets all of them in the situation, so "the other one" and "skip this one too" resolve; nothing else accumulates. The **offer**: when the gate says `offer` and acting would actually do something (`Daemon.can_act_on`: a reflex, the topic's tools, or a knowledge question), Gemma answers as chat with `offer_line` ("Want me to do that?") appended and the sentence is parked for `offer_window_s` (10 s). The next sentence is read by the gate's `is_yes` Choice (yes / no / other, asked on the same embedding as everything else): yes re-runs the parked sentence as `act`, no gets "Right, leaving it.", anything else is handled as itself and the offer lapses. `/health` shows `ledger` and `offers`.
 
 ---
 
@@ -307,7 +307,7 @@ materials:        mat_shell  mat_shell_dark  mat_claw  mat_cream  mat_eye  mat_i
 6. **The gate.** ✅ Every spoken sentence goes through the local System One (§8a): kind, topic, urgency, is-it-about-her, with probabilities and a decision (chat / offer / act) in the log and `/health.gate`. She still answers everything herself until 6b.
 7. **MCP actions, reflex tier.** ✅ The MCP client and the reflexes (§8b): "skip this song", "pause", "louder", "what song is this" are done in about a second with no model in the loop, and she reports the fact plus a quip.
 8. **The thinker.** ✅ Qwen with the topic's tools for sentences that carry an argument or need several steps ("play some Nina Simone"), acknowledged and covered while it loads (§8b).
-9. **Ledger and offer.** Short rolling memory for both models; a middling-confidence request gets "Want me to do that?" and a yes routes it (§8b).
+9. **Ledger and offer.** ✅ Short rolling memory for both models; a middling-confidence request gets "Want me to do that?" and a yes within ten seconds routes it (§8b).
 
 Stop after any phase and you still have something that works.
 
@@ -428,7 +428,7 @@ quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 
 ```
 WIRING.md                this document
-strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), thinker (Qwen tool loop), hub, server, tests
+strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), thinker (Qwen tool loop), ledger (short memory), hub, server, tests
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, gaze.gd, menu.gd, validate_widget.gd
                          + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
 doorways/                event producers: mpris_watch.py (any MPRIS media player), notify_watch.py (desktop notifications via D-Bus monitor), beat_watch.py + beat_track.py (tempo from the player's audio), git/ (global post-commit + pre-push hooks)

@@ -34,11 +34,13 @@ class BrainError(RuntimeError):
     pass
 
 
-def describe(event: Event) -> str:
-    """The event as the model sees it; same shape as the few-shot examples."""
+def describe(event: Event, context: str = "") -> str:
+    """The event as the model sees it; same shape as the few-shot examples. `context` is the
+    ledger (recent exchanges), added to what the user said so "the other one" means something."""
     if event.source == "voice":
         # Not something that happened: the user spoke to her. Answer them.
-        return f"source: voice (the user is talking to you; reply to them)\nsaid: {event.title or event.body}"
+        text = f"source: voice (the user is talking to you; reply to them)\nsaid: {event.title or event.body}"
+        return f"{text}\n{context}" if context else text
     if event.source == "action":
         # She just did something for the user (or tried). The fact is already said by code; the
         # model adds a short quip after it, nothing else.
@@ -200,13 +202,13 @@ class OllamaReactor:
             raise BrainError(f"schema miss: {content[:120]!r}")
         return data
 
-    async def react(self, event: Event) -> Performance:
+    async def react(self, event: Event, context: str = "") -> Performance:
         if not self.session:
             return await self.fallback.react(event)
         self.calls += 1
         started = time.perf_counter()
         try:
-            data = await self._ask(describe(event))
+            data = await self._ask(describe(event, context))
         except (aiohttp.ClientError, asyncio.TimeoutError, BrainError) as exc:
             self.fallbacks += 1
             log.warning("brain: fallback after %.2fs (%s)", time.perf_counter() - started, exc)
@@ -223,7 +225,7 @@ class OllamaReactor:
         if line and stale and elapsed < self.brain.timeout_s * 0.6:
             self.retries += 1
             try:
-                again = await self._ask(describe(event), avoid=stale, temperature=min(self.brain.temperature + 0.3, 1.5))
+                again = await self._ask(describe(event, context), avoid=stale, temperature=min(self.brain.temperature + 0.3, 1.5))
                 second = tidy(again["line"], self.brain.max_words)
                 if second and len(stale_words(second, list(self.recent))) < len(stale):
                     log.info("brain: reworded (avoided %s): %r -> %r", stale, line, second)

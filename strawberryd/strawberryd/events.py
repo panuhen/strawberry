@@ -56,7 +56,7 @@ class Event:
 
 
 class Reactor(Protocol):
-    async def react(self, event: Event) -> Performance: ...
+    async def react(self, event: Event, context: str = "") -> Performance: ...
 
 
 class CannedReactor:
@@ -66,7 +66,7 @@ class CannedReactor:
     Ollama is wired in. Keep its output shape identical to what the model path returns.
     """
 
-    async def react(self, event: Event) -> Performance:
+    async def react(self, event: Event, context: str = "") -> Performance:
         emotion = "alert" if event.urgency == "critical" else "neutral"
         if event.source == "media" or (event.source == "git" and event.app == "pre-push"):
             emotion = "happy"

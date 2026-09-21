@@ -155,6 +155,10 @@ class ActionsConfig:
     reflex: float = 0.6            # tool confidence at which a plain command fires the tool directly
     argument: float = 0.5          # p(has_argument) above this needs the thinker (Qwen) to fill it in
     timeout_s: float = 25.0        # the whole action, tools included; then she says it failed
+    offer_line: str = "Want me to do that?"  # added when the gate is only fairly sure it was a request
+    offer_window_s: float = 10.0   # a yes within this long does it
+    ledger_turns: int = 6          # her memory: this many recent exchanges…
+    ledger_age_s: float = 600.0    # …no older than this, given to both models
 
 
 @dataclass
@@ -305,6 +309,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("tools.result_chars must be >= 100")
     if not (0.0 <= config.actions.reflex <= 1.0 and 0.0 <= config.actions.argument <= 1.0):
         raise ConfigError("actions.reflex and actions.argument must be between 0 and 1")
+    if config.actions.ledger_turns < 1 or config.actions.offer_window_s <= 0:
+        raise ConfigError("actions.ledger_turns >= 1 and actions.offer_window_s > 0 are required")
     if config.thinker.max_rounds < 1 or config.thinker.timeout_s <= 0 or config.thinker.num_ctx < 1024:
         raise ConfigError("thinker.max_rounds >= 1, timeout_s > 0 and num_ctx >= 1024 are required")
     if not config.thinker.acks or not all(isinstance(a, str) and a for a in config.thinker.acks):

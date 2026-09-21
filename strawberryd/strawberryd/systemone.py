@@ -377,8 +377,19 @@ WANTS_LIBRARY_CHANGE = Noul(
     )),
 )
 
+# Only consulted while an offer is open ("Want me to do that?"), on the next sentence.
+IS_YES = Choice("is_yes", (
+    Option("yes", "agreement: go ahead", ("yes", "yes please", "yeah", "yep", "go on then", "sure", "okay do it",
+                                          "please do", "do that", "yes go ahead", "aye", "alright")),
+    Option("no", "refusal: leave it", ("no", "no thanks", "nah", "leave it", "never mind", "don't", "no leave it",
+                                       "forget it", "not now")),
+    Option("other", "something else entirely", ("skip this song", "what time is it", "how are you", "play some jazz",
+                                                "what did you say", "louder")),
+))
+
 TOOL_QUESTIONS: dict[str, Choice] = {"music": MUSIC_TOOL}
-ROUTING: tuple[Question, ...] = (KIND, TOPIC, IS_URGENT, IS_ABOUT_HER, HAS_ARGUMENT, WANTS_LIBRARY_CHANGE, *TOOL_QUESTIONS.values())
+ROUTING: tuple[Question, ...] = (KIND, TOPIC, IS_URGENT, IS_ABOUT_HER, HAS_ARGUMENT, WANTS_LIBRARY_CHANGE, IS_YES,
+                                 *TOOL_QUESTIONS.values())
 ACTIONABLE = ("request", "question")
 
 
@@ -395,6 +406,8 @@ class Route:
     tool_confidence: float = 0.0
     has_argument: float = 0.0  # p(yes): something to fill in that needs the thinker
     library_change: float = 0.0  # p(yes): asks to save/like/remove/add to a playlist (careful tools)
+    is_yes: str = ""           # yes | no | other: read only while an offer is open
+    is_yes_confidence: float = 0.0
     answers: dict[str, Answer] = field(default_factory=dict, compare=False)
     ms: float = 0.0
 
@@ -411,6 +424,7 @@ class Route:
             "tool_confidence": round(self.tool_confidence, 4),
             "has_argument": round(self.has_argument, 4),
             "library_change": round(self.library_change, 4),
+            "is_yes": self.is_yes,
             "ms": round(self.ms, 1),
             "answers": {k: v.to_dict() for k, v in self.answers.items()},
         }
@@ -512,6 +526,8 @@ class Gate:
             tool_confidence=tool.confidence if tool else 0.0,
             has_argument=answers["has_argument"].score or 0.0,
             library_change=answers["wants_library_change"].score or 0.0,
+            is_yes=answers["is_yes"].choice or "other",
+            is_yes_confidence=answers["is_yes"].confidence,
             answers=answers,
             ms=ms,
         )
