@@ -70,7 +70,7 @@ class VoiceConfig:
     max_seconds: float = 15.0
     silence_s: float = 1.1        # this much quiet after speech ends the recording
     min_speech_s: float = 0.4
-    level_db: float = -40.0       # speech must be louder than this (and than the room + 12 dB)
+    level_db: float = -50.0       # speech must be louder than this (and than the room + 12 dB); webcam mics are quiet
     beam_size: int = 1
 
 

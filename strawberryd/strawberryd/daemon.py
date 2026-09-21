@@ -69,17 +69,19 @@ class Daemon:
         if self.listen_task and not self.listen_task.done():
             self.listen_task.cancel()
 
-    POKE_DEBOUNCE_S = 0.7
+    POKE_GAP_S = 0.5
 
     def listen(self) -> dict[str, Any]:
         """The hotkey: start a voice session, or end the recording early if one is running."""
         if not self.listener.ready:
             return {"listening": False, "error": self.listener.disabled_reason or "voice not ready"}
         now = time.monotonic()
-        if now - self.last_poke < self.POKE_DEBOUNCE_S:
-            # Key auto-repeat fires the shortcut many times a second; that is one press, not a stop.
-            return {"listening": self.listener.phase == "listening", "debounced": True}
+        gap = now - self.last_poke
         self.last_poke = now
+        if gap < self.POKE_GAP_S:
+            # GNOME re-runs the shortcut ~30 times a second while the key is held. A poke only
+            # counts after the key has been released: a gap since the previous poke.
+            return {"listening": self.listener.phase == "listening", "debounced": True}
         if self.listener.busy:
             if self.listener.phase == "listening":
                 self.listener.stop.set()

@@ -201,10 +201,11 @@ async def test_pokes_are_debounced():
     daemon, _ = make_daemon("x", recorder=lambda source, stop, *a: (stop.wait(2.0), fake_recording())[1])
     await daemon.start()
     assert daemon.listen() == {"listening": True}
-    assert daemon.listen()["debounced"] is True       # auto-repeat within 0.7 s is not a stop
+    for _ in range(30):                               # a held key: GNOME repeats the command ~30/s
+        assert daemon.listen()["debounced"] is True
     while daemon.listener.phase != "listening":       # let the session task reach the recorder
         await asyncio.sleep(0.01)
-    daemon.last_poke -= 1.0
+    daemon.last_poke -= 1.0                           # released, then pressed again
     assert daemon.listen() == {"listening": False, "stopped": True}
     await daemon.listen_task
     await daemon.close()
