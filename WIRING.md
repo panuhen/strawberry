@@ -242,7 +242,17 @@ Nothing in that needs a hosted model; it needs a local scorer that turns (state,
 | `nli-deberta-v3-small` | 11/16 | 37 ms | |
 | `nli-deberta-v3-base` (quantised) | 7/16 | 57 ms | |
 
-So the local System One is **`strawberryd/systemone.py`**: `ask(state, questions) -> answers` with the three primitives above, computed from embedding similarity. A Choice option = its description plus its `examples` (embedded once at start, mean-pooled into a centroid); `probabilities` = softmax of cosine similarities; `confidence` by the formula above. Score = Choice over the rubric levels with the expected level. Noul = Choice between the `true` and `false` descriptions. Gemma's schema-constrained enum (one extra field in the reaction call) is the tie-breaker when confidence is low. If TypeSafe ever ships weights, it drops into the same seam.
+**Built (Phase 6a, 2026-09-21): `strawberryd/systemone.py`.** `SystemOne.ask(state, *questions)` with the three primitives, computed from embedding similarity; `Gate` on top runs the routing questions and logs every decision. Two things changed from the bake-off design once the whole phrase set was measured:
+
+| scorer (embeddinggemma, T = 0.05) | scripts/gate_phrases.json |
+|---|---|
+| mean-pooled centroids, no prefixes | 29/34 |
+| nearest examples (mean of top 2), no prefixes | 32/34 |
+| **nearest examples + embeddinggemma's prompt prefixes** (`task: classification \| query: ` on the sentence, `title: none \| text: ` on the examples) | **34/34**, then 10/13 on a held-out batch written afterwards; 47/47 after three examples were added |
+
+An option's score is the mean similarity of its two nearest examples (one odd example cannot carry it; one close example is enough), softmax at T = 0.05 → probabilities, confidence by the formula above. Score = expected level over the rubric, 1-based, with a legend. Noul = Choice between the `yes` and `no` examples, reported as p(yes). A single Ollama embedding call costs ~165 ms regardless of batch size, so a sentence is routed in ~170 ms (the bake-off's 16 ms was amortised over 16 texts). The examples are embedded once at start (warm-up gets the same 120 s allowance as the brain); if Ollama is down the gate reports `disabled_reason` in `/health.gate` and every sentence is chat.
+
+Config `[gate]`: `enabled`, `model`, `query_prefix`/`document_prefix` (empty both for a model without conventions), `neighbours`, `temperature`, `act`/`offer`/`topic_min` thresholds, `timeout_s`, and `[gate.examples]` with `"kind.request" = [...]`-style extra phrases: a sentence she misreads goes under the option it belongs to. Tools: `bin/strawberry route "…"` prints one sentence's full reading; `scripts/gate_check.py` runs the phrase set (add to it; it exits 1 on a miss). Unit tests run on a bag-of-words fake embedder (`tests/test_systemone.py`).
 
 **The routing questions** (all asked at once, atomic, combined in code):
 
@@ -250,7 +260,7 @@ So the local System One is **`strawberryd/systemone.py`**: `ask(state, questions
 - `topic` Choice: `music`, `calendar`, `notes`, `system`, `other` — picks which MCP servers to load.
 - `is_urgent` Noul; `is_about_her` Noul (she answers those herself, whatever the kind).
 
-Then in code: `chat` or low confidence → Gemma replies as today; `request`/`question` with confidence ≥ 0.6 → the action path with that topic's tools, after Gemma says a two-word acknowledgement ("On it.") and she goes to `thinking`; in between → Gemma answers and adds the offer ("Did you want me to do that?"), and a yes within 10 s routes it. Every gate decision is logged with its probabilities so the thresholds can be tuned on real sentences.
+Then in code (`decide()`): `chat` or low confidence → Gemma replies as today; `request`/`question` with confidence ≥ 0.6 → the action path with that topic's tools, after Gemma says a two-word acknowledgement ("On it.") and she goes to `thinking`; in between → Gemma answers and adds the offer ("Did you want me to do that?"), and a yes within 10 s routes it. Every gate decision is logged with its probabilities so the thresholds can be tuned on real sentences.
 
 ### 8b. The tool loop
 
@@ -280,7 +290,8 @@ materials:        mat_shell  mat_shell_dark  mat_claw  mat_cream  mat_eye  mat_i
 3. **Notifications doorway.** ✅ D-Bus monitor → same intake. Anything that notifies (including WhatsApp/Messenger) makes her react.
 4. **TTS.** ✅ Piper → `audio` field → Godot plays it through the analysed bus → claws clack in time. `[speech]` in config turns it on.
 5. **Voice in.** ✅ Hotkey → faster-whisper → transcript → the reaction path answers (§7). The action path with tools is Phase 6.
-6. **MCP actions.** Wire the Python MCP client; voice commands start *doing* things (skip track, log to re:call).
+6. **The gate.** ✅ Every spoken sentence goes through the local System One (§8a): kind, topic, urgency, is-it-about-her, with probabilities and a decision (chat / offer / act) in the log and `/health.gate`. She still answers everything herself until 6b.
+7. **MCP actions.** Wire the Python MCP client (§8b); `act` and `offer` start *doing* things (skip track, log to re:call).
 
 Stop after any phase and you still have something that works.
 
@@ -401,13 +412,14 @@ quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 
 ```
 WIRING.md                this document
-strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), hub, server, tests
+strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), hub, server, tests
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, gaze.gd, menu.gd, validate_widget.gd
                          + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
 doorways/                event producers: mpris_watch.py (any MPRIS media player), notify_watch.py (desktop notifications via D-Bus monitor), beat_watch.py + beat_track.py (tempo from the player's audio), git/ (global post-commit + pre-push hooks)
-bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend; say / voices / audition / install (start on login)
+bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend; say / voices / audition / listen / route / install (start on login)
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
 scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless widget; it must reconnect
+scripts/gate_check.py    the gate over scripts/gate_phrases.json against live Ollama; add sentences she misreads
 v2/                      the asset: Blender build scripts, GLB, evidence, preview project
 v1/ (top level)          the earlier deliverable
 ```

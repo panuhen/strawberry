@@ -5,3 +5,6 @@ enabled = false
 
 [voice]
 enabled = false   # no microphone or whisper model in the acceptance run; tests/test_voice.py covers the flow
+
+[gate]
+enabled = false   # no Ollama in the acceptance run; tests/test_systemone.py covers the gate

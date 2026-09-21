@@ -23,6 +23,7 @@ def main() -> None:
     parser.add_argument("--say", metavar="TEXT", default=None, help="synthesise TEXT with the configured voice to a wav, print its path, exit")
     parser.add_argument("--voice", default=None, help="with --say: override speech.voice")
     parser.add_argument("--out", type=Path, default=None, help="with --say: wav path (default: a temp file)")
+    parser.add_argument("--route", metavar="TEXT", default=None, help="run TEXT through the gate (WIRING §8a), print the JSON, exit")
     parser.add_argument("--version", action="version", version=f"strawberryd {__version__}")
     args = parser.parse_args()
 
@@ -56,6 +57,8 @@ def main() -> None:
         return
     if args.say is not None:
         sys.exit(say(config, args.say, args.voice, args.out))
+    if args.route is not None:
+        sys.exit(route(config, args.route))
 
     logging.basicConfig(
         level=config.daemon.log_level.upper(),
@@ -63,6 +66,32 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
     run(config)
+
+
+def route(config, text: str) -> int:
+    """`strawberryd --route "..."`: the gate's reading of one sentence, for tuning the examples."""
+    import asyncio
+    from dataclasses import replace
+
+    from .systemone import Gate
+
+    gate = Gate(replace(config.gate, enabled=True), config.brain.ollama_url)
+
+    async def run_once() -> int:
+        await gate.start()
+        try:
+            if not gate.ready:
+                print(f"gate not ready: {gate.disabled_reason}", file=sys.stderr)
+                return 1
+            result = await gate.route(text)
+            if result is None:
+                return 1
+            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+            return 0
+        finally:
+            await gate.close()
+
+    return asyncio.run(run_once())
 
 
 def say(config, text: str, voice: str | None, out: Path | None) -> int:

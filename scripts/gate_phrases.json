@@ -1,0 +1,244 @@
+{
+  "_": [
+    "Sentences the gate must read right (WIRING.md §8a). Run: scripts/gate_check.py",
+    "Each entry: text, expected kind (request|question|chat|other), optional topic, optional decision.",
+    "Add the ones she gets wrong in real use; the fix is an example under [gate.examples] in the config,",
+    "or in KIND/TOPIC in strawberryd/systemone.py when it should ship for everyone."
+  ],
+  "phrases": [
+    {
+      "text": "can you skip this song",
+      "kind": "request",
+      "topic": "music"
+    },
+    {
+      "text": "skip this track",
+      "kind": "request",
+      "topic": "music"
+    },
+    {
+      "text": "pause the music please",
+      "kind": "request",
+      "topic": "music"
+    },
+    {
+      "text": "put on some jazz",
+      "kind": "request",
+      "topic": "music"
+    },
+    {
+      "text": "turn the volume down a bit",
+      "kind": "request",
+      "topic": "music"
+    },
+    {
+      "text": "play the previous one again",
+      "kind": "request",
+      "topic": "music"
+    },
+    {
+      "text": "queue up something by Nina Simone",
+      "kind": "request",
+      "topic": "music"
+    },
+    {
+      "text": "remind me to call mum at five",
+      "kind": "request",
+      "topic": "calendar"
+    },
+    {
+      "text": "set a timer for twenty minutes",
+      "kind": "request",
+      "topic": "calendar"
+    },
+    {
+      "text": "log this to my notes: buy milk",
+      "kind": "request",
+      "topic": "notes"
+    },
+    {
+      "text": "add eggs to the shopping list",
+      "kind": "request",
+      "topic": "notes"
+    },
+    {
+      "text": "lock the screen",
+      "kind": "request",
+      "topic": "system"
+    },
+    {
+      "text": "open my email",
+      "kind": "request",
+      "topic": "system"
+    },
+    {
+      "text": "what song is this",
+      "kind": "question",
+      "topic": "music"
+    },
+    {
+      "text": "who is singing this",
+      "kind": "question",
+      "topic": "music"
+    },
+    {
+      "text": "what album is this from",
+      "kind": "question",
+      "topic": "music"
+    },
+    {
+      "text": "what's on my calendar tomorrow",
+      "kind": "question",
+      "topic": "calendar"
+    },
+    {
+      "text": "how long until my next meeting",
+      "kind": "question",
+      "topic": "calendar"
+    },
+    {
+      "text": "am I free on Friday afternoon",
+      "kind": "question",
+      "topic": "calendar"
+    },
+    {
+      "text": "what did I write down about the garden",
+      "kind": "question",
+      "topic": "notes"
+    },
+    {
+      "text": "how much disk space is left",
+      "kind": "question",
+      "topic": "system"
+    },
+    {
+      "text": "what time is it in Tokyo",
+      "kind": "question"
+    },
+    {
+      "text": "how are you doing today",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "you look lovely today",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "good morning strawberry",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "I'm so tired today",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "do you like techno",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "this song is brilliant isn't it",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "thanks, that was quick",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "you're a menace, you know that",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "good night, see you tomorrow",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "um",
+      "kind": "other",
+      "decision": "chat"
+    },
+    {
+      "text": "hello hello is this thing on",
+      "kind": "other",
+      "decision": "chat"
+    },
+    {
+      "text": "no not you, I was talking to the cat",
+      "kind": "other",
+      "decision": "chat"
+    },
+    {
+      "text": "next song please",
+      "kind": "request",
+      "topic": "music"
+    },
+    {
+      "text": "could you turn this off, I need to focus",
+      "kind": "request",
+      "topic": "music"
+    },
+    {
+      "text": "put something on for cooking",
+      "kind": "request",
+      "topic": "music"
+    },
+    {
+      "text": "note to self: the printer needs toner",
+      "kind": "request",
+      "topic": "notes"
+    },
+    {
+      "text": "wake me in half an hour",
+      "kind": "request",
+      "topic": "calendar"
+    },
+    {
+      "text": "which year did this come out",
+      "kind": "question",
+      "topic": "music"
+    },
+    {
+      "text": "do I have anything on this evening",
+      "kind": "question",
+      "topic": "calendar"
+    },
+    {
+      "text": "how many meetings tomorrow",
+      "kind": "question",
+      "topic": "calendar"
+    },
+    {
+      "text": "is the laptop battery charging",
+      "kind": "question",
+      "topic": "system"
+    },
+    {
+      "text": "you're in a good mood today",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "that one's a banger",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "sorry, long day, ignore me",
+      "kind": "chat",
+      "decision": "chat"
+    },
+    {
+      "text": "right, where was I",
+      "kind": "other",
+      "decision": "chat"
+    }
+  ]
+}

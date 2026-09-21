@@ -11,6 +11,7 @@
 #   strawberry voices [NAME...]   list installed Piper voices, or download the named ones
 #   strawberry audition [TEXT]    play a sample line in every installed voice
 #   strawberry listen     talk to her once (what the hotkey runs); press again to stop early
+#   strawberry route TEXT what the gate makes of a sentence (kind, topic, confidence, decision); for tuning
 #   strawberry hotkey [COMBO|--remove]  GNOME shortcut for `listen` (default <Super><Shift>space)
 #   strawberry install    start on login: systemd user units for daemon + watchers, autostart for the widget
 #   strawberry uninstall  undo install (she only runs when you launch her)
@@ -232,6 +233,9 @@ subprocess.run(["gsettings", "set", key, "binding", combo], check=True)
 print(f"hotkey {combo} -> {command}")
 PY
     ;;
+  route)
+    shift; [ $# -gt 0 ] || { echo "usage: strawberry route TEXT" >&2; exit 2; }
+    exec "$D" --route "$*" ;;
   say)
     shift; [ $# -gt 0 ] || { echo "usage: strawberry say TEXT" >&2; exit 2; }
     daemon_up || { echo "strawberryd is down; start it with: strawberry daemon" >&2; exit 1; }

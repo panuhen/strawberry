@@ -37,6 +37,7 @@ def make_daemon(transcript: str = "hello there", recording: Recording | None = N
     config = Config()
     config.brain.enabled = False
     config.speech.enabled = False
+    config.gate.enabled = False
     config.voice = VoiceConfig(enabled=enabled)
     rec = recording or fake_recording()
     listener = Listener(
@@ -133,6 +134,7 @@ async def test_whisper_load_failure_disables_voice_not_daemon():
     config = Config()
     config.brain.enabled = False
     config.speech.enabled = False
+    config.gate.enabled = False
     listener = Listener(VoiceConfig(enabled=True), transcriber_factory=boom)
     daemon = Daemon(reactor=CannedReactor(), config=config, listener=listener)
     await daemon.start()
@@ -187,6 +189,7 @@ async def test_bluetooth_profile_is_switched_and_restored_around_recording():
     config = Config()
     config.brain.enabled = False
     config.speech.enabled = False
+    config.gate.enabled = False
     listener = Listener(VoiceConfig(enabled=True), transcriber_factory=lambda cfg: (lambda a: "hi"),
                         recorder=recorder, microphone=microphone)
     daemon = Daemon(reactor=CannedReactor(), config=config, listener=listener)

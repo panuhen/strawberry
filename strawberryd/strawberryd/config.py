@@ -105,6 +105,25 @@ class SpeechConfig:
 
 
 @dataclass
+class GateConfig:
+    """The System One gate on spoken sentences (WIRING.md §8a)."""
+
+    enabled: bool = True
+    model: str = "embeddinggemma"  # Ollama embedding model; the examples are the classifier
+    query_prefix: str = "task: classification | query: "   # embeddinggemma's prompt conventions;
+    document_prefix: str = "title: none | text: "           # empty both for a model without them
+    neighbours: int = 2            # an option scores the mean of its N nearest examples
+    temperature: float = 0.05      # softmax over those scores; lower = more decisive
+    act: float = 0.6               # kind confidence at which a request/question goes to the action path
+    offer: float = 0.3             # between offer and act: she answers and offers to do it
+    topic_min: float = 0.2         # below this the topic is "other" and no tools are loaded
+    timeout_s: float = 2.0         # one embedding call is ~165 ms on a GPU
+    # Extra phrases per option, keyed "kind.request", "topic.music", ...; a misread sentence
+    # goes here and is fixed.
+    examples: dict[str, list[str]] = field(default_factory=dict)
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
@@ -113,6 +132,7 @@ class Config:
     speech: SpeechConfig = field(default_factory=SpeechConfig)
     beat: BeatConfig = field(default_factory=BeatConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    gate: GateConfig = field(default_factory=GateConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -124,6 +144,7 @@ class Config:
             "speech": asdict(self.speech),
             "beat": asdict(self.beat),
             "voice": asdict(self.voice),
+            "gate": asdict(self.gate),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -137,6 +158,7 @@ _SECTIONS = {
     "speech": SpeechConfig,
     "beat": BeatConfig,
     "voice": VoiceConfig,
+    "gate": GateConfig,
 }
 
 
@@ -187,6 +209,17 @@ def _validate(config: Config) -> None:
         raise ConfigError("voice.max_seconds and voice.silence_s must be positive")
     if config.voice.device not in ("cpu", "cuda", "auto"):
         raise ConfigError("voice.device must be cpu, cuda, or auto")
+    if config.gate.temperature <= 0:
+        raise ConfigError("gate.temperature must be positive")
+    if config.gate.neighbours < 1:
+        raise ConfigError("gate.neighbours must be >= 1")
+    if not (0.0 <= config.gate.offer <= config.gate.act <= 1.0):
+        raise ConfigError("gate thresholds need 0 <= offer <= act <= 1")
+    for key, phrases in config.gate.examples.items():
+        if not isinstance(phrases, list) or not all(isinstance(p, str) for p in phrases):
+            raise ConfigError(f"gate.examples.{key} must be a list of strings")
+        if key.split(".")[0] not in ("kind", "topic"):
+            raise ConfigError(f"gate.examples key {key!r} must start with kind. or topic.")
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
 
     try:
@@ -286,6 +319,15 @@ def default_toml() -> str:
         "bluetooth = true               # auto prefers a Bluetooth headset mic (its profile is switched while she listens)",
         "max_seconds = 15.0",
         "silence_s = 1.1                # quiet after speech that ends the recording",
+        "",
+        "[gate]",
+        "enabled = true                 # sorts what you said: chat, or a request/question for the action path",
+        'model = "embeddinggemma"       # Ollama embedding model (ollama pull embeddinggemma)',
+        "act = 0.6                      # confidence at which she acts on a request without asking",
+        "offer = 0.3                    # between offer and act she answers and offers to do it",
+        "# [gate.examples]              # a sentence she misreads goes under the option it belongs to",
+        '# \"kind.request\" = ["put the kettle on"]',
+        '# \"topic.music\" = ["what year is this from"]',
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

@@ -7,6 +7,7 @@ A local desktop AI mascot: a cel-shaded crab that lives on the desktop and react
 - **`strawberryd/`** — Python daemon (HTTP intake + websocket to the widget). `uv sync && uv run pytest`.
 - **`widget/`** — Godot 4.7 desktop widget: transparent, always-on-top, click-through. Run with `bin/strawberry`.
 - **Voice** — Piper TTS, on when `[speech] enabled = true` in `~/.config/strawberry/config.toml`. `bin/strawberry voices` lists or downloads voices, `bin/strawberry audition` compares them, `bin/strawberry say "…"` makes her talk.
+- **The gate** — every sentence you say is sorted locally by `embeddinggemma` into chat, question or request (with a topic and a confidence) before anyone answers; `bin/strawberry route "skip this song"` shows the reading, `scripts/gate_check.py` runs the phrase set. The action path that acts on requests is next (WIRING §8b).
 - **Talk to her** — `bin/strawberry hotkey` binds Super+Shift+Space: press, speak, she listens (faster-whisper on the CPU) and answers out loud.
 - **Daily use** — `bin/strawberry install` makes her start on login (systemd user units + autostart). Right-click her for mute, quiet hour, volume, skin, always-on-top, the settings file, and quit. Her pupils follow the mouse, and she dances to the actual beat of whatever is playing (techno gets a rave, metal a headbang, hip hop a groove).
 - **`v2/`** — the current 3D asset (`strawberry_v2.glb`), its Blender build, and the cel preview project. See `v2/README.md`.

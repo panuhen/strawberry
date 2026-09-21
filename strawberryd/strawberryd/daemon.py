@@ -14,6 +14,7 @@ from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
 from .reactions import decorate
 from .speech import Speaker
+from .systemone import Gate, Route
 from .voice import Listener
 
 log = logging.getLogger("strawberryd")
@@ -23,12 +24,13 @@ PERSISTENT_STATES = ("idle", "dancing")  # mirrors widget.gd PERSISTENT (WIRING.
 
 class Daemon:
     def __init__(self, reactor: Reactor | None = None, config: Config | None = None, speaker: Speaker | None = None,
-                 listener: Listener | None = None) -> None:
+                 listener: Listener | None = None, gate: Gate | None = None) -> None:
         self.config = config or Config()
         self.hub = WidgetHub()
         self.reactor: Reactor = reactor or self._default_reactor()
         self.speaker = speaker or Speaker(self.config.speech)
         self.listener = listener or Listener(self.config.voice)
+        self.gate = gate or Gate(self.config.gate, self.config.brain.ollama_url)
         self.listen_task: asyncio.Task | None = None
         self.last_poke = -1e9
         self.started = time.monotonic()
@@ -59,6 +61,7 @@ class Daemon:
             await start()
         await self.speaker.start()
         await self.listener.start()
+        await self.gate.start()
 
     async def close(self) -> None:
         close = getattr(self.reactor, "close", None)
@@ -66,6 +69,7 @@ class Daemon:
             await close()
         await self.speaker.close()
         await self.listener.close()
+        await self.gate.close()
         if self.listen_task and not self.listen_task.done():
             self.listen_task.cancel()
 
@@ -128,8 +132,16 @@ class Daemon:
         self.tempo_at = time.monotonic()
         return await self.hub.send({"tempo": tempo})
 
+    async def route(self, text: str) -> Route | None:
+        """The gate's reading of a spoken sentence (WIRING.md §8a); None means "treat as chat"."""
+        return await self.gate.route(text)
+
     async def handle_event(self, event: Event) -> tuple[Performance, int]:
         log.info("event %s app=%r title=%r urgency=%s", event.source, event.app, event.title, event.urgency)
+        if event.source == "voice" and event.title:
+            # Phase 6a: every spoken sentence is routed and logged; the action path (6b) takes
+            # `act` and `offer` from here. Until then she answers everything herself.
+            await self.route(event.title)
         performance = decorate(event, await self.reactor.react(event))
         sent = await self.perform(performance)
         return performance, sent
