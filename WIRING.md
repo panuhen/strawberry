@@ -270,7 +270,11 @@ Then in code (`decide()`): `chat` or low confidence → Gemma replies as today; 
 
 What she says is split by reliability: **code writes the fact** in one plain sentence ("Skipped. Now Blue Monday by New Order.", "Volume down to 65.", "I tried to skip, but Spotify said: no active device.") and the reaction path adds **one short quip** in her voice after it (an `action` event: `brain.describe` quotes the fact and asks for at most 8 words; `Daemon.report` joins them, forces `alert` on a failure). Measured first: a 1B model given the structured result composed lines like "Let's go. A bit more fun, perhaps?" for a skip and a cheerful line for a failure, so the fact never depends on it. The MPRIS doorway's reaction to a track change she caused is swallowed for 8 s (`quiet_media_until`, set before the action runs because the watcher is faster than the confirmation). `/health.actions` keeps the last action with its tool calls. Anything the reflex tier does not cover (an argument, `other`, a topic without reflexes) is counted as `deferred` in the journal and answered as chat until the thinker exists.
 
-The thinker, still to build, runs inside the daemon on that client: transcript (+ the gate's topic) → Ollama `qwen3.8:27b` with that topic's tools → if a tool call, run it against the MCP server, feed the result back → final text → **through Gemma for the line**, so the voice stays hers → `perform(...)`. Qwen loads on demand with `keep_alive = "10m"`; a cold load is 10–20 s, hidden behind the acknowledgement and the thinking pose, with a spoken "still on it" at 8 s and a spoken failure line at the timeout. MCPHost stays as the human's terminal for typing at the model; the servers are the existing MCPs unchanged (Spotify first, re:call and calendar next).
+**Built (2026-09-21): the thinker, `strawberryd/thinker.py`.** For what the reflexes decline (an argument, `other`, several steps) and the gate still says `act`: Qwen (`brain.action_model`, `qwen3.8:27b`) gets the sentence, the *situation* ("Now playing on Spotify: … (album: …)", so "this song" means something) and only the topic's tools, as Ollama tool specs from `Toolbox.tools_for`. It calls tools until it answers; each tool call goes through the same client with truncated results; after `max_rounds` (4) the tools are withdrawn and it must answer with what it has. Its answer is ONE plain factual sentence, which becomes the fact she says (Gemma adds the quip as for a reflex). Qwen never speaks as her and never sees the persona. `think = false` (Ollama accepts false / "low" / "medium" / true = xhigh, not "high"), `keep_alive = "10m"`, `num_ctx = 8192`, temperature 0.2, one `timeout_s` (45 s) over the whole request. Every call is a fresh conversation; nothing accumulates.
+
+Cover for the wait: `Daemon.think` performs a random acknowledgement from `[thinker] acks` in the `thinking` pose at once, says "Still on it." once after `still_on_it_s` (8 s), then reports. Measured: cold load 7–17 s (the first request of a session), a warm round ~2 s, prompt ~360 tokens with 25 Spotify tools; "play some nina simone" = search(artist) → play(context_uri) in 9.5 s cold from the CLI. Loading Qwen can evict Gemma and the embedding model from VRAM; both re-warm themselves in the background after a timeout (see §3). `bin/strawberry think "…" [TOPIC]` runs it by hand and prints the calls; `/health.thinker` keeps the last one. Tests on a scripted fake Ollama and the fake Spotify (`tests/test_thinker.py`).
+
+Still to build in this section: the **ledger** (a rolling six-turn, ten-minute list of what you said and what she did, given to both models so "skip this one too" and a "yes" to an offer work) and the **offer** decision itself, which today is answered as chat.
 
 ---
 
@@ -298,7 +302,8 @@ materials:        mat_shell  mat_shell_dark  mat_claw  mat_cream  mat_eye  mat_i
 5. **Voice in.** ✅ Hotkey → faster-whisper → transcript → the reaction path answers (§7). The action path with tools is Phase 6.
 6. **The gate.** ✅ Every spoken sentence goes through the local System One (§8a): kind, topic, urgency, is-it-about-her, with probabilities and a decision (chat / offer / act) in the log and `/health.gate`. She still answers everything herself until 6b.
 7. **MCP actions, reflex tier.** ✅ The MCP client and the reflexes (§8b): "skip this song", "pause", "louder", "what song is this" are done in about a second with no model in the loop, and she reports the fact plus a quip.
-8. **The thinker.** Qwen with the topic's tools for sentences that carry an argument or need several steps; the ledger and the `offer` question (§8b).
+8. **The thinker.** ✅ Qwen with the topic's tools for sentences that carry an argument or need several steps ("play some Nina Simone"), acknowledged and covered while it loads (§8b).
+9. **Ledger and offer.** Short rolling memory for both models; a middling-confidence request gets "Want me to do that?" and a yes routes it (§8b).
 
 Stop after any phase and you still have something that works.
 
@@ -419,11 +424,11 @@ quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 
 ```
 WIRING.md                this document
-strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), hub, server, tests
+strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), thinker (Qwen tool loop), hub, server, tests
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, gaze.gd, menu.gd, validate_widget.gd
                          + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
 doorways/                event producers: mpris_watch.py (any MPRIS media player), notify_watch.py (desktop notifications via D-Bus monitor), beat_watch.py + beat_track.py (tempo from the player's audio), git/ (global post-commit + pre-push hooks)
-bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend; say / voices / audition / listen / route / tools / tool / install (start on login)
+bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend; say / voices / audition / listen / route / tools / tool / think / install (start on login)
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
 scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless widget; it must reconnect
 scripts/gate_check.py    the gate over scripts/gate_phrases.json against live Ollama; add sentences she misreads

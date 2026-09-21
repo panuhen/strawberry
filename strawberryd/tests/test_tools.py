@@ -211,7 +211,7 @@ def test_config_validation():
 
 async def test_daemon_exposes_tools_in_health(aiohttp_client):
     config = Config()
-    config.brain.enabled = config.speech.enabled = config.voice.enabled = config.gate.enabled = False
+    config.brain.enabled = config.speech.enabled = config.voice.enabled = config.gate.enabled = config.thinker.enabled = False
     config.tools = ToolsConfig(servers={"music": {"topic": "music", "command": "music"}}, preconnect=False)
     daemon = Daemon(reactor=CannedReactor(), config=config, toolbox=Toolbox(config.tools, connect=make_connect({"music": MUSIC})))
     client = await aiohttp_client(create_app(daemon))

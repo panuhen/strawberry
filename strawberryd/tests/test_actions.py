@@ -175,7 +175,7 @@ async def test_a_hung_tool_is_a_failure_not_a_stall():
 async def test_voice_to_skip_end_to_end_through_the_daemon(aiohttp_client):
     """A spoken 'skip this track' becomes a next() call and a line about the new track."""
     config = Config()
-    config.brain.enabled = config.speech.enabled = config.voice.enabled = False
+    config.brain.enabled = config.speech.enabled = config.voice.enabled = config.thinker.enabled = False
     spotify, toolbox, actor = make()
     gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
     daemon = Daemon(reactor=CannedReactor(), config=config, gate=gate, toolbox=toolbox, actor=actor)

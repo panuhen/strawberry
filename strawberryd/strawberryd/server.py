@@ -101,6 +101,7 @@ async def health(request: web.Request) -> web.Response:
             "gate": daemon.gate.stats(),
             "tools": daemon.toolbox.stats(),
             "actions": daemon.actor.stats(),
+            "thinker": daemon.thinker.stats(),
             "rest_state": daemon.rest_state,
             "tempo": daemon.fresh_tempo(),
         }

@@ -20,6 +20,7 @@ def daemon():
     config.voice.enabled = False
     config.gate.enabled = False
     config.tools.enabled = False
+    config.thinker.enabled = False
     return Daemon(reactor=CannedReactor(), config=config)
 
 

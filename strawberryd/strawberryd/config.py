@@ -149,6 +149,22 @@ class ActionsConfig:
 
 
 @dataclass
+class ThinkerConfig:
+    """The big model with a topic's tools, for requests the reflexes cannot do (WIRING.md §8b)."""
+
+    enabled: bool = True
+    model: str = ""                # "" = brain.action_model
+    think: bool | str = False      # Ollama: false | "low" | "medium" | true (= xhigh); off: the gate routed already
+    keep_alive: int | str = "10m"  # stays loaded this long after a request; a cold load is 7-17 s
+    num_ctx: int = 8192
+    num_predict: int = 300
+    max_rounds: int = 4            # tool rounds before she has to answer with what she has
+    timeout_s: float = 45.0        # the whole request, cold load included
+    still_on_it_s: float = 8.0     # she says so once if it takes longer than this
+    acks: list[str] = field(default_factory=lambda: ["On it.", "Let me see.", "One moment.", "Right, hang on."])
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
@@ -160,6 +176,7 @@ class Config:
     gate: GateConfig = field(default_factory=GateConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     actions: ActionsConfig = field(default_factory=ActionsConfig)
+    thinker: ThinkerConfig = field(default_factory=ThinkerConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -174,6 +191,7 @@ class Config:
             "gate": asdict(self.gate),
             "tools": asdict(self.tools),
             "actions": asdict(self.actions),
+            "thinker": asdict(self.thinker),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -190,6 +208,7 @@ _SECTIONS = {
     "gate": GateConfig,
     "tools": ToolsConfig,
     "actions": ActionsConfig,
+    "thinker": ThinkerConfig,
 }
 
 
@@ -205,6 +224,11 @@ def _apply(section_name: str, target: Any, values: dict[str, Any]) -> None:
         if key == "keep_alive":
             if isinstance(value, bool) or not isinstance(value, (int, str)):
                 raise ConfigError(f"{section_name}.{key} must be an int (seconds, -1 = forever) or a duration string like \"10m\"")
+            setattr(target, key, value)
+            continue
+        if key == "think":
+            if not (isinstance(value, bool) or value in ("low", "medium")):
+                raise ConfigError(f"{section_name}.{key} must be true, false, \"low\" or \"medium\"")
             setattr(target, key, value)
             continue
         # TOML integers are fine where we hold a float; nothing else is coerced.
@@ -268,6 +292,10 @@ def _validate(config: Config) -> None:
         raise ConfigError("tools.result_chars must be >= 100")
     if not (0.0 <= config.actions.reflex <= 1.0 and 0.0 <= config.actions.argument <= 1.0):
         raise ConfigError("actions.reflex and actions.argument must be between 0 and 1")
+    if config.thinker.max_rounds < 1 or config.thinker.timeout_s <= 0 or config.thinker.num_ctx < 1024:
+        raise ConfigError("thinker.max_rounds >= 1, timeout_s > 0 and num_ctx >= 1024 are required")
+    if not config.thinker.acks or not all(isinstance(a, str) and a for a in config.thinker.acks):
+        raise ConfigError("thinker.acks must be a non-empty list of strings")
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
 
     try:
@@ -389,6 +417,12 @@ def default_toml() -> str:
         "[actions]",
         "enabled = true                 # act on requests: skip, pause, what's playing… (needs [tools] and [gate])",
         "reflex = 0.6                   # how sure the gate must be to fire a plain command straight away",
+        "",
+        "[thinker]",
+        "enabled = true                 # the big model with the topic's tools, for \"play some Nina Simone\"",
+        'model = ""                     # empty = brain.action_model',
+        'think = false                  # false | "low" | "medium" | true; off is fine, the gate already routed',
+        'keep_alive = "10m"             # a cold load is 7-17 s; she says an acknowledgement while it happens',
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

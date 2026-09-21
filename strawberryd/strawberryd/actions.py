@@ -148,6 +148,22 @@ def _volume(delta: int) -> Reflex:
     return reflex
 
 
+async def spotify_situation(toolbox: Toolbox, server: str) -> str:
+    """One line of context for the thinker: 'this song' means whatever is playing now."""
+    track, data, result = await _current(toolbox, server)
+    if not result.ok:
+        return ""
+    if not track:
+        return "Nothing is playing on Spotify right now."
+    album = (data.get("track") or {}).get("album")
+    state = "Now playing" if data.get("playing", True) else "Paused"
+    return f"{state} on Spotify: {track}" + (f" (album: {album})." if album else ".")
+
+
+Situation = Callable[[Toolbox, str], Awaitable[str]]
+SITUATIONS: dict[str, Situation] = {"spotify": spotify_situation}
+
+
 REFLEXES: dict[str, dict[str, Reflex]] = {
     "spotify": {
         "skip": spotify_skip,
@@ -214,6 +230,19 @@ class Actor:
         }
         log.info("actions: %r -> %s.%s: %s -> %r (%.0f ms)", text, server, route.tool, outcome.did, outcome.fact, ms)
         return outcome
+
+    async def situation(self, topic: str) -> str:
+        """What the thinker should know about the topic before it starts, from the servers that can say."""
+        lines = []
+        for name, server in self.toolbox.servers.items():
+            if server.topic == topic and name in SITUATIONS:
+                try:
+                    line = await asyncio.wait_for(SITUATIONS[name](self.toolbox, name), 5.0)
+                except asyncio.TimeoutError:
+                    line = ""
+                if line:
+                    lines.append(line)
+        return " ".join(lines)
 
     def stats(self) -> dict[str, Any]:
         return {"enabled": self.config.enabled, "acted": self.acted, "failed": self.failed, "deferred": self.deferred,

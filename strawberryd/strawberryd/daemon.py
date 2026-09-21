@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from dataclasses import replace
 from typing import Any
@@ -16,6 +17,7 @@ from .hub import WidgetHub
 from .reactions import decorate
 from .speech import Speaker
 from .systemone import Gate, Route
+from .thinker import Thinker
 from .tools import Toolbox
 from .voice import Listener
 
@@ -27,7 +29,7 @@ PERSISTENT_STATES = ("idle", "dancing")  # mirrors widget.gd PERSISTENT (WIRING.
 class Daemon:
     def __init__(self, reactor: Reactor | None = None, config: Config | None = None, speaker: Speaker | None = None,
                  listener: Listener | None = None, gate: Gate | None = None, toolbox: Toolbox | None = None,
-                 actor: Actor | None = None) -> None:
+                 actor: Actor | None = None, thinker: Thinker | None = None) -> None:
         self.config = config or Config()
         self.hub = WidgetHub()
         self.reactor: Reactor = reactor or self._default_reactor()
@@ -36,6 +38,9 @@ class Daemon:
         self.gate = gate or Gate(self.config.gate, self.config.brain.ollama_url)
         self.toolbox = toolbox or Toolbox(self.config.tools)
         self.actor = actor or Actor(self.config.actions, self.toolbox)
+        self.thinker = thinker or Thinker(self.config.thinker, self.toolbox, self.config.brain.action_model,
+                                          self.config.brain.ollama_url)
+        self.rng = random.Random()
         self.listen_task: asyncio.Task | None = None
         self.last_poke = -1e9
         self.started = time.monotonic()
@@ -71,6 +76,7 @@ class Daemon:
         await self.listener.start()
         await self.gate.start()
         await self.toolbox.start()
+        await self.thinker.start()
 
     async def close(self) -> None:
         close = getattr(self.reactor, "close", None)
@@ -80,6 +86,7 @@ class Daemon:
         await self.listener.close()
         await self.gate.close()
         await self.toolbox.close()
+        await self.thinker.close()
         if self.listen_task and not self.listen_task.done():
             self.listen_task.cancel()
 
@@ -168,6 +175,8 @@ class Daemon:
                     # is still confirming it, and that reaction would come out ahead of hers.
                     self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
                 outcome = await self.actor.act(event.title, route)
+                if outcome is None and route.decision == "act" and self.thinker.can_handle(route.topic):
+                    outcome = await self.think(event.title, route)
                 if outcome is not None:
                     return await self.report(outcome.event(event.title), outcome.ok)
                 if armed:
@@ -175,6 +184,22 @@ class Daemon:
         performance = decorate(event, await self.reactor.react(event))
         sent = await self.perform(performance)
         return performance, sent
+
+    async def think(self, text: str, route: Route):
+        """The thinker, with cover: an acknowledgement and the thinking pose right away (a cold
+        load is 7-17 s), one "still on it" if it drags, then the outcome for `report`."""
+        await self.perform(Performance(state="thinking", text=self.rng.choice(self.config.thinker.acks)))
+
+        async def still_on_it() -> None:
+            await asyncio.sleep(self.config.thinker.still_on_it_s)
+            await self.perform(Performance(state="thinking", text="Still on it."))
+
+        reminder = asyncio.get_running_loop().create_task(still_on_it())
+        try:
+            situation = await self.actor.situation(route.topic)
+            return await self.thinker.run(text, route.topic, situation)
+        finally:
+            reminder.cancel()
 
     QUIP_WORDS = 10
 
