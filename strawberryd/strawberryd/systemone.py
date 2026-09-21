@@ -261,6 +261,7 @@ KIND = Choice("kind", (
         "remind me to call mum at five", "add this to my notes", "write down: buy milk",
         "open my email", "mute the music", "play something calmer", "queue up some Daft Punk",
         "save this song", "like this track", "add this to my favourites", "put this on my running playlist",
+        "recommend me some music", "suggest something to listen to", "play something I might like",
     )),
     Option("question", "wants a fact looked up or read out", (
         "what song is this", "who sings this", "what's on my calendar tomorrow", "when is my next meeting",
@@ -270,6 +271,9 @@ KIND = Choice("kind", (
         "who was the president of the United States in 1960", "what's the capital of Australia",
         "how far away is the moon", "how many grams are in an ounce", "when did the Berlin Wall fall",
         "what does RSVP stand for", "who wrote War and Peace", "how do you spell necessary",
+        "what can you tell me about this artist", "tell me more about this band", "who are the members of this band",
+        "tell me about the history of Led Zeppelin", "what else did this artist make", "when was this band formed",
+        "tell me something about this song", "what genre is this",
     )),
     Option("chat", "small talk, feelings, banter, talking to her for its own sake", (
         "hello there", "good morning strawberry", "how was your night", "how are you doing today",
@@ -288,6 +292,8 @@ TOPIC = Choice("topic", (
         "skip this song", "who sings this", "pause the music", "play some jazz", "turn it down",
         "what album is this from", "put this on repeat", "I love this track", "turn the music off",
         "put something on", "play something for the evening", "what year is this from",
+        "tell me about this artist", "who are the members of this band", "what else did they make",
+        "recommend me some music", "what should I listen to",
     )),
     Option("calendar", "meetings, appointments, reminders, the time and the date", (
         "what's on my calendar tomorrow", "when is my next meeting", "remind me at five",
@@ -346,9 +352,11 @@ MUSIC_TOOL = Choice("music_tool", (
                                             "I can barely hear it")),
     Option("now_playing", "say what is playing", ("what song is this", "who sings this", "what's playing",
                                                    "what are we listening to", "who is this by", "what album is this from")),
-    Option("other", "something else about music: a specific song, artist or playlist, the queue, shuffle", (
+    Option("other", "something else about music: a specific song, artist or playlist, the queue, shuffle, facts", (
         "play some jazz", "put on some Nina Simone", "queue up Blue Monday", "play my running playlist",
         "shuffle this album", "put this on repeat", "add this to my favourites", "what year did this come out",
+        "tell me about this artist", "what can you tell me about the band", "who are the members of this band",
+        "tell me more about the band members and the history", "what else did they make", "recommend me some music",
     )),
 ))
 

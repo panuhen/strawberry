@@ -316,6 +316,31 @@
       "kind": "request",
       "topic": "music",
       "tool": "other"
+    },
+    {
+      "text": "what can you tell me about the artist",
+      "kind": "question",
+      "topic": "music",
+      "decision": "act",
+      "tool": "other"
+    },
+    {
+      "text": "tell me more about the band members and the history",
+      "kind": "question",
+      "topic": "music",
+      "tool": "other"
+    },
+    {
+      "text": "who are the members of this band",
+      "kind": "question",
+      "topic": "music",
+      "tool": "other"
+    },
+    {
+      "text": "can you recommend any good music",
+      "kind": "request",
+      "topic": "music",
+      "tool": "other"
     }
   ]
 }

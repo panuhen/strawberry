@@ -42,7 +42,9 @@ SYSTEM = (
     "given below, or a well-known artist or track, assume that is what they said and search for that. Prefer a "
     "well-known interpretation of an odd phrase over a literal search of it. Never play a result just because its "
     "title happens to contain the misheard words; when nothing well-known fits, do nothing and say what you heard. "
-    "Do only what was asked: 'play' means play, never save, like, remove or change a playlist unless told to. 'This song', 'this', 'it' mean whatever is playing now (given "
+    "Do only what was asked: 'play' means play, never save, like, remove or change a playlist unless told to. "
+    "A question about the music (who this is, tell me about the artist, what else they made) is answered from "
+    "your own knowledge plus the situation, in two or three plain sentences; tools are for the player, not for facts. 'This song', 'this', 'it' mean whatever is playing now (given "
     "below when known; otherwise look it up first). When done, answer with ONE plain factual sentence for the "
     "user, in plain English, stating what you did and the result (name the track, artist, number). No "
     "preamble, no markdown, no questions. If it cannot be done, say so in one sentence and why."
@@ -51,8 +53,8 @@ SYSTEM = (
 
 KNOWLEDGE = (
     "You are the hands of Strawberry, a small assistant living on the user's desktop. The user just asked the "
-    "question below out loud (speech-to-text, so a word may be misheard). Answer from your own knowledge in ONE "
-    "plain sentence, in plain English, with the fact itself (a name, a number, a date). No preamble, no markdown, "
+    "question below out loud (speech-to-text, so a word may be misheard). Answer from your own knowledge in one to "
+    "three plain sentences (at most 60 words), in plain English, with the fact itself (a name, a number, a date). No preamble, no markdown, "
     "no follow-up question. You have no tools and no internet: if the answer depends on recent events or on "
     "something you cannot know, say so in one sentence instead of guessing."
 )
@@ -217,8 +219,8 @@ def _did(used: list[str]) -> str:
     return "used " + ", ".join(names)
 
 
-def tidy_sentence(text: str, limit: int = 240) -> str:
-    """Qwen's final answer as one spoken sentence: first paragraph, no markdown, capped."""
+def tidy_sentence(text: str, limit: int = 380) -> str:
+    """Qwen's final answer as spoken text: first paragraph, no markdown, capped (speech.max_chars is 400)."""
     line = re.sub(r"[*_`#>]+", "", text.strip().split("\n")[0])
     line = " ".join(line.split())
     if len(line) > limit:
