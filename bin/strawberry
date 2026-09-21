@@ -23,7 +23,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/strawberry"
 D="$ROOT/strawberryd/.venv/bin/strawberryd"
 [ -x "$D" ] || (cd "$ROOT/strawberryd" && uv sync --quiet)
-PORT="${STRAWBERRYD_PORT:-$("$D" --print-port 2>/dev/null || echo 8770)}"
+# The port straight from the TOML (awk, ~1 ms) rather than `strawberryd --print-port` (~300 ms of
+# Python start-up): the hotkey runs this script, and that delay was visible in her reaction.
+config_port() {
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/strawberry/config.toml"
+  [ -f "$cfg" ] && awk -F'=' '/^\[/{s=$0} s=="[daemon]" && $1 ~ /^port[ \t]*$/ {gsub(/[^0-9]/,"",$2); print $2; exit}' "$cfg"
+}
+PORT="${STRAWBERRYD_PORT:-$(config_port)}"; PORT="${PORT:-8770}"
 HEALTH="http://127.0.0.1:$PORT/health"
 PIDFILE="$STATE_DIR/strawberryd.pid"
 LOG="$STATE_DIR/strawberryd.log"
