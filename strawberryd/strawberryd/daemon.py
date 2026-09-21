@@ -30,6 +30,7 @@ class Daemon:
         self.speaker = speaker or Speaker(self.config.speech)
         self.listener = listener or Listener(self.config.voice)
         self.listen_task: asyncio.Task | None = None
+        self.last_poke = -1e9
         self.started = time.monotonic()
         self.performed = 0
         # Her resting state (idle|dancing) outlives any one widget: a widget that (re)connects
@@ -68,10 +69,17 @@ class Daemon:
         if self.listen_task and not self.listen_task.done():
             self.listen_task.cancel()
 
+    POKE_DEBOUNCE_S = 0.7
+
     def listen(self) -> dict[str, Any]:
         """The hotkey: start a voice session, or end the recording early if one is running."""
         if not self.listener.ready:
             return {"listening": False, "error": self.listener.disabled_reason or "voice not ready"}
+        now = time.monotonic()
+        if now - self.last_poke < self.POKE_DEBOUNCE_S:
+            # Key auto-repeat fires the shortcut many times a second; that is one press, not a stop.
+            return {"listening": self.listener.phase == "listening", "debounced": True}
+        self.last_poke = now
         if self.listener.busy:
             if self.listener.phase == "listening":
                 self.listener.stop.set()

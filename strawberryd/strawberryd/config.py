@@ -64,7 +64,9 @@ class VoiceConfig:
     language: str = ""            # "" = detect; "en" pins English and is faster
     device: str = "cpu"           # keep the GPU for Ollama; "cuda" works if you have room
     compute_type: str = "int8"
-    source: str = ""              # microphone (pactl source name fragment); "" = first real input
+    source: str = ""              # microphone (pactl source name fragment); "" = auto (see bluetooth)
+    bluetooth: bool = True        # auto: prefer a connected Bluetooth headset's mic, switching it to its
+                                  # headset profile while she listens (music drops to phone quality for those seconds)
     max_seconds: float = 15.0
     silence_s: float = 1.1        # this much quiet after speech ends the recording
     min_speech_s: float = 0.4
@@ -280,7 +282,8 @@ def default_toml() -> str:
         'model = "small"                # tiny | base | small | medium | large-v3; small is ~460 MB, ~1 s on CPU',
         'language = ""                  # "" detects; "en" is faster and steadier',
         'device = "cpu"                 # "cuda" if the GPU has room next to Ollama',
-        'source = ""                    # microphone name fragment (pactl list sources short); "" = first real input',
+        'source = ""                    # microphone name fragment (pactl list sources short); "" = auto',
+        "bluetooth = true               # auto prefers a Bluetooth headset mic (its profile is switched while she listens)",
         "max_seconds = 15.0",
         "silence_s = 1.1                # quiet after speech that ends the recording",
         "",

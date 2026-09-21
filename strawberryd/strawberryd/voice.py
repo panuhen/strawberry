@@ -18,6 +18,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
+import select
 import subprocess
 import threading
 import time
@@ -34,6 +36,7 @@ log = logging.getLogger("strawberryd.voice")
 
 RATE = 16000
 CHUNK = 1600  # 0.1 s
+NO_DATA_S = 3.0  # pw-record produced nothing: the capture never got linked
 DIDNT_CATCH = "Sorry, I didn't catch that."
 
 
@@ -74,6 +77,87 @@ def pick_source(preferred: str = "") -> str | None:
     return sources[0] if sources else None
 
 
+HEADSET_PROFILES = ("headset-head-unit-msbc", "headset-head-unit", "headset-head-unit-cvsd")  # best first
+
+
+@dataclass
+class HeadsetCard:
+    name: str
+    active_profile: str
+    headset_profile: str      # the best available HSP/HFP profile
+
+    @property
+    def needs_switch(self) -> bool:
+        return not self.active_profile.startswith("headset")
+
+
+def parse_cards(text: str) -> list[HeadsetCard]:
+    """Bluetooth cards with a usable headset profile, from `pactl list cards` output.
+
+    A Bluetooth headset is either hi-fi (A2DP, no microphone) or a headset (HSP/HFP, mic at
+    16 kHz mono); never both at once. We switch it for the length of a recording.
+    """
+    cards: list[HeadsetCard] = []
+    name = active = ""
+    available: list[str] = []
+    for raw in text.splitlines() + ["Card #end"]:
+        line = raw.strip()
+        if line.startswith("Card #"):
+            if name.startswith("bluez_card") and available:
+                best = next(p for p in HEADSET_PROFILES if p in available)
+                cards.append(HeadsetCard(name, active, best))
+            name = active = ""
+            available = []
+        elif line.startswith("Name:"):
+            name = line.split(":", 1)[1].strip()
+        elif line.startswith("Active Profile:"):
+            active = line.split(":", 1)[1].strip()
+        else:
+            for profile in HEADSET_PROFILES:
+                if line.startswith(profile + ":") and "available: yes" in line:
+                    available.append(profile)
+    return cards
+
+
+def headset_card() -> HeadsetCard | None:
+    try:
+        text = subprocess.run(["pactl", "list", "cards"], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    cards = parse_cards(text)
+    return cards[0] if cards else None
+
+
+def set_profile(card: str, profile: str) -> None:
+    subprocess.run(["pactl", "set-card-profile", card, profile], check=False, timeout=5)
+
+
+def acquire_microphone(preferred: str, prefer_bluetooth: bool) -> tuple[str | None, Callable[[], None]]:
+    """Blocking. Returns (source name, restore) where restore() undoes any profile switch.
+
+    Order: an explicit `preferred` fragment; else a connected Bluetooth headset (switched to its
+    mic profile for the duration); else the first real input.
+    """
+    if preferred:
+        return pick_source(preferred), (lambda: None)
+    card = headset_card() if prefer_bluetooth else None
+    if card is not None:
+        previous = card.active_profile
+        if card.needs_switch:
+            set_profile(card.name, card.headset_profile)
+        for _ in range(30):  # the bluez_input source appears within ~0.1 s; the audio path a bit later
+            source = next((s for s in list_sources() if s.startswith("bluez_input")), None)
+            if source:
+                time.sleep(0.4)
+                restore = (lambda: set_profile(card.name, previous)) if card.needs_switch else (lambda: None)
+                return source, restore
+            time.sleep(0.1)
+        if card.needs_switch:
+            set_profile(card.name, previous)
+        log.warning("voice: headset %s switched to %s but no bluez_input source appeared", card.name, card.headset_profile)
+    return pick_source(""), (lambda: None)
+
+
 def dbfs(chunk: np.ndarray) -> float:
     rms = float(np.sqrt(np.mean(chunk * chunk))) if len(chunk) else 0.0
     return 20.0 * math.log10(max(rms, 1e-6))
@@ -95,6 +179,7 @@ def record(source: str, stop: threading.Event, max_seconds: float, silence_s: fl
         log.error("pw-record failed: %s", exc)
         return Recording(np.zeros(0, np.float32), 0.0, 0.0, "error")
     assert proc.stdout is not None
+    fd = proc.stdout.fileno()
     chunks: list[np.ndarray] = []
     floor = 0.0
     speech = 0.0
@@ -102,22 +187,36 @@ def record(source: str, stop: threading.Event, max_seconds: float, silence_s: fl
     heard_speech = False
     stopped_by = "end"
     started = time.monotonic()
+    last_data = started
+    pending = b""
     try:
         while True:
-            raw = proc.stdout.read(CHUNK * 2)
-            if not raw:
+            # select(): a capture PipeWire never links delivers nothing, and a blocking read
+            # would hang here forever with her stuck in the listening pose.
+            ready, _, _ = select.select([fd], [], [], 0.2)
+            if ready:
+                raw = os.read(fd, CHUNK * 2)
+                if not raw:
+                    break
+                last_data = time.monotonic()
+                pending += raw
+                while len(pending) >= CHUNK * 2:
+                    chunk = np.frombuffer(pending[: CHUNK * 2], dtype=np.int16).astype(np.float32) / 32768.0
+                    pending = pending[CHUNK * 2:]
+                    chunks.append(chunk)
+                    level = dbfs(chunk)
+                    floor = level if len(chunks) == 1 else min(floor, level)
+                    threshold = max(floor + 12.0, level_db)
+                    if level > threshold:
+                        speech += 0.1
+                        silence = 0.0
+                        heard_speech = heard_speech or speech >= min_speech_s
+                    else:
+                        silence += 0.1
+            elif time.monotonic() - last_data > NO_DATA_S:
+                log.warning("voice: no audio from %s for %.0fs; giving up", source, time.monotonic() - last_data)
+                stopped_by = "error"
                 break
-            chunk = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-            chunks.append(chunk)
-            level = dbfs(chunk)
-            floor = level if len(chunks) == 1 else min(floor, level)
-            threshold = max(floor + 12.0, level_db)
-            if level > threshold:
-                speech += 0.1
-                silence = 0.0
-                heard_speech = heard_speech or speech >= min_speech_s
-            else:
-                silence += 0.1
             elapsed = time.monotonic() - started
             if stop.is_set():
                 stopped_by = "poke"
@@ -158,11 +257,18 @@ class Listener:
         transcriber_factory: Callable[[VoiceConfig], Transcriber] | None = None,
         recorder: Callable[..., Recording] | None = None,
         source_picker: Callable[[str], str | None] | None = None,
+        microphone: Callable[[str, bool], tuple[str | None, Callable[[], None]]] | None = None,
     ) -> None:
         self.config = config
         self.transcriber_factory = transcriber_factory or whisper_transcriber
         self.recorder = recorder or record
-        self.source_picker = source_picker or pick_source
+        # Tests inject a plain picker; production acquires the mic (Bluetooth profile switch included).
+        if microphone is not None:
+            self.microphone = microphone
+        elif source_picker is not None:
+            self.microphone = lambda preferred, _bt: (source_picker(preferred), (lambda: None))
+        else:
+            self.microphone = acquire_microphone
         self.transcriber: Transcriber | None = None
         self.stop = threading.Event()
         self.busy = False
@@ -172,6 +278,7 @@ class Listener:
         self.last_transcript: str | None = None
         self.last_ms = 0.0
         self.load_s: float | None = None
+        self.bluetooth_ok = True     # cleared after a Bluetooth mic delivers nothing (SCO failure); analog then
         self.disabled_reason: str | None = None if config.enabled else "disabled in config"
 
     @property
@@ -204,6 +311,7 @@ class Listener:
             "ready": self.ready,
             "reason": self.disabled_reason,
             "phase": self.phase,
+            "bluetooth_ok": self.bluetooth_ok,
             "sessions": self.sessions,
             "empty": self.empty,
             "last_transcript": self.last_transcript,
@@ -212,24 +320,33 @@ class Listener:
 
     async def session(self, daemon: Any) -> dict[str, Any]:
         """One listen -> think -> answer cycle. `daemon` performs states and handles the event."""
-        source = self.source_picker(self.config.source)
-        if source is None:
-            log.warning("voice: no microphone source found (preferred %r)", self.config.source)
-            await daemon.perform(Performance(state="talking", text="I can't find a microphone.", emotion="alert"))
-            return {"transcript": None, "error": "no microphone"}
         self.busy = True
         self.sessions += 1
         self.stop.clear()
         started = time.perf_counter()
+        restore: Callable[[], None] = lambda: None
         try:
             self.phase = "listening"
             await daemon.perform(Performance(state="listening"))
-            rec: Recording = await asyncio.to_thread(
-                self.recorder, source, self.stop, self.config.max_seconds, self.config.silence_s,
-                self.config.min_speech_s, self.config.level_db,
-            )
+            source, restore = await asyncio.to_thread(self.microphone, self.config.source, self.config.bluetooth and self.bluetooth_ok)
+            if source is None:
+                log.warning("voice: no microphone source found (preferred %r)", self.config.source)
+                await daemon.perform(Performance(state="talking", text="I can't find a microphone.", emotion="alert"))
+                return {"transcript": None, "error": "no microphone"}
+            try:
+                rec: Recording = await asyncio.to_thread(
+                    self.recorder, source, self.stop, self.config.max_seconds, self.config.silence_s,
+                    self.config.min_speech_s, self.config.level_db,
+                )
+            finally:
+                await asyncio.to_thread(restore)  # hi-fi profile back before she starts talking
             log.info("voice: recorded %.1fs (%.1fs speech, stopped by %s) from %s", rec.seconds, rec.speech_seconds,
                      rec.stopped_by, source)
+            if rec.stopped_by == "error" and source.startswith("bluez_input"):
+                # The headset's HFP audio link is broken on this machine; stop switching it and
+                # interrupting the music for nothing. Next session uses the wired input.
+                self.bluetooth_ok = False
+                log.warning("voice: Bluetooth microphone %s delivered no audio; not using it again this run", source)
             self.phase = "thinking"
             await daemon.perform(Performance(state="thinking"))
             text = ""

@@ -90,6 +90,7 @@ async def test_second_poke_stops_the_recording_early():
     await daemon.start()
     assert daemon.listen()["listening"] is True
     await stop_seen.wait()
+    daemon.last_poke -= 1.0  # a deliberate second press, not key auto-repeat
     assert daemon.listen() == {"listening": False, "stopped": True}
     result = await daemon.listen_task
     assert result["transcript"] == "stop that"
@@ -137,6 +138,75 @@ async def test_whisper_load_failure_disables_voice_not_daemon():
     await daemon.start()
     assert not daemon.listener.ready
     assert "no model" in daemon.listen()["error"]
+    await daemon.close()
+
+
+PACTL_CARDS = """Card #45
+\tName: alsa_card.pci-0000_0d_00.4
+\tDriver: alsa
+\tProfiles:
+\t\toutput:analog-stereo+input:analog-stereo: Analog Stereo Duplex (sinks: 1, sources: 1, priority: 6565, available: yes)
+\tActive Profile: output:iec958-stereo+input:analog-stereo
+Card #61
+\tName: bluez_card.74_B7_E6_37_3B_0F
+\tDriver: module-bluez5-device.c
+\tProfiles:
+\t\theadset-head-unit: Headset Head Unit (HSP/HFP) (sinks: 1, sources: 1, priority: 1, available: yes)
+\t\ta2dp-sink: High Fidelity Playback (A2DP Sink, codec SBC) (sinks: 1, sources: 0, priority: 18, available: yes)
+\t\theadset-head-unit-cvsd: Headset Head Unit (HSP/HFP, codec CVSD) (sinks: 1, sources: 1, priority: 2, available: yes)
+\t\theadset-head-unit-msbc: Headset Head Unit (HSP/HFP, codec mSBC) (sinks: 1, sources: 1, priority: 3, available: yes)
+\tActive Profile: a2dp-sink
+"""
+
+
+def test_parse_cards_finds_the_headset_and_its_best_profile():
+    from strawberryd.voice import parse_cards
+
+    cards = parse_cards(PACTL_CARDS)
+    assert len(cards) == 1
+    card = cards[0]
+    assert card.name == "bluez_card.74_B7_E6_37_3B_0F"
+    assert card.active_profile == "a2dp-sink" and card.needs_switch
+    assert card.headset_profile == "headset-head-unit-msbc"
+    already = parse_cards(PACTL_CARDS.replace("Active Profile: a2dp-sink", "Active Profile: headset-head-unit-msbc"))
+    assert not already[0].needs_switch
+    assert parse_cards(PACTL_CARDS.replace("available: yes", "available: no")) == []
+
+
+async def test_bluetooth_profile_is_switched_and_restored_around_recording():
+    events: list[str] = []
+
+    def microphone(preferred, bluetooth):
+        events.append(f"acquire bt={bluetooth}")
+        return "bluez_input.test.0", (lambda: events.append("restore"))
+
+    def recorder(source, *args):
+        events.append(f"record {source}")
+        return fake_recording()
+
+    config = Config()
+    config.brain.enabled = False
+    config.speech.enabled = False
+    listener = Listener(VoiceConfig(enabled=True), transcriber_factory=lambda cfg: (lambda a: "hi"),
+                        recorder=recorder, microphone=microphone)
+    daemon = Daemon(reactor=CannedReactor(), config=config, listener=listener)
+    await daemon.start()
+    daemon.listen()
+    await daemon.listen_task
+    assert events == ["acquire bt=True", "record bluez_input.test.0", "restore"]
+    await daemon.close()
+
+
+async def test_pokes_are_debounced():
+    daemon, _ = make_daemon("x", recorder=lambda source, stop, *a: (stop.wait(2.0), fake_recording())[1])
+    await daemon.start()
+    assert daemon.listen() == {"listening": True}
+    assert daemon.listen()["debounced"] is True       # auto-repeat within 0.7 s is not a stop
+    while daemon.listener.phase != "listening":       # let the session task reach the recorder
+        await asyncio.sleep(0.01)
+    daemon.last_poke -= 1.0
+    assert daemon.listen() == {"listening": False, "stopped": True}
+    await daemon.listen_task
     await daemon.close()
 
 
