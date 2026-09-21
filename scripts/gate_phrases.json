@@ -1,7 +1,7 @@
 {
   "_": [
     "Sentences the gate must read right (WIRING.md §8a). Run: scripts/gate_check.py",
-    "Each entry: text, expected kind (request|question|chat|other), optional topic, optional decision.",
+    "Each entry: text, expected kind (request|question|chat|other), optional topic, decision, tool (the topic's tool question).",
     "Add the ones she gets wrong in real use; the fix is an example under [gate.examples] in the config,",
     "or in KIND/TOPIC in strawberryd/systemone.py when it should ship for everyone."
   ],
@@ -9,37 +9,44 @@
     {
       "text": "can you skip this song",
       "kind": "request",
-      "topic": "music"
+      "topic": "music",
+      "tool": "skip"
     },
     {
       "text": "skip this track",
       "kind": "request",
-      "topic": "music"
+      "topic": "music",
+      "tool": "skip"
     },
     {
       "text": "pause the music please",
       "kind": "request",
-      "topic": "music"
+      "topic": "music",
+      "tool": "pause"
     },
     {
       "text": "put on some jazz",
       "kind": "request",
-      "topic": "music"
+      "topic": "music",
+      "tool": "other"
     },
     {
       "text": "turn the volume down a bit",
       "kind": "request",
-      "topic": "music"
+      "topic": "music",
+      "tool": "volume_down"
     },
     {
       "text": "play the previous one again",
       "kind": "request",
-      "topic": "music"
+      "topic": "music",
+      "tool": "previous"
     },
     {
       "text": "queue up something by Nina Simone",
       "kind": "request",
-      "topic": "music"
+      "topic": "music",
+      "tool": "other"
     },
     {
       "text": "remind me to call mum at five",
@@ -74,17 +81,20 @@
     {
       "text": "what song is this",
       "kind": "question",
-      "topic": "music"
+      "topic": "music",
+      "tool": "now_playing"
     },
     {
       "text": "who is singing this",
       "kind": "question",
-      "topic": "music"
+      "topic": "music",
+      "tool": "now_playing"
     },
     {
       "text": "what album is this from",
       "kind": "question",
-      "topic": "music"
+      "topic": "music",
+      "tool": "now_playing"
     },
     {
       "text": "what's on my calendar tomorrow",
@@ -178,17 +188,20 @@
     {
       "text": "next song please",
       "kind": "request",
-      "topic": "music"
+      "topic": "music",
+      "tool": "skip"
     },
     {
       "text": "could you turn this off, I need to focus",
       "kind": "request",
-      "topic": "music"
+      "topic": "music",
+      "tool": "pause"
     },
     {
       "text": "put something on for cooking",
       "kind": "request",
-      "topic": "music"
+      "topic": "music",
+      "tool": "other"
     },
     {
       "text": "note to self: the printer needs toner",
@@ -203,7 +216,8 @@
     {
       "text": "which year did this come out",
       "kind": "question",
-      "topic": "music"
+      "topic": "music",
+      "tool": "other"
     },
     {
       "text": "do I have anything on this evening",
@@ -239,6 +253,30 @@
       "text": "right, where was I",
       "kind": "other",
       "decision": "chat"
+    },
+    {
+      "text": "louder please",
+      "kind": "request",
+      "topic": "music",
+      "tool": "volume_up"
+    },
+    {
+      "text": "music back on",
+      "kind": "request",
+      "topic": "music",
+      "tool": "resume"
+    },
+    {
+      "text": "play my running playlist",
+      "kind": "request",
+      "topic": "music",
+      "tool": "other"
+    },
+    {
+      "text": "stop stop stop",
+      "kind": "request",
+      "topic": "music",
+      "tool": "pause"
     }
   ]
 }

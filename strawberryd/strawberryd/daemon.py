@@ -8,6 +8,7 @@ import time
 from dataclasses import replace
 from typing import Any
 
+from .actions import Actor
 from .config import Config
 from .contract import Performance
 from .events import CannedReactor, Event, Reactor
@@ -25,7 +26,8 @@ PERSISTENT_STATES = ("idle", "dancing")  # mirrors widget.gd PERSISTENT (WIRING.
 
 class Daemon:
     def __init__(self, reactor: Reactor | None = None, config: Config | None = None, speaker: Speaker | None = None,
-                 listener: Listener | None = None, gate: Gate | None = None, toolbox: Toolbox | None = None) -> None:
+                 listener: Listener | None = None, gate: Gate | None = None, toolbox: Toolbox | None = None,
+                 actor: Actor | None = None) -> None:
         self.config = config or Config()
         self.hub = WidgetHub()
         self.reactor: Reactor = reactor or self._default_reactor()
@@ -33,6 +35,7 @@ class Daemon:
         self.listener = listener or Listener(self.config.voice)
         self.gate = gate or Gate(self.config.gate, self.config.brain.ollama_url)
         self.toolbox = toolbox or Toolbox(self.config.tools)
+        self.actor = actor or Actor(self.config.actions, self.toolbox)
         self.listen_task: asyncio.Task | None = None
         self.last_poke = -1e9
         self.started = time.monotonic()
@@ -43,6 +46,9 @@ class Daemon:
         # Latest beat estimate from doorways/beat_watch.py and when it arrived (§4c).
         self.tempo: dict[str, Any] | None = None
         self.tempo_at = 0.0
+        # After she changes the music herself, the MPRIS doorway reports the new track; her
+        # account of the action already covers it, so that one reaction is swallowed.
+        self.quiet_media_until = 0.0
 
     def _default_reactor(self) -> Reactor:
         canned = CannedReactor()
@@ -140,12 +146,41 @@ class Daemon:
         """The gate's reading of a spoken sentence (WIRING.md §8a); None means "treat as chat"."""
         return await self.gate.route(text)
 
+    QUIET_MEDIA_S = 8.0
+
     async def handle_event(self, event: Event) -> tuple[Performance, int]:
         log.info("event %s app=%r title=%r urgency=%s", event.source, event.app, event.title, event.urgency)
+        if event.source == "media" and time.monotonic() < self.quiet_media_until:
+            log.info("media event swallowed: she caused it (%r)", event.title)
+            return Performance(state=self.rest_state), 0
+        if event.source == "action":
+            # Posted by hand (or by a future doorway that did something): body is the fact.
+            return await self.report(event, event.category != "failed")
         if event.source == "voice" and event.title:
-            # Phase 6a: every spoken sentence is routed and logged; the action path (6b) takes
-            # `act` and `offer` from here. Until then she answers everything herself.
-            await self.route(event.title)
+            # A spoken sentence goes through the gate (§8a); a clear request she can act on is
+            # done first, and what she says is her account of the outcome (§8b). Everything
+            # else, including `offer` for now, she answers as chat.
+            route = await self.route(event.title)
+            if route is not None:
+                if route.decision == "act" and route.topic == "music":
+                    # Set before acting: the MPRIS doorway reports the new track while the skip
+                    # is still confirming it, and that reaction would come out ahead of hers.
+                    self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
+                outcome = await self.actor.act(event.title, route)
+                if outcome is not None:
+                    return await self.report(outcome.event(event.title), outcome.ok)
+                self.quiet_media_until = 0.0  # nothing was done; the music is not hers to explain
         performance = decorate(event, await self.reactor.react(event))
+        sent = await self.perform(performance)
+        return performance, sent
+
+    QUIP_WORDS = 10
+
+    async def report(self, event: Event, ok: bool) -> tuple[Performance, int]:
+        """Say what she did: the fact (event.body, written by code) and the reactor's quip after it."""
+        performance = decorate(event, await self.reactor.react(event))
+        quip = " ".join((performance.text or "").split()[: self.QUIP_WORDS]).strip()
+        text = f"{event.body} {quip}".strip() if quip else event.body
+        performance = replace(performance, text=text, emotion=performance.emotion if ok else "alert")
         sent = await self.perform(performance)
         return performance, sent

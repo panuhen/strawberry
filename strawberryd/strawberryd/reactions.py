@@ -44,7 +44,7 @@ def is_burst(event: Event) -> bool:
 def choose(event: Event, emotion: str) -> Choice:
     if event.source == "media":
         return Choice(reaction="nod")  # she is dancing; a hop would break it
-    if event.source == "voice":
+    if event.source in ("voice", "action"):
         return Choice(reaction="nod")
     if event.source == "git":
         if event.app == "pre-push":

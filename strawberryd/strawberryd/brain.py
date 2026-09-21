@@ -39,6 +39,12 @@ def describe(event: Event) -> str:
     if event.source == "voice":
         # Not something that happened: the user spoke to her. Answer them.
         return f"source: voice (the user is talking to you; reply to them)\nsaid: {event.title or event.body}"
+    if event.source == "action":
+        # She just did something for the user (or tried). The fact is already said by code; the
+        # model adds a short quip after it, nothing else.
+        return (f"source: action (you did this for the user and have just said: \"{event.body}\" "
+                f"Add ONE short quip to follow it, at most 8 words, no facts, no repetition)\n"
+                f"asked: {event.title}\ndid: {event.app}")
     parts = [f"source: {event.source}"]
     if event.app:
         parts.append(f"app: {event.app}")

@@ -100,6 +100,7 @@ async def health(request: web.Request) -> web.Response:
             "voice": daemon.listener.stats(),
             "gate": daemon.gate.stats(),
             "tools": daemon.toolbox.stats(),
+            "actions": daemon.actor.stats(),
             "rest_state": daemon.rest_state,
             "tempo": daemon.fresh_tempo(),
         }

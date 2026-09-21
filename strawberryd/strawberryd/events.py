@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from .contract import ContractError, Performance, anim_for
 
-SOURCES = ("notification", "git", "voice", "media", "manual")
+SOURCES = ("notification", "git", "voice", "media", "manual", "action")
 URGENCIES = ("low", "normal", "critical")
 MAX_BODY = 2000
 MAX_LINE = 140
@@ -70,6 +70,8 @@ class CannedReactor:
         emotion = "alert" if event.urgency == "critical" else "neutral"
         if event.source == "media" or (event.source == "git" and event.app == "pre-push"):
             emotion = "happy"
+        if event.source == "action":
+            emotion = "alert" if event.category == "failed" else "happy"
         line = self._line(event)
         return Performance(state="talking", anim=anim_for(emotion), text=line[:MAX_LINE], emotion=emotion)
 
@@ -90,4 +92,6 @@ class CannedReactor:
             return f"Now playing: {event.title or event.body}" if (event.title or event.body) else "Music!"
         if event.source == "voice":
             return f"You said: {event.body or event.title}" if (event.body or event.title) else "I heard you."
+        if event.source == "action":
+            return ""  # the fact (event.body) is spoken by the daemon; nothing to add
         return event.title or event.body or "Something happened."

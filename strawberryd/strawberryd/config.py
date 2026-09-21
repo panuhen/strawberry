@@ -139,6 +139,16 @@ class ToolsConfig:
 
 
 @dataclass
+class ActionsConfig:
+    """Acting on what you said (WIRING.md §8b): the reflex tier, and the thinker behind it."""
+
+    enabled: bool = True
+    reflex: float = 0.6            # tool confidence at which a plain command fires the tool directly
+    argument: float = 0.5          # p(has_argument) above this needs the thinker (Qwen) to fill it in
+    timeout_s: float = 25.0        # the whole action, tools included; then she says it failed
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
@@ -149,6 +159,7 @@ class Config:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     gate: GateConfig = field(default_factory=GateConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
+    actions: ActionsConfig = field(default_factory=ActionsConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -162,6 +173,7 @@ class Config:
             "voice": asdict(self.voice),
             "gate": asdict(self.gate),
             "tools": asdict(self.tools),
+            "actions": asdict(self.actions),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -177,6 +189,7 @@ _SECTIONS = {
     "voice": VoiceConfig,
     "gate": GateConfig,
     "tools": ToolsConfig,
+    "actions": ActionsConfig,
 }
 
 
@@ -253,6 +266,8 @@ def _validate(config: Config) -> None:
             raise ConfigError(f"tools.servers.{name}: unknown keys {sorted(unknown)}")
     if config.tools.result_chars < 100:
         raise ConfigError("tools.result_chars must be >= 100")
+    if not (0.0 <= config.actions.reflex <= 1.0 and 0.0 <= config.actions.argument <= 1.0):
+        raise ConfigError("actions.reflex and actions.argument must be between 0 and 1")
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
 
     try:
@@ -370,6 +385,10 @@ def default_toml() -> str:
         'command = "spotify-mcp"        # or a full path, e.g. ~/spotify-mcp/.venv/bin/spotify-mcp',
         "# args = []",
         "# env = {}",
+        "",
+        "[actions]",
+        "enabled = true                 # act on requests: skip, pause, what's playing… (needs [tools] and [gate])",
+        "reflex = 0.6                   # how sure the gate must be to fire a plain command straight away",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

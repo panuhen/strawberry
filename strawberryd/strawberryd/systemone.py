@@ -324,7 +324,43 @@ IS_ABOUT_HER = Noul(
     )),
 )
 
-ROUTING: tuple[Question, ...] = (KIND, TOPIC, IS_URGENT, IS_ABOUT_HER)
+# The second level (§8a, chained): which tool, and does the sentence carry an argument the
+# embedding cannot extract. Asked on the same vector, so they cost nothing extra.
+MUSIC_TOOL = Choice("music_tool", (
+    Option("skip", "go to the next track", ("skip this song", "next song please", "skip", "play the next one",
+                                            "not this one, next", "change the track", "can you skip this")),
+    Option("previous", "go back to the previous track", ("play the previous one again", "go back a track",
+                                                          "previous song", "put the last one back on")),
+    Option("pause", "stop or pause the music", ("pause the music", "stop the music", "pause it", "turn this off",
+                                                 "quiet please", "mute the music", "silence")),
+    Option("resume", "start the music again", ("resume", "play", "unpause", "start the music again", "carry on",
+                                                "music back on please")),
+    Option("volume_down", "make it quieter", ("turn the volume down a bit", "quieter", "turn it down", "too loud",
+                                               "bring the volume down")),
+    Option("volume_up", "make it louder", ("turn it up", "louder", "make it louder", "volume up a bit",
+                                            "I can barely hear it")),
+    Option("now_playing", "say what is playing", ("what song is this", "who sings this", "what's playing",
+                                                   "what are we listening to", "who is this by", "what album is this from")),
+    Option("other", "something else about music: a specific song, artist or playlist, the queue, shuffle", (
+        "play some jazz", "put on some Nina Simone", "queue up Blue Monday", "play my running playlist",
+        "shuffle this album", "put this on repeat", "add this to my favourites", "what year did this come out",
+    )),
+))
+
+HAS_ARGUMENT = Noul(
+    "has_argument",
+    yes=Option("yes", "names a specific song, artist, playlist, amount, time or text", (
+        "play some Nina Simone", "queue up Blue Monday", "volume to thirty", "set a timer for ten minutes",
+        "remind me to call mum at five", "play my running playlist", "write down: buy milk", "put on some jazz",
+    )),
+    no=Option("no", "a plain command with nothing to fill in", (
+        "skip this", "pause", "next song", "what song is this", "turn it down a bit", "louder", "resume",
+        "who sings this", "stop the music", "lock the screen",
+    )),
+)
+
+TOOL_QUESTIONS: dict[str, Choice] = {"music": MUSIC_TOOL}
+ROUTING: tuple[Question, ...] = (KIND, TOPIC, IS_URGENT, IS_ABOUT_HER, HAS_ARGUMENT, *TOOL_QUESTIONS.values())
 ACTIONABLE = ("request", "question")
 
 
@@ -337,6 +373,9 @@ class Route:
     is_urgent: float           # p(yes)
     is_about_her: float        # p(yes)
     decision: str              # chat | offer | act
+    tool: str = ""             # the topic's tool question, when there is one: "skip", "now_playing", "other"…
+    tool_confidence: float = 0.0
+    has_argument: float = 0.0  # p(yes): something to fill in that needs the thinker
     answers: dict[str, Answer] = field(default_factory=dict, compare=False)
     ms: float = 0.0
 
@@ -349,6 +388,9 @@ class Route:
             "is_urgent": round(self.is_urgent, 4),
             "is_about_her": round(self.is_about_her, 4),
             "decision": self.decision,
+            "tool": self.tool,
+            "tool_confidence": round(self.tool_confidence, 4),
+            "has_argument": round(self.has_argument, 4),
             "ms": round(self.ms, 1),
             "answers": {k: v.to_dict() for k, v in self.answers.items()},
         }
@@ -435,21 +477,28 @@ class Gate:
         ms = (time.perf_counter() - started) * 1000
         kind = answers["kind"]
         topic = answers["topic"]
+        topic_name = topic.choice if topic.confidence >= self.config.topic_min else "other"
+        tool_q = TOOL_QUESTIONS.get(topic_name or "")
+        tool = answers[tool_q.name] if tool_q and tool_q.name in answers else None
         route = Route(
             text=text,
             kind=kind.choice or "other",
-            topic=topic.choice if topic.confidence >= self.config.topic_min else "other",
+            topic=topic_name or "other",
             confidence=kind.confidence,
             is_urgent=answers["is_urgent"].score or 0.0,
             is_about_her=answers["is_about_her"].score or 0.0,
             decision=decide(kind.choice or "other", kind.confidence, self.config.act, self.config.offer),
+            tool=(tool.choice or "") if tool else "",
+            tool_confidence=tool.confidence if tool else 0.0,
+            has_argument=answers["has_argument"].score or 0.0,
             answers=answers,
             ms=ms,
         )
         self.last_route = route
         self.last_ms = ms
-        log.info("gate: %r -> %s/%s conf %.2f -> %s (%.0f ms) %s", text, route.kind, route.topic, route.confidence,
-                 route.decision, ms, {k: round(v, 2) for k, v in kind.probabilities.items()})
+        log.info("gate: %r -> %s/%s conf %.2f -> %s%s arg %.2f (%.0f ms) %s", text, route.kind, route.topic,
+                 route.confidence, route.decision, f" tool {route.tool} {route.tool_confidence:.2f}" if route.tool else "",
+                 route.has_argument, ms, {k: round(v, 2) for k, v in kind.probabilities.items()})
         return route
 
     def schedule_rewarm(self) -> None:

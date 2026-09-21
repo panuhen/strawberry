@@ -58,9 +58,39 @@ EXAMPLES = [
         "emotion": "happy",
     },
     {
-        "event": "source: voice (the user is talking to you; reply to them)\nsaid: can you skip this song",
-        "line": "I would, but my claws don't reach the buttons yet. Soon.",
+        "event": "source: action (you did this for the user and have just said: \"Skipped. Now Blue Monday by New Order.\" "
+                 "Add ONE short quip to follow it, at most 8 words, no facts, no repetition)\n"
+                 "asked: skip this song\ndid: skipped to the next track",
+        "line": "Frankly an upgrade.",
+        "emotion": "happy",
+    },
+    {
+        "event": "source: action (you did this for the user and have just said: \"That's Feeling Good by Nina Simone, from I Put a Spell on You.\" "
+                 "Add ONE short quip to follow it, at most 8 words, no facts, no repetition)\n"
+                 "asked: what song is this\ndid: looked at the player",
+        "line": "You have taste today.",
+        "emotion": "happy",
+    },
+    {
+        "event": "source: action (you did this for the user and have just said: \"Volume down to 65.\" "
+                 "Add ONE short quip to follow it, at most 8 words, no facts, no repetition)\n"
+                 "asked: turn it down a bit\ndid: turned the volume down",
+        "line": "Your neighbours send their thanks.",
         "emotion": "neutral",
+    },
+    {
+        "event": "source: action (you did this for the user and have just said: \"Paused.\" "
+                 "Add ONE short quip to follow it, at most 8 words, no facts, no repetition)\n"
+                 "asked: pause it\ndid: paused the music",
+        "line": "Blissful silence, for now.",
+        "emotion": "neutral",
+    },
+    {
+        "event": "source: action (you did this for the user and have just said: \"I tried to skip, but Spotify said: no active device.\" "
+                 "Add ONE short quip to follow it, at most 8 words, no facts, no repetition)\n"
+                 "asked: skip this song\ndid: tried to skip",
+        "line": "Rude of it, honestly.",
+        "emotion": "alert",
     },
     {
         "event": "source: notification\napp: Software Updater\ntitle: Updates available\nbody: 17 packages\nurgency: low",

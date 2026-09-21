@@ -57,13 +57,15 @@ async def main() -> int:
                 wrong.append(f"topic {route.topic} (wanted {case['topic']})")
             if "decision" in case and route.decision != case["decision"]:
                 wrong.append(f"decision {route.decision} (wanted {case['decision']})")
+            if "tool" in case and route.tool != case["tool"]:
+                wrong.append(f"tool {route.tool} {route.tool_confidence:.2f} (wanted {case['tool']})")
             probs = {k: round(v, 2) for k, v in route.answers["kind"].probabilities.items()}
             if wrong:
                 misses += 1
                 print(f"MISS  {case['text']!r}: {', '.join(wrong)}  conf {route.confidence:.2f} {probs}")
             elif args.verbose:
                 print(f"ok    {case['text']!r}: {route.kind}/{route.topic} -> {route.decision}  conf {route.confidence:.2f} "
-                      f"urgent {route.is_urgent:.2f} her {route.is_about_her:.2f}")
+                      f"tool {route.tool or '-'} {route.tool_confidence:.2f} arg {route.has_argument:.2f}")
     finally:
         await gate.close()
     n = len(phrases)
