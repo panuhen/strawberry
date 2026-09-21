@@ -217,14 +217,44 @@ One session (`Listener.session`):
 
 ---
 
-## 8. Action path — MCP (last, and a real fork)
+## 8. Action path — the gate, then MCP (Phase 6)
 
-MCPHost is a good **interactive** pane for typing at the model, but the daemon needs to drive tool-calls **programmatically**. Two options:
+Voice is the only doorway whose events can be *requests*. Everything else stays on the reaction path for good. So Phase 6 is two pieces: a **gate** that decides what a spoken sentence is, and a **tool loop** on the big model behind it.
 
-- **Recommended:** run the tool loop inside the daemon with the **Python MCP SDK**. The daemon is already Python, and this keeps the whole action path in one process. MCPHost stays as the separate human terminal.
-- Alternative: shell out to MCPHost if/when it exposes a non-interactive mode.
+### 8a. The gate: a local "System One"
 
-Either way, the servers are the existing MCPs unchanged (Spotify today, re:call/arxiv later). The loop: transcript → Ollama with tools → if tool call, run the MCP, feed result back → final text → `perform(...)`.
+The shape we want is the one TypeSafe AI sells as a hosted API (docs.typesafe.ai): a *System One* model that "makes fast, structured decisions that software can use directly" and "does not write replies, produce code, or generate explanations". Their logic, captured here so we can run it locally:
+
+- **State** is free text (or JSON). **Questions** are typed and evaluated in parallel against the same state in one call; "each question asks one specific, well-scoped thing… a gut-check determination"; complex judgements are decomposed into atomic questions and combined in code.
+- **Choice**: options with one-line descriptions (include "other" when the list may not be exhaustive; use `what` / `not_for` / `examples` when options are confused) → `choice`, `probabilities` (sum 1), `confidence`.
+- **Score**: an ordered rubric of 2–10 *situations* ("broken but a workaround exists", not "moderately severe"), each level scored independently → `score` = Σ level·p, `probabilities`, `legend`, `confidence`.
+- **Noul**: a yes/no → a single probability of yes (0…1), no separate confidence.
+- **Confidence** collapses the distribution by how peaked it is, not entropy: for three options `(3·p_max − 1)/2`, i.e. in general `(n·p_max − 1)/(n − 1)`: 0 for uniform, 1 for a single spike.
+- **Acting on it**: thresholds per consequence, not per model. > 0.9 act on your own; the middle confirms or flags; < 0.5 don't act. "Different actions within the same system should be gated at different levels depending on the consequences of getting it wrong." Thresholds are tuned on your own data, starting conservative.
+
+Nothing in that needs a hosted model; it needs a local scorer that turns (state, option) into a probability. Bake-off on 16 phrases in three classes (request / chat / question), 2026-09-21:
+
+| backend | correct | per text | notes |
+|---|---|---|---|
+| **`embeddinggemma` (Ollama embeddings) + labelled example centroids, softmax at T = 0.05** | **16/16** | **16 ms** | the winner; examples live in config like the persona's |
+| `all-minilm` (Ollama) + centroids | 15/16 | 137 ms | tiny (45 MB) but slower here and weaker |
+| `Xenova/nli-deberta-v3-xsmall` zero-shot NLI (onnxruntime) | 12/16 | 34 ms | "put on some jazz" read as chat |
+| `nli-deberta-v3-small` | 11/16 | 37 ms | |
+| `nli-deberta-v3-base` (quantised) | 7/16 | 57 ms | |
+
+So the local System One is **`strawberryd/systemone.py`**: `ask(state, questions) -> answers` with the three primitives above, computed from embedding similarity. A Choice option = its description plus its `examples` (embedded once at start, mean-pooled into a centroid); `probabilities` = softmax of cosine similarities; `confidence` by the formula above. Score = Choice over the rubric levels with the expected level. Noul = Choice between the `true` and `false` descriptions. Gemma's schema-constrained enum (one extra field in the reaction call) is the tie-breaker when confidence is low. If TypeSafe ever ships weights, it drops into the same seam.
+
+**The routing questions** (all asked at once, atomic, combined in code):
+
+- `kind` Choice: `request` (asks her to do something), `question` (wants information looked up), `chat` (small talk, feelings, banter), `other`.
+- `topic` Choice: `music`, `calendar`, `notes`, `system`, `other` — picks which MCP servers to load.
+- `is_urgent` Noul; `is_about_her` Noul (she answers those herself, whatever the kind).
+
+Then in code: `chat` or low confidence → Gemma replies as today; `request`/`question` with confidence ≥ 0.6 → the action path with that topic's tools, after Gemma says a two-word acknowledgement ("On it.") and she goes to `thinking`; in between → Gemma answers and adds the offer ("Did you want me to do that?"), and a yes within 10 s routes it. Every gate decision is logged with its probabilities so the thresholds can be tuned on real sentences.
+
+### 8b. The tool loop
+
+Run inside the daemon with the **Python MCP SDK**: transcript (+ the gate's topic) → Ollama `qwen3.8:27b` with that topic's tools → if a tool call, run it against the MCP server, feed the result back → final text → **through Gemma for the line**, so the voice stays hers → `perform(...)`. Qwen loads on demand with `keep_alive = "10m"`; a cold load is 10–20 s, hidden behind the acknowledgement and the thinking pose, with a spoken "still on it" at 8 s and a spoken failure line at the timeout. MCPHost stays as the human's terminal for typing at the model; the servers are the existing MCPs unchanged (Spotify first, re:call and calendar next).
 
 ---
 

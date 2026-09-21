@@ -28,6 +28,7 @@ MIN_BPM = 60.0
 MAX_BPM = 190.0
 PRIOR_BPM = 120.0
 PRIOR_SIGMA_OCTAVES = 0.7
+CONTINUITY_BONUS = 0.6   # score multiplier (1 + bonus) for candidates within ~8% of the last confident tempo
 LOW_HZ = 150.0
 
 
@@ -62,6 +63,7 @@ class BeatTracker:
         self.buffer = np.zeros(0, dtype=np.float32)
         self.prev_log: np.ndarray | None = None
         self.last_frame_time = 0.0
+        self.last_bpm: float | None = None   # continuity: a breakdown must not halve a settled tempo
         freqs = np.fft.rfftfreq(n_fft, 1.0 / sample_rate)
         self.low_bins = freqs < LOW_HZ
 
@@ -73,6 +75,7 @@ class BeatTracker:
         self.filled = 0
         self.buffer = np.zeros(0, dtype=np.float32)
         self.prev_log = None
+        self.last_bpm = None
 
     def feed(self, samples: np.ndarray, now: float) -> None:
         """`now` is the wall-clock time at which the last sample in `samples` was heard."""
@@ -129,11 +132,18 @@ class BeatTracker:
         bpm_c = 60.0 * self.fps / candidates
         prior = np.exp(-0.5 * (np.log2(bpm_c / PRIOR_BPM) / PRIOR_SIGMA_OCTAVES) ** 2)
         scores = ac[candidates] * (0.6 + 0.4 * prior)
+        if self.last_bpm is not None:
+            # Continuity: during a breakdown the kick drops out and the hi-hats suggest half
+            # the tempo. Favour candidates near the tempo we were already confident about.
+            near = np.exp(-0.5 * (np.log2(bpm_c / self.last_bpm) / 0.08) ** 2)
+            scores = scores * (1.0 + CONTINUITY_BONUS * near)
         best = int(candidates[int(np.argmax(scores))])
         lag = self._refine_peak(ac, best)
         period = lag / self.fps
         bpm = 60.0 / period
         confidence = float(np.clip(self._interp(ac, lag), 0.0, 1.0))
+        if confidence >= 0.5:
+            self.last_bpm = bpm
         multiples = [self._interp(ac, lag * k) for k in (1.0, 2.0, 4.0) if lag * k < n - 1]
         evenness = float(np.clip(np.mean(multiples), 0.0, 1.0)) if multiples else confidence
 

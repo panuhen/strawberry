@@ -16,6 +16,7 @@ extends Node
 const LIFT_BPM := 119.0          # dance_loop: 4.033 s, 8 leg lifts -> one lift per 0.504 s
 const FRESH_S := 6.0
 const CONFIRM_MESSAGES := 2      # a new style has to win this many estimates in a row
+const CONFIRM_SWAY := 4          # dropping to sway takes longer: breakdowns are 4–8 s and the beat comes back
 const MIN_SPEED := 0.65
 const MAX_SPEED := 1.6
 
@@ -66,7 +67,8 @@ func set_tempo(data: Dictionary) -> void:
 	else:
 		candidate = pick
 		candidate_votes = 1
-	if candidate_votes >= CONFIRM_MESSAGES and candidate != style:
+	var needed := CONFIRM_SWAY if candidate == "sway" and style != "" else CONFIRM_MESSAGES
+	if candidate_votes >= needed and candidate != style:
 		style = candidate
 		styles_seen[style] = true
 		print("dance style: ", style, " (%.0f bpm)" % float(data.get("bpm", 0.0)))
@@ -79,7 +81,9 @@ static func choose(t: Dictionary) -> String:
 	var low := float(t.get("low_ratio", 0.0))
 	var dens := float(t.get("density", 0.0))
 	var loud := float(t.get("loudness_db", -60.0))
-	if conf < 0.3 or bpm < 76.0 or loud < -38.0:
+	# Loudness here is the player's stream before the volume knob, so it says how dense the
+	# mix is, not how loud the room is; only near-silence should force a sway.
+	if conf < 0.3 or bpm < 76.0 or loud < -48.0:
 		return "sway"
 	if bpm >= 118.0 and even >= 0.45 and low >= 0.25:
 		return "rave"

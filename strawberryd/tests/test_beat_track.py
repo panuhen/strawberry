@@ -82,6 +82,28 @@ def test_fast_rock_keeps_its_tempo():
     assert abs(tempo.bpm - 168.0) < 2.0 or abs(tempo.bpm - 84.0) < 1.0  # an octave down is acceptable
 
 
+def test_breakdown_does_not_halve_a_settled_tempo():
+    """Ten seconds of four-on-the-floor, then a hats-only breakdown: the tempo holds."""
+    tracker = beat_track.BeatTracker(sample_rate=SR)
+    full = drums(128.0, 10.0)
+    t = 1000.0
+    for i in range(0, len(full), 2048):
+        piece = full[i:i + 2048]
+        t = 1000.0 + (i + len(piece)) / SR
+        tracker.feed(piece, t)
+    settled = tracker.estimate(t)
+    assert settled is not None and abs(settled.bpm - 128.0) < 1.5
+    breakdown = drums(128.0, 6.0, kicks_on=(), hats=True, seed=7) * 0.5  # no kick at all, quiet hats
+    start = t
+    for i in range(0, len(breakdown), 2048):
+        piece = breakdown[i:i + 2048]
+        t = start + (i + len(piece)) / SR
+        tracker.feed(piece, t)
+    during = tracker.estimate(t)
+    assert during is not None
+    assert abs(during.bpm - 128.0) < 2.0 or abs(during.bpm - 256.0) < 3.0, during.bpm
+
+
 def test_noise_has_low_confidence():
     rng = np.random.default_rng(3)
     _, tempo, _ = run(rng.standard_normal(int(10 * SR)).astype(np.float32) * 0.1)
