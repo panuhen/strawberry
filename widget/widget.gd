@@ -15,6 +15,7 @@ const SpeechPlayer = preload("res://speech_player.gd")
 const Menu = preload("res://menu.gd")
 const Gaze = preload("res://gaze.gd")
 const DanceStyle = preload("res://dance_style.gd")
+const TopHat = preload("res://top_hat.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
 const STATE_CLIPS := {
@@ -25,7 +26,7 @@ const STATE_CLIPS := {
 	"dancing": "dance_loop",
 }
 const ONE_SHOTS := ["alert_snap", "notify_perk"]
-const LOOPING := ["idle_loop", "listen_loop", "think_loop", "talk_base", "dance_loop"]
+const LOOPING := ["idle_loop", "listen_loop", "think_loop", "talk_base", "dance_loop", "sleep_loop"]
 # States she settles back into after talking. listening/thinking are pipeline transients.
 const PERSISTENT := ["idle", "dancing"]
 const SETTINGS_PATH := "user://widget.cfg"
@@ -47,6 +48,11 @@ var speech: AudioStreamPlayer
 var menu: PopupMenu
 var gaze: Node
 var dance: Node
+var top_hat: Node3D
+var top_hat_enabled := false
+var capture_hat := false
+var sleeper: Node
+var sleep_after_minutes := 5.0
 var ws: Node
 var blink_controller: Node
 var claw_controller: Node
@@ -72,11 +78,15 @@ func _ready() -> void:
 	setup_window()
 	setup_scene()
 	restore_settings()
+	if capture_hat:
+		top_hat_enabled = true
+	setup_top_hat()
 	apply_appearance()
 	setup_controllers()
 	setup_reactions()
 	setup_bubble()
 	setup_menu()
+	setup_sleep()
 	setup_ws()
 	set_state("idle")
 	call_deferred("update_passthrough")
@@ -93,6 +103,8 @@ func parse_args() -> void:
 			var parts := arg.trim_prefix("--look=").split(",")
 			if parts.size() == 2:
 				look_at = Vector2(float(parts[0]), float(parts[1]))
+		elif arg == "--hat":
+			capture_hat = true
 		elif arg.begins_with("--dance="):
 			capture_dance = arg.trim_prefix("--dance=")
 
@@ -119,6 +131,8 @@ func update_passthrough() -> void:
 	var points := PackedVector2Array()
 	for node in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh := node as MeshInstance3D
+		if not mesh.is_visible_in_tree():
+			continue
 		var aabb: AABB = mesh.global_transform * mesh.get_aabb()
 		for i in 8:
 			points.append(camera.unproject_position(aabb.get_endpoint(i)))
@@ -184,6 +198,36 @@ func set_always_on_top(value: bool) -> void:
 		get_window().always_on_top = value
 	save_settings()
 
+func setup_top_hat() -> void:
+	top_hat = TopHat.new()
+	top_hat.name = "TopHat"
+	model.add_child(top_hat)
+	top_hat.setup(self, model)
+	top_hat.visible = top_hat_enabled
+
+func set_top_hat(value: bool) -> void:
+	top_hat_enabled = value
+	top_hat.visible = value
+	top_hat.lift = 0.0
+	top_hat.tilt = 0.0
+	top_hat.update_pose(0.0)
+	save_settings()
+	call_deferred("update_passthrough")
+
+func restart_widget() -> void:
+	save_settings()
+	var arguments := OS.get_cmdline_args()
+	if is_headless():
+		arguments.append("--headless")
+	else:
+		arguments.append_array(["--display-driver", DisplayServer.get_name()])
+	if OS.has_feature("editor"):
+		arguments.append_array(["--path", ProjectSettings.globalize_path("res://")])
+	arguments.append("--")
+	arguments.append_array(OS.get_cmdline_user_args())
+	OS.set_restart_on_exit(true, arguments)
+	get_tree().quit()
+
 func set_skin(id: String) -> void:
 	if SkinPalettes.SKINS.has(id):
 		skin_id = id
@@ -216,7 +260,7 @@ func setup_scene() -> void:
 	player.animation_finished.connect(_on_animation_finished)
 	for clip_name in LOOPING:
 		player.get_animation(clip_name).loop_mode = Animation.LOOP_LINEAR
-	for clip_name in ONE_SHOTS:
+	for clip_name in ONE_SHOTS + ["sleep_enter", "wake_up"]:
 		player.get_animation(clip_name).loop_mode = Animation.LOOP_NONE
 
 	camera = Camera3D.new()
@@ -300,6 +344,15 @@ func hop_window() -> void:
 	tween.tween_method(func(y: float): DisplayServer.window_set_position(Vector2i(base.x, base.y - int(y))), 7.0, 0.0, 0.09).set_ease(Tween.EASE_IN)
 	tween.tween_callback(func(): DisplayServer.window_set_position(base))
 
+func setup_sleep() -> void:
+	sleeper = preload("res://sleep_controller.gd").new()
+	add_child(sleeper)
+	sleeper.setup(self)
+
+func _input(event: InputEvent) -> void:
+	if sleeper and (event is InputEventMouse or event is InputEventKey):
+		sleeper.activity()
+
 func setup_ws() -> void:
 	ws = WsClient.new()
 	ws.url = ws_url
@@ -335,6 +388,8 @@ func _on_message(data: Dictionary) -> void:
 	perform(data)
 
 func perform(data: Dictionary) -> void:
+	if sleeper and sleeper.defer_performance(data):
+		return
 	performances += 1
 	var new_state := str(data.get("state", "idle"))
 	if not STATE_CLIPS.has(new_state):
@@ -399,10 +454,12 @@ func run_command(data: Dictionary) -> void:
 			push_warning("unknown command: " + JSON.stringify(data))
 
 func set_state(new_state: String) -> void:
+	if sleeper:
+		sleeper.activity()
 	state = new_state
 	if new_state in PERSISTENT:
 		rest_state = new_state
-	if one_shot == "":
+	if one_shot == "" and (sleeper == null or sleeper.phase == "awake"):
 		play_clip(STATE_CLIPS[state])
 
 func play_clip(clip_name: String, blend := 0.2) -> void:
@@ -442,6 +499,8 @@ func restore_settings() -> void:
 		var saved_skin: Variant = config.get_value("appearance", "skin", "strawberry")
 		if saved_skin is String and SkinPalettes.SKINS.has(saved_skin):
 			skin_id = saved_skin
+		sleep_after_minutes = maxf(0.0, float(config.get_value("sleep", "after_minutes", 5.0)))
+		top_hat_enabled = bool(config.get_value("appearance", "top_hat", false))
 		muted = bool(config.get_value("audio", "muted", false))
 		quiet_until = float(config.get_value("audio", "quiet_until", 0.0))
 		voice_volume = clampf(float(config.get_value("audio", "volume", 1.0)), 0.0, 1.0)
@@ -466,7 +525,9 @@ func restore_settings() -> void:
 func save_settings() -> void:
 	var config := ConfigFile.new()
 	config.load(settings_path())
+	config.set_value("sleep", "after_minutes", sleep_after_minutes)
 	config.set_value("appearance", "skin", skin_id)
+	config.set_value("appearance", "top_hat", top_hat_enabled)
 	config.set_value("audio", "muted", muted)
 	config.set_value("audio", "quiet_until", quiet_until)
 	config.set_value("audio", "volume", voice_volume)

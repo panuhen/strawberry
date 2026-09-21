@@ -49,6 +49,11 @@ func advance_blink(delta: float) -> void:
 	wide_value = 0.0
 	happy_values = Vector2.ZERO
 	var clip: String = player.assigned_animation if is_instance_valid(player) else ""
+	# Sleep clips own the closed lids and their gradual opening during wake-up.
+	if clip in ["sleep_enter", "sleep_loop", "wake_up"]:
+		elapsed = -1.0
+		previous_expression = clip
+		return
 	var reaction := ""
 	if enabled and clip in ["notify_perk", "alert_snap"] and player.current_animation_position < player.get_animation(clip).length:
 		reaction = clip

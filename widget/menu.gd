@@ -6,13 +6,15 @@ extends PopupMenu
 
 # Explicit ids for every item: items added without one get their index as id, and a
 # submenu row would then collide with a real id and take its check mark.
-enum { MUTE, QUIET_HOUR, ALWAYS_ON_TOP, SETTINGS_FILE, APPLY_SETTINGS, VOICES_FOLDER, RESET_POSITION, QUIT, VOLUME_MENU = 100, SKIN_MENU = 101 }
+enum { MUTE, QUIET_HOUR, ALWAYS_ON_TOP, SETTINGS_FILE, APPLY_SETTINGS, VOICES_FOLDER, RESET_POSITION, QUIT, TOP_HAT = 20, RESTART_WIDGET = 21, VOLUME_MENU = 100, SKIN_MENU = 101, SLEEP_MENU = 102, SLEEP_NOW = 22 }
+const SLEEP_MINUTES := [5.0, 1.0, 10.0, 30.0, 0.0]
 const VOLUMES := [0.25, 0.5, 0.75, 1.0]
 const QUIET_SECONDS := 3600.0
 
 var widget: Node3D
 var volume_menu: PopupMenu
 var skin_menu: PopupMenu
+var sleep_menu: PopupMenu
 var opened := 0
 
 func setup(owner: Node3D) -> void:
@@ -32,6 +34,15 @@ func setup(owner: Node3D) -> void:
 		skin_menu.add_radio_check_item(widget.SkinPalettes.display_name(widget.SkinPalettes.ORDER[i]), i)
 	skin_menu.id_pressed.connect(func(id: int): widget.set_skin(widget.SkinPalettes.ORDER[id]))
 	add_submenu_node_item("Skin", skin_menu, SKIN_MENU)
+	sleep_menu = PopupMenu.new()
+	sleep_menu.add_theme_font_size_override("font_size", 15)
+	for i in SLEEP_MINUTES.size():
+		var minutes: float = SLEEP_MINUTES[i]
+		sleep_menu.add_radio_check_item("Never" if minutes == 0 else "%d minutes" % int(minutes), i)
+	sleep_menu.id_pressed.connect(func(id: int): widget.sleeper.set_delay(SLEEP_MINUTES[id]))
+	add_submenu_node_item("Sleep after inactivity", sleep_menu, SLEEP_MENU)
+	add_item("Sleep now", SLEEP_NOW)
+	add_check_item("Top hat", TOP_HAT)
 	add_check_item("Always on top", ALWAYS_ON_TOP)
 	add_separator()
 	add_item("Settings file…", SETTINGS_FILE)
@@ -39,6 +50,7 @@ func setup(owner: Node3D) -> void:
 	add_item("Voices folder…", VOICES_FOLDER)
 	add_separator()
 	add_item("Reset position", RESET_POSITION)
+	add_item("Restart widget", RESTART_WIDGET)
 	add_item("Quit", QUIT)
 	id_pressed.connect(_on_pressed)
 	about_to_popup.connect(_refresh)
@@ -49,6 +61,10 @@ func open_at(at: Vector2) -> void:
 
 ## Reflect the widget's current state in the check marks each time the menu opens.
 func _refresh() -> void:
+	set_item_disabled(get_item_index(SLEEP_NOW), widget.state != "idle" or widget.rest_state != "idle" or widget.one_shot != "" or widget.speech.playing or widget.bubble.speaking or widget.reactions.recipe != "")
+	for i in SLEEP_MINUTES.size():
+		sleep_menu.set_item_checked(i, is_equal_approx(widget.sleep_after_minutes, SLEEP_MINUTES[i]))
+	set_item_checked(get_item_index(TOP_HAT), widget.top_hat_enabled)
 	set_item_checked(get_item_index(MUTE), widget.muted)
 	var quiet_left: float = widget.quiet_until - Time.get_unix_time_from_system()
 	var quiet_index := get_item_index(QUIET_HOUR)
@@ -62,6 +78,13 @@ func _refresh() -> void:
 
 func _on_pressed(id: int) -> void:
 	match id:
+		SLEEP_NOW:
+			hide()
+			widget.sleeper.call_deferred("begin_sleep")
+		TOP_HAT:
+			widget.set_top_hat(not widget.top_hat_enabled)
+		RESTART_WIDGET:
+			widget.restart_widget()
 		MUTE:
 			widget.set_muted(not widget.muted)
 		QUIET_HOUR:
