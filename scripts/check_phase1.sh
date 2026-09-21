@@ -8,7 +8,7 @@ PORT="${STRAWBERRYD_PORT:-8771}"   # off the default port so a running daemon is
 BASE="http://127.0.0.1:$PORT"
 
 echo "== strawberryd unit tests"
-(cd "$ROOT/strawberryd" && uv sync --quiet && uv run --quiet pytest -q)
+(cd "$ROOT/strawberryd" && uv sync --quiet --inexact && uv run --quiet pytest -q)
 
 if [ ! -d "$ROOT/widget/.godot" ]; then
   echo "== importing widget project"
