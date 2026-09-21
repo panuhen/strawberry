@@ -200,12 +200,20 @@ The reply text goes **two places at once**: to Piper (wav) and into the blob's `
 
 ---
 
-## 7. Doorway: voice (STT)
+## 7. Doorway: voice (STT) — `strawberryd/voice.py`
 
-- Hotkey → capture mic → **faster-whisper** (kept resident, model loaded once, CPU) → transcript.
-- Transcript goes to the **action path** (§8) so speech can do things, not just chat.
-- While capturing, send `{state:"listening"}`; while transcribing + thinking, `{state:"thinking"}`.
-- The hotkey is bound as a **GNOME custom keyboard shortcut** that runs a one-line script POSTing to the daemon. GNOME owns the key, so it is identical on X11 and Wayland and the daemon never grabs keys itself.
+Hotkey → she listens → **faster-whisper** → the transcript is a `source: voice` event → the brain answers in her voice. Voice lives *inside the daemon* (not a fourth watcher) so the whisper model loads once at start (~1.6 s for `small`, int8, CPU) and the hotkey is a bare `POST /listen`.
+
+One session (`Listener.session`):
+
+1. `{state: "listening"}` → `pw-record` from the microphone at 16 kHz mono. The mic is `[voice].source` (a `pactl` source-name fragment) or the first non-monitor input; the machine's *default* source is the speaker monitor, which would make her hear the music instead of you, so the default is never used blindly.
+2. Recording ends after `silence_s` (1.1 s) of quiet following at least `min_speech_s` of speech, on a second poke (`/listen` again = stop early), or at `max_seconds` (15). Speech is any 0.1 s chunk louder than the room's quietest chunk + 12 dB and than `level_db` (−40 dBFS).
+3. `{state: "thinking"}` → whisper in a worker thread (`vad_filter`, `beam_size` 1, language detect or pinned with `language = "en"`).
+4. Empty transcript → `{state: "talking", text: "Sorry, I didn't catch that."}`. Otherwise `Event(source="voice", title=<transcript>)` goes through `handle_event`, so Gemma writes the reply and Piper speaks it. `describe()` renders voice events as "the user is talking to you; reply to them", and the persona carries two voice examples, so she answers rather than narrates.
+
+`/health` shows `voice` (model, ready, phase, sessions, empty, last_transcript, last_ms). If whisper cannot load (no model, no network for the first download), voice is disabled with the reason and the rest of the daemon is unaffected. `scripts/check_config.toml` disables voice for the acceptance run; the flow is unit-tested with fake recorder and transcriber (`tests/test_voice.py`).
+
+**Hotkey.** `bin/strawberry hotkey [COMBO]` writes a GNOME custom keyboard shortcut (`gsettings`, default `<Super><Alt>s`) that runs `bin/strawberry listen`, i.e. `curl -X POST /listen`. GNOME owns the key, so it is identical on X11 and Wayland and the daemon never grabs keyboard input. `--remove` undoes it. Phase 6 routes voice through the action model with tools; today it goes to the reaction path like everything else.
 
 ---
 
@@ -241,7 +249,7 @@ materials:        mat_shell  mat_shell_dark  mat_claw  mat_cream  mat_eye  mat_i
 2. **Reaction path, silent.** ✅ git `post-commit` → `/event` → Ollama one-liner + emotion → blob with `text`, no `audio` → **bubble appears above the crab on commit.** Proves event → brain → face end to end with zero audio risk.
 3. **Notifications doorway.** ✅ D-Bus monitor → same intake. Anything that notifies (including WhatsApp/Messenger) makes her react.
 4. **TTS.** ✅ Piper → `audio` field → Godot plays it through the analysed bus → claws clack in time. `[speech]` in config turns it on.
-5. **Voice in.** Hotkey → faster-whisper → transcript. Route to plain Ollama first to prove capture.
+5. **Voice in.** ✅ Hotkey → faster-whisper → transcript → the reaction path answers (§7). The action path with tools is Phase 6.
 6. **MCP actions.** Wire the Python MCP client; voice commands start *doing* things (skip track, log to re:call).
 
 Stop after any phase and you still have something that works.

@@ -2,3 +2,6 @@
 # deterministic. The model path has its own unit tests (tests/test_brain.py).
 [brain]
 enabled = false
+
+[voice]
+enabled = false   # no microphone or whisper model in the acceptance run; tests/test_voice.py covers the flow

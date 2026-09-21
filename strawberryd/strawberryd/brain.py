@@ -36,6 +36,9 @@ class BrainError(RuntimeError):
 
 def describe(event: Event) -> str:
     """The event as the model sees it; same shape as the few-shot examples."""
+    if event.source == "voice":
+        # Not something that happened: the user spoke to her. Answer them.
+        return f"source: voice (the user is talking to you; reply to them)\nsaid: {event.title or event.body}"
     parts = [f"source: {event.source}"]
     if event.app:
         parts.append(f"app: {event.app}")

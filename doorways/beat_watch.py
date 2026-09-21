@@ -20,6 +20,7 @@ import argparse
 import json
 import logging
 import os
+import select
 import subprocess
 import sys
 import time
@@ -37,6 +38,10 @@ log = logging.getLogger("beat_watch")
 RATE = 22050
 CHUNK_SAMPLES = 2048
 LATENCY_S = 0.05
+SILENT_DB = -60.0
+STALE_AFTER_S = 12.0   # a running player that stays this silent has a dead capture link (seen after suspend)
+NO_DATA_S = 3.0        # pw-record produced nothing: PipeWire never linked us to the target
+STRATEGIES = ("serial", "name", "sink-monitor")
 PLAYERS = ("spotify", "vlc", "mpv", "rhythmbox", "audacious", "clementine", "elisa", "lollypop", "amberol",
            "tidal", "deezer", "youtube music", "firefox", "chromium", "chrome", "brave")
 OURS = ("strawberry", "strawberryd", "godot")
@@ -57,6 +62,10 @@ def pipewire_streams() -> list[dict]:
             continue
         out.append({
             "id": obj.get("id"),
+            # pw-record --target takes the object *serial* or the name, not the id. Ids and serials
+            # happen to match on a fresh graph and drift apart after suspend/resume; targeting the
+            # id then yields a dead object that streams zeros.
+            "serial": str(props.get("object.serial", obj.get("id"))),
             "name": str(props.get("node.name", "")),
             "app": str(props.get("application.name", "")),
             "state": str(info.get("state", "")),
@@ -88,6 +97,8 @@ class Watcher:
         self.tracker = BeatTracker(sample_rate=RATE)
         self.posts = 0
         self.failures = 0
+        self.strategy = 0
+        self.silent_since: float | None = None
 
     def run(self) -> None:
         while True:
@@ -95,44 +106,92 @@ class Watcher:
             if stream is None:
                 time.sleep(3.0)
                 continue
-            log.info("listening to %s (%s, node %s)", stream["app"] or stream["name"], stream["name"], stream["id"])
-            self.capture(stream)
+            how = STRATEGIES[self.strategy % len(STRATEGIES)]
+            log.info("listening to %s (%s, node %s, serial %s) by %s", stream["app"] or stream["name"], stream["name"],
+                     stream["id"], stream["serial"], how)
+            outcome = self.capture(stream, how)
             self.tracker.reset()
             self.post({"silent": True})
-            time.sleep(1.0)
+            if outcome == "nolink":
+                # This way of asking PipeWire did not get us linked to the player; try the next.
+                self.strategy += 1
+                time.sleep(0.5)
+            else:
+                time.sleep(1.0)
 
-    def capture(self, stream: dict) -> None:
-        cmd = ["pw-record", "--target", str(stream["id"]), "--rate", str(RATE), "--channels", "1",
-               "--format", "s16", "--latency", f"{int(LATENCY_S * 1000)}ms", "-"]
+    def capture(self, stream: dict, how: str) -> str:
+        """Run pw-record until the stream ends. Returns 'ended', 'nolink' (no bytes arrived),
+        or 'stale' (zeros for STALE_AFTER_S while the player runs)."""
+        if how == "serial":
+            cmd = ["pw-record", "--target", stream["serial"]]
+        elif how == "name":
+            cmd = ["pw-record", "--target", stream["name"]]
+        else:
+            # Default sink monitor: device-agnostic (follows the default sink) but hears every
+            # app, her own voice included. Last resort, and the watcher says so in the log.
+            cmd = ["pw-record", "-P", "stream.capture.sink=true"]
+        cmd += ["--rate", str(RATE), "--channels", "1", "--format", "s16", "--latency", f"{int(LATENCY_S * 1000)}ms", "-"]
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except OSError as exc:
             log.error("pw-record not runnable: %s", exc)
             time.sleep(10.0)
-            return
+            return "ended"
         assert proc.stdout is not None
-        next_post = time.time() + self.interval
+        fd = proc.stdout.fileno()
+        started = time.time()
+        last_data = started
+        next_post = started + self.interval
+        self.silent_since = None
+        got_any = False
+        pending = b""  # an odd byte left over from a read, so samples never go out of alignment
         try:
             while True:
-                raw = proc.stdout.read(CHUNK_SAMPLES * 2)
-                if not raw:
-                    log.info("stream %s ended", stream["name"])
-                    return
+                ready, _, _ = select.select([fd], [], [], 1.0)
                 now = time.time() - LATENCY_S
-                samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-                self.tracker.feed(samples, now)
+                if ready:
+                    raw = os.read(fd, CHUNK_SAMPLES * 2)
+                    if not raw:
+                        log.info("stream %s ended", stream["name"])
+                        return "ended"
+                    got_any = True
+                    last_data = time.time()
+                    raw = pending + raw
+                    cut = len(raw) - len(raw) % 2
+                    pending = raw[cut:]
+                    samples = np.frombuffer(raw[:cut], dtype=np.int16).astype(np.float32) / 32768.0
+                    self.tracker.feed(samples, now)
+                elif time.time() - last_data > NO_DATA_S:
+                    log.warning("no audio from %s for %.0fs (capture by %s never linked); reconnecting",
+                                stream["name"], time.time() - last_data, how)
+                    return "nolink" if not got_any else "ended"
                 if now >= next_post:
                     next_post = now + self.interval
                     self.report(now)
+                    if self.silent_since is not None and now - self.silent_since > STALE_AFTER_S and self.player_running(stream):
+                        # After suspend/resume a capture can keep delivering zeros while the
+                        # player's node says "running". Reconnect rather than dance to nothing.
+                        log.warning("silent for %.0fs while %s is running; reconnecting the capture", now - self.silent_since, stream["name"])
+                        return "stale"
         finally:
             proc.kill()
             proc.wait(timeout=2)
 
+    @staticmethod
+    def player_running(stream: dict) -> bool:
+        for s in pipewire_streams():
+            if s["id"] == stream["id"]:
+                return s["state"] == "running"
+        return False
+
     def report(self, now: float) -> None:
         tempo = self.tracker.estimate(now)
-        if tempo is None or tempo.loudness_db < -60.0:
+        if tempo is None or tempo.loudness_db < SILENT_DB:
+            if self.silent_since is None:
+                self.silent_since = now
             self.post({"silent": True})
             return
+        self.silent_since = None
         payload = tempo.to_dict()
         payload["next_beat"] = round(tempo.next_beat, 3)
         self.post(payload)

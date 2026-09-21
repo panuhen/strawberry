@@ -10,6 +10,8 @@
 #   strawberry say TEXT   make her say TEXT now (through the running daemon and widget)
 #   strawberry voices [NAME...]   list installed Piper voices, or download the named ones
 #   strawberry audition [TEXT]    play a sample line in every installed voice
+#   strawberry listen     talk to her once (what the hotkey runs); press again to stop early
+#   strawberry hotkey [COMBO|--remove]  GNOME shortcut for `listen` (default <Super><Alt>s)
 #   strawberry install    start on login: systemd user units for daemon + watchers, autostart for the widget
 #   strawberry uninstall  undo install (she only runs when you launch her)
 #
@@ -188,6 +190,42 @@ case "${1:-widget}" in
     CFG="${XDG_CONFIG_HOME:-$HOME/.config}/strawberry/config.toml"
     [ -f "$CFG" ] || "$D" --init-config
     if [ -n "${EDITOR:-}" ]; then "$EDITOR" "$CFG"; else echo "$CFG"; echo "(set \$EDITOR to open it automatically; restart with: strawberry restart)"; fi ;;
+  listen)
+    # The hotkey target: start listening, or end the recording early if she already is.
+    curl -fsS -X POST "http://127.0.0.1:$PORT/listen" >/dev/null 2>&1 || exit 1 ;;
+  hotkey)
+    shift
+    KEYPATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/strawberry/"
+    SCHEMA="org.gnome.settings-daemon.plugins.media-keys"
+    if [ "${1:-}" = "--remove" ]; then
+      python3 - "$SCHEMA" "$KEYPATH" <<'PY'
+import ast, subprocess, sys
+schema, path = sys.argv[1:]
+raw = subprocess.run(["gsettings", "get", schema, "custom-keybindings"], capture_output=True, text=True).stdout.strip()
+paths = [] if raw.startswith("@as") else ast.literal_eval(raw)
+paths = [p for p in paths if p != path]
+subprocess.run(["gsettings", "set", schema, "custom-keybindings", str(paths)], check=True)
+subprocess.run(["gsettings", "reset-recursively", f"{schema}.custom-keybinding:{path}"], check=False)
+print("hotkey removed")
+PY
+      exit 0
+    fi
+    COMBO="${1:-<Super><Alt>s}"
+    python3 - "$SCHEMA" "$KEYPATH" "$COMBO" "$ROOT/bin/strawberry listen" <<'PY'
+import ast, subprocess, sys
+schema, path, combo, command = sys.argv[1:]
+raw = subprocess.run(["gsettings", "get", schema, "custom-keybindings"], capture_output=True, text=True).stdout.strip()
+paths = [] if raw.startswith("@as") else ast.literal_eval(raw)
+if path not in paths:
+    paths.append(path)
+    subprocess.run(["gsettings", "set", schema, "custom-keybindings", str(paths)], check=True)
+key = f"{schema}.custom-keybinding:{path}"
+subprocess.run(["gsettings", "set", key, "name", "Strawberry: listen"], check=True)
+subprocess.run(["gsettings", "set", key, "command", command], check=True)
+subprocess.run(["gsettings", "set", key, "binding", combo], check=True)
+print(f"hotkey {combo} -> {command}")
+PY
+    ;;
   say)
     shift; [ $# -gt 0 ] || { echo "usage: strawberry say TEXT" >&2; exit 2; }
     daemon_up || { echo "strawberryd is down; start it with: strawberry daemon" >&2; exit 1; }

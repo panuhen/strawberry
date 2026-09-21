@@ -10,9 +10,14 @@ from strawberryd.server import create_app
 @pytest.fixture
 def daemon():
     # Plumbing tests run against the canned reactor; the model path has its own tests.
+    from strawberryd.config import Config
     from strawberryd.events import CannedReactor
 
-    return Daemon(reactor=CannedReactor())
+    config = Config()
+    config.brain.enabled = False
+    config.speech.enabled = False
+    config.voice.enabled = False  # no whisper model load in plumbing tests (tests/test_voice.py covers voice)
+    return Daemon(reactor=CannedReactor(), config=config)
 
 
 @pytest.fixture

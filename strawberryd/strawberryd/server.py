@@ -3,6 +3,7 @@
   POST /event    {source, app, title, body, urgency}  <- what the hooks hit
   POST /perform  a raw contract blob                  <- curl / tests / future TTS-less callers
   POST /tempo    a beat estimate                      <- doorways/beat_watch.py (§4c)
+  POST /listen   the hotkey: listen once (again = stop early)   (§7)
   GET  /health
   GET  /ws       the Godot widget connects here and stays connected
 """
@@ -38,6 +39,7 @@ def create_app(daemon: Daemon) -> web.Application:
             web.post("/perform", perform),
             web.post("/event", event),
             web.post("/tempo", tempo),
+            web.post("/listen", listen),
             web.get("/ws", websocket),
         ]
     )
@@ -95,6 +97,7 @@ async def health(request: web.Request) -> web.Response:
             "uptime_s": round(daemon.uptime, 1),
             "brain": daemon.brain_stats(),
             "speech": daemon.speaker.stats(),
+            "voice": daemon.listener.stats(),
             "rest_state": daemon.rest_state,
             "tempo": daemon.fresh_tempo(),
         }
@@ -147,6 +150,13 @@ def parse_tempo(data: Any) -> dict[str, Any]:
             raise ContractError(f"tempo.{key} out of range")
         out[key] = float(value)
     return out
+
+
+async def listen(request: web.Request) -> web.Response:
+    _reject_browsers(request)
+    result = request.app[DAEMON].listen()
+    status = 503 if "error" in result else 200
+    return web.json_response(result, status=status)
 
 
 async def tempo(request: web.Request) -> web.Response:

@@ -58,6 +58,21 @@ class MediaConfig:
 
 
 @dataclass
+class VoiceConfig:
+    enabled: bool = True          # hotkey -> listen -> faster-whisper -> she answers (Phase 5)
+    model: str = "small"          # faster-whisper model: tiny | base | small | medium | large-v3 (or a path)
+    language: str = ""            # "" = detect; "en" pins English and is faster
+    device: str = "cpu"           # keep the GPU for Ollama; "cuda" works if you have room
+    compute_type: str = "int8"
+    source: str = ""              # microphone (pactl source name fragment); "" = first real input
+    max_seconds: float = 15.0
+    silence_s: float = 1.1        # this much quiet after speech ends the recording
+    min_speech_s: float = 0.4
+    level_db: float = -40.0       # speech must be louder than this (and than the room + 12 dB)
+    beam_size: int = 1
+
+
+@dataclass
 class BeatConfig:
     enabled: bool = True          # listen to the player's audio stream for the beat (doorways/beat_watch.py)
     target: str = ""              # PipeWire node or application name; empty = the running player, auto
@@ -95,6 +110,7 @@ class Config:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     speech: SpeechConfig = field(default_factory=SpeechConfig)
     beat: BeatConfig = field(default_factory=BeatConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -105,6 +121,7 @@ class Config:
             "notifications": asdict(self.notifications),
             "speech": asdict(self.speech),
             "beat": asdict(self.beat),
+            "voice": asdict(self.voice),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -117,6 +134,7 @@ _SECTIONS = {
     "notifications": NotificationsConfig,
     "speech": SpeechConfig,
     "beat": BeatConfig,
+    "voice": VoiceConfig,
 }
 
 
@@ -163,6 +181,10 @@ def _validate(config: Config) -> None:
         raise ConfigError("speech.volume must be >= 0")
     if config.speech.keep_files < 1:
         raise ConfigError("speech.keep_files must be >= 1")
+    if config.voice.max_seconds <= 0 or config.voice.silence_s <= 0:
+        raise ConfigError("voice.max_seconds and voice.silence_s must be positive")
+    if config.voice.device not in ("cpu", "cuda", "auto"):
+        raise ConfigError("voice.device must be cpu, cuda, or auto")
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
 
     try:
@@ -252,6 +274,15 @@ def default_toml() -> str:
         "enabled = true                 # listen to the player's own audio stream and dance to its beat",
         'target = ""                    # PipeWire node/app name; empty = whichever player is running',
         "interval_s = 2.0",
+        "",
+        "[voice]",
+        "enabled = true                 # hotkey (strawberry hotkey) -> she listens -> faster-whisper -> answers",
+        'model = "small"                # tiny | base | small | medium | large-v3; small is ~460 MB, ~1 s on CPU',
+        'language = ""                  # "" detects; "en" is faster and steadier',
+        'device = "cpu"                 # "cuda" if the GPU has room next to Ollama',
+        'source = ""                    # microphone name fragment (pactl list sources short); "" = first real input',
+        "max_seconds = 15.0",
+        "silence_s = 1.1                # quiet after speech that ends the recording",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

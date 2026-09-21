@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import replace
@@ -13,6 +14,7 @@ from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
 from .reactions import decorate
 from .speech import Speaker
+from .voice import Listener
 
 log = logging.getLogger("strawberryd")
 
@@ -20,11 +22,14 @@ PERSISTENT_STATES = ("idle", "dancing")  # mirrors widget.gd PERSISTENT (WIRING.
 
 
 class Daemon:
-    def __init__(self, reactor: Reactor | None = None, config: Config | None = None, speaker: Speaker | None = None) -> None:
+    def __init__(self, reactor: Reactor | None = None, config: Config | None = None, speaker: Speaker | None = None,
+                 listener: Listener | None = None) -> None:
         self.config = config or Config()
         self.hub = WidgetHub()
         self.reactor: Reactor = reactor or self._default_reactor()
         self.speaker = speaker or Speaker(self.config.speech)
+        self.listener = listener or Listener(self.config.voice)
+        self.listen_task: asyncio.Task | None = None
         self.started = time.monotonic()
         self.performed = 0
         # Her resting state (idle|dancing) outlives any one widget: a widget that (re)connects
@@ -52,12 +57,28 @@ class Daemon:
         if start:
             await start()
         await self.speaker.start()
+        await self.listener.start()
 
     async def close(self) -> None:
         close = getattr(self.reactor, "close", None)
         if close:
             await close()
         await self.speaker.close()
+        await self.listener.close()
+        if self.listen_task and not self.listen_task.done():
+            self.listen_task.cancel()
+
+    def listen(self) -> dict[str, Any]:
+        """The hotkey: start a voice session, or end the recording early if one is running."""
+        if not self.listener.ready:
+            return {"listening": False, "error": self.listener.disabled_reason or "voice not ready"}
+        if self.listener.busy:
+            if self.listener.phase == "listening":
+                self.listener.stop.set()
+                return {"listening": False, "stopped": True}
+            return {"listening": False, "busy": self.listener.phase}
+        self.listen_task = asyncio.get_running_loop().create_task(self.listener.session(self))
+        return {"listening": True}
 
     def brain_stats(self) -> dict[str, Any]:
         stats = getattr(self.reactor, "stats", None)
