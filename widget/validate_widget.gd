@@ -337,6 +337,30 @@ func run() -> void:
 	report["dance_styles_seen"] = widget.dance.styles_seen.keys()
 	await post("/perform", {"state": "idle"})
 
+	# 17. Typing to her: the glass box opens with focus, a submitted line round-trips as a voice event.
+	check(widget.type_box != null and not widget.type_box.visible, "type box should start hidden")
+	check(widget.menu.get_item_index(widget.menu.TYPE_BOX) >= 0, "menu should offer the type box")
+	widget.open_type_box()
+	check(widget.type_box.visible and widget.type_box.field.has_focus(), "type box should open with focus")
+	check(widget.type_box.field.editable, "type box should be editable while she is idle and connected")
+	var typed_before := widget.performances
+	widget.type_box.submit("hello from the keyboard")
+	check(widget.type_box.sent == 1 and widget.type_box.field.text == "", "type box should clear after sending")
+	waited = 0.0
+	while widget.performances == typed_before and waited < 10.0:
+		await wait(0.1)
+		waited += 0.1
+	check(widget.performances == typed_before + 1, "a typed line should come back as one performance")
+	check(widget.state == "talking" and widget.bubble.speaking, "she should answer the typed line")
+	var ledger := await get_json("/health")
+	var turns: Array = ledger[2].get("ledger", [])
+	check(not turns.is_empty() and turns[-1].get("said", "") == "hello from the keyboard", "the typed line should be in the ledger like a spoken one")
+	widget.type_box.submit("")
+	check(widget.type_box.sent == 1, "an empty line should not be sent")
+	widget.close_type_box()
+	check(not widget.type_box.visible and not widget.type_box.field.has_focus(), "type box should close and drop focus")
+	await wait_speech_end()
+
 	finish()
 
 ## A 1 kHz tone with a syllable-like 5 Hz amplitude wobble, saved where the daemon can see it.

@@ -2,7 +2,7 @@ extends Node3D
 ## The desktop widget: a frameless, transparent, always-on-top window that performs
 ## whatever strawberryd sends over the websocket (WIRING.md §1, §6, §13).
 ##
-## Drag the crab to move her. Q quits, C cycles skins. Outlines are always on.
+## Drag the crab to move her. Q quits, C cycles skins, T opens the type box. Outlines are always on.
 ## Command-line (after `--`): --ws=ws://host:port/ws   --capture=/path/out.png
 
 const CelStyle = preload("res://cel_style.gd")
@@ -16,6 +16,7 @@ const Menu = preload("res://menu.gd")
 const Gaze = preload("res://gaze.gd")
 const DanceStyle = preload("res://dance_style.gd")
 const TopHat = preload("res://top_hat.gd")
+const TypeBox = preload("res://type_box.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
 const STATE_CLIPS := {
@@ -37,6 +38,7 @@ var ws_url := "ws://127.0.0.1:8770/ws"
 var capture_path := ""
 var look_at := Vector2(-1, -1)   # --look=x,y pins the cursor position (captures, headless checks)
 var capture_dance := ""          # --dance=rave: capture that style mid-beat instead of the wave
+var capture_typing := false      # --typing: capture with the glass type box open
 
 var model: Node3D
 var player: AnimationPlayer
@@ -46,6 +48,7 @@ var badge: Sprite3D
 var reactions: Node
 var speech: AudioStreamPlayer
 var menu: PopupMenu
+var type_box: PanelContainer
 var gaze: Node
 var dance: Node
 var top_hat: Node3D
@@ -86,6 +89,7 @@ func _ready() -> void:
 	setup_reactions()
 	setup_bubble()
 	setup_menu()
+	setup_type_box()
 	setup_sleep()
 	setup_ws()
 	set_state("idle")
@@ -105,6 +109,8 @@ func parse_args() -> void:
 				look_at = Vector2(float(parts[0]), float(parts[1]))
 		elif arg == "--hat":
 			capture_hat = true
+		elif arg == "--typing":
+			capture_typing = true
 		elif arg.begins_with("--dance="):
 			capture_dance = arg.trim_prefix("--dance=")
 
@@ -136,6 +142,11 @@ func update_passthrough() -> void:
 		var aabb: AABB = mesh.global_transform * mesh.get_aabb()
 		for i in 8:
 			points.append(camera.unproject_position(aabb.get_endpoint(i)))
+	if type_box and type_box.visible:
+		# The glass box sits below her; while it is open it takes clicks as well.
+		var rect := type_box.get_global_rect()
+		for i in 4:
+			points.append(rect.position + Vector2(rect.size.x * (i % 2), rect.size.y * (i >> 1)))
 	if points.size() < 3:
 		return
 	var hull := Geometry2D.convex_hull(points)
@@ -171,6 +182,29 @@ func setup_menu() -> void:
 	# so the whole window must take clicks while it is open.
 	menu.about_to_popup.connect(func(): if not is_headless(): get_window().mouse_passthrough_polygon = PackedVector2Array())
 	menu.popup_hide.connect(update_passthrough)
+
+# --- typing to her ---------------------------------------------------------------
+
+func setup_type_box() -> void:
+	type_box = TypeBox.new()
+	add_child(type_box)
+	type_box.setup(self)
+	type_box.submitted.connect(send_typed)
+
+func open_type_box() -> void:
+	type_box.open()
+
+func close_type_box() -> void:
+	type_box.close()
+
+## A typed line goes to the daemon as a heard sentence: the same funnel as speech (§8b).
+func send_typed(text: String) -> void:
+	if sleeper:
+		sleeper.activity()
+	if not ws.is_open():
+		bubble.speak("I can't reach my daemon right now.", "alert")
+		return
+	ws.send({"type": "heard", "text": text})
 
 func is_quiet() -> bool:
 	return muted or Time.get_unix_time_from_system() < quiet_until
@@ -233,6 +267,8 @@ func set_skin(id: String) -> void:
 		skin_id = id
 		apply_appearance()
 		save_settings()
+		if type_box:
+			type_box.apply_skin()
 
 func reset_position() -> void:
 	if is_headless():
@@ -250,6 +286,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			get_tree().quit()
 		KEY_C:
 			cycle_skin()
+		KEY_T:
+			type_box.toggle()
 
 # --- scene --------------------------------------------------------------------
 
@@ -545,6 +583,9 @@ func save_settings() -> void:
 func capture() -> void:
 	# Evidence shot: a message performance so the wave, the badge and the bubble are in frame.
 	await get_tree().create_timer(0.4).timeout
+	if capture_typing:
+		type_box.open()
+		type_box.field.text = "play some nina simone"
 	if capture_dance != "":
 		# A style frozen just after a beat: bpm/features that the rule table maps to it.
 		var by_style := {"rave": [130.0, 0.8, 0.7, 0.45, 3.0], "headbang": [160.0, 0.6, 0.3, 0.2, 5.0],

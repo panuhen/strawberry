@@ -201,7 +201,7 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
-                await _on_widget_message(ws, msg.data)
+                await _on_widget_message(daemon, ws, msg.data)
             elif msg.type == WSMsgType.ERROR:
                 log.warning("widget socket error: %s", ws.exception())
     finally:
@@ -210,8 +210,9 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def _on_widget_message(ws: web.WebSocketResponse, raw: str) -> None:
-    # The widget introduces itself and pings for liveness; anything else is logged, not acted on.
+async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str) -> None:
+    # The widget introduces itself, pings for liveness, and relays typed sentences ("heard");
+    # anything else is logged, not acted on.
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -222,6 +223,14 @@ async def _on_widget_message(ws: web.WebSocketResponse, raw: str) -> None:
         log.info("widget hello: %s", {k: v for k, v in data.items() if k != "type"})
     elif kind == "ping":
         await ws.send_str('{"type": "pong"}')
+    elif kind == "heard":
+        # Typed into the widget's box: the same funnel as a spoken sentence (§8b). In the background,
+        # so the socket keeps answering pings while Qwen thinks (the widget drops a silent socket).
+        text = str(data.get("text", "")).strip()
+        if text:
+            log.info("widget typed: %r", text)
+            daemon.background(daemon.handle_event(Event.from_dict({"source": "voice", "title": text})),
+                              f"typed {text[:40]!r}")
     else:
         log.debug("widget message: %s", data)
 

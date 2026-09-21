@@ -65,6 +65,7 @@ class Daemon:
         self.offer: tuple[str, Route, float] | None = None   # (sentence, its route, expires at monotonic)
         self.offers = 0
         self.offers_taken = 0
+        self.background_tasks: set[asyncio.Task] = set()
 
     def _default_reactor(self) -> Reactor:
         canned = CannedReactor()
@@ -91,7 +92,22 @@ class Daemon:
         if self.config.voice.enabled and self.config.voice.hotwords and self.toolbox.servers:
             self.vocabulary_task = asyncio.get_running_loop().create_task(self._vocabulary_loop())
 
+    def background(self, work, label: str) -> asyncio.Task:
+        """Run `work` on the side (a typed sentence from the widget): kept referenced, failures logged."""
+        task = asyncio.get_running_loop().create_task(work)
+        self.background_tasks.add(task)
+
+        def done(t: asyncio.Task) -> None:
+            self.background_tasks.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                log.error("background %s failed: %r", label, t.exception())
+
+        task.add_done_callback(done)
+        return task
+
     async def close(self) -> None:
+        for task in list(self.background_tasks):
+            task.cancel()
         close = getattr(self.reactor, "close", None)
         if close:
             await close()

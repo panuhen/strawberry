@@ -202,6 +202,18 @@ async def test_widget_ping_gets_a_pong(client):
     await ws.close()
 
 
+async def test_widget_typed_line_takes_the_voice_path(client, daemon):
+    ws = await client.ws_connect("/ws")
+    await ws.send_json({"type": "heard", "text": "  "})          # blank: ignored
+    await ws.send_json({"type": "heard", "text": "hello there"})
+    reply = await ws.receive_json(timeout=5)
+    assert reply["state"] == "talking" and reply.get("text")
+    assert daemon.ledger.to_list()[-1]["said"] == "hello there"   # same funnel as speech: it is in the ledger
+    await ws.send_json({"type": "ping"})
+    assert await ws.receive_json(timeout=2) == {"type": "pong"}  # nothing else came out of the blank line
+    await ws.close()
+
+
 async def test_shutdown_closes_widgets_with_going_away(aiohttp_client, daemon):
     from aiohttp import WSCloseCode, WSMsgType
 

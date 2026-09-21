@@ -1,12 +1,12 @@
 extends PopupMenu
-## Right-click menu on the crab (WIRING.md §13): mute, quiet hour, voice volume, skin,
+## Right-click menu on the crab (WIRING.md §13): type to her, mute, quiet hour, voice volume, skin,
 ## always-on-top, the settings file, and quit. Preferences persist in user://widget.cfg
 ## through the widget's save_settings(); daemon-side settings live in config.toml, which
 ## "Settings file…" opens in the desktop's text editor.
 
 # Explicit ids for every item: items added without one get their index as id, and a
 # submenu row would then collide with a real id and take its check mark.
-enum { MUTE, QUIET_HOUR, ALWAYS_ON_TOP, SETTINGS_FILE, APPLY_SETTINGS, VOICES_FOLDER, RESET_POSITION, QUIT, TOP_HAT = 20, RESTART_WIDGET = 21, VOLUME_MENU = 100, SKIN_MENU = 101, SLEEP_MENU = 102, SLEEP_NOW = 22 }
+enum { MUTE, QUIET_HOUR, ALWAYS_ON_TOP, SETTINGS_FILE, APPLY_SETTINGS, VOICES_FOLDER, RESET_POSITION, QUIT, TOP_HAT = 20, RESTART_WIDGET = 21, VOLUME_MENU = 100, SKIN_MENU = 101, SLEEP_MENU = 102, SLEEP_NOW = 22, TYPE_BOX = 23 }
 const SLEEP_MINUTES := [5.0, 1.0, 10.0, 30.0, 0.0]
 const VOLUMES := [0.25, 0.5, 0.75, 1.0]
 const QUIET_SECONDS := 3600.0
@@ -20,6 +20,7 @@ var opened := 0
 func setup(owner: Node3D) -> void:
 	widget = owner
 	add_theme_font_size_override("font_size", 15)
+	add_item("Type to her…", TYPE_BOX)
 	add_check_item("Mute her voice", MUTE)
 	add_check_item("Quiet for an hour", QUIET_HOUR)
 	volume_menu = PopupMenu.new()
@@ -78,6 +79,9 @@ func _refresh() -> void:
 
 func _on_pressed(id: int) -> void:
 	match id:
+		TYPE_BOX:
+			hide()
+			widget.call_deferred("open_type_box")
 		SLEEP_NOW:
 			hide()
 			widget.sleeper.call_deferred("begin_sleep")
