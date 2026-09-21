@@ -198,3 +198,38 @@ def test_describe_matches_the_example_shape():
         "source: notification\napp: Power\ntitle: Low\nbody: 5%\nurgency: critical"
     )
     assert describe(Event(source="media", app="Spotify", title="X — Y")) == "source: media\napp: Spotify\ntitle: X — Y"
+
+
+async def test_timeout_schedules_a_background_rewarm(monkeypatch):
+    """A reaction timeout means the model is reloading; the short calls must not keep aborting it."""
+    import asyncio
+
+    from strawberryd.brain import OllamaReactor
+    from strawberryd.config import BrainConfig
+    from strawberryd.events import CannedReactor, Event
+
+    reactor = OllamaReactor(BrainConfig(timeout_s=0.05), fallback=CannedReactor())
+    reactor.session = object()  # "started"; _ask and warm_up are stubbed below
+    warmed = asyncio.Event()
+
+    async def slow_ask(*args, **kwargs):
+        raise asyncio.TimeoutError()
+
+    async def warm_up():
+        warmed.set()
+        reactor.loaded = True
+
+    monkeypatch.setattr(reactor, "_ask", slow_ask)
+    monkeypatch.setattr(reactor, "warm_up", warm_up)
+    performance = await reactor.react(Event(source="git", title="repo", body="a commit"))
+    assert performance.text  # the canned line
+    assert reactor.fallbacks == 1
+    await asyncio.wait_for(warmed.wait(), 1.0)
+    await reactor.rewarm
+    assert reactor.loaded
+    # A second timeout while a rewarm is running does not start another.
+    reactor.rewarm = asyncio.get_running_loop().create_future()  # type: ignore[assignment]
+    warmed.clear()
+    await reactor.react(Event(source="git", title="repo", body="another"))
+    assert not warmed.is_set()
+    reactor.rewarm.cancel()

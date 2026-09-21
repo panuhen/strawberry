@@ -104,6 +104,7 @@ class OllamaReactor:
         self.loaded = False
         self.recent: deque[str] = deque(maxlen=RECENT_LINES)
         self.rng = random.Random()
+        self.rewarm: asyncio.Task | None = None
 
     def stats(self) -> dict[str, Any]:
         return {
@@ -143,6 +144,15 @@ class OllamaReactor:
             self.loaded = False
             log.warning("brain: could not load %s (%s); reacting with canned lines until it answers",
                         self.brain.reaction_model, exc)
+
+    def schedule_rewarm(self) -> None:
+        """A timeout usually means the model was evicted from VRAM (a big model loaded) and is
+        reloading. Ollama aborts a load when the client hangs up, so the short reaction calls
+        would keep killing it forever; load it again with the long allowance, in the background."""
+        if self.rewarm and not self.rewarm.done():
+            return
+        self.loaded = False
+        self.rewarm = asyncio.get_running_loop().create_task(self.warm_up())
 
     def _messages(self, event_text: str, avoid: list[str] | None = None) -> list[dict[str, str]]:
         out = [{"role": "system", "content": self.brain.persona}]
@@ -194,6 +204,8 @@ class OllamaReactor:
         except (aiohttp.ClientError, asyncio.TimeoutError, BrainError) as exc:
             self.fallbacks += 1
             log.warning("brain: fallback after %.2fs (%s)", time.perf_counter() - started, exc)
+            if isinstance(exc, asyncio.TimeoutError):
+                self.schedule_rewarm()
             return await self.fallback.react(event)
         self.loaded = True
         line = tidy(data["line"], self.brain.max_words)

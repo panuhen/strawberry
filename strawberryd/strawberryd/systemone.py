@@ -389,6 +389,7 @@ class Gate:
         self.last_route: Route | None = None
         self.last_ms: float | None = None
         self.disabled_reason = "" if config.enabled else "disabled in config"
+        self.rewarm: asyncio.Task | None = None
 
     async def start(self) -> None:
         if not self.config.enabled or not self.systemone:
@@ -428,6 +429,8 @@ class Gate:
         except GateError as exc:
             self.failures += 1
             log.warning("gate: %s; treating %r as chat", exc, text)
+            if "Timeout" in str(exc):
+                self.schedule_rewarm()
             return None
         ms = (time.perf_counter() - started) * 1000
         kind = answers["kind"]
@@ -448,6 +451,30 @@ class Gate:
         log.info("gate: %r -> %s/%s conf %.2f -> %s (%.0f ms) %s", text, route.kind, route.topic, route.confidence,
                  route.decision, ms, {k: round(v, 2) for k, v in kind.probabilities.items()})
         return route
+
+    def schedule_rewarm(self) -> None:
+        """After a timeout the embedding model is most likely reloading after being evicted; a
+        short call hanging up aborts that load (Ollama), so reload it once with the long allowance."""
+        if self.rewarm and not self.rewarm.done():
+            return
+
+        async def warm() -> None:
+            if not self.owned or not self.systemone:
+                return
+            self.owned.timeout_s = self.WARM_UP_S
+            try:
+                await self.embed_one("warm up")
+                log.info("gate: %s reloaded", self.config.model)
+            except GateError as exc:
+                log.warning("gate: reload failed (%s)", exc)
+            finally:
+                self.owned.timeout_s = self.config.timeout_s
+
+        self.rewarm = asyncio.get_running_loop().create_task(warm())
+
+    async def embed_one(self, text: str) -> None:
+        assert self.embedder
+        await self.embedder([text])
 
     def stats(self) -> dict[str, Any]:
         return {
