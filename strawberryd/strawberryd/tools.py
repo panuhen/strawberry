@@ -317,10 +317,13 @@ class Toolbox:
             self.functions[spec.function] = spec
         return resolved
 
-    async def call(self, server: str, name: str, arguments: dict[str, Any] | None = None) -> ToolResult:
+    async def call(self, server: str, name: str, arguments: dict[str, Any] | None = None,
+                   result_chars: int | None = None) -> ToolResult:
+        """`result_chars` overrides the configured cut for callers that parse the whole result
+        themselves (the vocabulary reads a 50-track listing); a model never gets more than the config."""
         if server not in self.servers:
             return ToolResult(server, name, False, f"no server named {server!r} in [tools.servers]", 0.0, arguments=arguments or {})
-        return await self.servers[server].call(name, arguments, self.config.result_chars)
+        return await self.servers[server].call(name, arguments, result_chars or self.config.result_chars)
 
     async def call_function(self, function: str, arguments: dict[str, Any] | None = None) -> ToolResult:
         """By the model-facing name from the last `tools_for`."""

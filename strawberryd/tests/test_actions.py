@@ -60,8 +60,9 @@ class FakeSpotify:
         if name == "get_favorites":
             return FakeResult([FakeContent(json.dumps({"favorites": [{"name": "Around the World", "artists": ["Daft Punk"]}]}))])
         if name == "get_saved_tracks":
-            return FakeResult([FakeContent(json.dumps({"tracks": [{"name": "Blue Monday", "artists": ["New Order"]},
-                                                                  {"name": "Feeling Good", "artists": ["Nina Simone"]}]}))])
+            padding = [{"name": f"Filler {i}", "artists": ["New Order"], "album": "x" * 60} for i in range(40)]  # > result_chars
+            return FakeResult([FakeContent(json.dumps({"tracks": padding + [{"name": "Feeling Good", "artists": ["Nina Simone"]},
+                                                                            {"name": "Last", "artists": ["Erik Satie"]}]}))])
         if name == "get_playlists":
             return FakeResult([FakeContent(json.dumps({"playlists": [{"name": "Acid Techno"}, {"name": "🥲"}]}))])
         raise KeyError(name)
@@ -213,7 +214,8 @@ async def test_voice_to_skip_end_to_end_through_the_daemon(aiohttp_client):
 async def test_vocabulary_comes_from_the_library_in_order_of_likelihood():
     spotify, toolbox, actor = make()
     names = await actor.vocabulary()
-    assert names == ["Nina Simone", "Daft Punk", "New Order", "Acid Techno"]  # now playing, favourites, saved, playlists; no emoji
+    # now playing, favourites, saved (a listing far longer than tools.result_chars), playlists; no emoji
+    assert names == ["Nina Simone", "Daft Punk", "New Order", "Erik Satie", "Acid Techno"]
     assert await actor.situation("music") == "Now playing on Spotify: Feeling Good by Nina Simone (album: I Put a Spell on You)."
     await toolbox.close()
 
@@ -228,9 +230,9 @@ async def test_daemon_merges_config_vocabulary_with_the_library(aiohttp_client):
     await daemon.start()
     assert daemon.vocabulary_task is None  # voice is off: no background refresh
     await daemon.refresh_vocabulary()
-    assert daemon.vocabulary == ["Kaelon", "Daft Punk", "Nina Simone", "New Order", "Acid Techno"]
-    assert daemon.hotwords() == "Kaelon, Daft Punk, Nina Simone, New Order, Acid Techno"
+    assert daemon.vocabulary == ["Kaelon", "Daft Punk", "Nina Simone", "New Order", "Erik Satie", "Acid Techno"]
+    assert daemon.hotwords() == "Kaelon, Daft Punk, Nina Simone, New Order, Erik Satie, Acid Techno"
     config.voice.max_hotwords = 2
     assert daemon.hotwords() == "Kaelon, Daft Punk"
-    assert (await (await client.get("/health")).json())["voice"]["hotwords"] == 5
+    assert (await (await client.get("/health")).json())["voice"]["hotwords"] == 6
     await daemon.close()

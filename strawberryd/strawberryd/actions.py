@@ -181,15 +181,16 @@ async def spotify_vocabulary(toolbox: Toolbox, server: str) -> list[str]:
     track, data, now = await _current(toolbox, server)
     if now.ok:
         add(*(data.get("track") or {}).get("artists", []))
-    favourites = await toolbox.call(server, "get_favorites")
+    whole = 500_000  # these listings are parsed here, not read by a model: no truncation
+    favourites = await toolbox.call(server, "get_favorites", result_chars=whole)
     if favourites.ok:
         for item in _json(favourites).get("favorites", []):
             add(*item.get("artists", []))
-    saved = await toolbox.call(server, "get_saved_tracks", {"limit": 50})
+    saved = await toolbox.call(server, "get_saved_tracks", {"limit": 50}, result_chars=whole)
     if saved.ok:
         for item in _json(saved).get("tracks", []):
             add(*item.get("artists", []))
-    playlists = await toolbox.call(server, "get_playlists", {"limit": 50})
+    playlists = await toolbox.call(server, "get_playlists", {"limit": 50}, result_chars=whole)
     if playlists.ok:
         for item in _json(playlists).get("playlists", []):
             name = item.get("name", "")
