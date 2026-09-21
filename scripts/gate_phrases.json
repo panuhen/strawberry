@@ -277,6 +277,27 @@
       "kind": "request",
       "topic": "music",
       "tool": "pause"
+    },
+    {
+      "text": "who was the president of the united states in 1960",
+      "kind": "question",
+      "topic": "other",
+      "decision": "act"
+    },
+    {
+      "text": "how many kilometres is a marathon",
+      "kind": "question",
+      "topic": "other"
+    },
+    {
+      "text": "what's the capital of Mongolia",
+      "kind": "question",
+      "topic": "other"
+    },
+    {
+      "text": "who painted the Mona Lisa",
+      "kind": "question",
+      "topic": "other"
     }
   ]
 }

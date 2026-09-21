@@ -48,6 +48,15 @@ SYSTEM = (
 )
 
 
+KNOWLEDGE = (
+    "You are the hands of Strawberry, a small assistant living on the user's desktop. The user just asked the "
+    "question below out loud (speech-to-text, so a word may be misheard). Answer from your own knowledge in ONE "
+    "plain sentence, in plain English, with the fact itself (a name, a number, a date). No preamble, no markdown, "
+    "no follow-up question. You have no tools and no internet: if the answer depends on recent events or on "
+    "something you cannot know, say so in one sentence instead of guessing."
+)
+
+
 class ThinkerError(RuntimeError):
     pass
 
@@ -93,6 +102,37 @@ class Thinker:
 
     def can_handle(self, topic: str) -> bool:
         return self.config.enabled and topic in self.toolbox.topics()
+
+    async def answer(self, text: str, context: str = "") -> Outcome:
+        """A question with no tools for its topic: Qwen answers from what it knows, one sentence."""
+        self.calls += 1
+        started = time.perf_counter()
+        user = text if not context else f"Situation: {context}\n\nThe user asks: {text}"
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": KNOWLEDGE}, {"role": "user", "content": user}],
+            "think": self.config.think,
+            "stream": False,
+            "keep_alive": self.config.keep_alive,
+            "options": {"num_ctx": self.config.num_ctx, "num_predict": self.config.num_predict, "temperature": 0.2},
+        }
+        try:
+            reply = await asyncio.wait_for(self.chat(payload), self.config.timeout_s)
+            content = ((reply.get("message") or {}).get("content") or "").strip()
+            outcome = Outcome("answered from memory", tidy_sentence(content), True) if content else \
+                Outcome("tried to answer", "I got lost thinking about that, sorry.", False)
+        except asyncio.TimeoutError:
+            outcome = Outcome("thought about it too long", "I tried, but my thinking took too long. Sorry.", False)
+        except ThinkerError as exc:
+            log.warning("thinker: %s", exc)
+            outcome = Outcome("tried to think", "I tried, but my thinking part is not answering.", False)
+        self.last_s = time.perf_counter() - started
+        if not outcome.ok:
+            self.failures += 1
+        self.last = {"asked": text, "topic": "knowledge", "did": outcome.did, "fact": outcome.fact, "ok": outcome.ok,
+                     "s": round(self.last_s, 2), "calls": []}
+        log.info("thinker: %r (knowledge) -> %r in %.1fs", text, outcome.fact, self.last_s)
+        return outcome
 
     async def run(self, text: str, topic: str, context: str = "") -> Outcome:
         """One request, start to finish. Never raises: a failure is an Outcome with ok=False."""

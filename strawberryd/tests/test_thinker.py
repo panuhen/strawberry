@@ -10,8 +10,8 @@ from strawberryd.contract import Performance
 from strawberryd.daemon import Daemon
 from strawberryd.events import CannedReactor
 from strawberryd.server import create_app
-from strawberryd.systemone import Gate
-from strawberryd.thinker import SYSTEM, Thinker, ThinkerError, tidy_sentence
+from strawberryd.systemone import Gate, Route
+from strawberryd.thinker import KNOWLEDGE, SYSTEM, Thinker, ThinkerError, tidy_sentence
 from strawberryd.tools import Toolbox
 from tests.test_actions import TOOLS, FakeSpotify
 from tests.test_systemone import FakeEmbedder
@@ -178,4 +178,40 @@ async def test_an_argument_request_goes_to_the_thinker_with_cover(aiohttp_client
     assert "Names in the user's library: Daft Punk, New Order." in thinker.chat.payloads[-1]["messages"][1]["content"]
     assert first_user.endswith("The user says: put on some jazz")
     assert spotify.log[0] == "get_current_track"
+    await daemon.close()
+
+
+async def test_a_question_with_no_tools_is_answered_from_memory():
+    _, toolbox, qwen, thinker = make(["Dwight D. Eisenhower was President of the United States in 1960."])
+    outcome = await thinker.answer("who was the president of the united states in 1960", "Today is Monday.")
+    assert outcome.ok and outcome.fact == "Dwight D. Eisenhower was President of the United States in 1960."
+    assert outcome.did == "answered from memory"
+    payload = qwen.payloads[-1]
+    assert payload["messages"][0]["content"] == KNOWLEDGE and "tools" not in payload
+    assert payload["messages"][1]["content"] == "Situation: Today is Monday.\n\nThe user asks: who was the president of the united states in 1960"
+    assert thinker.stats()["last"]["topic"] == "knowledge"
+    _, toolbox2, _, silent = make([""])
+    assert not (await silent.answer("anything")).ok
+    for box in (toolbox, toolbox2):
+        await box.close()
+
+
+async def test_daemon_sends_a_clear_question_without_tools_to_memory(aiohttp_client):
+    config = Config()
+    config.brain.enabled = config.speech.enabled = config.voice.enabled = False
+    config.thinker = ThinkerConfig(acks=["Let me see."])
+    _, toolbox, qwen, thinker = make(["Eisenhower, until January 1961."])
+    thinker.config = config.thinker
+    daemon = Daemon(reactor=CannedReactor(), config=config, toolbox=toolbox, thinker=thinker)
+    sink = Sink()
+    daemon.hub.add(sink)  # type: ignore[arg-type]
+    await daemon.start()
+    route = Route(text="who was president in 1960", kind="question", topic="other", confidence=0.95, is_urgent=0.1,
+                  is_about_her=0.05, decision="act")
+    outcome = await daemon.think("who was president in 1960", route, knowledge=True)
+    assert outcome.ok and outcome.fact == "Eisenhower, until January 1961."
+    assert [m.get("text") for m in sink.got] == ["Let me see."]
+    assert qwen.payloads[-1]["messages"][1]["content"].startswith("Situation: Today is ")
+    # A request (not a question) for a topic without tools still falls through to chat.
+    assert not thinker.can_handle("other")
     await daemon.close()

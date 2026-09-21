@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 import numpy as np
+from pathlib import Path
 
 from .config import VoiceConfig
 from .contract import Performance
@@ -234,11 +235,41 @@ def record(source: str, stop: threading.Event, max_seconds: float, silence_s: fl
     return Recording(audio, len(audio) / RATE, speech if heard_speech else 0.0, stopped_by)
 
 
+def preload_cuda_libraries() -> list[str]:
+    """ctranslate2 dlopens cuBLAS and cuDNN by soname; the pip wheels (dependency group `gpu`:
+    nvidia-cublas-cu12, nvidia-cudnn-cu12) put them where no loader looks. Load them by path
+    first, the way faster-whisper's own docs suggest. Returns what was loaded."""
+    import ctypes
+    import importlib.util
+
+    loaded = []
+    for package in ("nvidia.cublas", "nvidia.cudnn"):
+        spec = importlib.util.find_spec(package)
+        if spec is None or not spec.submodule_search_locations:
+            continue
+        lib_dir = Path(list(spec.submodule_search_locations)[0]) / "lib"
+        for so in sorted(lib_dir.glob("*.so*")):
+            if so.name.startswith(("libcublas", "libcudnn")) and ".so." in so.name and so.name.count(".") <= 3:
+                try:
+                    ctypes.CDLL(str(so), mode=ctypes.RTLD_GLOBAL)
+                    loaded.append(so.name)
+                except OSError as exc:
+                    log.debug("voice: could not preload %s (%s)", so.name, exc)
+    return loaded
+
+
 def whisper_transcriber(voice: VoiceConfig) -> Transcriber:
     """Load faster-whisper once; import is local so tests never need the package or a model."""
+    if voice.device in ("cuda", "auto"):
+        loaded = preload_cuda_libraries()
+        log.info("voice: CUDA libraries preloaded: %s", ", ".join(loaded) or "none found (uv sync --group gpu)")
     from faster_whisper import WhisperModel
 
-    model = WhisperModel(voice.model, device=voice.device, compute_type=voice.compute_type)
+    try:
+        # A cached model must not phone huggingface.co on every start (nothing leaves the machine).
+        model = WhisperModel(voice.model, device=voice.device, compute_type=voice.compute_type, local_files_only=True)
+    except Exception:  # not downloaded yet: this once, fetch it
+        model = WhisperModel(voice.model, device=voice.device, compute_type=voice.compute_type)
 
     def transcribe(audio: np.ndarray, hotwords: str = "") -> str:
         # `hotwords` biases decoding toward these names without asserting they were said.
@@ -309,6 +340,7 @@ class Listener:
         return {
             "enabled": self.config.enabled,
             "model": self.config.model if self.config.enabled else None,
+            "device": f"{self.config.device}/{self.config.compute_type}" if self.config.enabled else None,
             "ready": self.ready,
             "reason": self.disabled_reason,
             "phase": self.phase,

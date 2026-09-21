@@ -266,6 +266,9 @@ KIND = Choice("kind", (
         "how long until my next appointment", "what day is it", "what time is it in Tokyo",
         "how many unread messages do I have", "what did I note down yesterday", "is it going to rain",
         "is the battery charging", "is the wifi still connected", "how much disk space is left",
+        "who was the president of the United States in 1960", "what's the capital of Australia",
+        "how far away is the moon", "how many grams are in an ounce", "when did the Berlin Wall fall",
+        "what does RSVP stand for", "who wrote War and Peace", "how do you spell necessary",
     )),
     Option("chat", "small talk, feelings, banter, talking to her for its own sake", (
         "hello there", "good morning strawberry", "how was your night", "how are you doing today",
@@ -298,9 +301,10 @@ TOPIC = Choice("topic", (
         "what's using all the memory", "take a screenshot", "is the battery charging",
         "is the wifi connected",
     )),
-    Option("other", "none of those", (
+    Option("other", "none of those: general knowledge, the world, small talk", (
         "how are you today", "good morning", "you're adorable", "I'm tired", "what time is it in Tokyo",
-        "is it going to rain",
+        "is it going to rain", "who was the president of the United States in 1960", "what's the capital of Australia",
+        "how far away is the moon", "when did the Berlin Wall fall", "who wrote War and Peace",
     )),
 ))
 

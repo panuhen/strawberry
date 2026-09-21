@@ -19,6 +19,10 @@ dev = [
     "pytest>=8",
     "pytest-aiohttp>=1.0",
 ]
+gpu = [
+    "nvidia-cublas-cu12>=12.9.2.10",
+    "nvidia-cudnn-cu12>=9.26.0.51",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -208,8 +208,12 @@ class Daemon:
                     # is still confirming it, and that reaction would come out ahead of hers.
                     self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
                 outcome = await self.actor.act(event.title, route)
-                if outcome is None and route.decision == "act" and self.thinker.can_handle(route.topic):
-                    outcome = await self.think(event.title, route)
+                if outcome is None and route.decision == "act":
+                    if self.thinker.can_handle(route.topic):
+                        outcome = await self.think(event.title, route)
+                    elif route.kind == "question" and self.thinker.enabled:
+                        # No tools for this topic, but a clear question: Qwen answers from memory.
+                        outcome = await self.think(event.title, route, knowledge=True)
                 if outcome is not None:
                     if armed:
                         # Again after the action: the thinker can take longer than the window.
@@ -221,9 +225,10 @@ class Daemon:
         sent = await self.perform(performance)
         return performance, sent
 
-    async def think(self, text: str, route: Route):
+    async def think(self, text: str, route: Route, knowledge: bool = False):
         """The thinker, with cover: an acknowledgement and the thinking pose right away (a cold
-        load is 7-17 s), one "still on it" if it drags, then the outcome for `report`."""
+        load is 7-17 s), one "still on it" if it drags, then the outcome for `report`.
+        `knowledge`: no tools for the topic, answer the question from what the model knows."""
         await self.perform(Performance(state="thinking", text=self.rng.choice(self.config.thinker.acks)))
 
         async def still_on_it() -> None:
@@ -232,6 +237,8 @@ class Daemon:
 
         reminder = asyncio.get_running_loop().create_task(still_on_it())
         try:
+            if knowledge:
+                return await self.thinker.answer(text, time.strftime("Today is %A %d %B %Y, %H:%M local time."))
             situation = await self.actor.situation(route.topic)
             if self.vocabulary:
                 situation = f"{situation} Names in the user's library: {self.hotwords()}.".strip()
