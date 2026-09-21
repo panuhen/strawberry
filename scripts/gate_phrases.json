@@ -341,6 +341,18 @@
       "kind": "request",
       "topic": "music",
       "tool": "other"
+    },
+    {
+      "text": "ok, play it",
+      "kind": "request",
+      "topic": "music",
+      "tool": "resume"
+    },
+    {
+      "text": "play something similar",
+      "kind": "request",
+      "topic": "music",
+      "tool": "other"
     }
   ]
 }

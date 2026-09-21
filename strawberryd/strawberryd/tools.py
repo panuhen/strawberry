@@ -110,6 +110,25 @@ def looks_like_error(text: str) -> bool:
     return set(data) <= {"error", "status", "details", "code", "message"}
 
 
+def clarify_error(text: str) -> str:
+    """Some servers label every refusal the same way. Spotify's says "Permission denied. Check app
+    scopes." for a 403 that is really "Restriction violated": already playing, already paused, or
+    the device does not allow the command. A model reading that would report a permissions problem
+    to the user, so the body is rewritten before anyone reads it (it stays an error body)."""
+    if not looks_like_error(text):
+        return text
+    data = json.loads(text)
+    details = str(data.get("details", ""))
+    if "Restriction violated" in details:
+        data["error"] = ("Spotify refused the command: restriction violated. Usually the player is already in that "
+                         "state (already playing or paused) or the active device does not allow it. Not a permissions problem.")
+        return json.dumps(data, ensure_ascii=False)
+    if data.get("status") == 403 and "Forbidden" in details:
+        data["error"] = "Spotify forbids this for the app (403 Forbidden); it cannot be done from here."
+        return json.dumps(data, ensure_ascii=False)
+    return text
+
+
 class Server:
     """One MCP server: a task owning the connection, a queue of calls into it."""
 
@@ -230,7 +249,7 @@ class Server:
             return ToolResult(self.name, name, False, str(exc), ms, arguments=arguments)
         ms = (time.perf_counter() - started) * 1000
         self.last_ms = ms
-        text = result_text(raw)
+        text = clarify_error(result_text(raw))
         ok = not getattr(raw, "is_error", False) and not looks_like_error(text)
         truncated = len(text) > result_chars
         if truncated:

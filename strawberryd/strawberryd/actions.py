@@ -84,7 +84,7 @@ def _failed(verb: str, result: ToolResult) -> Outcome:
     elif data.get("status") == 403:
         said = "Spotify says that's not allowed for this app"
     else:
-        said = f"Spotify said: {detail}"
+        said = f"Spotify said: {detail[:120]}"
     return Outcome(f"tried to {verb}", f"I tried to {verb}, but {said}.", False, (result,))
 
 

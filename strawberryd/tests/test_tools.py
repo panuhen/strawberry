@@ -15,7 +15,7 @@ from strawberryd.config import Config, ConfigError, ToolsConfig, _validate
 from strawberryd.daemon import Daemon
 from strawberryd.events import CannedReactor
 from strawberryd.server import create_app
-from strawberryd.tools import Toolbox, ToolSpec, looks_like_error, result_text
+from strawberryd.tools import Toolbox, ToolSpec, clarify_error, looks_like_error, result_text
 
 ECHO_SERVER = Path(__file__).with_name("mcp_echo_server.py")
 
@@ -266,3 +266,12 @@ async def test_careful_tools_are_withheld_unless_asked():
     assert [s.name for s in await box.tools_for("music", careful=False)] == ["play"]
     assert [s.name for s in await box.tools_for("music")] == ["play", "save_tracks", "clear_favorites"]
     await box.close()
+
+
+def test_spotify_403s_are_clarified_but_stay_errors():
+    restricted = '{"error": "Permission denied. Check app scopes.", "status": 403, "details": "http 403: Player command failed: Restriction violated, reason: UNKNOWN"}'
+    text = clarify_error(restricted)
+    assert "Not a permissions problem" in text and "already playing" in text and looks_like_error(text)
+    forbidden = '{"error": "Permission denied. Check app scopes.", "status": 403, "details": "http 403: Forbidden, reason: None"}'
+    assert "forbids this for the app" in clarify_error(forbidden)
+    assert clarify_error("Skipped.") == "Skipped." and clarify_error('{"error": "token expired"}') == '{"error": "token expired"}'

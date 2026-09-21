@@ -98,7 +98,8 @@ async def test_max_rounds_forces_an_answer_without_tools():
     outcome = await thinker.run("what is this", "music")
     assert len(qwen.payloads) == 3  # two tool rounds, then the forced final
     assert "tools" not in qwen.payloads[-1]
-    assert qwen.payloads[-1]["messages"][-1]["content"].startswith("Stop calling tools")
+    assert qwen.payloads[-1]["messages"][-1]["content"].startswith("You can call no more tools")
+    assert "Never claim an action" in qwen.payloads[-1]["messages"][-1]["content"]
     assert outcome.ok and outcome.fact == "Best I can tell, Feeling Good is playing."
     assert spotify.log == ["get_current_track", "get_current_track"]
     await toolbox.close()

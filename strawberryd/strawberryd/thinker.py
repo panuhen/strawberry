@@ -44,7 +44,9 @@ SYSTEM = (
     "title happens to contain the misheard words; when nothing well-known fits, do nothing and say what you heard. "
     "Do only what was asked: 'play' means play, never save, like, remove or change a playlist unless told to. "
     "A question about the music (who this is, tell me about the artist, what else they made) is answered from "
-    "your own knowledge plus the situation, in two or three plain sentences; tools are for the player, not for facts. 'This song', 'this', 'it' mean whatever is playing now (given "
+    "your own knowledge plus the situation, in two or three plain sentences; tools are for the player, not for facts. "
+    "Report only what you actually did with a tool; if you could not do it, say so. If the situation says music is "
+    "already playing, a plain 'play it' needs no tool: say it is already playing. 'This song', 'this', 'it' mean whatever is playing now (given "
     "below when known; otherwise look it up first). When done, answer with ONE plain factual sentence for the "
     "user, in plain English, stating what you did and the result (name the track, artist, number). No "
     "preamble, no markdown, no questions. If it cannot be done, say so in one sentence and why."
@@ -181,7 +183,10 @@ class Thinker:
             if not last_round:
                 payload["tools"] = tools
             else:
-                messages.append({"role": "user", "content": "Stop calling tools now. Answer the user in one sentence with what you have."})
+                messages.append({"role": "user", "content": (
+                    "You can call no more tools. Tell the user honestly what you did and did not manage to do, in one "
+                    "or two sentences. Never claim an action (playing, queueing, saving) that you did not perform with "
+                    "a tool in this conversation.")})
             reply = await self.chat(payload)
             message = reply.get("message") or {}
             tool_calls = message.get("tool_calls") or []

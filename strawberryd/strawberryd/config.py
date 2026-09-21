@@ -171,7 +171,7 @@ class ThinkerConfig:
     keep_alive: int | str = "10m"  # stays loaded this long after a request; a cold load is 7-17 s
     num_ctx: int = 8192
     num_predict: int = 300
-    max_rounds: int = 4            # tool rounds before she has to answer with what she has
+    max_rounds: int = 6            # tool rounds before she has to answer honestly with what she has
     timeout_s: float = 45.0        # the whole request, cold load included
     still_on_it_s: float = 8.0     # she says so once if it takes longer than this
     acks: list[str] = field(default_factory=lambda: ["On it.", "Let me see.", "One moment.", "Right, hang on."])

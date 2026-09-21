@@ -345,7 +345,8 @@ MUSIC_TOOL = Choice("music_tool", (
     Option("pause", "stop or pause the music", ("pause the music", "stop the music", "pause it", "turn this off",
                                                  "quiet please", "mute the music", "silence")),
     Option("resume", "start the music again", ("resume", "play", "unpause", "start the music again", "carry on",
-                                                "music back on please")),
+                                                "music back on please", "play it", "ok play it", "play it please",
+                                                "go on, play", "put it on", "press play")),
     Option("volume_down", "make it quieter", ("turn the volume down a bit", "quieter", "turn it down", "too loud",
                                                "bring the volume down")),
     Option("volume_up", "make it louder", ("turn it up", "louder", "make it louder", "volume up a bit",
@@ -357,6 +358,8 @@ MUSIC_TOOL = Choice("music_tool", (
         "shuffle this album", "put this on repeat", "add this to my favourites", "what year did this come out",
         "tell me about this artist", "what can you tell me about the band", "who are the members of this band",
         "tell me more about the band members and the history", "what else did they make", "recommend me some music",
+        "play something similar", "play something else", "play something by this band", "play my running playlist",
+        "queue up something by Nina Simone", "put something on for cooking", "play the live version",
     )),
 ))
 
