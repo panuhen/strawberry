@@ -11,7 +11,7 @@
 #   strawberry voices [NAME...]   list installed Piper voices, or download the named ones
 #   strawberry audition [TEXT]    play a sample line in every installed voice
 #   strawberry listen     talk to her once (what the hotkey runs); press again to stop early
-#   strawberry hotkey [COMBO|--remove]  GNOME shortcut for `listen` (default <Super><Alt>s)
+#   strawberry hotkey [COMBO|--remove]  GNOME shortcut for `listen` (default <Super><Shift>space)
 #   strawberry install    start on login: systemd user units for daemon + watchers, autostart for the widget
 #   strawberry uninstall  undo install (she only runs when you launch her)
 #
@@ -210,7 +210,7 @@ print("hotkey removed")
 PY
       exit 0
     fi
-    COMBO="${1:-<Super><Alt>s}"
+    COMBO="${1:-<Super><Shift>space}"
     python3 - "$SCHEMA" "$KEYPATH" "$COMBO" "$ROOT/bin/strawberry listen" <<'PY'
 import ast, subprocess, sys
 schema, path, combo, command = sys.argv[1:]
