@@ -124,6 +124,21 @@ class GateConfig:
 
 
 @dataclass
+class ToolsConfig:
+    """MCP servers she can act through (WIRING.md §8b). The servers you list are the servers."""
+
+    enabled: bool = True
+    preconnect: bool = True        # connect at start (in the background) so the first request is quick
+    result_chars: int = 2000       # a tool result is cut here before any model reads it
+    connect_timeout_s: float = 20.0
+    call_timeout_s: float = 20.0
+    # name -> {topic, command, args, env, cwd}; topic is one of the gate's (music, calendar, notes, system)
+    servers: dict[str, dict[str, Any]] = field(default_factory=lambda: {
+        "spotify": {"topic": "music", "command": "spotify-mcp"},
+    })
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
@@ -133,6 +148,7 @@ class Config:
     beat: BeatConfig = field(default_factory=BeatConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     gate: GateConfig = field(default_factory=GateConfig)
+    tools: ToolsConfig = field(default_factory=ToolsConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,6 +161,7 @@ class Config:
             "beat": asdict(self.beat),
             "voice": asdict(self.voice),
             "gate": asdict(self.gate),
+            "tools": asdict(self.tools),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -159,6 +176,7 @@ _SECTIONS = {
     "beat": BeatConfig,
     "voice": VoiceConfig,
     "gate": GateConfig,
+    "tools": ToolsConfig,
 }
 
 
@@ -220,6 +238,21 @@ def _validate(config: Config) -> None:
             raise ConfigError(f"gate.examples.{key} must be a list of strings")
         if key.split(".")[0] not in ("kind", "topic"):
             raise ConfigError(f"gate.examples key {key!r} must start with kind. or topic.")
+    for name, server in config.tools.servers.items():
+        if not isinstance(server, dict) or not isinstance(server.get("command"), str) or not server["command"]:
+            raise ConfigError(f"tools.servers.{name} needs a command")
+        if not isinstance(server.get("topic", "other"), str):
+            raise ConfigError(f"tools.servers.{name}.topic must be a string")
+        if not all(isinstance(a, str) for a in server.get("args", [])):
+            raise ConfigError(f"tools.servers.{name}.args must be a list of strings")
+        env = server.get("env", {})
+        if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
+            raise ConfigError(f"tools.servers.{name}.env must be a table of strings")
+        unknown = set(server) - {"topic", "command", "args", "env", "cwd"}
+        if unknown:
+            raise ConfigError(f"tools.servers.{name}: unknown keys {sorted(unknown)}")
+    if config.tools.result_chars < 100:
+        raise ConfigError("tools.result_chars must be >= 100")
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
 
     try:
@@ -328,6 +361,15 @@ def default_toml() -> str:
         "# [gate.examples]              # a sentence she misreads goes under the option it belongs to",
         '# \"kind.request\" = ["put the kettle on"]',
         '# \"topic.music\" = ["what year is this from"]',
+        "",
+        "[tools]",
+        "enabled = true                 # MCP servers she acts through; the servers you list are the servers",
+        "result_chars = 2000            # tool results are cut here before a model reads them",
+        "[tools.servers.spotify]",
+        'topic = "music"                # one of the gate\'s topics: music, calendar, notes, system',
+        'command = "spotify-mcp"        # or a full path, e.g. ~/spotify-mcp/.venv/bin/spotify-mcp',
+        "# args = []",
+        "# env = {}",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

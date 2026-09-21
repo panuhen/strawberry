@@ -264,7 +264,9 @@ Then in code (`decide()`): `chat` or low confidence → Gemma replies as today; 
 
 ### 8b. The tool loop
 
-Run inside the daemon with the **Python MCP SDK**: transcript (+ the gate's topic) → Ollama `qwen3.8:27b` with that topic's tools → if a tool call, run it against the MCP server, feed the result back → final text → **through Gemma for the line**, so the voice stays hers → `perform(...)`. Qwen loads on demand with `keep_alive = "10m"`; a cold load is 10–20 s, hidden behind the acknowledgement and the thinking pose, with a spoken "still on it" at 8 s and a spoken failure line at the timeout. MCPHost stays as the human's terminal for typing at the model; the servers are the existing MCPs unchanged (Spotify first, re:call and calendar next).
+**Built so far (2026-09-21): the MCP client, `strawberryd/tools.py`.** `[tools.servers.<name>]` in the config lists the servers with a `topic` (one of the gate's) and a launch `command`; the servers you list are the servers. Each runs as a child process over stdio through the official `mcp` SDK (2.x); the SDK's transport has to be opened and closed from one task, so every server gets a task that owns the connection and serves calls from a queue. Servers connect in the background at start (`preconnect`) or lazily, are skipped with a warning when they fail, and are retried on the next use; a hung call drops the connection instead of blocking the ones behind it. `Toolbox.tools_for(topic)` returns `ToolSpec`s with an Ollama-ready `for_ollama()` (names prefixed with the server on a collision); results are text cut to `result_chars` (2000) and `ok` reads both the MCP error flag and the `{"error": …}` body some servers return instead. Measured with the Spotify server: connect 0.45 s, 25 tools, a call 0.1–0.3 s. `bin/strawberry tools [TOPIC]` lists, `bin/strawberry tool spotify next` calls; `/health.tools` shows each server's state. Tests: a fake session for the logic and a real stdio round trip against `tests/mcp_echo_server.py`.
+
+The loop itself, still to build, runs inside the daemon on that client: transcript (+ the gate's topic) → Ollama `qwen3.8:27b` with that topic's tools → if a tool call, run it against the MCP server, feed the result back → final text → **through Gemma for the line**, so the voice stays hers → `perform(...)`. Qwen loads on demand with `keep_alive = "10m"`; a cold load is 10–20 s, hidden behind the acknowledgement and the thinking pose, with a spoken "still on it" at 8 s and a spoken failure line at the timeout. MCPHost stays as the human's terminal for typing at the model; the servers are the existing MCPs unchanged (Spotify first, re:call and calendar next).
 
 ---
 
@@ -412,11 +414,11 @@ quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 
 ```
 WIRING.md                this document
-strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), hub, server, tests
+strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), hub, server, tests
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, gaze.gd, menu.gd, validate_widget.gd
                          + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
 doorways/                event producers: mpris_watch.py (any MPRIS media player), notify_watch.py (desktop notifications via D-Bus monitor), beat_watch.py + beat_track.py (tempo from the player's audio), git/ (global post-commit + pre-push hooks)
-bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend; say / voices / audition / listen / route / install (start on login)
+bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend; say / voices / audition / listen / route / tools / tool / install (start on login)
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
 scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless widget; it must reconnect
 scripts/gate_check.py    the gate over scripts/gate_phrases.json against live Ollama; add sentences she misreads

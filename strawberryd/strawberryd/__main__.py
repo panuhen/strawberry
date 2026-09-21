@@ -24,6 +24,9 @@ def main() -> None:
     parser.add_argument("--voice", default=None, help="with --say: override speech.voice")
     parser.add_argument("--out", type=Path, default=None, help="with --say: wav path (default: a temp file)")
     parser.add_argument("--route", metavar="TEXT", default=None, help="run TEXT through the gate (WIRING §8a), print the JSON, exit")
+    parser.add_argument("--tools", metavar="TOPIC", nargs="?", const="", default=None, help="list the MCP tools for TOPIC (or all), exit")
+    parser.add_argument("--tool", metavar=("SERVER", "NAME"), nargs=2, default=None, help="call one MCP tool and print its result, exit")
+    parser.add_argument("--args", metavar="JSON", default="{}", help="with --tool: the arguments as a JSON object")
     parser.add_argument("--version", action="version", version=f"strawberryd {__version__}")
     args = parser.parse_args()
 
@@ -59,6 +62,8 @@ def main() -> None:
         sys.exit(say(config, args.say, args.voice, args.out))
     if args.route is not None:
         sys.exit(route(config, args.route))
+    if args.tools is not None or args.tool is not None:
+        sys.exit(tools(config, args.tools, args.tool, args.args))
 
     logging.basicConfig(
         level=config.daemon.log_level.upper(),
@@ -90,6 +95,46 @@ def route(config, text: str) -> int:
             return 0
         finally:
             await gate.close()
+
+    return asyncio.run(run_once())
+
+
+def tools(config, topic: str | None, call: list[str] | None, arguments: str) -> int:
+    """`strawberryd --tools [TOPIC]` / `--tool SERVER NAME --args JSON`: the MCP servers by hand."""
+    import asyncio
+    from dataclasses import replace
+
+    from .tools import Toolbox
+
+    try:
+        parsed = json.loads(arguments)
+        if not isinstance(parsed, dict):
+            raise ValueError
+    except ValueError:
+        print("--args must be a JSON object", file=sys.stderr)
+        return 2
+    toolbox = Toolbox(replace(config.tools, enabled=True, preconnect=False))
+
+    async def run_once() -> int:
+        try:
+            if call:
+                result = await toolbox.call(call[0], call[1], parsed)
+                print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                return 0 if result.ok else 1
+            topics = [topic] if topic else sorted(toolbox.topics())
+            for name in topics:
+                specs = await toolbox.tools_for(name)
+                print(f"[{name}] {len(specs)} tools")
+                for spec in specs:
+                    required = spec.schema.get("required", [])
+                    params = ", ".join(f"{p}{'' if p in required else '?'}" for p in spec.schema.get("properties", {}))
+                    print(f"  {spec.server}.{spec.name}({params})  {spec.description.splitlines()[0][:80] if spec.description else ''}")
+            for name, stats in toolbox.stats().items():
+                if stats["error"]:
+                    print(f"  {name}: {stats['error']}", file=sys.stderr)
+            return 0
+        finally:
+            await toolbox.close()
 
     return asyncio.run(run_once())
 

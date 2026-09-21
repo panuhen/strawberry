@@ -15,6 +15,7 @@ from .hub import WidgetHub
 from .reactions import decorate
 from .speech import Speaker
 from .systemone import Gate, Route
+from .tools import Toolbox
 from .voice import Listener
 
 log = logging.getLogger("strawberryd")
@@ -24,13 +25,14 @@ PERSISTENT_STATES = ("idle", "dancing")  # mirrors widget.gd PERSISTENT (WIRING.
 
 class Daemon:
     def __init__(self, reactor: Reactor | None = None, config: Config | None = None, speaker: Speaker | None = None,
-                 listener: Listener | None = None, gate: Gate | None = None) -> None:
+                 listener: Listener | None = None, gate: Gate | None = None, toolbox: Toolbox | None = None) -> None:
         self.config = config or Config()
         self.hub = WidgetHub()
         self.reactor: Reactor = reactor or self._default_reactor()
         self.speaker = speaker or Speaker(self.config.speech)
         self.listener = listener or Listener(self.config.voice)
         self.gate = gate or Gate(self.config.gate, self.config.brain.ollama_url)
+        self.toolbox = toolbox or Toolbox(self.config.tools)
         self.listen_task: asyncio.Task | None = None
         self.last_poke = -1e9
         self.started = time.monotonic()
@@ -62,6 +64,7 @@ class Daemon:
         await self.speaker.start()
         await self.listener.start()
         await self.gate.start()
+        await self.toolbox.start()
 
     async def close(self) -> None:
         close = getattr(self.reactor, "close", None)
@@ -70,6 +73,7 @@ class Daemon:
         await self.speaker.close()
         await self.listener.close()
         await self.gate.close()
+        await self.toolbox.close()
         if self.listen_task and not self.listen_task.done():
             self.listen_task.cancel()
 

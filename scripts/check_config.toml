@@ -8,3 +8,6 @@ enabled = false   # no microphone or whisper model in the acceptance run; tests/
 
 [gate]
 enabled = false   # no Ollama in the acceptance run; tests/test_systemone.py covers the gate
+
+[tools]
+enabled = false   # no MCP servers in the acceptance run; tests/test_tools.py covers the client

@@ -16,8 +16,10 @@ def daemon():
     config = Config()
     config.brain.enabled = False
     config.speech.enabled = False
+    # No whisper, Ollama or MCP servers in plumbing tests; each has its own test file.
     config.voice.enabled = False
-    config.gate.enabled = False  # no whisper model load in plumbing tests (tests/test_voice.py covers voice)
+    config.gate.enabled = False
+    config.tools.enabled = False
     return Daemon(reactor=CannedReactor(), config=config)
 
 
