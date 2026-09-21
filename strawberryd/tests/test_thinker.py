@@ -150,7 +150,7 @@ async def test_an_argument_request_goes_to_the_thinker_with_cover(aiohttp_client
             await asyncio.sleep(0.05)  # longer than still_on_it_s
             return await super().__call__(payload)
 
-    thinker.chat = SlowFirst(["Now playing Feeling Good by Nina Simone."])
+    thinker.chat = SlowFirst(["Now playing Feeling Good by Nina Simone.", "Queued."])
     thinker.config = config.thinker
     gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
     daemon = Daemon(reactor=CannedReactor(), config=config, gate=gate, toolbox=toolbox, thinker=thinker)
@@ -173,6 +173,9 @@ async def test_an_argument_request_goes_to_the_thinker_with_cover(aiohttp_client
     # The thinker was told what is playing, and "get_current_track" was how it learnt it.
     first_user = thinker.chat.payloads[0]["messages"][1]["content"]
     assert first_user.startswith("Situation: Now playing on Spotify: Feeling Good by Nina Simone (album: I Put a Spell on You).")
+    daemon.vocabulary = ["Daft Punk", "New Order"]
+    await client.post("/event", json={"source": "voice", "title": "put on some jazz"})
+    assert "Names in the user's library: Daft Punk, New Order." in thinker.chat.payloads[-1]["messages"][1]["content"]
     assert first_user.endswith("The user says: put on some jazz")
     assert spotify.log[0] == "get_current_track"
     await daemon.close()

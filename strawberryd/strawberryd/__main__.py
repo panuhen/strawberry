@@ -161,6 +161,9 @@ def think(config, text: str, topic: str) -> int:
         await thinker.start()
         try:
             situation = await actor.situation(topic)
+            names = await actor.vocabulary()
+            if names:
+                situation = f"{situation} Names in the user's library: {', '.join(names[: config.voice.max_hotwords])}.".strip()
             print(f"situation: {situation or '(none)'}", file=sys.stderr)
             outcome = await thinker.run(text, topic, situation)
             print(json.dumps(thinker.last, indent=2, ensure_ascii=False))

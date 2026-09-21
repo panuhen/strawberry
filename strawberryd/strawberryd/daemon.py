@@ -233,6 +233,8 @@ class Daemon:
         reminder = asyncio.get_running_loop().create_task(still_on_it())
         try:
             situation = await self.actor.situation(route.topic)
+            if self.vocabulary:
+                situation = f"{situation} Names in the user's library: {self.hotwords()}.".strip()
             return await self.thinker.run(text, route.topic, situation)
         finally:
             reminder.cancel()
