@@ -367,6 +367,28 @@ async def test_a_second_sigterm_during_shutdown_is_held(monkeypatch):
     fn(*args)      # logs, raises nothing
 
 
+async def test_stopped_during_startup_still_closes_the_daemon(daemon, monkeypatch):
+    from strawberry_crab import server
+
+    closed = []
+
+    async def slow_start():
+        await asyncio.sleep(10)
+
+    async def close():
+        closed.append(True)
+
+    monkeypatch.setattr(daemon, "start", slow_start)
+    monkeypatch.setattr(daemon, "close", close)
+    app = create_app(daemon)
+    task = asyncio.ensure_future(server._start_daemon(app))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert closed == [True]
+
+
 async def test_close_closes_every_part_even_when_one_fails(daemon):
     closed = []
 
@@ -384,3 +406,72 @@ async def test_close_closes_every_part_even_when_one_fails(daemon):
     daemon.thinker = Part("thinker")
     await daemon.close()
     assert closed == ["reactor", "gate", "thinker"]
+
+
+async def test_probe_reports_what_is_off_and_performs_nothing(client, daemon):
+    ws = await client.ws_connect("/ws")
+    response = await client.post("/probe", json={})
+    assert response.status == 200
+    body = await response.json()
+    assert set(body["skipped"]) == {"gate", "voice", "brain", "tts", "whisper"}
+    assert [row["text"] for row in body["lines"]] == list(Daemon.PROBE_LINES)
+    assert daemon.performed == 0 and daemon.ledger.to_list() == []
+    await ws.close()
+
+
+async def test_probe_times_every_slot_and_offers_the_brain_no_tools(aiohttp_client, daemon, tmp_path, caplog):
+    import logging
+    import wave
+    from types import SimpleNamespace
+
+    from strawberry_crab.contract import Performance
+
+    caplog.set_level(logging.INFO)
+    wav = tmp_path / "line.wav"
+    with wave.open(str(wav), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(22050)
+        out.writeframes(b"\x00\x01" * 22050)
+    seen = {}
+
+    async def route(text):
+        return SimpleNamespace(topic="other")
+
+    async def react(event, context=""):
+        return Performance(state="talking", text="hi")
+
+    async def run(text, context="", careful=False, topic="", tools=True):
+        seen["tools"] = tools
+        return SimpleNamespace(ok=True)
+
+    async def say(text):
+        return str(wav)
+
+    def transcribe(audio, hotwords=""):
+        seen["samples"] = len(audio)
+        return "hello"
+
+    daemon.gate = SimpleNamespace(ready=True, route=route)
+    daemon.reactor = SimpleNamespace(session=object(), react=react)
+    daemon.config.brain.enabled = True
+    daemon.thinker = SimpleNamespace(enabled=True, run=run)
+    daemon.speaker = SimpleNamespace(ready=True, say=say, stats=dict)
+    daemon.listener = SimpleNamespace(ready=True, transcriber=transcribe, disabled_reason=None)
+    app = create_app(daemon)
+    app.on_startup.clear()          # the stand-ins have nothing to start or close
+    app.on_cleanup.clear()
+    client = await aiohttp_client(app)
+    body = await (await client.post("/probe", json={})).json()
+    assert body["skipped"] == {}
+    for row in body["lines"]:
+        for slot in ("gate", "voice", "brain", "tts", "whisper"):
+            assert row[slot]["ok"] and row[slot]["ms"] >= 0
+    assert seen["tools"] is False
+    assert 15900 <= seen["samples"] <= 16100                  # 22.05 kHz resampled to whisper's 16 kHz
+    assert "probe:" in caplog.text and "Hello there" not in caplog.text   # times are logged, text is not
+
+
+async def test_probe_is_refused_to_browsers(client):
+    response = await client.post("/probe", json={}, headers={"Origin": "http://evil.example"})
+    assert response.status == 403

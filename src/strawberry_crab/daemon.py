@@ -390,6 +390,55 @@ class Daemon:
         recent = self.ledger.context()
         return f"{situation}\n{recent}" if recent else situation
 
+    # `strawberry doctor --talk` (POST /probe): fixed sentences, so the only text this path ever
+    # handles is ours, and nothing the user wrote can end up in a log line.
+    PROBE_LINES = ("Hello there, how are you today?", "Tell me one short fact about crabs.")
+
+    async def probe(self) -> dict[str, Any]:
+        """Time each slot on the scripted lines: the gate, the desktop voice (Gemma), the brain
+        (Qwen, offered no tools so the probe cannot change anything), Piper, and whisper reading
+        Piper's wav back. Nothing is performed to the widget or kept in the ledger; a slot that is
+        off or not ready is reported with its reason instead of a time."""
+        skipped: dict[str, str] = {}
+        if not self.gate.ready:
+            skipped["gate"] = self.gate.disabled_reason or "gate off"
+        if not self.config.brain.enabled or getattr(self.reactor, "session", None) is None:
+            skipped["voice"] = "brain off (canned lines)"
+        if not self.thinker.enabled:
+            skipped["brain"] = "thinker off"
+        if not self.speaker.ready:
+            skipped["tts"] = self.speaker.stats().get("reason") or "speech off"
+        if not self.listener.ready:
+            skipped["whisper"] = self.listener.disabled_reason or "voice off"
+        lines: list[dict[str, Any]] = []
+        for text in self.PROBE_LINES:
+            row: dict[str, Any] = {"text": text}
+
+            async def timed(slot: str, work) -> Any:
+                started = time.perf_counter()
+                try:
+                    result = await work
+                except Exception as exc:   # noqa: BLE001 - a probe reports, it does not crash the daemon
+                    row[slot] = {"ok": False, "error": type(exc).__name__}
+                    return None
+                row[slot] = {"ok": result is not None, "ms": round((time.perf_counter() - started) * 1000, 1)}
+                return result
+
+            if "gate" not in skipped:
+                await timed("gate", self.gate.route(text))
+            if "voice" not in skipped:
+                await timed("voice", self.reactor.react(Event(source="voice", title=text)))
+            if "brain" not in skipped:
+                outcome = await timed("brain", self.thinker.run(text, "", tools=False))
+                if outcome is not None and not outcome.ok:
+                    row["brain"]["ok"] = False
+            wav = await timed("tts", self.speaker.say(text)) if "tts" not in skipped else None
+            if wav and "whisper" not in skipped:
+                audio = await asyncio.to_thread(read_wav_16k, wav)
+                await timed("whisper", asyncio.to_thread(self.listener.transcriber, audio))
+            lines.append(row)
+        return {"lines": lines, "skipped": skipped}
+
     QUIP_WORDS = 10
     QUIP_UNTIL_CHARS = 200   # a fact this long is a paragraph already; no quip after it
 
@@ -403,6 +452,23 @@ class Daemon:
         performance = replace(performance, text=text, emotion=performance.emotion if ok else "alert")
         sent = await self.perform(performance)
         return performance, sent
+
+
+def read_wav_16k(path: str) -> Any:
+    """A mono 16-bit wav (Piper's) as float32 samples at 16 kHz, the rate whisper is fed."""
+    import wave
+
+    import numpy as np
+
+    from .voice import RATE
+
+    with wave.open(str(path), "rb") as wav:
+        rate = wav.getframerate()
+        samples = np.frombuffer(wav.readframes(wav.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+    if rate == RATE or not len(samples):
+        return samples
+    positions = np.arange(0, len(samples), rate / RATE)
+    return np.interp(positions, np.arange(len(samples)), samples).astype(np.float32)
 
 
 def short_quip(text: str, max_words: int) -> str:
