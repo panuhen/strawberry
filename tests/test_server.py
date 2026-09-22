@@ -270,6 +270,30 @@ async def test_command_refuses_what_a_widget_would_not_understand(client):
                               headers={"Origin": "https://evil.example"})).status == 403
 
 
+async def test_reload_notifications_rereads_the_section_and_goes_to_no_widget(client, daemon):
+    """The tray's "Message bodies" rows: the daemon re-reads [notifications] itself (§14)."""
+    from strawberry_crab.config import default_path
+
+    ws = await client.ws_connect("/ws")
+    path = default_path()                              # the throwaway XDG one (conftest)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('[notifications]\nbody = "glance"\nbody_apps = { Signal = "off" }\n')
+    response = await client.post("/command", json={"command": "reload_notifications"})
+    assert response.status == 200
+    assert await response.json() == {"sent": 0, "command": {"command": "reload_notifications"}, "body": "glance"}
+    assert daemon.config.notifications.body == "glance"
+    assert daemon.config.notifications.mode_for("Signal") == "off"
+    assert daemon.config.brain.enabled is False       # only [notifications]; the rest waits for a restart
+
+    path.write_text('[notifications]\nbody = "loud"\n')
+    response = await client.post("/command", json={"command": "reload_notifications"})
+    assert response.status == 409 and "not reloaded" in (await response.json())["error"]
+    assert daemon.config.notifications.body == "glance"      # a bad file changes nothing
+    with pytest.raises(asyncio.TimeoutError):
+        await ws.receive_json(timeout=0.2)                  # the widget never heard of it
+    await ws.close()
+
+
 async def test_health_carries_the_state_the_tray_shows(client):
     assert (await (await client.get("/health")).json())["state"] == "idle"
     await client.post("/perform", json={"state": "thinking"})

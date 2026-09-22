@@ -3,7 +3,8 @@
   POST /event    {source, app, title, body, urgency}  <- what the hooks hit
   POST /perform  a raw contract blob                  <- curl / tests / future TTS-less callers
   POST /tempo    a beat estimate                      <- doorways/beat_watch.py (§4c)
-  POST /command  {command, value}                     <- the tray, to the widgets (§14)
+  POST /command  {command, value}                     <- the tray, to the widgets (§14);
+                                                         reload_notifications is the daemon's own
   POST /listen   the hotkey: listen once (again = stop early)   (§7)
   POST /probe    time each model slot on fixed sentences         <- strawberry doctor --talk
   GET  /health
@@ -22,7 +23,7 @@ from typing import Any
 from aiohttp import WSMsgType, web
 
 from . import __version__, firstrun, paths
-from .config import Config
+from .config import Config, ConfigError
 from .contract import ContractError, Performance, anim_for
 from .daemon import Daemon
 from .events import Event
@@ -233,18 +234,24 @@ COMMANDS = {
     "sleep_after": (int, float),   # minutes of quiet before she dozes off; 0 = never
 }
 
+# What the daemon does itself instead of sending on (§14): the tray has changed the config file.
+DAEMON_COMMANDS = {
+    "reload_notifications": None,   # re-read [notifications] (body mode, body_apps, filters)
+}
+
 
 def parse_command(data: Any) -> dict[str, Any]:
     """{"command": "mute", "value": true} -> the message the widgets receive (WIRING.md §14)."""
     if not isinstance(data, dict):
         raise ContractError("command must be an object")
     name = data.get("command")
-    if name not in COMMANDS:
-        raise ContractError(f"unknown command {name!r}; one of {sorted(COMMANDS)}")
+    known = COMMANDS | DAEMON_COMMANDS
+    if name not in known:
+        raise ContractError(f"unknown command {name!r}; one of {sorted(known)}")
     unknown = set(data) - {"command", "value"}
     if unknown:
         raise ContractError(f"unknown fields: {sorted(unknown)}")
-    expected = COMMANDS[name]
+    expected = known[name]
     message: dict[str, Any] = {"command": name}
     if expected is None:
         return message
@@ -266,6 +273,14 @@ async def command(request: web.Request) -> web.Response:
         message = parse_command(await _body(request))
     except ContractError as exc:
         return _error(str(exc))
+    if message["command"] == "reload_notifications":
+        try:
+            body = daemon.reload_notifications()
+        except ConfigError as exc:
+            log.warning("command: [notifications] not reloaded (%s); keeping the settings she has", exc)
+            return _error(f"config not reloaded: {exc}", 409)
+        log.info("command: [notifications] reloaded, bodies %s", body)
+        return web.json_response({"sent": 0, "command": message, "body": body})
     sent = await daemon.hub.send(message)
     log.info("command -> %d widget(s): %s", sent, message)
     return web.json_response({"sent": sent, "command": message})

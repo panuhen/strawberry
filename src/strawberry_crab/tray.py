@@ -14,6 +14,10 @@ The menu is her right-click menu (widget/menu.gd), preferences and all, plus sho
 status row. Clicks become daemon calls: `POST /command` broadcasts `{"command": ...,
 "value": ...}` to the widgets, `GET /health` tells us what she is doing, and the check marks
 are read back from the widget's own settings file so the two menus agree.
+
+One row is not the widget's: "Message bodies" writes `[notifications] body` into config.toml
+(configedit.py: comments kept, validated, backed up), then tells the daemon to re-read
+[notifications] and restarts the notify_watch child, the two readers of that setting (§4, §14).
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ import math
 import os
 import sys
 import time
+import tomllib
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from typing import Any, Callable
@@ -36,7 +41,7 @@ from .bus import BusClient, BusError, field as header_field, open_session_bus
 from .client import DaemonClient, configure_logging, stop_on_signals
 from .doorways import DOORWAYS
 from .icons import pixmaps
-from . import paths
+from . import configedit, paths
 from . import widgetbin
 
 log = logging.getLogger("strawberryd.tray")
@@ -62,6 +67,10 @@ VOLUMES = (0.25, 0.5, 0.75, 1.0)
 SLEEP_MINUTES = (5.0, 1.0, 10.0, 30.0, 0.0)          # 0 = never
 SKINS = (("strawberry", "Strawberry"), ("peach", "Peach"), ("blueberry", "Blueberry"),
          ("mint", "Mint"), ("lavender", "Lavender"))
+# [notifications] body in config.toml (config.BODY_MODES). Not in her right-click menu, which holds
+# only the widget's own preferences.
+BODY_CHOICES = (("off", "Off"), ("react", "React"), ("glance", "Glance"))
+BODY_OVERRIDES_LABEL = "Per-app overrides in config"
 
 STATE_LABELS = {
     "idle": "Idle",
@@ -71,6 +80,7 @@ STATE_LABELS = {
     "dancing": "Dancing",
 }
 NO_DAEMON = "strawberryd is not running"
+NOTIFY_CHILD = "notify_watch"     # the doorway that reads [notifications] body at its start
 
 
 # --- the menu, as data ------------------------------------------------------------
@@ -84,17 +94,18 @@ class MenuItem:
     toggle: str = ""              # "checkmark" | "radio" | "" (dbusmenu's toggle-type)
     checked: bool = False
     separator: bool = False
-    value: Any = None             # what the action carries: a volume, a skin id, minutes
+    visible: bool = True
+    value: Any = None            # what the action carries: a volume, a skin id, minutes
     children: list["MenuItem"] = dataclass_field(default_factory=list)
 
     def properties(self) -> dict[str, tuple[str, Any]]:
         """The dbusmenu property map, values as variants."""
         if self.separator:
-            return {"type": ("s", "separator")}
+            return {"type": ("s", "separator")} | ({} if self.visible else {"visible": ("b", False)})
         props: dict[str, tuple[str, Any]] = {
             "label": ("s", self.label),
             "enabled": ("b", self.enabled),
-            "visible": ("b", True),
+            "visible": ("b", self.visible),
         }
         if self.toggle:
             props["toggle-type"] = ("s", self.toggle)
@@ -122,6 +133,8 @@ class TrayState:
     top_hat: bool = False
     always_on_top: bool = True
     sleep_minutes: float = 5.0
+    body_mode: str = "off"            # [notifications] body, read from config.toml (read_body_setting)
+    body_overrides: bool = False      # the file has a body_apps table
 
     @property
     def quiet(self) -> bool:
@@ -140,13 +153,18 @@ class TrayState:
 def menu_items(state: TrayState) -> list[MenuItem]:
     """Her right-click menu, in the top bar: the same preferences, plus show/hide and a status
     row (WIRING.md §13 for the crab's menu, §14 for this one). Ids are stable, so a host may
-    cache them; the submenu rows take 20, 30 and 40 upwards."""
+    cache them; the submenu rows take 20, 30, 40 and 50 upwards. "Per-app overrides in config"
+    and its separator are always there, hidden when body_apps is empty, so no row moves."""
     volume = [MenuItem(20 + i, "volume", f"{int(v * 100)}%", toggle="radio",
                        checked=abs(state.volume - v) < 0.01, value=v) for i, v in enumerate(VOLUMES)]
     skins = [MenuItem(30 + i, "skin", name, toggle="radio", checked=state.skin == skin_id, value=skin_id)
              for i, (skin_id, name) in enumerate(SKINS)]
     sleep = [MenuItem(40 + i, "sleep_after", "Never" if m == 0 else f"{int(m)} minutes", toggle="radio",
                       checked=abs(state.sleep_minutes - m) < 0.01, value=m) for i, m in enumerate(SLEEP_MINUTES)]
+    bodies = [MenuItem(51 + i, "body_mode", name, toggle="radio", checked=state.body_mode == mode, value=mode)
+              for i, (mode, name) in enumerate(BODY_CHOICES)]
+    bodies += [MenuItem(54, "separator", separator=True, visible=state.body_overrides),
+               MenuItem(55, "note", BODY_OVERRIDES_LABEL, enabled=False, visible=state.body_overrides)]
     return [
         MenuItem(1, "status", state.status_label(), enabled=False),
         MenuItem(2, "hide" if state.widget_shown else "show", "Hide her" if state.widget_shown else "Show her"),
@@ -160,6 +178,7 @@ def menu_items(state: TrayState) -> list[MenuItem]:
         MenuItem(10, "sleep_now", "Sleep now"),
         MenuItem(11, "hat", "Top hat", toggle="checkmark", checked=state.top_hat),
         MenuItem(12, "on_top", "Always on top", toggle="checkmark", checked=state.always_on_top),
+        MenuItem(50, "submenu", "Message bodies", children=bodies),
         MenuItem(13, "separator", separator=True),
         MenuItem(14, "settings_file", "Settings file…"),
         MenuItem(15, "voices_folder", "Voices folder…"),
@@ -222,6 +241,31 @@ def read_widget_prefs(path: Path | None = None) -> dict[str, Any]:
         key, _, raw = line.partition("=")
         values[key.strip()] = _prefs_value(raw.strip())
     return values
+
+
+def read_body_setting(path: Path) -> tuple[str, bool] | None:
+    """(`[notifications] body`, whether `body_apps` is set) from config.toml, for the radio rows.
+
+    No file: the defaults. A file that does not parse: None, and the menu keeps what it shows.
+    tomllib alone, not config.load: this runs every couple of seconds and must not log.
+    """
+    from .config import BODY_MODES, NotificationsConfig
+
+    try:
+        data = tomllib.loads(path.read_text())
+    except FileNotFoundError:
+        return NotificationsConfig().body, False
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    section = data.get("notifications")
+    section = section if isinstance(section, dict) else {}
+    body = section.get("body")
+    if body is None and isinstance(section.get("include_body"), bool):
+        body = "react" if section["include_body"] else "off"      # the old key, as config.load reads it
+    if body not in BODY_MODES:
+        body = NotificationsConfig().body
+    apps = section.get("body_apps")
+    return body, isinstance(apps, dict) and bool(apps)
 
 
 def _prefs_value(raw: str) -> Any:
@@ -380,6 +424,7 @@ class Child:
     process: asyncio.subprocess.Process | None = None
     restarts: int = 0
     task: asyncio.Task | None = None
+    asked_to_restart: bool = False     # restart_child: the next exit is ours, not a crash
 
     @property
     def pid(self) -> int | None:
@@ -405,7 +450,10 @@ def child_specs(port: int, config: Path | None, widget: bool = True,
         daemon += ["--config", str(config)]
     children = [Child("daemon", daemon)]
     for module in DOORWAYS:
-        children.append(Child(module, [python, "-m", f"strawberry_crab.doorways.{module}", "--daemon", url]))
+        argv = [python, "-m", f"strawberry_crab.doorways.{module}", "--daemon", url]
+        if config and module == NOTIFY_CHILD:
+            argv += ["--config", str(config)]      # the file "Message bodies" writes, not the XDG one
+        children.append(Child(module, argv))
     if not widget:
         return children
     try:
@@ -460,6 +508,10 @@ class Children:
             code = await child.process.wait()
             if self.stopping:
                 return
+            if child.asked_to_restart:
+                child.asked_to_restart = False
+                log.info("%s stopped to pick up a setting; starting it again", child.name)
+                continue
             lived = time.monotonic() - started
             child.restarts += 1
             log.warning("%s exited with %s after %.0f s; restarting in %.0f s", child.name, code, lived, backoff)
@@ -476,6 +528,16 @@ class Children:
         for child in self.children:
             if child.process and child.process.returncode is None:
                 child.process.terminate()
+
+    def restart_child(self, name: str) -> bool:
+        """Stop one child so its supervisor starts it again at once (no backoff, not counted as a
+        restart). False when it is not running: it reads its settings when it next starts anyway."""
+        for child in self.children:
+            if child.name == name and child.process and child.process.returncode is None:
+                child.asked_to_restart = True
+                child.process.terminate()
+                return True
+        return False
 
     async def stop(self) -> None:
         self.stopping = True
@@ -522,13 +584,16 @@ class Children:
 
 class Tray:
     def __init__(self, daemon_url: str, children: Children | None = None, icons=None,
-                 icon_name: str | None = None, prefs_path: Path | None = None) -> None:
+                 icon_name: str | None = None, prefs_path: Path | None = None,
+                 config_path: Path | None = None) -> None:
         self.daemon = DaemonClient(daemon_url)
         self.children = children
         self.state = TrayState()
         self.icons = icons if icons is not None else pixmaps()
         self.icon_name = themed_icon_name() if icon_name is None else icon_name
         self.prefs_path = prefs_path     # None: widget_prefs_path(), with the legacy fallback
+        self.config_path = config_path   # None: config.default_path(), as the daemon reads it
+        self.config_seen: tuple[int, int] | None = None     # (mtime_ns, size) last read
         self.items = menu_items(self.state)
         self.revision = 1
         self.client: BusClient | None = None
@@ -703,6 +768,8 @@ class Tray:
             want = not self.state.always_on_top
             if await self.command("on_top", want):
                 self.state.always_on_top = want
+        elif action == "body_mode":
+            await self.set_body_mode(str(value))
         elif action == "settings_file":
             await self.open_settings_file()
         elif action == "voices_folder":
@@ -718,6 +785,59 @@ class Tray:
         elif action == "quit":
             self.stopping.set()
         await self.publish()
+
+    def config_file(self) -> Path:
+        from .config import default_path
+
+        return self.config_path or default_path()
+
+    async def set_body_mode(self, mode: str) -> None:
+        """Message bodies ▸ off | react | glance: into config.toml, then live (WIRING.md §4, §14).
+
+        1. `[notifications] body = "<mode>"` through configedit: comments kept, validated, the old
+           file backed up. Nothing else changes; body_apps overrides stay as they are.
+        2. The daemon re-reads [notifications] (POST /command reload_notifications): it decides
+           react against glance.
+        3. The notify_watch child restarts (it reads the mode at its start): it decides whether a
+           body leaves the watcher at all. It is stopped after the daemon has the new mode, so
+           turning bodies on never forwards one the daemon would read the old way.
+        Logs the mode name and nothing else from the file; says nothing.
+        """
+        from .config import BODY_MODES, ConfigError
+
+        if mode not in BODY_MODES:
+            return
+        path = self.config_file()
+        try:
+            saved = await asyncio.to_thread(configedit.set_value, path, "notifications.body", mode)
+        except (ConfigError, OSError) as exc:
+            log.warning("message bodies: %s not written (%s)", mode, exc)
+            return
+        self.state.body_mode = mode
+        self.config_seen = None            # read the file again on the next refresh
+        log.info("message bodies: %s (written%s)", mode, ", backup kept" if saved else "")
+        if not await self.command("reload_notifications"):
+            log.warning("message bodies: the daemon is not answering; it reads %s when it starts", mode)
+        if self.children is None:
+            log.warning("message bodies: --no-children, so restart notify_watch yourself to apply %s", mode)
+        elif self.children.restart_child(NOTIFY_CHILD):
+            log.info("message bodies: restarting %s", NOTIFY_CHILD)
+
+    def read_config(self) -> None:
+        """The body mode from config.toml, re-read only when the file has changed."""
+        path = self.config_file()
+        try:
+            stat = path.stat()
+            seen = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            seen = (0, -1)
+        if seen == self.config_seen:
+            return
+        setting = read_body_setting(path)
+        if setting is None:
+            return                         # mid-edit or broken: keep what the menu shows, try again later
+        self.config_seen = seen
+        self.state.body_mode, self.state.body_overrides = setting
 
     async def open_settings_file(self) -> None:
         """The same as her menu's Settings file…: write the commented template first if it is
@@ -754,6 +874,7 @@ class Tray:
         if health:
             self.state.state = str(health.get("state") or health.get("rest_state") or "idle")
         self.read_prefs()
+        self.read_config()
         return await self.publish()
 
     def read_prefs(self) -> None:
@@ -833,7 +954,7 @@ def machine_id() -> str:
 
 
 async def run_tray(port: int, children: bool = True, widget: bool = True, config: Path | None = None) -> int:
-    tray = Tray(f"http://127.0.0.1:{port}")
+    tray = Tray(f"http://127.0.0.1:{port}", config_path=config)
     if children:
         tray.children = Children(child_specs(port, config, widget=widget),
                                  state_path=paths.tray_state_file())

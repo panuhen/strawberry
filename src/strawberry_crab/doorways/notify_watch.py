@@ -13,7 +13,7 @@ What gets forwarded is decided by [notifications] in ~/.config/strawberry/config
 ignored apps, an urgency floor, which apps' message bodies may leave the watcher, and a short
 coalescing window so twenty Slack pings become one "20 notifications" event.
 
-    python -m strawberry_crab.doorways.notify_watch [--daemon http://127.0.0.1:8770] [--log-level DEBUG]
+    python -m strawberry_crab.doorways.notify_watch [--daemon http://127.0.0.1:8770] [--config FILE] [--log-level DEBUG]
 
 Two rules for the monitor connection, both learned the hard way:
 
@@ -333,15 +333,18 @@ async def watch(daemon: str, cfg: NotificationsConfig) -> int:
     return await Watcher(daemon, cfg).run(stopping)
 
 
-def main() -> int:
-    config = load()
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="desktop notifications -> strawberryd doorway")
-    parser.add_argument("--daemon", default=f"http://{config.daemon.host}:{config.daemon.port}")
+    parser.add_argument("--daemon", default=None, help="default: the config's [daemon] host and port")
+    parser.add_argument("--config", type=Path, default=None, help="settings file (default: the XDG one)")
     parser.add_argument("--log-level", default="INFO")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     configure_logging(args.log_level)
+    # Read once, at start: the tray restarts this doorway when it changes [notifications] (§14).
+    config = load(args.config)
+    daemon = args.daemon or f"http://{config.daemon.host}:{config.daemon.port}"
     try:
-        return asyncio.run(watch(args.daemon, config.notifications))
+        return asyncio.run(watch(daemon, config.notifications))
     except KeyboardInterrupt:
         return 0
     except (ConnectionError, OSError, RuntimeError) as exc:
