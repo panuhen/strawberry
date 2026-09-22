@@ -73,6 +73,7 @@ Long-running Python (asyncio, aiohttp). One port, default **8770**:
 - `POST /perform` — accepts a raw contract blob. For `curl`, tests, and callers that already know what they want.
 - `GET /health` — `{ok, widgets, performed, uptime_s, state, rest_state, brain: {model, loaded, calls, fallbacks, last_latency_s}}`. `state` is what she is doing now (a transient older than 6 s reads as her resting state, because the widget returns to it on its own); the tray's status row is this field.
 - `GET /config` — the effective settings (§15).
+- `POST /probe` — `strawberry doctor --talk`: the daemon's own two scripted sentences (`Daemon.PROBE_LINES`) through the gate, the desktop voice (Gemma), the brain (Qwen, offered no tools so nothing changes), Piper and whisper (reading Piper's wav back), each timed. It takes no text, performs nothing, records nothing in the ledger, logs only the times, and answers a loopback client only.
 - `GET /ws` — the widget connects here.
 - **Core function:** `Daemon.perform(performance)` builds the blob, (Phase 4) runs TTS, and sends to Godot. Everything routes through it.
 
@@ -90,6 +91,8 @@ Long-running Python (asyncio, aiohttp). One port, default **8770**:
 Critical beats message (a critical WhatsApp still shivers). The app icon resolved by the doorway rides along as `icon`.
 
 **Local tools only.** Requests carrying a browser `Origin` header are refused (403) on every route including `/ws`, and POSTs must be `Content-Type: application/json` (415 otherwise). Godot, curl, and the doorways never send `Origin`; browsers always do. Without this a web page could make her talk, or open `/ws` and read notification text as it goes past.
+
+**Shutdown.** SIGTERM runs aiohttp's cleanup: widgets are closed with GOING_AWAY, then `Daemon.close()` closes every part (each one even if another fails). Stopping the tray unit signals its whole cgroup and the tray also terminates its children, so the daemon sees SIGTERM twice; the first shutdown hook swaps in a handler that ignores the second, which would otherwise cancel the cleanup halfway and leave the Ollama sessions to the garbage collector ("Unclosed client session" in the journal). A SIGTERM while the models are still loading closes what was opened, too.
 
 Run: `strawberryd [--port 8770]` (the console script; in a checkout `.venv/bin/strawberryd` after `uv sync --inexact --group gpu`), or `strawberry daemon`, which also starts the doorways.
 
@@ -516,7 +519,8 @@ LICENSE, THIRD_PARTY.md  MIT; what we use from others, and the models and voices
 .github/workflows/       ci.yml (tests + build on push/PR), release.yml (v* tag -> GitHub release + PyPI, PACKAGING.md)
 pyproject.toml, uv.lock  the one Python package, `strawberry` (hatchling; `uv build`, `uv tool install .`); groups dev (pytest, Pillow) and gpu (cuBLAS/cuDNN, also the `gpu` extra)
 src/strawberry_crab/          the package: contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), thinker (Qwen tool loop), ledger (short memory), hub, server
-                         + cli.py (`strawberry`), strawberryd.py (`strawberryd`), paths.py (XDG dirs, the checkout), firstrun.py (the one-time privacy note, §15), widgetbin.py (which widget runs; `widget --fetch`), bus.py (jeepney plumbing), client.py (HTTP to the daemon), icons.py (PNG -> ARGB32), tray.py (the StatusNotifierItem and the process that owns her, §14), mpris.py, adapters/
+                         + cli.py (`strawberry`), strawberryd.py (`strawberryd`), paths.py (XDG dirs, the checkout), firstrun.py (the one-time privacy note, §15), widgetbin.py (which widget runs; `widget --fetch`), bus.py (jeepney plumbing), client.py (HTTP to the daemon), icons.py (PNG -> ARGB32), tray.py (the StatusNotifierItem and the process that owns her, §14), mpris.py, adapters/,
+                         setupcmd.py (`strawberry setup`: tiers by VRAM, config merge, pulls, voice, widget), doctor.py (`strawberry doctor [--talk]`)
 src/strawberry_crab/doorways/ notify_watch.py, mpris_watch.py, beat_watch.py + beat_track.py (`strawberry-doorway <name>`, or python -m strawberry_crab.doorways.<name>)
 src/strawberry_crab/assets/icons/  the tray icon PNGs (package data), rendered by scripts/render_icons.py
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)

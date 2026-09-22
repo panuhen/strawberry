@@ -154,10 +154,20 @@ def test_config_init_only_writes_the_template(monkeypatch, capsys):
     assert capsys.readouterr().out.splitlines() == [str(paths.config_file())] * 2
 
 
-def test_setup_and_doctor_are_placeholders_for_step_5(capsys):
-    assert cli.main(["setup"]) == 1
-    assert cli.main(["doctor"]) == 1
-    assert capsys.readouterr().err.count("step 5") == 2
+def test_setup_and_doctor_take_their_flags(monkeypatch):
+    from strawberry_crab import doctor, setupcmd
+
+    seen = []
+    monkeypatch.setattr(setupcmd, "main", lambda **kw: seen.append(("setup", kw)) or 0)
+    monkeypatch.setattr(doctor, "main", lambda **kw: seen.append(("doctor", kw)) or 1)
+    assert cli.main(["setup", "--yes", "--tier", "cpu"]) == 0
+    assert cli.main(["doctor", "--talk"]) == 1
+    assert seen == [("setup", {"yes": True, "install": False, "tier": "cpu"}), ("doctor", {"talk_too": True})]
+
+
+def test_setup_refuses_an_unknown_tier(capsys):
+    assert cli.main(["setup", "--yes", "--tier", "huge"]) == 2
+    assert "no tier 'huge'" in capsys.readouterr().err
 
 
 def test_config_writes_the_template_once(monkeypatch, capsys):

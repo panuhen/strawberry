@@ -48,21 +48,20 @@ For speech recognition on the GPU install the CUDA extra instead:
 
 What each command does:
 
-- **`strawberry setup`** can be run again at any time and picks up where it stopped. It
-  downloads the widget binary for your version and checks its SHA-256, finds or installs Ollama,
-  reads your GPU memory and proposes models that fit, prints each model's licence before pulling
-  it, downloads a Piper voice, checks for the PipeWire tools, git and the GNOME AppIndicator
-  extension (and prints the install line for your distro when one is missing), writes
-  `config.toml` if you have none, and offers `strawberry install` and `strawberry git-hooks install`.
+- **`strawberry setup`** can be run again at any time; it keeps the values already in your
+  config. It reads your GPU memory and proposes models that fit, prints each model's licence
+  before pulling it, offers Ollama's installer if Ollama is missing, downloads a Piper voice,
+  downloads the widget binary for your version, backs up and updates `config.toml`, offers to
+  add the settings your file does not have yet, and offers `strawberry install`. `--yes` takes
+  the defaults without asking.
 - **`strawberry install`** writes one systemd user unit, `strawberry-tray.service`, plus an
   autostart entry as a fallback. The tray starts the daemon, the watchers and the widget, and
   restarts any of them that dies. `strawberry uninstall` removes both.
-- **`strawberry doctor`** checks everything she depends on and says what is missing and how to
-  fix it: the daemon, the widget and its version, the tray, Ollama and each model, GPU memory,
-  the voice, the microphone device, PipeWire, the D-Bus session, the notification monitor, media
-  players, the beat watcher, the systemd unit and the git hooks. It ends with a short scripted
-  conversation and the time each model took. It exits non-zero when something you can fix is
-  missing. Please include its output in bug reports.
+- **`strawberry doctor`** checks what she depends on and says what is missing and how to fix
+  it: the config, Ollama and each model, GPU memory, whisper and CUDA, the voice, the widget and
+  its version, PipeWire, git, the tray host and the daemon. It exits non-zero when something is
+  broken. `strawberry doctor --talk` also runs a short scripted conversation through the running
+  daemon and prints the time each model took. Please include its output in bug reports.
 
 Other commands: `strawberry status`, `stop`, `restart`, `say "…"`, `talk`, `voices`,
 `audition`, `tools`, `hotkey`, `git-hooks install|remove`. `strawberry --help` lists them all.
@@ -151,6 +150,14 @@ bin/strawberry                       # daemon, watchers, widget
 scripts/build_widget.sh              # export dist/strawberry-widget-<version>-linux-x86_64
 scripts/check_phase1.sh              # tests, then a headless widget against a real daemon
 ```
+
+**Setup and doctor.** `strawberry setup` reads the GPU's VRAM (nvidia-smi) and proposes the models that fit: the tested setup on a 24 GB card (Qwen 27B brain, `gemma3:1b`, `embeddinggemma`, whisper `medium` on CUDA, Piper `en_GB-alba-medium`), a smaller Qwen3 for 16, 10 and 6 GB, and no brain on the CPU. Any slot can be typed over. It writes the choices into `config.toml` (backing it up first and keeping the values already there), prints each model's licence, runs `ollama pull` for what is missing, downloads the voice, fetches the widget if the installed one is another version, offers to append the settings the file does not have, and offers `strawberry install`. The models are not part of this package: you download each from its publisher, under its own terms. `--yes` takes the defaults without asking (`--install` also installs; `--tier 10gb` picks a tier). `strawberry doctor` checks Ollama and each model, the GPU, whisper and CUDA, the voice, the widget version, PipeWire, git, the tray host, the config and the daemon, prints ✓ / ! / ✗ with a fix per problem and exits 1 if anything is ✗; `doctor --talk` also times a short scripted conversation through the running daemon, per slot.
+
+**Which widget runs.** `strawberry widget` and the tray run the installed binary when it is there, else the checkout's Godot project with `godot` on PATH, else they say to run `strawberry widget --fetch`. A binary built from a checkout (`scripts/build_widget.sh`, needs Godot 4.7.2 and its export templates) can be tried by hand: `dist/strawberry-widget-<version>-linux-x86_64 --display-driver x11 -- --ws=ws://127.0.0.1:8770/ws`. The widget tells the daemon its version; a source run says `dev` and is always accepted, a release on another major version is refused (WIRING §1).
+
+Entry points: `strawberry` (the CLI; `strawberry --help`), `strawberryd` (the daemon alone), `strawberry-doorway mpris_watch|notify_watch|beat_watch`. Files: config and the widget's preferences `~/.config/strawberry/` (`config.toml`, `widget.cfg`), voices and the widget binary `~/.local/share/strawberry/` (`voices/`, `widget/`), state and logs `~/.local/state/strawberry/` (XDG variables respected). `uv build` makes the wheel.
+
+End-to-end check: `scripts/check_phase1.sh` (unit tests, then a headless widget against a real daemon; `WIDGET=dist/strawberry-widget-… scripts/check_phase1.sh` runs the same checks in the exported binary); `scripts/check_tray.sh` registers the tray and reads it back.
 
 ## Licence
 

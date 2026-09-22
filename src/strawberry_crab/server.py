@@ -5,15 +5,18 @@
   POST /tempo    a beat estimate                      <- doorways/beat_watch.py (§4c)
   POST /command  {command, value}                     <- the tray, to the widgets (§14)
   POST /listen   the hotkey: listen once (again = stop early)   (§7)
+  POST /probe    time each model slot on fixed sentences         <- strawberry doctor --talk
   GET  /health
   GET  /ws       the Godot widget connects here and stays connected
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import signal
 from typing import Any
 
 from aiohttp import WSMsgType, web
@@ -53,6 +56,7 @@ def create_app(daemon: Daemon) -> web.Application:
     app = web.Application()
     app[DAEMON] = daemon
     app.on_startup.append(_start_daemon)
+    app.on_shutdown.append(_hold_signals)
     app.on_shutdown.append(_close_widgets)
     app.on_cleanup.append(_close_daemon)
     app.add_routes(
@@ -64,6 +68,7 @@ def create_app(daemon: Daemon) -> web.Application:
             web.post("/tempo", tempo),
             web.post("/command", command),
             web.post("/listen", listen),
+            web.post("/probe", probe),
             web.get("/ws", websocket),
         ]
     )
@@ -71,11 +76,37 @@ def create_app(daemon: Daemon) -> web.Application:
 
 
 async def _start_daemon(app: web.Application) -> None:
-    await app[DAEMON].start()
+    try:
+        await app[DAEMON].start()
+    except BaseException:
+        # Stopped while the models load (SIGTERM cancels startup): aiohttp runs no cleanup for an
+        # app that never started, so the sessions opened so far are closed here.
+        await app[DAEMON].close()
+        raise
 
 
 async def _close_daemon(app: web.Application) -> None:
     await app[DAEMON].close()
+
+
+async def _hold_signals(app: web.Application) -> None:
+    """One SIGTERM is enough: ignore the rest while shutting down.
+
+    Stopping the tray unit signals its whole cgroup, and the tray terminates its children as
+    well, so the daemon gets SIGTERM twice. aiohttp's handler would raise GracefulExit again in
+    the middle of cleanup, cancel it, and leave the Ollama sessions to the garbage collector
+    ("Unclosed client session" in the journal). runner.cleanup() removes these handlers at its end.
+    """
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _already_stopping, sig)
+        except (NotImplementedError, RuntimeError, ValueError):
+            pass     # not the main thread (tests), or no signals on this platform
+
+
+def _already_stopping(sig: signal.Signals) -> None:
+    log.info("%s during shutdown ignored; already stopping", signal.Signals(sig).name)
 
 
 async def _close_widgets(app: web.Application) -> None:
@@ -245,6 +276,24 @@ async def listen(request: web.Request) -> web.Response:
     result = request.app[DAEMON].listen()
     status = 503 if "error" in result else 200
     return web.json_response(result, status=status)
+
+
+LOOPBACK = ("127.0.0.1", "::1")
+
+
+async def probe(request: web.Request) -> web.Response:
+    """`strawberry doctor --talk`: the daemon's own scripted lines through each slot, timed.
+
+    Takes no text (the sentences are Daemon.PROBE_LINES), performs nothing, and answers only a
+    client on this machine even when [daemon] host is not loopback.
+    """
+    _reject_browsers(request)
+    if request.remote not in LOOPBACK:
+        return _error("the probe is local only", 403)
+    result = await request.app[DAEMON].probe()
+    log.info("probe: %s", {slot: [row[slot].get("ms") for row in result["lines"] if slot in row]
+                           for slot in ("gate", "voice", "brain", "tts", "whisper")})
+    return web.json_response(result)
 
 
 async def tempo(request: web.Request) -> web.Response:

@@ -72,10 +72,10 @@ widget binary reaches every distro with the same artefact.
 | ~~`bin/strawberry` bash launcher finds files via the repo~~ | done (2): `strawberry` CLI entry point, XDG paths, icons as package data; the widget still runs from a checkout (4) |
 | ~~Widget finds the repo via `res://..` (menu: settings file, restart)~~ | done (4): XDG paths, `strawberry config --init` / `restart` through `$STRAWBERRY_CLI` |
 | ~~Music control needs the Spotify MCP server~~ | done (3): MPRIS reflexes for any player; Spotify is an adapter |
-| Ollama present with the models pulled | `strawberry setup` installs Ollama (their script) and pulls the models (5) |
-| Piper voice already downloaded | `strawberry setup` downloads the default voice; `strawberry voices` for more (5) |
+| ~~Ollama present with the models pulled~~ | done (5): `strawberry setup` offers Ollama's installer and pulls the models that fit |
+| ~~Piper voice already downloaded~~ | done (5): `strawberry setup` downloads the chosen voice; `strawberry voices` for more |
 | ~~`jq`, `curl` in the git hooks and `say`~~ | done (2): hooks call `strawberry git-event` (Python); `say` is Python |
-| `pw-record`, `pw-dump` | Runtime check with the apt/dnf line in the message (5) |
+| ~~`pw-record`, `pw-dump`~~ | done (5): `strawberry doctor` checks them and prints the apt/dnf/pacman line |
 | ~~No licence~~ | done (6): MIT, THIRD_PARTY.md, and a release workflow |
 
 ## Steps
@@ -171,7 +171,13 @@ The plan as written:
 - Where it lives: `~/.local/share/strawberry/widget/strawberry-widget`; the CLI downloads it from
   the GitHub release matching the installed package version and checks a SHA-256 from the release.
 
-### 5. `strawberry setup` and `strawberry doctor`
+### 5. `strawberry setup` and `strawberry doctor` — **done 2026-09-22**
+
+Evidence: `uv run pytest -q` → 408 passed (359 before; `pythonpath = ["."]` added so `uv run pytest` finds the `tests.*` imports); `scripts/check_phase1.sh`, `scripts/check_reconnect.sh` and `scripts/check_tray.sh` pass. With throwaway XDG dirs: `strawberry setup --yes` on an empty config dir detected the RTX 3090 (24576 MiB), proposed the 24gb tier, wrote `config.toml` from the template with whisper `medium`/`cuda`/`int8_float16` and speech on, printed a licence line per model and for the voice and whisper, found all three models in Ollama (no pull), downloaded `en_GB-alba-medium`, got the expected 404 for the widget release and fell back to developer mode, listed the 27 keys the template leaves out; the second run changed nothing. Against a throwaway daemon on :8781, `strawberry doctor` printed 12 ✓ and 2 ! (keys at their defaults; no widget binary, developer mode) and exited 0, and `doctor --talk` printed gate ~200 ms, Gemma ~900 ms, Qwen (no tools) ~1.1 s, Piper ~90 ms, whisper small on the CPU ~3.3 s per line. The journal's "Unclosed client session" at shutdown was reproduced (a second SIGTERM, which a unit stop always sends: systemd signals the cgroup and the tray terminates its children, cancelled the cleanup) and fixed in server.py; the same double SIGTERM now logs "SIGTERM during shutdown ignored" and nothing else.
+
+Choices made on the way: tiers go by **total** VRAM, not free (the user's Ollama may already hold these very models): 24gb (the tested setup), 16gb (`qwen3:14b`), 10gb (`qwen3:8b`, whisper small on CUDA), 6gb (`qwen3:4b`, whisper on the CPU), cpu (thinker off). NVIDIA only (`nvidia-smi`); no rocm-smi yet. The config is edited as text, a key at a time inside its section, so the user's comments survive; a key already in the file is kept unless the user types a value for that slot or asks for a tier (`--tier`, or another number at the prompt); the edit is parsed and validated before it is written, and the old file is copied to `config.toml.bak-<time>`. The missing-keys step leaves out the long values (persona, the example lists, the server tables, the acks) and appends the rest with a `# default, added by strawberry setup <date>` comment, never under `--yes`. The Ollama installer is offered interactively only, never run under `--yes`. `doctor --talk` uses a new `POST /probe` (WIRING §2): fixed sentences, no tools for the brain, nothing performed, local only, times logged and no text. `git-hooks install` is not offered by setup. Left: MODELS.md (the per-slot constraints live in the tier comments in `setupcmd.py` and in the README section for now).
+
+The plan as written:
 
 `setup` is idempotent, verbose and resumable:
 
@@ -252,5 +258,5 @@ The plan as written:
 | 3. MPRIS reflexes + adapters | – (parallel with 1) | a day |
 | 2. package + CLI | 1, 3 | half a day — **done 2026-09-22** |
 | 4. widget binary + XDG + handshake | 2 | half a day — **done 2026-09-22** |
-| 5. setup + doctor | 2, 4 | a day |
+| 5. setup + doctor | 2, 4 | a day — **done 2026-09-22** |
 | 6. releases, licence, README | 5 | half a day — **done 2026-09-22** |

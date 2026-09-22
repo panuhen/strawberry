@@ -4,6 +4,7 @@
     strawberry daemon          the daemon and doorways only (idempotent)
     strawberry tray            the 🍓, and under it the daemon, the doorways and the widget
     strawberry install         start on login (one systemd user unit for the tray)
+    strawberry setup | doctor  models, voice and widget; then check it all (setupcmd.py, doctor.py)
     strawberry status | stop | restart | config | say | listen | route | talk | ...
 
 The daemon itself is `strawberryd` (strawberryd.py); the by-hand tools that share its config
@@ -794,9 +795,19 @@ def cmd_git_hooks(action: str) -> int:
     return 0
 
 
-def cmd_later(name: str) -> int:
-    print(f"strawberry {name}: not yet; it arrives in PACKAGING.md step 5.", file=sys.stderr)
-    return 1
+def cmd_setup(yes: bool, install: bool, tier: str | None) -> int:
+    from . import setupcmd
+
+    try:
+        return setupcmd.main(yes=yes, install=install, tier=tier)
+    except ValueError as exc:      # an unknown --tier
+        raise CliError(str(exc), 2) from None
+
+
+def cmd_doctor(talk: bool) -> int:
+    from . import doctor
+
+    return doctor.main(talk_too=talk)
 
 
 # --- the command line -----------------------------------------------------------
@@ -860,8 +871,14 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("args", nargs="*", help="the hook's own arguments (pre-push: remote name and url)")
     p = add("git-hooks", "install or remove the global git hooks (core.hooksPath)")
     p.add_argument("action", choices=("install", "remove"))
-    add("setup", "fetch the widget, the models and a voice (PACKAGING.md step 5; not yet)")
-    add("doctor", "check everything she needs and say what is missing (PACKAGING.md step 5; not yet)")
+    p = add("setup", "choose models that fit this GPU, pull them, fetch a voice and the widget, fill in the config")
+    p.add_argument("--yes", "-y", action="store_true", help="take every default without asking")
+    p.add_argument("--install", action="store_true", help="with --yes: also run `strawberry install` at the end")
+    p.add_argument("--tier", default=None, metavar="NAME",
+                   help="the model tier instead of the one VRAM suggests: 24gb | 16gb | 10gb | 6gb | cpu")
+    p = add("doctor", "check everything she needs and say how to fix what is missing (exit 1 if something is)")
+    p.add_argument("--talk", action="store_true",
+                   help="also time a short scripted conversation through the running daemon, per slot")
     return top
 
 
@@ -896,8 +913,10 @@ def dispatch(command: str, args: argparse.Namespace, extra: list[str]) -> int:
         return cmd_git_event(args.hook, args.args)
     if command == "git-hooks":
         return cmd_git_hooks(args.action)
-    if command in ("setup", "doctor"):
-        return cmd_later(command)
+    if command == "setup":
+        return cmd_setup(args.yes, args.install, args.tier)
+    if command == "doctor":
+        return cmd_doctor(args.talk)
     if command == "config":
         return cmd_config(init_only=args.init)
     if command == "widget" and (args.fetch or args.widget_version):
