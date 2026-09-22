@@ -42,20 +42,24 @@ SILENT_DB = -60.0
 STALE_AFTER_S = 12.0   # a running player that stays this silent has a dead capture link (seen after suspend)
 NO_DATA_S = 3.0        # pw-record produced nothing: PipeWire never linked us to the target
 STRATEGIES = ("serial", "name", "sink-monitor")
+NODE_NAME = "strawberry-beat"   # our capture node, so the link check can find it in the graph
 PLAYERS = ("spotify", "vlc", "mpv", "rhythmbox", "audacious", "clementine", "elisa", "lollypop", "amberol",
            "tidal", "deezer", "youtube music", "firefox", "chromium", "chrome", "brave")
 OURS = ("strawberry", "strawberryd", "godot")
 
 
-def pipewire_streams() -> list[dict]:
-    """Running audio output streams as {id, name, app, state}."""
+def pw_dump() -> list[dict]:
     try:
-        dump = json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5).stdout or "[]")
+        return json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5).stdout or "[]")
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
         log.warning("pw-dump failed: %s", exc)
         return []
+
+
+def pipewire_streams(dump: list[dict] | None = None) -> list[dict]:
+    """Audio output streams as {id, serial, name, app, state}."""
     out = []
-    for obj in dump:
+    for obj in pw_dump() if dump is None else dump:
         info = obj.get("info") or {}
         props = info.get("props") or {}
         if props.get("media.class") != "Stream/Output/Audio":
@@ -74,19 +78,46 @@ def pipewire_streams() -> list[dict]:
 
 
 def pick_target(streams: list[dict], preferred: str = "") -> dict | None:
+    """A RUNNING stream only. Spotify keeps a second, idle stream node; asking PipeWire to capture an
+    idle node gets us silently linked to the default sink's monitor instead, and from then on the
+    beat follows the output device (dead across a headset profile switch) rather than the player."""
+    running = [s for s in streams if s["state"] == "running"]
     if preferred:
-        for s in streams:
+        for s in running:
             if preferred.lower() in (s["name"].lower(), s["app"].lower()):
                 return s
         return None
-    candidates = [s for s in streams if s["app"].lower() not in OURS and s["name"].lower() not in OURS]
-    running = [s for s in candidates if s["state"] == "running"]
-    for pool in (running, candidates):
-        for s in pool:
-            label = (s["name"] + " " + s["app"]).lower()
-            if any(p in label for p in PLAYERS):
-                return s
-    return running[0] if running else None
+    candidates = [s for s in running if s["app"].lower() not in OURS and s["name"].lower() not in OURS]
+    for s in candidates:
+        label = (s["name"] + " " + s["app"]).lower()
+        if any(p in label for p in PLAYERS):
+            return s
+    return candidates[0] if candidates else None
+
+
+def capture_sources(dump: list[dict], node_name: str = NODE_NAME) -> list[dict]:
+    """Where our capture node's inputs come from: [{id, name, class}] per linked output node."""
+    nodes = {o.get("id"): ((o.get("info") or {}).get("props") or {}) for o in dump if str(o.get("type", "")).endswith("Node")}
+    ours = {i for i, props in nodes.items() if props.get("node.name") == node_name}
+    if not ours:
+        return []
+    sources: dict[int, dict] = {}
+    for o in dump:
+        if not str(o.get("type", "")).endswith("Link"):
+            continue
+        info = o.get("info") or {}
+        if info.get("input-node-id") in ours:
+            out_id = info.get("output-node-id")
+            props = nodes.get(out_id, {})
+            sources[out_id] = {"id": out_id, "name": str(props.get("node.name", "")), "class": str(props.get("media.class", ""))}
+    return list(sources.values())
+
+
+def linked_to_player(sources: list[dict], stream: dict) -> bool | None:
+    """True: fed by the player's stream. False: fed by something else (a sink monitor). None: no links yet."""
+    if not sources:
+        return None
+    return any(src["id"] == stream["id"] for src in sources) and not any(src["class"].startswith("Audio/Sink") for src in sources)
 
 
 class Watcher:
@@ -112,11 +143,12 @@ class Watcher:
             outcome = self.capture(stream, how)
             self.tracker.reset()
             self.post({"silent": True})
-            if outcome == "nolink":
+            if outcome in ("nolink", "wrong-source"):
                 # This way of asking PipeWire did not get us linked to the player; try the next.
                 self.strategy += 1
                 time.sleep(0.5)
             else:
+                self.strategy = 0
                 time.sleep(1.0)
 
     def capture(self, stream: dict, how: str) -> str:
@@ -130,7 +162,8 @@ class Watcher:
             # Default sink monitor: device-agnostic (follows the default sink) but hears every
             # app, her own voice included. Last resort, and the watcher says so in the log.
             cmd = ["pw-record", "-P", "stream.capture.sink=true"]
-        cmd += ["--rate", str(RATE), "--channels", "1", "--format", "s16", "--latency", f"{int(LATENCY_S * 1000)}ms", "-"]
+        cmd += ["-P", f"node.name={NODE_NAME}", "--rate", str(RATE), "--channels", "1", "--format", "s16",
+                "--latency", f"{int(LATENCY_S * 1000)}ms", "-"]
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except OSError as exc:
@@ -144,6 +177,7 @@ class Watcher:
         next_post = started + self.interval
         self.silent_since = None
         got_any = False
+        checked = False
         pending = b""  # an odd byte left over from a read, so samples never go out of alignment
         try:
             while True:
@@ -154,6 +188,14 @@ class Watcher:
                     if not raw:
                         log.info("stream %s ended", stream["name"])
                         return "ended"
+                    if not checked and how != "sink-monitor" and time.time() - started > 1.0:
+                        # Data flows: make sure it is the player's, not the sink monitor PipeWire
+                        # substitutes when it cannot link to the target.
+                        checked = True
+                        verdict = linked_to_player(capture_sources(pw_dump()), stream)
+                        if verdict is False:
+                            log.warning("capture by %s got linked to the output device, not to %s; retrying", how, stream["name"])
+                            return "wrong-source"
                     got_any = True
                     last_data = time.time()
                     raw = pending + raw
