@@ -46,6 +46,12 @@ run; the notification, media and audio-capture doorways would each need a native
   extension (Ubuntu ships it on); without it nothing breaks, the right-click menu covers everything,
   and `doctor` says which case you are in.
 
+- **Name (decided 2026-09-22): `strawberry-crab`.** `strawberry` is taken on PyPI, and `strawberry-graphql`
+  imports as `strawberry` and ships a `strawberry` command. So: install name `strawberry-crab`, import name
+  `strawberry_crab` (renamed once, after step 4, so two packages can never overwrite each other's files in
+  one environment), and the command stays `strawberry`, her name (`uv tool install` refuses to overwrite
+  another tool's command and says so, so a clash is never silent).
+
 ## Why not the sandboxed formats
 
 Flatpak and Snap fight what she does: monitoring the notification bus, capturing another app's
