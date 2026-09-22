@@ -10,7 +10,7 @@ import time
 from dataclasses import replace
 from typing import Any
 
-from .actions import Actor, Outcome
+from .actions import NO_CATALOGUE, Actor, Outcome
 from .adapters import gate_examples
 from .config import Config
 from .contract import Performance
@@ -328,6 +328,8 @@ class Daemon:
             performance, sent = await self.report(outcome.event(text), outcome.ok)
             self.ledger.record(text, performance.text or "", did=outcome.did)
             return performance, sent
+        if route is not None and self.actor.needs_catalogue(route):
+            return await self.no_catalogue(event, route)
         if not self.thinker.enabled:
             if music:
                 self.quiet_media_until = 0.0  # Gemma cannot touch the music; it is not hers to explain
@@ -342,6 +344,18 @@ class Daemon:
                                                   emotion=outcome.emotion or "neutral"))
         sent = await self.perform(performance)
         self.ledger.record(text, performance.text or "", did=outcome.did)
+        return performance, sent
+
+    async def no_catalogue(self, event: Event, route: Route) -> tuple[Performance, int]:
+        """A request for particular music with only MPRIS to act through: her fixed line that it
+        needs a music add-on, instead of a model that would claim it played something (§8b)."""
+        self.quiet_media_until = 0.0   # she changed nothing; a track change now is somebody else's
+        log.info("voice: %r wants music found (needs_catalogue %.2f) and no music server is configured; "
+                 "saying so (ADAPTERS.md: adding a server)", event.title, route.catalogue)
+        performance = decorate(event, Performance(state="talking", text=self.rng.choice(NO_CATALOGUE),
+                                                  emotion="neutral"))
+        sent = await self.perform(performance)
+        self.ledger.record(event.title, performance.text or "", did="needs a music add-on")
         return performance, sent
 
     async def chat(self, event: Event) -> tuple[Performance, int]:

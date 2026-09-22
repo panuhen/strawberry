@@ -12,7 +12,7 @@ from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor, Event
 from strawberry_crab.server import create_app
 from strawberry_crab.systemone import (
-    IS_ABOUT_HER, KIND, ROUTING, TOPIC, Choice, Gate, GateError, Noul, Option, Score, SystemOne, confidence, decide,
+    IS_ABOUT_HER, KIND, NEEDS_CATALOGUE, ROUTING, TOPIC, Choice, Gate, GateError, Noul, Option, Score, SystemOne, confidence, decide,
     softmax,
 )
 
@@ -127,13 +127,15 @@ def test_decide_thresholds_per_consequence():
 
 def test_shipped_routing_questions_are_well_formed():
     names = [q.name for q in ROUTING]
-    assert names == ["kind", "topic", "is_urgent", "is_about_her", "has_argument", "wants_library_change", "music_tool"]
+    assert names == ["kind", "topic", "is_urgent", "is_about_her", "has_argument", "wants_library_change", "music_tool",
+                     "needs_catalogue"]
     assert [o.name for o in KIND.options] == ["request", "question", "chat", "other"]
     assert [o.name for o in TOPIC.options] == ["music", "calendar", "notes", "system", "other"]
     for question in (KIND, TOPIC):
         for option in question.options:
             assert len(option.examples) >= 4, f"{question.name}.{option.name} needs examples"
     assert IS_ABOUT_HER.yes.examples and IS_ABOUT_HER.no.examples
+    assert len(NEEDS_CATALOGUE.yes.examples) >= 4 and len(NEEDS_CATALOGUE.no.examples) >= 4
 
 
 def test_config_examples_extend_an_option():
@@ -167,7 +169,8 @@ async def test_gate_routes_and_logs_a_request():
     assert route is not None
     assert route.kind == "request" and route.topic == "music"
     assert route.decision in ("act", "offer")
-    assert set(route.answers) == {"kind", "topic", "is_urgent", "is_about_her", "has_argument", "wants_library_change", "music_tool"}
+    assert set(route.answers) == {"kind", "topic", "is_urgent", "is_about_her", "has_argument", "wants_library_change", "music_tool",
+                                     "needs_catalogue"}
     assert route.tool == "skip" and route.tool_confidence > 0.0
     stats = gate.stats()
     assert stats["calls"] == 1 and stats["ready"] is True
