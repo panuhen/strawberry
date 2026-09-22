@@ -8,7 +8,8 @@ extends Node
 ##   headbang  rock/metal: fast, dense, uneven. Forward nod on the beat, claws up, squint.
 ##   groove    hip hop/funk: 80–108 BPM with low end. Slow roll, claw pumps every other beat.
 ##   bounce    pop and the rest with a beat. Squash on the beat.
-##   sway      slow, quiet or beatless. Gentle roll, no lock, clip slowed.
+##   sway      slow, quiet, beatless, or a tempo the tracker is not steady on yet. Gentle roll,
+##             no lock, clip slowed.
 ##
 ## Everything is computed from the next beat's wall-clock time, so the moves land on the kick
 ## regardless of frame rate. Without a fresh estimate (6 s) she dances the plain clip.
@@ -84,6 +85,11 @@ static func choose(t: Dictionary) -> String:
 	# Loudness here is the player's stream before the volume knob, so it says how dense the
 	# mix is, not how loud the room is; only near-silence should force a sway.
 	if conf < 0.3 or bpm < 76.0 or loud < -48.0:
+		return "sway"
+	# The tracker says whether the tempo has held for a few estimates. Until it has (the first
+	# seconds of a song, a tempo change, a beat it keeps changing its mind about), sway rather
+	# than stomp on beats that may be wrong. A watcher that predates the flag sends none.
+	if not bool(t.get("steady", true)):
 		return "sway"
 	if bpm >= 118.0 and even >= 0.45 and low >= 0.25:
 		return "rave"

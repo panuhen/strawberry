@@ -11,8 +11,8 @@ widget as {"tempo": {...}}; the widget picks a dance style from it (WIRING.md §
 
 Runs on the package's interpreter (numpy is a normal dependency): `strawberry-doorway
 beat_watch`, or `python -m strawberry_crab.doorways.beat_watch` as the tray starts it. Silence, a
-paused player or a beatless piece give a low-confidence estimate; the widget treats that as
-"just sway".
+paused player or a beatless piece give a low-confidence estimate, and a tempo that has not held
+for a few estimates yet goes out with "steady": false; the widget treats both as "just sway".
 """
 
 from __future__ import annotations
@@ -248,9 +248,10 @@ class Watcher:
             if payload.get("silent"):
                 log.info("silent -> %s widget(s)", reply.get("sent", "?"))
             else:
-                log.info("bpm %.1f conf %.2f even %.2f low %.2f dens %.1f %.0f dB -> %s widget(s)",
-                         payload["bpm"], payload["confidence"], payload["evenness"], payload["low_ratio"],
-                         payload["density"], payload["loudness_db"], reply.get("sent", "?"))
+                log.info("bpm %.1f conf %.2f %s even %.2f low %.2f dens %.1f %.0f dB -> %s widget(s)",
+                         payload["bpm"], payload["confidence"], "steady" if payload.get("steady") else "unsteady",
+                         payload["evenness"], payload["low_ratio"], payload["density"], payload["loudness_db"],
+                         reply.get("sent", "?"))
         except urllib.error.HTTPError as exc:
             log.warning("/tempo rejected: %s", exc.read().decode(errors="replace")[:200])
         except (urllib.error.URLError, TimeoutError) as exc:

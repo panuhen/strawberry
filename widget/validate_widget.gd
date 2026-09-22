@@ -336,6 +336,11 @@ func run() -> void:
 		"rave": {"bpm": 140.0, "confidence": 0.9, "evenness": 0.8, "low_ratio": 0.5, "density": 4.0, "loudness_db": -10.0}}
 	for name in rules:
 		check(widget.dance.choose(rules[name]) == name, "rule table: expected %s" % name)
+	var unsteady: Dictionary = rules["rave"].duplicate()
+	unsteady["steady"] = false
+	check(widget.dance.choose(unsteady) == "sway", "an unsteady tempo should sway, not rave")
+	unsteady["steady"] = true
+	check(widget.dance.choose(unsteady) == "rave", "a steady tempo keeps its style")
 	await post("/tempo", {"silent": true})
 	await wait(0.2)
 	check(not widget.dance.applied, "silence should stop the layers")
