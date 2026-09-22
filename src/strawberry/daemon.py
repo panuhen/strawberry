@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 import time
 from dataclasses import replace
 from typing import Any
@@ -306,7 +307,7 @@ class Daemon:
             return None
         said = replace(event, body="", said=gist)
         quip_performance = await self.reactor.react(said)
-        quip = " ".join((quip_performance.text or "").split()[: self.GLANCE_QUIP_WORDS]).strip()
+        quip = short_quip(quip_performance.text or "", self.GLANCE_QUIP_WORDS)
         text = f"{gist} {quip}".strip() if quip else gist
         return decorate(event, replace(quip_performance, text=text))
 
@@ -393,10 +394,26 @@ class Daemon:
     async def report(self, event: Event, ok: bool) -> tuple[Performance, int]:
         """Say what she did: the fact (event.body, written by code) and the reactor's quip after it."""
         performance = decorate(event, await self.reactor.react(event))
-        quip = " ".join((performance.text or "").split()[: self.QUIP_WORDS]).strip()
+        quip = short_quip(performance.text or "", self.QUIP_WORDS)
         if len(event.body) > self.QUIP_UNTIL_CHARS:
             quip = ""
         text = f"{event.body} {quip}".strip() if quip else event.body
         performance = replace(performance, text=text, emotion=performance.emotion if ok else "alert")
         sent = await self.perform(performance)
         return performance, sent
+
+
+def short_quip(text: str, max_words: int) -> str:
+    """The quip's whole sentences that fit in `max_words`; "" when even the first does not.
+    Never a sentence cut in half ("Be careful of the wait time and")."""
+    kept: list[str] = []
+    count = 0
+    for sentence in re.findall(r"[^.!?]+[.!?]*", text.strip()):
+        words = sentence.split()
+        if not words:
+            continue
+        if count + len(words) > max_words:
+            break
+        kept.append(" ".join(words))
+        count += len(words)
+    return " ".join(kept)

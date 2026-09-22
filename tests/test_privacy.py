@@ -225,7 +225,7 @@ async def test_glance_quip_is_capped_and_a_gist_with_numbers_is_refused():
     brain.gist_line = "Alex asks about lunch."
     brain.seen.clear()
     performance, _ = await daemon.handle_event(LUNCH)
-    assert performance.text == "Alex asks about lunch. one two three four five six seven eight"
+    assert performance.text == "Alex asks about lunch."   # a quip over the cap is dropped, never cut mid-sentence
 
 
 async def test_per_app_mode_overrides_the_default():
@@ -351,3 +351,12 @@ async def test_no_message_text_in_any_log_record(aiohttp_server, caplog, monkeyp
     for record in caplog.records:
         assert CANARY not in record.getMessage(), f"{record.name}: {record.getMessage()}"
     assert any("body_len=" in r.getMessage() for r in caplog.records)
+
+
+def test_short_quip_keeps_whole_sentences_only():
+    from strawberry.daemon import short_quip
+    assert short_quip("Lunchtime. Be careful of the wait time and those servers!", 8) == "Lunchtime."
+    assert short_quip("Moving things? Good luck.", 8) == "Moving things? Good luck."
+    assert short_quip("One very long sentence that goes on and on past the limit.", 8) == ""
+    assert short_quip("", 8) == ""
+    assert short_quip("No end mark here", 8) == "No end mark here"
