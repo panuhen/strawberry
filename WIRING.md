@@ -327,7 +327,7 @@ Stop after any phase and you still have something that works.
 - [x] A git commit makes Strawberry show a model-written bubble (silent). (`gemma3:1b` via `OllamaReactor`)
 - [x] A desktop notification (any app) triggers a reaction. (`notify-send -a WhatsApp James "…"` → Gemma line in the bubble)
 - [x] With TTS on, the wav plays through Godot and the claws clack to the audio; `claw_open_*` is 0 when idle. (`check_phase1.sh` step 11: 0 → 0.78 → 0; a missing wav is a 400)
-- [ ] A voice command routed through MCP successfully calls one real tool (e.g. Spotify skip).
+- [x] A voice command routed through MCP successfully calls one real tool. (Live 2026-09-22: "skip this" → `spotify.next` + `get_current_track` in 1.1 s as a reflex; "play some daft punk" → Qwen `search` + `play` in 6.4 s, answered in her own voice.)
 
 ---
 
