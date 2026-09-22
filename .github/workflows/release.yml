@@ -1,0 +1,154 @@
+# A release: push a tag vX.Y.Z whose X.Y.Z is the version in pyproject.toml (PACKAGING.md,
+# "Releasing"). This builds the wheel and sdist, runs the tests, exports the widget binary and
+# runs its headless acceptance, creates the GitHub release with all of it attached, then
+# publishes to PyPI once someone approves the `pypi` environment deployment.
+#
+# PyPI uses trusted publishing (OIDC): no token or secret is stored anywhere. The PyPI project
+# trusts owner panuhen, repository strawberry, workflow release.yml, environment pypi.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: "4.7.2"
+  # From the godotengine release's SHA512-SUMS.txt, so a changed download fails the build.
+  GODOT_EDITOR_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
+  GODOT_TEMPLATES_SHA512: ca4d71c4d7b81dfc15d1a98baa07534aa95b03fdda78a0075b06672e1648d2e5f40980c9adc28d23e1b92e732ee7bf3461997aa804af74ec2fcd7a93ccb84079
+
+jobs:
+  build-wheel:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0   # setup-uv publishes no moving major tag
+        with:
+          python-version: "3.12"
+      - name: The tag must match the package version
+        id: version
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          module="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/strawberry_crab/__init__.py)"
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag $GITHUB_REF_NAME, pyproject $version, __init__ $module"
+          if [ "$tag" != "$version" ] || [ "$module" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the package version $version (__init__ says $module)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Tests (no GPU wheels, no Ollama, no session bus)
+        run: |
+          uv sync --locked
+          uv run --no-sync pytest -q
+      - name: Build the sdist and the wheel
+        run: uv build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  build-widget:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.12"
+      - name: Godot and its export templates
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          editor="Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+          templates="Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          cd "$RUNNER_TEMP"
+          curl -fsSLo "$editor.zip" "$base/$editor.zip"
+          curl -fsSLo "$templates" "$base/$templates"
+          echo "$GODOT_EDITOR_SHA512  $editor.zip" | sha512sum -c -
+          echo "$GODOT_TEMPLATES_SHA512  $templates" | sha512sum -c -
+          unzip -q "$editor.zip"
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 "$editor" "$HOME/.local/bin/godot"
+          dest="${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$dest"
+          unzip -q "$templates"
+          mv templates/* "$dest/"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Export the widget
+        run: scripts/build_widget.sh
+      - name: Headless acceptance of the exported binary
+        run: |
+          uv sync --locked
+          name="$(basename "$(ls dist/strawberry-widget-*-linux-x86_64)")"
+          SKIP_UNIT_TESTS=1 WIDGET="dist/$name" scripts/check_phase1.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: widget
+          path: |
+            dist/strawberry-widget-*-linux-x86_64
+            dist/strawberry-widget-*-linux-x86_64.sha256
+          if-no-files-found: error
+
+  release:
+    needs: [build-wheel, build-widget]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Check the widget's checksum and name
+        env:
+          VERSION: ${{ needs.build-wheel.outputs.version }}
+        run: |
+          cd dist
+          ls -l
+          test -f "strawberry-widget-$VERSION-linux-x86_64" || { echo "::error::no widget binary for $VERSION"; exit 1; }
+          sha256sum -c "strawberry-widget-$VERSION-linux-x86_64.sha256"
+          chmod +x "strawberry-widget-$VERSION-linux-x86_64"
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build-wheel.outputs.version }}
+        run: |
+          # The release notes are this version's CHANGELOG.md section.
+          awk -v v="$VERSION" '
+            /^## \[/ { if (on) exit; if (index($0, "[" v "]")) { on = 1; next } }
+            on { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "::error::CHANGELOG.md has no section for [$VERSION]"
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "Strawberry $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            dist/*.whl dist/*.tar.gz \
+            "dist/strawberry-widget-$VERSION-linux-x86_64" \
+            "dist/strawberry-widget-$VERSION-linux-x86_64.sha256"
+
+  publish-pypi:
+    # After the release, so `strawberry widget --fetch` finds the binary by the time anyone can
+    # install this version. The `pypi` environment asks for approval before this job runs.
+    needs: [release]
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/strawberry-crab/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
