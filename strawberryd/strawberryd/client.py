@@ -17,6 +17,18 @@ from typing import Any
 log = logging.getLogger("strawberryd.client")
 
 
+def loggable(payload: dict) -> str:
+    """What a log line may say about a payload: its source and app, its keys, the body's length.
+
+    Never the body, and never the title: a notification's text stays out of the journal (§4).
+    """
+    parts = [f"{key}={payload[key]!r}" for key in ("source", "app", "command") if key in payload]
+    parts.append("keys=" + ",".join(sorted(payload)))
+    if "body" in payload:
+        parts.append(f"body_len={len(str(payload['body']))}")
+    return "{" + " ".join(parts) + "}"
+
+
 class DaemonClient:
     def __init__(self, url: str, timeout: float = 2.0) -> None:
         self.url = url.rstrip("/")
@@ -33,10 +45,10 @@ class DaemonClient:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 reply = json.loads(response.read() or b"{}")
             self.forwarded += 1
-            log.info("%s %s -> %s widget(s)", path, payload, reply.get("sent", "?"))
+            log.info("%s %s -> %s widget(s)", path, loggable(payload), reply.get("sent", "?"))
             return True
         except urllib.error.HTTPError as exc:
-            log.warning("%s rejected %s: %s", path, payload, exc.read().decode(errors="replace")[:200])
+            log.warning("%s rejected %s: %s", path, loggable(payload), exc.read().decode(errors="replace")[:200])
             return True
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             log.warning("strawberryd unreachable at %s (%s)", self.url, exc)

@@ -12,18 +12,58 @@ def test_defaults_when_no_file(tmp_path):
     assert config.brain.examples == persona.EXAMPLES
     assert config.media.only == []
     assert config.notifications.ignore_apps == ["Spotify"]
-    assert config.notifications.include_body is True
+    assert config.notifications.body == "off"          # bodies stay in the watcher unless you say so
+    assert config.notifications.body_apps == {}
+    assert config.notifications.max_body_chars == 1000
 
 
 def test_notification_settings_validate(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text('[notifications]\ninclude_body = false\nmin_urgency = "normal"\nignore_apps = []\n')
+    path.write_text('[notifications]\nbody = "glance"\nmin_urgency = "normal"\nignore_apps = []\n'
+                    'body_apps = { Slack = "react", signal = "off" }\n')
     config = load(path, env={})
-    assert config.notifications.include_body is False
+    assert config.notifications.body == "glance"
+    assert config.notifications.mode_for("slack") == "react"      # case-insensitive
+    assert config.notifications.mode_for("Signal") == "off"
+    assert config.notifications.mode_for("WhatsApp") == "glance"
+    assert config.notifications.mode_for("", "signal") == "off"   # the desktop entry counts too
     assert config.notifications.min_urgency == "normal"
     assert config.notifications.ignore_apps == []
     path.write_text('[notifications]\nmin_urgency = "loud"\n')
     with pytest.raises(ConfigError, match="min_urgency"):
+        load(path, env={})
+
+
+@pytest.mark.parametrize("old, mode", [("true", "react"), ("false", "off")])
+def test_include_body_still_reads_with_a_deprecation_warning(tmp_path, caplog, old, mode):
+    path = tmp_path / "config.toml"
+    path.write_text(f"[notifications]\ninclude_body = {old}\n")
+    with caplog.at_level("WARNING", logger="strawberryd.config"):
+        config = load(path, env={})
+    assert config.notifications.body == mode
+    warnings = [r for r in caplog.records if "include_body is deprecated" in r.getMessage()]
+    assert len(warnings) == 1                      # once, not once per key or per access
+    assert not any("unknown key" in r.getMessage() for r in caplog.records)
+
+
+def test_include_body_loses_to_an_explicit_body(tmp_path, caplog):
+    path = tmp_path / "config.toml"
+    path.write_text('[notifications]\ninclude_body = true\nbody = "glance"\n')
+    with caplog.at_level("WARNING", logger="strawberryd.config"):
+        assert load(path, env={}).notifications.body == "glance"
+    assert any("ignored" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("text, key", [
+    ('body = "loud"', "notifications.body"),
+    ('body_apps = { Slack = "all" }', "body_apps.Slack"),
+    ("include_body = 1", "include_body"),
+    ("max_body_chars = 5", "max_body_chars"),
+])
+def test_body_settings_refuse_nonsense(tmp_path, text, key):
+    path = tmp_path / "config.toml"
+    path.write_text(f"[notifications]\n{text}\n")
+    with pytest.raises(ConfigError, match=key):
         load(path, env={})
 
 

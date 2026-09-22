@@ -92,10 +92,26 @@ class NotificationsConfig:
     ignore_apps: list[str] = field(default_factory=lambda: ["Spotify"])  # MPRIS already covers music
     only_apps: list[str] = field(default_factory=list)      # non-empty: forward these apps only
     min_urgency: str = "low"                                # low | normal | critical
-    include_body: bool = True                               # false: she knows who wrote, not what
-    max_body_chars: int = 200
+    # What she does with a message body (WIRING.md §4): "off" = it never leaves the watcher, she knows
+    # the app and the sender; "react" = Gemma reads it and reacts without quoting it; "glance" = a
+    # neutral one-line gist first, then her quip. A sensitive body (codes, sign-ins, bank alerts) is
+    # dropped whatever the mode.
+    body: str = "off"
+    body_apps: dict[str, str] = field(default_factory=dict)  # app name -> mode, case-insensitive
+    max_body_chars: int = 1000                              # cut at a word boundary, with an ellipsis
     ignore_replacements: bool = True                        # updates to an existing notification (progress bars)
     coalesce_s: float = 2.0                                 # several within this window become one event
+
+    def mode_for(self, *names: str) -> str:
+        """The body mode for an app: its body_apps entry (app name or desktop entry), else `body`."""
+        overrides = {k.lower(): v for k, v in self.body_apps.items()}
+        for name in names:
+            if name and name.lower() in overrides:
+                return overrides[name.lower()]
+        return self.body
+
+
+BODY_MODES = ("off", "react", "glance")
 
 
 @dataclass
@@ -264,6 +280,13 @@ def _validate(config: Config) -> None:
         raise ConfigError("brain.timeout_s must be positive")
     if config.notifications.min_urgency not in ("low", "normal", "critical"):
         raise ConfigError("notifications.min_urgency must be low, normal, or critical")
+    if config.notifications.body not in BODY_MODES:
+        raise ConfigError("notifications.body must be off, react, or glance")
+    for app, mode in config.notifications.body_apps.items():
+        if mode not in BODY_MODES:
+            raise ConfigError(f"notifications.body_apps.{app} must be off, react, or glance")
+    if config.notifications.max_body_chars < 20:
+        raise ConfigError("notifications.max_body_chars must be >= 20")
     if config.notifications.coalesce_s < 0:
         raise ConfigError("notifications.coalesce_s must be >= 0")
     if not (1 <= config.daemon.port <= 65535):
@@ -328,6 +351,23 @@ def _validate(config: Config) -> None:
         raise ConfigError(f"speech.{exc}") from exc
 
 
+def _migrate_notifications(values: dict[str, Any]) -> dict[str, Any]:
+    """`include_body = true|false` (until 2026-09-22) reads as `body = "react"|"off"`, with a warning."""
+    if "include_body" not in values:
+        return values
+    values = dict(values)
+    old = values.pop("include_body")
+    if not isinstance(old, bool):
+        raise ConfigError('notifications.include_body must be bool (and is deprecated: use body = "off" | "react" | "glance")')
+    if "body" in values:
+        log.warning("config: notifications.include_body is deprecated and ignored; body = %r is set", values["body"])
+    else:
+        values["body"] = "react" if old else "off"
+        log.warning('config: notifications.include_body is deprecated; read as body = %r (use body = "off" | "react" '
+                    '| "glance", WIRING.md §4)', values["body"])
+    return values
+
+
 def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     path = path or default_path()
@@ -343,6 +383,8 @@ def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
                 continue
             if not isinstance(values, dict):
                 raise ConfigError(f"[{section_name}] must be a table")
+            if section_name == "notifications":
+                values = _migrate_notifications(values)
             _apply(section_name, getattr(config, section_name), values)
     if "STRAWBERRYD_HOST" in env:
         config.daemon.host = env["STRAWBERRYD_HOST"]
@@ -390,8 +432,14 @@ def default_toml() -> str:
         f"ignore_apps = {json.dumps(n.ignore_apps)}   # music is covered by the media doorway",
         "only_apps = []              # non-empty: forward only these apps",
         f'min_urgency = "{n.min_urgency}"         # low | normal | critical',
-        f"include_body = {str(n.include_body).lower()}         # false: she knows who wrote, not what they wrote",
-        f"max_body_chars = {n.max_body_chars}",
+        "# Message bodies. off: the body never leaves the watcher; she knows the app and the sender.",
+        "# react: Gemma reads it and reacts in her own words, never quoting it.",
+        "# glance: a plain one-line gist first (\"Alex asks about lunch at noon.\"), then her quip.",
+        "# Codes, sign-ins and bank alerts are dropped in every mode (\"Slack sent something private.\").",
+        "# react and glance need [gate] (embeddinggemma): with the gate down every body counts as private.",
+        f'body = "{n.body}"',
+        '# body_apps = { Slack = "glance", Signal = "off" }   # per app, case-insensitive; overrides body',
+        f"max_body_chars = {n.max_body_chars}         # cut at a word boundary",
         f"ignore_replacements = {str(n.ignore_replacements).lower()}  # progress-bar style updates to an existing notification",
         f"coalesce_s = {n.coalesce_s}            # several within this window become one \"N notifications\" event",
         "",

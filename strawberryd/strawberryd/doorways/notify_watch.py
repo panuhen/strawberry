@@ -10,7 +10,7 @@ notification; this only listens (WIRING.md §4).
       -> POST /event {"source": "notification", "app": ..., "title": summary, "body": body, "urgency": ...}
 
 What gets forwarded is decided by [notifications] in ~/.config/strawberry/config.toml:
-ignored apps, an urgency floor, whether message bodies are included, and a short
+ignored apps, an urgency floor, which apps' message bodies may leave the watcher, and a short
 coalescing window so twenty Slack pings become one "20 notifications" event.
 
     python -m strawberryd.doorways.notify_watch [--daemon http://127.0.0.1:8770] [--log-level DEBUG]
@@ -61,10 +61,17 @@ def clean(text: str, limit: int) -> str:
     """Notification bodies may carry markup and entities; the model should see plain words."""
     text = html.unescape(TAG_RE.sub(" ", text or ""))
     text = SPACE_RE.sub(" ", text).strip()
-    return text[:limit]
+    if len(text) <= limit:
+        return text
+    # Cut at the last word boundary that keeps most of the text, and say so with an ellipsis.
+    cut = text[:limit - 1]
+    space = cut.rfind(" ")
+    if space >= limit // 2:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:.-") + "…"
 
 
-def parse_notify(args: tuple | list, max_body_chars: int = 200) -> dict[str, Any]:
+def parse_notify(args: tuple | list, max_body_chars: int = 1000) -> dict[str, Any]:
     """Turn the Notify() argument tuple into a flat dict."""
     app_name, replaces_id, app_icon, summary, body, _actions, hints, _timeout = args
     hints = {key: plain(value) for key, value in dict(hints or {}).items()}
@@ -124,9 +131,15 @@ def allowed(n: dict[str, Any], cfg: NotificationsConfig) -> str | None:
     return None
 
 
+def forwards_body(n: dict[str, Any], cfg: NotificationsConfig) -> bool:
+    return cfg.mode_for(n["app"], n.get("desktop_entry", "")) != "off"
+
+
 def to_event(n: dict[str, Any], cfg: NotificationsConfig) -> dict[str, str]:
     event = {"source": "notification", "app": n["app"], "title": n["title"], "urgency": n["urgency"]}
-    if cfg.include_body and n["body"]:
+    # Body mode "off" (the default): the body stays here and never crosses even localhost HTTP.
+    # Otherwise it goes to the daemon, which drops it if it looks sensitive (WIRING.md §4).
+    if forwards_body(n, cfg) and n["body"]:
         event["body"] = n["body"]
     if n.get("category"):
         event["category"] = n["category"]
@@ -263,9 +276,9 @@ class Watcher:
             # sends anything is disconnected by the bus, which is why the daemon is reached
             # over HTTP and why this connection is ours alone.
             await client.call(new_method_call(DBUS, "BecomeMonitor", "asu", ([MATCH_RULE.serialise()], 0)))
-            log.info("monitoring notifications -> %s (ignore %s, min urgency %s, bodies %s, coalesce %.1fs)",
-                     self.daemon.url, self.cfg.ignore_apps or "none", self.cfg.min_urgency,
-                     "included" if self.cfg.include_body else "dropped", self.cfg.coalesce_s)
+            log.info("monitoring notifications -> %s (ignore %s, min urgency %s, bodies %s%s, coalesce %.1fs)",
+                     self.daemon.url, self.cfg.ignore_apps or "none", self.cfg.min_urgency, self.cfg.body,
+                     f" {self.cfg.body_apps}" if self.cfg.body_apps else "", self.cfg.coalesce_s)
             consumer = asyncio.ensure_future(client.serve(self.handle))
             stop = asyncio.ensure_future(stopping.wait())
             await asyncio.wait([reader, consumer, stop], return_when=asyncio.FIRST_COMPLETED)
@@ -298,7 +311,10 @@ class Watcher:
             log.debug("dropped %r/%r: %s", n["app"], n["title"], reason)
             return
         n["icon"] = resolve_icon(n["app_icon"], n["desktop_entry"], n["app"], desktop_icon=desktop_icon_name)
-        log.info("notification app=%r title=%r urgency=%s icon=%s", n["app"], n["title"], n["urgency"], n["icon"] or "-")
+        # Never the body in a log line, whatever the mode: its length is enough to debug with.
+        log.info("notification app=%r title=%r urgency=%s body_len=%d (%s) icon=%s", n["app"], n["title"],
+                 n["urgency"], len(n["body"]), "forwarded" if forwards_body(n, self.cfg) else "kept here",
+                 n["icon"] or "-")
         self.batch.append(n)
         if self.flush_task and not self.flush_task.done():
             self.flush_task.cancel()
