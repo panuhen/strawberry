@@ -18,9 +18,9 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
-from . import __version__
+from . import __version__, firstrun, paths
 from .config import Config
-from .contract import ContractError, Performance
+from .contract import ContractError, Performance, anim_for
 from .daemon import Daemon
 from .events import Event
 
@@ -303,7 +303,8 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
     kind = data.get("type") if isinstance(data, dict) else None
     if kind == "hello":
         log.info("widget hello: %s", {k: v for k, v in data.items() if k != "type"})
-        await _check_version(daemon, ws, data.get("version"))
+        if await _check_version(daemon, ws, data.get("version")) != "major":
+            _first_run_notice(daemon)
     elif kind == "ping":
         await ws.send_str('{"type": "pong"}')
     elif kind == "heard":
@@ -318,7 +319,22 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
         log.debug("widget message: %s", data)
 
 
-async def _check_version(daemon: Daemon, ws: web.WebSocketResponse, version: Any) -> None:
+def _first_run_notice(daemon: Daemon) -> None:
+    """The privacy note in her bubble, once per user: the marker is written before it is sent,
+    so two widgets saying hello together do not both get it (firstrun.py)."""
+    if not firstrun.pending():
+        return
+    try:
+        firstrun.mark_shown()
+    except OSError as exc:
+        log.warning("could not write %s (%s); the privacy note will show again next start",
+                    paths.privacy_notice_marker(), exc)
+    note = Performance(state="talking", anim=anim_for("happy"), text=firstrun.bubble_text(daemon.config),
+                       emotion="happy", reaction="wave")
+    daemon.background(daemon.perform(note), "first-run privacy note")
+
+
+async def _check_version(daemon: Daemon, ws: web.WebSocketResponse, version: Any) -> str:
     version = str(version) if version is not None else None
     verdict = version_verdict(version)
     daemon.hub.set_version(ws, version or "unknown")
@@ -332,6 +348,7 @@ async def _check_version(daemon: Daemon, ws: web.WebSocketResponse, version: Any
                     "(`strawberry widget --fetch` gets the matching one)", version, __version__)
     elif verdict == "unknown":
         log.warning("widget did not say a readable version (%r); serving it", version)
+    return verdict
 
 
 def run(config: Config) -> None:
@@ -339,5 +356,7 @@ def run(config: Config) -> None:
     app = create_app(daemon)
     log.info("strawberryd listening on http://%s:%d (ws at /ws); config %s",
              config.daemon.host, config.daemon.port, config.path or "defaults")
+    if firstrun.pending():
+        log.info("%s", firstrun.log_text(config))
     # Short shutdown: widgets are closed explicitly in on_shutdown, nothing else is long-lived.
     web.run_app(app, host=config.daemon.host, port=config.daemon.port, print=None, shutdown_timeout=2.0)

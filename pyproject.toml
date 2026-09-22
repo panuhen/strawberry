@@ -52,3 +52,5 @@ include = ["/src/strawberry_crab", "/tests", "/scripts", "/README.md", "/WIRING.
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# `from tests.fake_spotify import ...` works under a bare `pytest` too, not only `python -m pytest`.
+pythonpath = ["."]
