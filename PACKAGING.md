@@ -191,7 +191,7 @@ something a user could fix is missing. Every bug report starts with its output.
   notification bus, media metadata, the player's audio for beat only, nothing leaves the
   machine), how to turn each doorway off, how to add an MCP server.
 - First-run privacy note in the widget bubble, once.
-- `v1/`, `v2/` build assets stay in the repo, out of the shipped package.
+- `model/` (the Blender sources) stays in the repo, out of the shipped package; the widget binary carries the GLB.
 
 ## Order and size
 

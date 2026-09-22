@@ -4,7 +4,7 @@
 
 **For:** an agent (Claude Code / Codex) and the human running it.
 
-**Assumes done:** `v2/strawberry_v2.glb` — rig, seven clips, morphs, cel shader, verified in Godot 4.7.2 (see `v2/README.md`). This spec references those names in §9; they must match.
+**Assumes done:** `model/strawberry_v2.glb` — rig, seven clips, morphs, cel shader, verified in Godot 4.7.2 (see `model/README.md`). This spec references those names in §9; they must match.
 
 **Assumes running:** Ollama serving Qwen3.8 on `127.0.0.1:11434`; dunst as the notification daemon; faster-whisper and Piper installed. (As of Phase 1 only Ollama is present on the machine.)
 
@@ -213,7 +213,7 @@ One session (`Listener.session`):
 
 `/health` shows `voice` (model, ready, phase, sessions, empty, last_transcript, last_ms). If whisper cannot load (no model, no network for the first download), voice is disabled with the reason and the rest of the daemon is unaffected. `scripts/check_config.toml` disables voice for the acceptance run; the flow is unit-tested with fake recorder and transcriber (`tests/test_voice.py`).
 
-**Names.** Whisper `small` hears "Daft Punk" as Dothpunk, Duff Punk, Dove Punk (2026-09-21, three tries; the thinker then played a real artist called Dovepunk). faster-whisper's `hotwords` biases decoding toward given names, so the daemon keeps a vocabulary: `[voice] vocabulary` from the config (your own names) plus what the music server knows, in order of likelihood: the artist playing now, favourites, the last 50 saved tracks' artists, playlist names (`actions.spotify_vocabulary`, refreshed every `vocabulary_refresh_s` = 10 min, first 2 s after start). The first `max_hotwords` (60) go to every transcription. An artist you have never saved gets no help from this; `[voice] model = "medium"` is the next lever. Measured on Piper-synthesised phrases (8 artist sentences): small 3/8 plain, 7/8 with hotwords, 1.5 s; medium 5/8 plain, 7/8 with hotwords, 3.2 s per sentence on the CPU. A real microphone and a non-native accent are harder than Piper (`small` heard "Kashmir by Led Zeppelin" as "Cosmere Pie, Let's Cheppelin'"), so `medium` is the recommendation. Whisper on CUDA (`[voice] device = "cuda"`, `compute_type = "int8_float16"`; `uv sync --group gpu` installs the cuBLAS and cuDNN wheels, which `voice.preload_cuda_libraries` loads by path) (the scripts sync with `--inexact` so a plain `uv sync` in `bin/strawberry` or the acceptance run does not prune that group again; a bare `uv sync` does, and whisper then logs `No module named 'nvidia'` and falls back to the CPU) is 0.13 s per sentence for `medium` and takes 1.2 GB of VRAM; measured next to Qwen and both Gemmas it fits with ~3.7 GB spare and nothing evicted. `/health.voice.hotwords` is the count.
+**Names.** Whisper `small` hears "Daft Punk" as Dothpunk, Duff Punk, Dove Punk (2026-09-21, three tries; the thinker then played a real artist called Dovepunk). faster-whisper's `hotwords` biases decoding toward given names, so the daemon keeps a vocabulary: `[voice] vocabulary` from the config (your own names) plus whatever a configured server's adapter can offer (none ships configured; with the optional Spotify server, in order of likelihood: the artist playing now, favourites, the last 50 saved tracks' artists, playlist names — `adapters/spotify.py`, refreshed every `vocabulary_refresh_s` = 10 min, first 2 s after start). The first `max_hotwords` (60) go to every transcription. Without such a server the list is just your own `vocabulary`. An artist you have never saved gets no help from this; `[voice] model = "medium"` is the next lever. Measured on Piper-synthesised phrases (8 artist sentences): small 3/8 plain, 7/8 with hotwords, 1.5 s; medium 5/8 plain, 7/8 with hotwords, 3.2 s per sentence on the CPU. A real microphone and a non-native accent are harder than Piper (`small` heard "Kashmir by Led Zeppelin" as "Cosmere Pie, Let's Cheppelin'"), so `medium` is the recommendation. Whisper on CUDA (`[voice] device = "cuda"`, `compute_type = "int8_float16"`; `uv sync --group gpu` installs the cuBLAS and cuDNN wheels, which `voice.preload_cuda_libraries` loads by path) (the scripts sync with `--inexact` so a plain `uv sync` in `bin/strawberry` or the acceptance run does not prune that group again; a bare `uv sync` does, and whisper then logs `No module named 'nvidia'` and falls back to the CPU) is 0.13 s per sentence for `medium` and takes 1.2 GB of VRAM; measured next to Qwen and both Gemmas it fits with ~3.7 GB spare and nothing evicted. `/health.voice.hotwords` is the count.
 
 **Hotkey.** `bin/strawberry hotkey [COMBO]` writes a GNOME custom keyboard shortcut (`gsettings`, default `<Super><Shift>space`; `<Super><Alt>s` is GNOME's screen-reader toggle) that runs `bin/strawberry listen`, i.e. `curl -X POST /listen`. GNOME owns the key, so it is identical on X11 and Wayland and the daemon never grabs keyboard input. `--remove` undoes it. Phase 6 routes voice through the action model with tools; today it goes to the reaction path like everything else.
 
@@ -446,14 +446,13 @@ WIRING.md                this document
 strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), mpris (music control over D-Bus for any player), adapters/ (per-server extras; spotify is the example), thinker (Qwen tool loop), ledger (short memory), hub, server, tests
 ADAPTERS.md              adding an MCP server, and writing an adapter for one
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, gaze.gd, menu.gd, type_box.gd, validate_widget.gd
-                         + strawberry_v2.glb and the v2 shaders/controllers (copied from v2/godot_check)
+                         + strawberry_v2.glb and the shaders/controllers
 doorways/                event producers: mpris_watch.py (any MPRIS media player), notify_watch.py (desktop notifications via D-Bus monitor), beat_watch.py + beat_track.py (tempo from the player's audio), git/ (global post-commit + pre-push hooks)
 bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend; say / voices / audition / listen / route / tools / tool / think / install (start on login)
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
 scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless widget; it must reconnect
 scripts/gate_check.py    the gate over scripts/gate_phrases.json against live Ollama; add sentences she misreads
-v2/                      the asset: Blender build scripts, GLB, evidence, preview project
-v1/ (top level)          the earlier deliverable
+model/                   the asset: GLB, editable Blender scene, procedural build script
 ```
 
 **Run it:** `bin/strawberry`. Then, from anywhere:
