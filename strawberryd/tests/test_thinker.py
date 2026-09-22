@@ -223,15 +223,33 @@ def plain_config() -> Config:
     return config
 
 
-async def test_an_argument_request_goes_to_qwen_with_cover(aiohttp_client):
-    """'put on some jazz': no reflex for it, she acks in the thinking pose, then says her line."""
+async def test_a_quick_qwen_reply_gets_the_pose_but_no_spoken_ack(aiohttp_client):
+    """A warm round is ~2 s: she thinks visibly and answers; "On it." before "what's up?" read odd."""
     config = plain_config()
-    config.thinker = ThinkerConfig(still_on_it_s=0.02, acks=["On it."])
+    config.thinker = ThinkerConfig(ack_after_s=5.0, still_on_it_s=8.0, acks=["On it."])
+    spotify, toolbox, qwen, thinker = make([])
+    thinker.chat = FakeQwen(["[neutral] Just some Mozart drifting through."])
+    thinker.config = config.thinker
+    gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
+    daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)
+    client = await aiohttp_client(create_app(daemon))
+    await daemon.start()
+    await client.post("/event", json={"source": "voice", "title": "what is up"})
+    texts = [m.get("text") for m in sink.got if m.get("state") in ("thinking", "talking")]
+    assert texts == [None, "Just some Mozart drifting through."]
+    await daemon.close()
+
+
+async def test_an_argument_request_goes_to_qwen_with_cover(aiohttp_client):
+    """'put on some jazz': no reflex for it; the thinking pose at once, the spoken ack and "still on
+    it" only because Qwen is slow here, then her line."""
+    config = plain_config()
+    config.thinker = ThinkerConfig(ack_after_s=0.02, still_on_it_s=0.08, acks=["On it."])
     spotify, toolbox, qwen, thinker = make([])
 
     class SlowFirst(FakeQwen):
         async def __call__(self, payload):
-            await asyncio.sleep(0.05)  # longer than still_on_it_s
+            await asyncio.sleep(0.4)  # longer than still_on_it_s
             return await super().__call__(payload)
 
     thinker.chat = SlowFirst(["[happy] Jazz it is. Feeling Good is on.", "[neutral] Queued."])
@@ -246,9 +264,9 @@ async def test_an_argument_request_goes_to_qwen_with_cover(aiohttp_client):
     assert route.has_argument > 0.5, route.to_dict()
     assert daemon.actor.stats()["deferred"] == 1 and thinker.stats()["calls"] == 1
     texts = [m.get("text") for m in sink.got if m.get("state") in ("thinking", "talking")]
-    assert texts == ["On it.", "Still on it.", "Jazz it is. Feeling Good is on."]
+    assert texts == [None, "On it.", "Still on it.", "Jazz it is. Feeling Good is on."]
     states = [m["state"] for m in sink.got if "state" in m]
-    assert states[:2] == ["thinking", "thinking"] and states[-1] == "talking"
+    assert states[:3] == ["thinking"] * 3 and states[-1] == "talking"
     assert body["performance"]["text"] == "Jazz it is. Feeling Good is on."
     assert body["performance"]["emotion"] == "happy" and body["performance"]["reaction"] == "nod"
     health = await (await client.get("/health")).json()

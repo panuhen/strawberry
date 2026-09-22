@@ -265,15 +265,19 @@ class Daemon:
         return performance, sent
 
     async def think(self, text: str, route: Route | None) -> Outcome:
-        """Qwen, with cover: an acknowledgement and the thinking pose right away (a warm round is
-        ~2 s, a cold load 7-17 s), one "still on it" if it drags, then her reply as the outcome."""
-        await self.perform(Performance(state="thinking", text=self.rng.choice(self.config.thinker.acks)))
+        """Qwen, with cover that scales with the wait: the thinking pose at once and nothing said (a
+        warm round is ~2 s, and "On it." before an answer to "what's up?" reads odd), a spoken
+        acknowledgement from `acks` only after `ack_after_s`, "Still on it." after `still_on_it_s`
+        (a cold load is 7-17 s), then her reply as the outcome."""
+        await self.perform(Performance(state="thinking"))
 
-        async def still_on_it() -> None:
-            await asyncio.sleep(self.config.thinker.still_on_it_s)
+        async def cover() -> None:
+            await asyncio.sleep(self.config.thinker.ack_after_s)
+            await self.perform(Performance(state="thinking", text=self.rng.choice(self.config.thinker.acks)))
+            await asyncio.sleep(max(self.config.thinker.still_on_it_s - self.config.thinker.ack_after_s, 0.1))
             await self.perform(Performance(state="thinking", text="Still on it."))
 
-        reminder = asyncio.get_running_loop().create_task(still_on_it())
+        reminder = asyncio.get_running_loop().create_task(cover())
         try:
             careful = route is not None and route.library_change >= 0.5
             return await self.thinker.run(text, await self.situation(), careful=careful)

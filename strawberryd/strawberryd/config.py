@@ -171,6 +171,7 @@ class ThinkerConfig:
     num_predict: int = 300
     max_rounds: int = 6            # tool rounds before she has to answer honestly with what she has
     timeout_s: float = 45.0        # the whole request, cold load included
+    ack_after_s: float = 2.5       # silent thinking pose first; a spoken ack only if the reply takes longer
     still_on_it_s: float = 8.0     # she says so once if it takes longer than this
     acks: list[str] = field(default_factory=lambda: ["On it.", "Let me see.", "One moment.", "Right, hang on."])
 
