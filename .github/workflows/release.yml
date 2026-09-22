@@ -124,6 +124,7 @@ jobs:
           # The release notes are this version's CHANGELOG.md section.
           awk -v v="$VERSION" '
             /^## \[/ { if (on) exit; if (index($0, "[" v "]")) { on = 1; next } }
+            /^\[[^]]*\]: / { next }
             on { print }
           ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
           if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
