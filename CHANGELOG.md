@@ -5,18 +5,6 @@ All notable changes to Strawberry are listed here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). One version covers the Python
 package and the widget binary.
 
-## [Unreleased]
-
-### Added
-
-- `strawberry doctor` checks whether the notification monitor is allowed, the MPRIS players on
-  the bus, `strawberry-tray.service` (installed, enabled, active, and a stale ExecStart after a
-  move or reinstall), the git hooks, and whether the beat watcher is posting and linked to the
-  player's stream. `/health` has `tempo_age_s` for that last one.
-- `strawberry setup` and `doctor` detect AMD cards (rocm-smi, or sysfs without ROCm). The models
-  run on them through Ollama's ROCm support; whisper runs on the CPU. Intel graphics count as no
-  usable GPU.
-
 ## [0.1.0] - 2026-09-22
 
 The first release on PyPI (`strawberry-crab`; 0.0.1 was a name placeholder) with the widget
@@ -58,6 +46,32 @@ binary on GitHub.
 - MIT licence, THIRD_PARTY.md, and release automation: on a `v*` tag GitHub Actions tests,
   builds the wheel and the widget, runs the widget's headless acceptance, creates the release and
   publishes to PyPI by trusted publishing.
+- `strawberry doctor` checks whether the notification monitor is allowed, the MPRIS players on
+  the bus, `strawberry-tray.service` (installed, enabled, active, and a stale ExecStart after a
+  move or reinstall), the git hooks, and whether the beat watcher is posting and linked to the
+  player's stream. `/health` has `tempo_age_s` for that last one.
+- `strawberry setup` and `doctor` detect AMD cards (rocm-smi, or sysfs without ROCm). The models
+  run on them through Ollama's ROCm support; whisper runs on the CPU. Intel graphics count as no
+  usable GPU.
+- A tray submenu, *Message bodies ▸ Off / React / Glance*: it writes `[notifications] body`
+  into config.toml (comments kept, a backup first) and applies it without a restart.
+- A steadier beat tracker: onsets in three bands with the kick leading the phase, octave
+  checks, hysteresis and a median over the last estimates. On a synthetic set of 35 clips the
+  right tempo went from 56 % to 84 % of estimates at the same CPU cost. Tempo events carry a
+  `steady` flag, and the widget sways instead of stepping while it is false.
+  `scripts/beat_eval.py` generates the set and scores a tracker.
+- With no music server configured, asking her to play, queue or save particular music gets a
+  plain answer that this needs a music add-on, instead of a wrong claim or a vague refusal.
+  Skip, pause, resume and "what song is this" keep working over MPRIS.
+- Supported platforms are checked at start: on anything but Linux the commands say so and exit.
+
+### Fixed
+
+- "Unclosed client session" errors when the tray service stopped: the daemon gets SIGTERM
+  twice (systemd and the tray), and the second one cancelled aiohttp's cleanup. The daemon now
+  runs its own shutdown and ignores repeat signals.
+- The journal no longer gets a line every 2 s for the tray's `/health` poll and the beat
+  watcher's tempo posts.
 
 [Unreleased]: https://github.com/panuhen/strawberry/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/panuhen/strawberry/releases/tag/v0.1.0
