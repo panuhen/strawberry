@@ -360,6 +360,7 @@ MUSIC_TOOL = Choice("music_tool", (
         "tell me more about the band members and the history", "what else did they make", "recommend me some music",
         "play something similar", "play something else", "play something by this band", "play my running playlist",
         "queue up something by Nina Simone", "put something on for cooking", "play the live version",
+        "play some acid techno", "play some classical music", "no, play another classical song", "put on some techno",
     )),
 ))
 
@@ -368,6 +369,7 @@ HAS_ARGUMENT = Noul(
     yes=Option("yes", "names a specific song, artist, playlist, amount, time or text", (
         "play some Nina Simone", "queue up Blue Monday", "volume to thirty", "set a timer for ten minutes",
         "remind me to call mum at five", "play my running playlist", "write down: buy milk", "put on some jazz",
+        "play some acid techno", "play some classical music", "play another classical song", "put on some techno",
     )),
     no=Option("no", "a plain command with nothing to fill in", (
         "skip this", "pause", "next song", "what song is this", "turn it down a bit", "louder", "resume",

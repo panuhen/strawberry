@@ -274,4 +274,6 @@ def test_spotify_403s_are_clarified_but_stay_errors():
     assert "Not a permissions problem" in text and "already playing" in text and looks_like_error(text)
     forbidden = '{"error": "Permission denied. Check app scopes.", "status": 403, "details": "http 403: Forbidden, reason: None"}'
     assert "forbids this for the app" in clarify_error(forbidden)
+    no_device = '{"error": "Resource not found.", "status": 404, "details": "http status: 404, code: -1 - https://api.spotify.com/v1/me/player/play:\\n Player command failed: No active device found"}'
+    assert "no active device" in clarify_error(no_device) and "Do not retry" in clarify_error(no_device) and looks_like_error(clarify_error(no_device))
     assert clarify_error("Skipped.") == "Skipped." and clarify_error('{"error": "token expired"}') == '{"error": "token expired"}'

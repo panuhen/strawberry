@@ -79,7 +79,9 @@ def _failed(verb: str, result: ToolResult) -> Outcome:
     data = _json(result)
     detail = (data.get("error") or result.text.strip().splitlines()[0][:160]) if result.text else "no answer"
     detail = str(detail).removeprefix("error: ")
-    if "Restriction violated" in str(data.get("details", "")):
+    if "No active device" in str(data.get("details", "")):
+        said = "Spotify has no active device; open Spotify on the computer or phone first"
+    elif "Restriction violated" in str(data.get("details", "")):
         said = "Spotify won't do that right now (already doing it, or the device refuses)"
     elif data.get("status") == 403:
         said = "Spotify says that's not allowed for this app"

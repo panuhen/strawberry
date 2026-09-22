@@ -353,6 +353,34 @@
       "kind": "request",
       "topic": "music",
       "tool": "other"
+    },
+    {
+      "text": "play some acid techno",
+      "kind": "request",
+      "topic": "music",
+      "decision": "act",
+      "tool": "other"
+    },
+    {
+      "text": "play some classical music",
+      "kind": "request",
+      "topic": "music",
+      "decision": "act",
+      "tool": "other"
+    },
+    {
+      "text": "no, play another classical song",
+      "kind": "request",
+      "topic": "music",
+      "decision": "act",
+      "tool": "other"
+    },
+    {
+      "text": "put on some techno",
+      "kind": "request",
+      "topic": "music",
+      "decision": "act",
+      "tool": "other"
     }
   ]
 }

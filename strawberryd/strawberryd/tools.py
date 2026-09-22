@@ -123,6 +123,10 @@ def clarify_error(text: str) -> str:
         data["error"] = ("Spotify refused the command: restriction violated. Usually the player is already in that "
                          "state (already playing or paused) or the active device does not allow it. Not a permissions problem.")
         return json.dumps(data, ensure_ascii=False)
+    if "No active device" in details:
+        data["error"] = ("Spotify has no active device: no Spotify app is open and active on any of the user's devices, so "
+                         "nothing can be played from here until they open one. Do not retry; tell the user.")
+        return json.dumps(data, ensure_ascii=False)
     if data.get("status") == 403 and "Forbidden" in details:
         data["error"] = "Spotify forbids this for the app (403 Forbidden); it cannot be done from here."
         return json.dumps(data, ensure_ascii=False)

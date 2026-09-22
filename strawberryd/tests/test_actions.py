@@ -35,6 +35,9 @@ class FakeSpotify:
 
     async def handle(self, name: str, arguments: dict) -> FakeResult:
         self.log.append(name)
+        if self.broken == "no_device":
+            return FakeResult([FakeContent(json.dumps({"error": "Resource not found.", "status": 404,
+                                                       "details": "http status: 404, code: -1 - .../me/player/play:\n Player command failed: No active device found"}))])
         if self.broken == "restricted":
             return FakeResult([FakeContent(json.dumps({"error": "Permission denied. Check app scopes.", "status": 403,
                                                        "details": "http status: 403 ... Player command failed: Restriction violated, reason: UNKNOWN"}))])
@@ -161,6 +164,10 @@ async def test_failures_become_a_failed_action_event():
     outcome = await restricted.act("skip", route("skip", "skip"))
     assert outcome.fact == "I tried to skip, but Spotify won't do that right now (already doing it, or the device refuses)."
     await toolbox2.close()
+    _, toolbox3, no_device = make(broken="no_device")
+    outcome = await no_device.act("skip", route("skip", "skip"))
+    assert outcome.fact == "I tried to skip, but Spotify has no active device; open Spotify on the computer or phone first."
+    await toolbox3.close()
 
 
 async def test_when_the_reflex_does_not_apply_she_answers_as_chat():
