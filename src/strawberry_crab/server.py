@@ -3,24 +3,30 @@
   POST /event    {source, app, title, body, urgency}  <- what the hooks hit
   POST /perform  a raw contract blob                  <- curl / tests / future TTS-less callers
   POST /tempo    a beat estimate                      <- doorways/beat_watch.py (§4c)
-  POST /command  {command, value}                     <- the tray, to the widgets (§14)
+  POST /command  {command, value}                     <- the tray, to the widgets (§14);
+                                                         reload_notifications is the daemon's own
   POST /listen   the hotkey: listen once (again = stop early)   (§7)
+  POST /probe    time each model slot on fixed sentences         <- strawberry doctor --talk
   GET  /health
   GET  /ws       the Godot widget connects here and stays connected
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import signal
+import time
 from typing import Any
 
 from aiohttp import WSMsgType, web
+from aiohttp.web_log import AccessLogger
 
-from . import __version__
-from .config import Config
-from .contract import ContractError, Performance
+from . import __version__, firstrun, paths
+from .config import Config, ConfigError
+from .contract import ContractError, Performance, anim_for
 from .daemon import Daemon
 from .events import Event
 
@@ -49,6 +55,20 @@ def version_verdict(widget: str | None, daemon: str = __version__) -> str:
     return "same" if ours.groups("0") == theirs.groups("0") else "minor"
 
 
+# The access log, minus the polling: the tray asks GET /health every 2 s and beat_watch posts
+# /tempo every interval_s, and a journal line for each buries everything else. A poll that fails
+# (4xx/5xx) is still logged. The line is aiohttp's default (request line, status, size, agent):
+# it has no request body in it, and nothing here adds one.
+QUIET_ROUTES = frozenset({("GET", "/health"), ("POST", "/tempo")})
+
+
+class QuietAccessLogger(AccessLogger):
+    def log(self, request: web.BaseRequest, response: web.StreamResponse, time: float) -> None:
+        if (request.method, request.path) in QUIET_ROUTES and response.status < 400:
+            return
+        super().log(request, response, time)
+
+
 def create_app(daemon: Daemon) -> web.Application:
     app = web.Application()
     app[DAEMON] = daemon
@@ -64,6 +84,7 @@ def create_app(daemon: Daemon) -> web.Application:
             web.post("/tempo", tempo),
             web.post("/command", command),
             web.post("/listen", listen),
+            web.post("/probe", probe),
             web.get("/ws", websocket),
         ]
     )
@@ -71,7 +92,13 @@ def create_app(daemon: Daemon) -> web.Application:
 
 
 async def _start_daemon(app: web.Application) -> None:
-    await app[DAEMON].start()
+    try:
+        await app[DAEMON].start()
+    except BaseException:
+        # Stopped while the models load (SIGTERM cancels startup): aiohttp runs no cleanup for an
+        # app that never started, so the sessions opened so far are closed here.
+        await app[DAEMON].close()
+        raise
 
 
 async def _close_daemon(app: web.Application) -> None:
@@ -132,6 +159,8 @@ async def health(request: web.Request) -> web.Response:
             "state": daemon.current_state(),
             "rest_state": daemon.rest_state,
             "tempo": daemon.fresh_tempo(),
+            # seconds since beat_watch last posted (None: never), for `strawberry doctor`
+            "tempo_age_s": None if daemon.tempo is None else round(time.monotonic() - daemon.tempo_at, 1),
         }
     )
 
@@ -213,18 +242,24 @@ COMMANDS = {
     "sleep_after": (int, float),   # minutes of quiet before she dozes off; 0 = never
 }
 
+# What the daemon does itself instead of sending on (§14): the tray has changed the config file.
+DAEMON_COMMANDS = {
+    "reload_notifications": None,   # re-read [notifications] (body mode, body_apps, filters)
+}
+
 
 def parse_command(data: Any) -> dict[str, Any]:
     """{"command": "mute", "value": true} -> the message the widgets receive (WIRING.md §14)."""
     if not isinstance(data, dict):
         raise ContractError("command must be an object")
     name = data.get("command")
-    if name not in COMMANDS:
-        raise ContractError(f"unknown command {name!r}; one of {sorted(COMMANDS)}")
+    known = COMMANDS | DAEMON_COMMANDS
+    if name not in known:
+        raise ContractError(f"unknown command {name!r}; one of {sorted(known)}")
     unknown = set(data) - {"command", "value"}
     if unknown:
         raise ContractError(f"unknown fields: {sorted(unknown)}")
-    expected = COMMANDS[name]
+    expected = known[name]
     message: dict[str, Any] = {"command": name}
     if expected is None:
         return message
@@ -246,6 +281,14 @@ async def command(request: web.Request) -> web.Response:
         message = parse_command(await _body(request))
     except ContractError as exc:
         return _error(str(exc))
+    if message["command"] == "reload_notifications":
+        try:
+            body = daemon.reload_notifications()
+        except ConfigError as exc:
+            log.warning("command: [notifications] not reloaded (%s); keeping the settings she has", exc)
+            return _error(f"config not reloaded: {exc}", 409)
+        log.info("command: [notifications] reloaded, bodies %s", body)
+        return web.json_response({"sent": 0, "command": message, "body": body})
     sent = await daemon.hub.send(message)
     log.info("command -> %d widget(s): %s", sent, message)
     return web.json_response({"sent": sent, "command": message})
@@ -256,6 +299,24 @@ async def listen(request: web.Request) -> web.Response:
     result = request.app[DAEMON].listen()
     status = 503 if "error" in result else 200
     return web.json_response(result, status=status)
+
+
+LOOPBACK = ("127.0.0.1", "::1")
+
+
+async def probe(request: web.Request) -> web.Response:
+    """`strawberry doctor --talk`: the daemon's own scripted lines through each slot, timed.
+
+    Takes no text (the sentences are Daemon.PROBE_LINES), performs nothing, and answers only a
+    client on this machine even when [daemon] host is not loopback.
+    """
+    _reject_browsers(request)
+    if request.remote not in LOOPBACK:
+        return _error("the probe is local only", 403)
+    result = await request.app[DAEMON].probe()
+    log.info("probe: %s", {slot: [row[slot].get("ms") for row in result["lines"] if slot in row]
+                           for slot in ("gate", "voice", "brain", "tts", "whisper")})
+    return web.json_response(result)
 
 
 async def tempo(request: web.Request) -> web.Response:
@@ -314,7 +375,8 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
     kind = data.get("type") if isinstance(data, dict) else None
     if kind == "hello":
         log.info("widget hello: %s", {k: v for k, v in data.items() if k != "type"})
-        await _check_version(daemon, ws, data.get("version"))
+        if await _check_version(daemon, ws, data.get("version")) != "major":
+            _first_run_notice(daemon)
     elif kind == "ping":
         await ws.send_str('{"type": "pong"}')
     elif kind == "heard":
@@ -329,7 +391,22 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
         log.debug("widget message: %s", data)
 
 
-async def _check_version(daemon: Daemon, ws: web.WebSocketResponse, version: Any) -> None:
+def _first_run_notice(daemon: Daemon) -> None:
+    """The privacy note in her bubble, once per user: the marker is written before it is sent,
+    so two widgets saying hello together do not both get it (firstrun.py)."""
+    if not firstrun.pending():
+        return
+    try:
+        firstrun.mark_shown()
+    except OSError as exc:
+        log.warning("could not write %s (%s); the privacy note will show again next start",
+                    paths.privacy_notice_marker(), exc)
+    note = Performance(state="talking", anim=anim_for("happy"), text=firstrun.bubble_text(daemon.config),
+                       emotion="happy", reaction="wave")
+    daemon.background(daemon.perform(note), "first-run privacy note")
+
+
+async def _check_version(daemon: Daemon, ws: web.WebSocketResponse, version: Any) -> str:
     version = str(version) if version is not None else None
     verdict = version_verdict(version)
     daemon.hub.set_version(ws, version or "unknown")
@@ -343,6 +420,7 @@ async def _check_version(daemon: Daemon, ws: web.WebSocketResponse, version: Any
                     "(`strawberry widget --fetch` gets the matching one)", version, __version__)
     elif verdict == "unknown":
         log.warning("widget did not say a readable version (%r); serving it", version)
+    return verdict
 
 
 def run(config: Config) -> None:
@@ -350,5 +428,84 @@ def run(config: Config) -> None:
     app = create_app(daemon)
     log.info("strawberryd listening on http://%s:%d (ws at /ws); config %s",
              config.daemon.host, config.daemon.port, config.path or "defaults")
-    # Short shutdown: widgets are closed explicitly in on_shutdown, nothing else is long-lived.
-    web.run_app(app, host=config.daemon.host, port=config.daemon.port, print=None, shutdown_timeout=2.0)
+    if firstrun.pending():
+        log.info("%s", firstrun.log_text(config))
+    # The loop is handled the way aiohttp's run_app handles it (asyncio.run would also wait on
+    # the default executor before returning); only the signal handling differs, in serve().
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(serve(app, config.daemon.host, config.daemon.port))
+    finally:
+        try:
+            _cancel_all(loop)
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+
+# Short shutdown: widgets are closed explicitly in on_shutdown, nothing else is long-lived.
+SHUTDOWN_TIMEOUT_S = 2.0
+
+
+async def serve(app: web.Application, host: str, port: int) -> None:
+    """Serve `app` until SIGTERM or SIGINT, then shut down all the way: on_shutdown, on_cleanup.
+
+    Not web.run_app: its signal handler raises GracefulExit out of the loop, and a second SIGTERM
+    read while aiohttp is still closing the listening socket, before any on_shutdown hook of ours
+    runs, raises it again in the middle of the cleanup. That is the normal stop under the tray:
+    systemd signals the whole cgroup and the tray terminates the daemon a millisecond later. The
+    cleanup was cancelled half way and the brain, gate and thinker sessions went to the garbage
+    collector ("Unclosed client session"). Here a signal only sets an event, so any number of
+    them is one stop (WIRING.md §2).
+    """
+    loop = asyncio.get_running_loop()
+    stop = asyncio.Event()
+
+    def on_signal(sig: signal.Signals) -> None:
+        name = signal.Signals(sig).name
+        if stop.is_set():
+            log.info("%s during shutdown ignored; already stopping", name)
+        else:
+            log.info("%s: shutting down", name)
+        stop.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, on_signal, sig)
+        except (NotImplementedError, RuntimeError, ValueError):
+            pass     # not the main thread (tests), or no signals on this platform
+    # Left in place until the loop closes: a signal during cleanup is one more no-op, not a kill.
+
+    runner = web.AppRunner(app, handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT_S,
+                           access_log_class=QuietAccessLogger)
+    setup = asyncio.ensure_future(runner.setup())      # on_startup: the models load here
+    stopped = asyncio.ensure_future(stop.wait())
+    try:
+        await asyncio.wait({setup, stopped}, return_when=asyncio.FIRST_COMPLETED)
+        if not setup.done():
+            # Stopped while the models load: _start_daemon closes what it had opened. aiohttp
+            # runs no on_cleanup for an app that never started, so there is nothing else to do.
+            setup.cancel()
+            await asyncio.gather(setup, return_exceptions=True)
+            log.info("stopped during startup")
+            return
+        setup.result()                                  # a startup error ends the daemon here
+        try:
+            site = web.TCPSite(runner, host, port)
+            await site.start()
+            await stopped
+        finally:
+            await runner.cleanup()
+            log.info("shut down; sessions closed")
+    finally:
+        stopped.cancel()
+
+
+def _cancel_all(loop: asyncio.AbstractEventLoop) -> None:
+    tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))

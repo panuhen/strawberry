@@ -20,9 +20,10 @@ nearest examples 32/34, nearest examples with embeddinggemma's task prefixes 34/
 embedding call costs ~165 ms whatever its size, so a sentence is routed in ~170 ms.
 
 The routing questions for spoken sentences (`KIND`, `TOPIC`, `IS_URGENT`, `IS_ABOUT_HER`, and the
-chained `MUSIC_TOOL` / `HAS_ARGUMENT` / `WANTS_LIBRARY_CHANGE`) live at the bottom of this file,
-with the `Gate` that runs them. The daemon uses the reading for two things now: firing a bare
-reflex, and deciding whether Qwen gets the careful tools. The examples are the whole model: add a
+chained `MUSIC_TOOL` / `HAS_ARGUMENT` / `WANTS_LIBRARY_CHANGE` / `NEEDS_CATALOGUE`) live at the bottom
+of this file, with the `Gate` that runs them. The daemon uses the reading for three things now: firing
+a bare reflex, deciding whether Qwen gets the careful tools, and saying a music request needs a music
+server when none is configured. The examples are the whole model: add a
 phrase she misreads to the right option and it is fixed.
 """
 
@@ -393,6 +394,31 @@ WANTS_LIBRARY_CHANGE = Noul(
     )),
 )
 
+# Can a player alone do it? MPRIS has skip, pause, play, volume and "what's playing"; finding a
+# particular artist, song, genre or playlist and playing or queueing it needs a music catalogue
+# (a music server such as Spotify's). With no such server configured, the daemon answers a
+# sentence that needs one with a fixed line instead of letting a model pretend (§8b).
+NEEDS_CATALOGUE = Noul(
+    "needs_catalogue",
+    yes=Option("yes", "asks for particular music to be found, then played or queued: an artist, a song, a genre, "
+                      "an album, a playlist, the user's library", (
+        "play some Nina Simone", "put on some jazz", "queue up Blue Monday", "play my running playlist",
+        "play my favourites", "play my saved tracks", "play the live version", "play something by this band",
+        "play something similar", "put something on for cooking", "play some classical music",
+        "put on some drum and bass", "play Bohemian Rhapsody", "queue up another one by them",
+        "play the new Radiohead album", "shuffle my playlist", "add Teardrop to the queue", "play led zeppelin",
+        "put on some ambient music", "queue something by Massive Attack", "play the song from the advert",
+        "play more by this artist",
+    )),
+    no=Option("no", "the bare player controls, what is playing, facts about music, recommendations, anything else", (
+        "skip this song", "next song please", "play the next one", "pause the music", "play it", "resume",
+        "carry on", "turn it down", "louder", "what song is this", "who sings this", "what album is this from",
+        "tell me about this artist", "what year did this come out", "recommend me some music",
+        "what should I listen to", "I love this track", "how are you today", "what's on my calendar tomorrow",
+        "play the previous one again", "music back on please", "who are the members of this band",
+    )),
+)
+
 # Not a routing question: asked of a notification body before any model reads it (WIRING.md §4,
 # strawberryd/privacy.py). Same embedder, its own call; scripts/sensitive_check.py is its contract.
 IS_SENSITIVE = Noul(
@@ -424,7 +450,7 @@ IS_SENSITIVE = Noul(
 
 TOOL_QUESTIONS: dict[str, Choice] = {"music": MUSIC_TOOL}
 ROUTING: tuple[Question, ...] = (KIND, TOPIC, IS_URGENT, IS_ABOUT_HER, HAS_ARGUMENT, WANTS_LIBRARY_CHANGE,
-                                 *TOOL_QUESTIONS.values())
+                                 *TOOL_QUESTIONS.values(), NEEDS_CATALOGUE)
 ACTIONABLE = ("request", "question")
 
 
@@ -441,6 +467,7 @@ class Route:
     tool_confidence: float = 0.0
     has_argument: float = 0.0  # p(yes): something to fill in that needs the thinker
     library_change: float = 0.0  # p(yes): asks to save/like/remove/add to a playlist (careful tools)
+    catalogue: float = 0.0     # p(yes): wants particular music found and played (needs a music server)
     answers: dict[str, Answer] = field(default_factory=dict, compare=False)
     ms: float = 0.0
 
@@ -457,6 +484,7 @@ class Route:
             "tool_confidence": round(self.tool_confidence, 4),
             "has_argument": round(self.has_argument, 4),
             "library_change": round(self.library_change, 4),
+            "catalogue": round(self.catalogue, 4),
             "ms": round(self.ms, 1),
             "answers": {k: v.to_dict() for k, v in self.answers.items()},
         }
@@ -568,6 +596,7 @@ class Gate:
             tool_confidence=tool.confidence if tool else 0.0,
             has_argument=answers["has_argument"].score or 0.0,
             library_change=answers["wants_library_change"].score or 0.0,
+            catalogue=answers["needs_catalogue"].score or 0.0,
             answers=answers,
             ms=ms,
         )

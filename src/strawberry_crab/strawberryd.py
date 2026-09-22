@@ -12,12 +12,13 @@ import logging
 import sys
 from pathlib import Path
 
-from . import __version__
+from . import __version__, osguard
 from .config import ConfigError, default_path, default_toml, load
 from .server import run
 
 
 def main(argv: list[str] | None = None) -> None:
+    osguard.require_supported()
     parser = argparse.ArgumentParser(prog="strawberryd", description="Strawberry mascot daemon")
     parser.add_argument("--config", type=Path, default=None, help=f"settings file (default {default_path()})")
     parser.add_argument("--host", default=None, help="override daemon.host")

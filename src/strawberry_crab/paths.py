@@ -2,7 +2,8 @@
 
     config   $XDG_CONFIG_HOME/strawberry/   (~/.config/strawberry/)        config.toml, widget.cfg
     data     $XDG_DATA_HOME/strawberry/     (~/.local/share/strawberry/)   voices/, widget/strawberry-widget
-    state    $XDG_STATE_HOME/strawberry/    (~/.local/state/strawberry/)   tray.json, pidfiles, logs, token caches
+    state    $XDG_STATE_HOME/strawberry/    (~/.local/state/strawberry/)   tray.json, pidfiles, logs, token caches,
+                                                                    privacy-notice-shown
 
 An unset, empty or relative XDG variable falls back to the default, as the spec says. Nothing
 here creates a directory; the caller that writes does that. The widget (widget/paths.gd)
@@ -64,6 +65,11 @@ def state_dir() -> Path:
 def tray_state_file() -> Path:
     """What the tray writes about its children; `strawberry status` reads it."""
     return state_dir() / "tray.json"
+
+
+def privacy_notice_marker() -> Path:
+    """Written once the first-run privacy note has been shown in her bubble (firstrun.py)."""
+    return state_dir() / "privacy-notice-shown"
 
 
 def systemd_user_dir() -> Path:

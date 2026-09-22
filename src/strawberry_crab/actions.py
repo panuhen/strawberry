@@ -77,6 +77,17 @@ def carries_argument(text: str, tool: str) -> bool:
     return any(word not in RESUME_WORDS for word in re.findall(r"[a-z'’]+", text.lower()))
 
 
+# What she says when a sentence wants particular music found (the gate's `needs_catalogue`) and no
+# configured server has a catalogue to find it in: MPRIS only has the player's buttons. A fixed
+# line, because a model with no tool for it either pretends ("Queued again.") or says she cannot
+# touch the player at all, which is wrong (ADAPTERS.md says how to add a music server).
+NO_CATALOGUE = (
+    "I can skip, pause and change the volume, but finding particular music needs a music add-on, like the Spotify one.",
+    "Picking music is beyond my claws without a music add-on, such as the Spotify one. The add-ons guide says how.",
+    "I only have the player's buttons. Choosing what to play needs a music add-on, like the Spotify one.",
+)
+
+
 # ----------------------------------------------------------------------------- the actor
 
 
@@ -119,6 +130,22 @@ class Actor:
             if reflex is not None:
                 return "mpris", reflex
         return None
+
+    CATALOGUE = 0.5   # p(needs_catalogue) from which a music request wants a server's catalogue
+
+    def has_catalogue(self) -> bool:
+        """A configured music server: its tools can search, play and queue. MPRIS cannot."""
+        return any(server.topic == MPRIS_TOPIC for server in self.toolbox.servers.values())
+
+    def needs_catalogue(self, route: Route) -> bool:
+        """True when the sentence asks for particular music ("play daft punk", "queue one more time")
+        and nothing configured could find it, so no model should be asked to pretend. A bare "play"
+        is the resume button, never a catalogue request, however the embedding scored it."""
+        if route.topic != MPRIS_TOPIC or route.kind not in ("request", "question") or route.catalogue < self.CATALOGUE:
+            return False
+        if route.tool == "resume" and not carries_argument(route.text, "resume"):
+            return False
+        return not self.has_catalogue()
 
     async def act(self, text: str, route: Route) -> Outcome | None:
         """Do what the sentence asks, if this tier can. Returns the outcome (its `fact` is what she

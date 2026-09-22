@@ -62,6 +62,8 @@ async def main() -> int:
                 wrong.append(f"decision {route.decision} (wanted {case['decision']})")
             if "tool" in case and route.tool != case["tool"]:
                 wrong.append(f"tool {route.tool} {route.tool_confidence:.2f} (wanted {case['tool']})")
+            if "catalogue" in case and (route.catalogue >= 0.5) != case["catalogue"]:
+                wrong.append(f"needs_catalogue {route.catalogue:.2f} (wanted {'>=' if case['catalogue'] else '<'} 0.5)")
             probs = {k: round(v, 2) for k, v in route.answers["kind"].probabilities.items()}
             if wrong:
                 misses += 1

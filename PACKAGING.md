@@ -26,8 +26,10 @@ run; the notification, media and audio-capture doorways would each need a native
   icon. `strawberry setup` pulls the models from Ollama's library, the Piper voice from the Rhasspy
   release, and faster-whisper fetches its own weights. The user downloads each under its own terms;
   setup prints one line per model naming its licence (Gemma terms of use, Apache-2.0 for Qwen, ...).
-  Our own licence is MIT; every runtime dependency is MIT or similar (Godot, Piper, faster-whisper,
-  the MCP SDK, jeepney, aiohttp, numpy).
+  Our own licence is MIT; the runtime dependencies are MIT or similar (Godot, faster-whisper,
+  the MCP SDK, jeepney, aiohttp, numpy) except **piper-tts, which is GPL-3.0-or-later** (found in
+  step 6: the package moved to piper1-gpl and bundles espeak-ng). We do not bundle it; pip installs
+  it as a separate package. THIRD_PARTY.md says so.
 - **The default config is the tested setup**: `qwen3.8:27b` (brain), `gemma3:1b` (desktop voice),
   `embeddinggemma` (gate), whisper `medium` on CUDA, Piper `en_GB-alba-medium`. It needs a 24 GB
   card. Every slot is a config value already; setup detects VRAM and is honest about what fits
@@ -70,11 +72,11 @@ widget binary reaches every distro with the same artefact.
 | ~~`bin/strawberry` bash launcher finds files via the repo~~ | done (2): `strawberry` CLI entry point, XDG paths, icons as package data; the widget still runs from a checkout (4) |
 | ~~Widget finds the repo via `res://..` (menu: settings file, restart)~~ | done (4): XDG paths, `strawberry config --init` / `restart` through `$STRAWBERRY_CLI` |
 | ~~Music control needs the Spotify MCP server~~ | done (3): MPRIS reflexes for any player; Spotify is an adapter |
-| Ollama present with the models pulled | `strawberry setup` installs Ollama (their script) and pulls the models (5) |
-| Piper voice already downloaded | `strawberry setup` downloads the default voice; `strawberry voices` for more (5) |
+| ~~Ollama present with the models pulled~~ | done (5): `strawberry setup` offers Ollama's installer and pulls the models that fit |
+| ~~Piper voice already downloaded~~ | done (5): `strawberry setup` downloads the chosen voice; `strawberry voices` for more |
 | ~~`jq`, `curl` in the git hooks and `say`~~ | done (2): hooks call `strawberry git-event` (Python); `say` is Python |
-| `pw-record`, `pw-dump` | Runtime check with the apt/dnf line in the message (5) |
-| No licence | MIT (6) |
+| ~~`pw-record`, `pw-dump`~~ | done (5): `strawberry doctor` checks them and prints the apt/dnf/pacman line |
+| ~~No licence~~ | done (6): MIT, THIRD_PARTY.md, and a release workflow |
 
 ## Steps
 
@@ -169,7 +171,15 @@ The plan as written:
 - Where it lives: `~/.local/share/strawberry/widget/strawberry-widget`; the CLI downloads it from
   the GitHub release matching the installed package version and checks a SHA-256 from the release.
 
-### 5. `strawberry setup` and `strawberry doctor`
+### 5. `strawberry setup` and `strawberry doctor` — **done 2026-09-22**
+
+Evidence: `uv run pytest -q` → 408 passed (359 before; `pythonpath = ["."]` added so `uv run pytest` finds the `tests.*` imports); `scripts/check_phase1.sh`, `scripts/check_reconnect.sh` and `scripts/check_tray.sh` pass. With throwaway XDG dirs: `strawberry setup --yes` on an empty config dir detected the RTX 3090 (24576 MiB), proposed the 24gb tier, wrote `config.toml` from the template with whisper `medium`/`cuda`/`int8_float16` and speech on, printed a licence line per model and for the voice and whisper, found all three models in Ollama (no pull), downloaded `en_GB-alba-medium`, got the expected 404 for the widget release and fell back to developer mode, listed the 27 keys the template leaves out; the second run changed nothing. Against a throwaway daemon on :8781, `strawberry doctor` printed 12 ✓ and 2 ! (keys at their defaults; no widget binary, developer mode) and exited 0, and `doctor --talk` printed gate ~200 ms, Gemma ~900 ms, Qwen (no tools) ~1.1 s, Piper ~90 ms, whisper small on the CPU ~3.3 s per line. The journal's "Unclosed client session" at shutdown was reproduced (a second SIGTERM, which a unit stop always sends: systemd signals the cgroup and the tray terminates its children, cancelled the cleanup) and fixed in server.py; the same double SIGTERM now logs "SIGTERM during shutdown ignored" and nothing else.
+
+Choices made on the way: tiers go by **total** VRAM, not free (the user's Ollama may already hold these very models): 24gb (the tested setup), 16gb (`qwen3:14b`), 10gb (`qwen3:8b`, whisper small on CUDA), 6gb (`qwen3:4b`, whisper on the CPU), cpu (thinker off). GPUs: NVIDIA from `nvidia-smi`; AMD from `rocm-smi --showmeminfo vram --json`, else the amdgpu driver's `/sys/class/drm/card*/device/mem_info_vram_total` (there without ROCm installed); Intel and other cards count as no usable GPU (the cpu tier). On AMD the brain rows stay the same (Ollama runs them on ROCm) and whisper is `small` on the CPU in every tier, because faster-whisper's GPU engine (CTranslate2) is CUDA only (`setupcmd.tiers_for`). The config is edited as text, a key at a time inside its section, so the user's comments survive; a key already in the file is kept unless the user types a value for that slot or asks for a tier (`--tier`, or another number at the prompt); the edit is parsed and validated before it is written, and the old file is copied to `config.toml.bak-<time>`. The missing-keys step leaves out the long values (persona, the example lists, the server tables, the acks) and appends the rest with a `# default, added by strawberry setup <date>` comment, never under `--yes`. The Ollama installer is offered interactively only, never run under `--yes`. `doctor --talk` uses a new `POST /probe` (WIRING §2): fixed sentences, no tools for the brain, nothing performed, local only, times logged and no text. `git-hooks install` is not offered by setup. Left: MODELS.md (the per-slot constraints live in the tier comments in `setupcmd.py` and in the README section for now).
+
+Follow-up (2026-09-22): the rest of the planned doctor list and AMD detection. `doctor` now also checks the notification monitor (a `BecomeMonitor` on a private connection with a rule for a signal nobody sends, closed right after the reply, so no message is ever read), the MPRIS players on the bus by name, `strawberry-tray.service` (`systemctl --user is-enabled` / `is-active` only, plus its ExecStart read from the unit file: the executable must exist, its shebang's interpreter must exist, and a different venv than the one doctor runs in is a `!`, a stale path a `✗`), the git hooks (core.hooksPath points at the hooks dir, both hooks are there, executable, and call a `strawberry` that exists), and the beat watcher: `/health` gained `tempo_age_s` (seconds since the last `/tempo`, `null` if none), and doctor reads the graph with `pw-dump`: no running player stream is fine, a running one with no recent post is a `!`, and a capture fed by an `Audio/Sink` rather than the player's stream is a `!`; only application and node names are printed, never a `media.name`. Doctor never starts, stops or restarts a service. Evidence: `uv run pytest -q` → 433 passed (408 at step 5); `strawberry doctor` on the live desktop (daemon on :8770 read only) printed the new lines (`✓ notification monitor — BecomeMonitor allowed`, `✓ MPRIS players — spotify`, `✓ systemd unit — strawberry-tray.service enabled, active`, `✓ git hooks — core.hooksPath = …`, `✓ beat watcher — idle: no player stream is running`), a `!` for the unit's ExecStart when run from another checkout's venv, and `✓` when run on the interpreter the unit uses.
+
+The plan as written:
 
 `setup` is idempotent, verbose and resumable:
 
@@ -198,7 +208,37 @@ the player (not a sink), systemd unit, git hooks path, versions of package and w
 short scripted conversation through the daemon with latency per slot. Exit code non-zero when
 something a user could fix is missing. Every bug report starts with its output.
 
-### 6. Releases and before shipping
+### 6. Releases and before shipping — **done 2026-09-22** (the first tag is not pushed yet)
+
+Evidence: `.github/workflows/release.yml` and `ci.yml` pass actionlint 1.7.7; `uv run pytest -q` → 365 passed (359 before), and the same suite passes in a fresh venv without the `gpu` group, with no display, session bus or CUDA device (what CI has); `uv build` makes the wheel and sdist with `LICENSE` (`License-Expression: MIT`), and `twine check` passes both; `scripts/build_widget.sh` from a checkout without an import cache (as in CI) exported the binary, and `SKIP_UNIT_TESTS=1 WIDGET=<it> scripts/check_phase1.sh` with throwaway XDG dirs and no display passed (`"passed": true`, `"widget_version": "0.1.0"`); the release-notes extraction was run against CHANGELOG.md. The workflow itself has not run: it needs a pushed tag. Choices made on the way: the Godot editor and templates are checked against SHA-512 sums pinned in the workflow (from the release's `SHA512-SUMS.txt`); `astral-sh/setup-uv` has no moving major tag, so it is pinned to `v10.2.0`, the rest to majors (`actions/checkout@v7`, `upload-artifact@v7`, `download-artifact@v8`, `pypa/gh-action-pypi-publish@release/v1`); PyPI is published after the GitHub release, so `widget --fetch` never 404s for a version pip can install; the first-run privacy note is `firstrun.py` (daemon log at start, her bubble on the first served hello, a marker in the state dir). Found on the way: piper-tts is GPL-3.0-or-later (see Decisions); `uv run pytest` (as opposed to `python -m pytest`) could not import `tests.fake_spotify` until `pythonpath = ["."]`; and a speech test loaded the real whisper model, which in a fresh cache means a download (now off).
+
+#### Releasing
+
+1. Bump `version` in `pyproject.toml` and `__version__` in `src/strawberry_crab/__init__.py`
+   (tests/test_version.py and the workflow check they agree), run `uv lock`, and move the
+   `[Unreleased]` notes in CHANGELOG.md under `## [X.Y.Z] - <date>`. The widget needs no edit:
+   `scripts/build_widget.sh` stamps the package version into it.
+2. Commit, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. `release.yml` runs: the tag must equal the version (else it fails before building), the tests,
+   `uv build`, Godot 4.7.2 and the templates, `scripts/build_widget.sh`, the headless widget
+   acceptance, then a GitHub release `vX.Y.Z` with the wheel, the sdist,
+   `strawberry-widget-X.Y.Z-linux-x86_64` and its `.sha256`, and CHANGELOG.md's section as notes.
+4. The `publish-pypi` job waits for approval of the `pypi` environment: Actions → the run →
+   *Review deployments* → approve. It uploads the wheel and sdist by trusted publishing.
+5. Check: `uv tool install strawberry-crab==X.Y.Z` in a clean environment, then
+   `strawberry widget --fetch` and `strawberry doctor`.
+
+A failed run before the release job leaves nothing behind: fix, delete the tag
+(`git push --delete origin vX.Y.Z`), tag again. After the GitHub release exists, delete the
+release too before re-tagging. A version on PyPI can never be uploaded again: after a bad upload
+bump the patch version.
+
+One-time setup on GitHub and PyPI: a `pypi` environment in the repository settings with a
+required reviewer (and, if wanted, a deployment rule limiting it to `v*` tags), and a trusted
+publisher on the PyPI project `strawberry-crab` for owner `panuhen`, repository `strawberry`,
+workflow `release.yml`, environment `pypi`.
+
+The plan as written:
 
 - GitHub Actions on tag `v*`: build the wheel (uv build), export the widget (Godot headless with
   the export templates in the runner), compute checksums, attach both to the release, publish
@@ -220,5 +260,5 @@ something a user could fix is missing. Every bug report starts with its output.
 | 3. MPRIS reflexes + adapters | – (parallel with 1) | a day |
 | 2. package + CLI | 1, 3 | half a day — **done 2026-09-22** |
 | 4. widget binary + XDG + handshake | 2 | half a day — **done 2026-09-22** |
-| 5. setup + doctor | 2, 4 | a day |
-| 6. releases, licence, README | 5 | half a day |
+| 5. setup + doctor | 2, 4 | a day — **done 2026-09-22** |
+| 6. releases, licence, README | 5 | half a day — **done 2026-09-22** |

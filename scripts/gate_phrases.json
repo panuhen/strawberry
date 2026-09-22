@@ -2,6 +2,7 @@
   "_": [
     "Sentences the gate must read right (WIRING.md §8a). Run: scripts/gate_check.py",
     "Each entry: text, expected kind (request|question|chat|other), optional topic, decision, tool (the topic's tool question).",
+    "Optional catalogue: true|false, whether needs_catalogue must be >= 0.5 (a request for particular music; with no music server configured she says it needs a music add-on, §8b).",
     "Add the ones she gets wrong in real use; the fix is an example under [gate.examples] in the config,",
     "or in KIND/TOPIC in strawberryd/systemone.py when it should ship for everyone.",
     "Run it against your own config: 'save this song' and 'play my running playlist' only mean something",
@@ -12,13 +13,15 @@
       "text": "can you skip this song",
       "kind": "request",
       "topic": "music",
-      "tool": "skip"
+      "tool": "skip",
+      "catalogue": false
     },
     {
       "text": "skip this track",
       "kind": "request",
       "topic": "music",
-      "tool": "skip"
+      "tool": "skip",
+      "catalogue": false
     },
     {
       "text": "pause the music please",
@@ -30,25 +33,29 @@
       "text": "put on some jazz",
       "kind": "request",
       "topic": "music",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
     },
     {
       "text": "turn the volume down a bit",
       "kind": "request",
       "topic": "music",
-      "tool": "volume_down"
+      "tool": "volume_down",
+      "catalogue": false
     },
     {
       "text": "play the previous one again",
       "kind": "request",
       "topic": "music",
-      "tool": "previous"
+      "tool": "previous",
+      "catalogue": false
     },
     {
       "text": "queue up something by Nina Simone",
       "kind": "request",
       "topic": "music",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
     },
     {
       "text": "remind me to call mum at five",
@@ -84,7 +91,8 @@
       "text": "what song is this",
       "kind": "question",
       "topic": "music",
-      "tool": "now_playing"
+      "tool": "now_playing",
+      "catalogue": false
     },
     {
       "text": "who is singing this",
@@ -272,7 +280,8 @@
       "text": "play my running playlist",
       "kind": "request",
       "topic": "music",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
     },
     {
       "text": "stop stop stop",
@@ -305,7 +314,8 @@
       "text": "play it please",
       "kind": "request",
       "topic": "music",
-      "tool": "resume"
+      "tool": "resume",
+      "catalogue": false
     },
     {
       "text": "skip please",
@@ -342,68 +352,97 @@
       "text": "can you recommend any good music",
       "kind": "request",
       "topic": "music",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": false
     },
     {
       "text": "ok, play it",
       "kind": "request",
       "topic": "music",
-      "tool": "resume"
+      "tool": "resume",
+      "catalogue": false
     },
     {
       "text": "play something similar",
       "kind": "request",
       "topic": "music",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
     },
     {
       "text": "play some acid techno",
       "kind": "request",
       "topic": "music",
       "decision": "act",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
     },
     {
       "text": "play some classical music",
       "kind": "request",
       "topic": "music",
       "decision": "act",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
     },
     {
       "text": "no, play another classical song",
       "kind": "request",
       "topic": "music",
       "decision": "act",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
     },
     {
       "text": "put on some techno",
       "kind": "request",
       "topic": "music",
       "decision": "act",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
     },
     {
       "text": "play daft punk",
       "kind": "request",
       "topic": "music",
       "decision": "act",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
     },
     {
       "text": "play soem daft punk",
       "kind": "request",
       "topic": "music",
       "decision": "act",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
     },
     {
       "text": "play led zeppelin",
       "kind": "request",
       "topic": "music",
       "decision": "act",
-      "tool": "other"
+      "tool": "other",
+      "catalogue": true
+    },
+    {
+      "text": "put on my liked songs",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": true
+    },
+    {
+      "text": "queue one more time",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": true
+    },
+    {
+      "text": "play the next song",
+      "kind": "request",
+      "topic": "music",
+      "tool": "skip",
+      "catalogue": false
     }
   ]
 }

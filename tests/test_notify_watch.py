@@ -253,3 +253,19 @@ def test_burst_across_apps_keeps_the_highest_urgency():
 def test_the_match_rule_is_the_one_the_bus_needs():
     assert notify_watch.MATCH_RULE.serialise() == (
         "interface='org.freedesktop.Notifications',member='Notify',type='method_call'")
+
+
+def test_main_reads_the_config_file_it_is_given(tmp_path, monkeypatch):
+    """The tray passes its --config here, so "Message bodies" and the watcher read one file."""
+    seen = []
+
+    async def fake_watch(daemon, cfg):
+        seen.append((daemon, cfg.body))
+        return 0
+
+    monkeypatch.setattr(notify_watch, "watch", fake_watch)
+    config = tmp_path / "c.toml"
+    config.write_text('[daemon]\nport = 8779\n[notifications]\nbody = "glance"\n')
+    assert notify_watch.main(["--config", str(config)]) == 0
+    assert notify_watch.main(["--config", str(config), "--daemon", "http://127.0.0.1:1"]) == 0
+    assert seen == [("http://127.0.0.1:8779", "glance"), ("http://127.0.0.1:1", "glance")]

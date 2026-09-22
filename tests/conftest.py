@@ -20,3 +20,19 @@ def no_real_session_bus(monkeypatch):
         raise mpris.MprisError("the session bus is out of bounds in tests")
 
     monkeypatch.setattr(mpris.SessionBus, "_router_ready", refuse)
+
+
+@pytest.fixture(autouse=True)
+def throwaway_xdg_dirs(monkeypatch, tmp_path_factory):
+    """No unit test may write the user's config, data or state: each gets its own XDG dirs.
+
+    The first-run privacy note counts as already shown there, so a test widget's hello is not
+    followed by an extra bubble; tests/test_firstrun.py removes the marker to see the note.
+    """
+    from strawberry_crab import paths
+
+    base = tmp_path_factory.mktemp("xdg")
+    for name in ("CONFIG", "DATA", "STATE", "CACHE"):
+        monkeypatch.setenv(f"XDG_{name}_HOME", str(base / name.lower()))
+    paths.privacy_notice_marker().parent.mkdir(parents=True)
+    paths.privacy_notice_marker().write_text("shown\n")

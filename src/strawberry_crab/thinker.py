@@ -70,7 +70,9 @@ TOOLS_GUIDE = (
 # The same voice with nothing to act through (no servers, or they are all down).
 NO_TOOLS = (
     "You have no tools right now and no internet. Answer from what you know and from the situation below. If the "
-    "answer depends on recent events or on something you cannot know, say so in one sentence instead of guessing."
+    "answer depends on recent events or on something you cannot know, say so in one sentence instead of guessing. "
+    "If you are asked to play, queue, find or save particular music, say in one short sentence that choosing music "
+    "needs a music add-on, such as the Spotify one. Never say you did something you did not do."
 )
 
 HONEST = (
@@ -173,14 +175,17 @@ class Thinker:
                  len(specs), limit, len(kept), ", ".join(s.key for s in cut))
         return kept
 
-    async def run(self, text: str, context: str = "", careful: bool = False, topic: str = "") -> Outcome:
+    async def run(self, text: str, context: str = "", careful: bool = False, topic: str = "",
+                  tools: bool = True) -> Outcome:
         """One sentence, start to finish: her reply, its mood, and whatever tools it took to get
-        there. Never raises: a failure is an Outcome with ok=False and something to say about it."""
+        there. Never raises: a failure is an Outcome with ok=False and something to say about it.
+        `tools=False` offers none (the latency probe, which must not change anything)."""
         self.calls += 1
         started = time.perf_counter()
         calls: list[ToolResult] = []
         try:
-            outcome = await asyncio.wait_for(self._run(text, context, calls, careful, topic), self.config.timeout_s)
+            outcome = await asyncio.wait_for(self._run(text, context, calls, careful, topic, tools),
+                                             self.config.timeout_s)
         except asyncio.TimeoutError:
             outcome = Outcome("thought about it too long", "I tried, but my thinking took too long. Sorry.", False,
                               tuple(calls), "alert")
@@ -198,8 +203,9 @@ class Thinker:
         log.info("thinker: %r -> %s -> [%s] %r in %.1fs", text, outcome.did, outcome.emotion, outcome.fact, self.last_s)
         return outcome
 
-    async def _run(self, text: str, context: str, calls: list[ToolResult], careful: bool, topic: str = "") -> Outcome:
-        specs = await self.tools(careful, topic)
+    async def _run(self, text: str, context: str, calls: list[ToolResult], careful: bool, topic: str = "",
+                   use_tools: bool = True) -> Outcome:
+        specs = await self.tools(careful, topic) if use_tools else []
         tools = [s.for_ollama() for s in specs]
         user = text if not context else f"Situation: {context}\n\nThe user says: {text}"
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt(bool(tools))},
