@@ -351,20 +351,164 @@ def test_the_close_code_matches_the_widget():
     assert f"const CLOSE_VERSION_REFUSED := {CLOSE_VERSION_REFUSED}" in ws_client
 
 
-async def test_a_second_sigterm_during_shutdown_is_held(monkeypatch):
-    # systemd signals the tray's whole cgroup and the tray terminates its children too; the
-    # second SIGTERM must not raise GracefulExit into the cleanup that closes the sessions.
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+async def test_two_sigterms_at_once_are_one_stop_and_cleanup_finishes(daemon, monkeypatch, caplog):
+    # systemd signals the tray's whole cgroup and the tray terminates the daemon a millisecond
+    # later, so both SIGTERMs are queued before shutdown starts. Both must end in one full cleanup.
+    import logging
     import signal
 
     from strawberry_crab import server
 
-    installed = {}
+    handlers = {}
     loop = asyncio.get_running_loop()
-    monkeypatch.setattr(loop, "add_signal_handler", lambda sig, fn, *args: installed.__setitem__(sig, (fn, args)))
-    await server._hold_signals(None)
-    assert set(installed) == {signal.SIGINT, signal.SIGTERM}
-    fn, args = installed[signal.SIGTERM]
-    fn(*args)      # logs, raises nothing
+    monkeypatch.setattr(loop, "add_signal_handler", lambda sig, fn, *args: handlers.__setitem__(sig, (fn, args)))
+    started, closed = asyncio.Event(), []
+    real_start, real_close = daemon.start, daemon.close
+
+    async def start():
+        await real_start()
+        started.set()
+
+    async def close():
+        await asyncio.sleep(0.05)        # a cleanup that takes a while, like closing sessions
+        await real_close()
+        closed.append(True)
+
+    monkeypatch.setattr(daemon, "start", start)
+    monkeypatch.setattr(daemon, "close", close)
+    task = asyncio.ensure_future(server.serve(create_app(daemon), "127.0.0.1", _free_port()))
+    await asyncio.wait_for(started.wait(), 5)
+    await asyncio.sleep(0.05)            # the site is listening
+    assert set(handlers) == {signal.SIGINT, signal.SIGTERM}
+    fn, args = handlers[signal.SIGTERM]
+    with caplog.at_level(logging.INFO, logger="strawberryd.http"):
+        fn(*args)
+        fn(*args)                        # the tray's terminate(), right behind systemd's
+        await asyncio.wait_for(task, 5)
+        fn(*args)                        # and one more after the end: still nothing raised
+    assert closed == [True]
+    assert "SIGTERM: shutting down" in caplog.text
+    assert "SIGTERM during shutdown ignored" in caplog.text
+
+
+async def test_a_stop_while_the_models_load_ends_serve_and_closes(daemon, monkeypatch):
+    import signal
+
+    from strawberry_crab import server
+
+    handlers = {}
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "add_signal_handler", lambda sig, fn, *args: handlers.__setitem__(sig, (fn, args)))
+    closed = []
+
+    async def slow_start():
+        await asyncio.sleep(10)
+
+    async def close():
+        closed.append(True)
+
+    monkeypatch.setattr(daemon, "start", slow_start)
+    monkeypatch.setattr(daemon, "close", close)
+    task = asyncio.ensure_future(server.serve(create_app(daemon), "127.0.0.1", _free_port()))
+    await asyncio.sleep(0.05)
+    fn, args = handlers[signal.SIGTERM]
+    fn(*args)
+    await asyncio.wait_for(task, 5)
+    assert closed == [True]              # by _start_daemon; no on_cleanup for an app never started
+
+
+# Run as the tray's daemon child, stopped the way `systemctl --user stop strawberry-tray` stops
+# it: systemd signals the whole cgroup and the tray terminates the daemon a moment later, so the
+# second SIGTERM lands while aiohttp is closing the listening socket, before any on_shutdown hook.
+# Every ClientSession is counted, so the verdict does not hang on the garbage collector.
+_DOUBLE_SIGTERM_CHILD = """
+import asyncio, os, runpy, signal, sys, time
+import aiohttp
+from aiohttp import web_runner
+from strawberry_crab.daemon import Daemon
+
+sessions = []
+real_init = aiohttp.ClientSession.__init__
+
+def init(self, *args, **kwargs):
+    real_init(self, *args, **kwargs)
+    sessions.append(self)
+
+aiohttp.ClientSession.__init__ = init
+
+real_start = Daemon.start
+
+async def start(self):
+    await real_start(self)
+    asyncio.get_running_loop().call_later(0.2, os.kill, os.getpid(), signal.SIGTERM)
+
+Daemon.start = start
+
+real_stop = web_runner.BaseSite.stop
+
+async def stop(self):
+    os.kill(os.getpid(), signal.SIGTERM)      # the tray's terminate()
+    time.sleep(0.02)                          # delivered before the loop looks again
+    await asyncio.sleep(0)                    # the loop reads it from its wakeup pipe
+    await asyncio.sleep(0)                    # and dispatches it
+    await real_stop(self)
+
+web_runner.BaseSite.stop = stop
+sys.argv = ["strawberryd", *sys.argv[1:]]
+try:
+    runpy.run_module("strawberry_crab.strawberryd", run_name="__main__", alter_sys=True)
+finally:
+    print(f"sessions: {len(sessions)} opened, {sum(not s.closed for s in sessions)} left open", flush=True)
+"""
+
+
+def test_the_tray_daemon_child_closes_its_sessions_on_a_double_sigterm(tmp_path):
+    # The real process, started the way the tray starts it (child_specs), with the brain, the
+    # gate and the thinker on: three aiohttp sessions. Ollama is a closed port, so nothing loads,
+    # but every session is opened. Before the fix the second SIGTERM raised aiohttp's GracefulExit
+    # in the middle of the cleanup and the sessions were left to the garbage collector.
+    import subprocess
+
+    from strawberry_crab.tray import child_specs
+
+    port, ollama = _free_port(), _free_port()
+    config = tmp_path / "config.toml"
+    config.write_text(f"""
+[brain]
+enabled = true
+ollama_url = "http://127.0.0.1:{ollama}"
+timeout_s = 0.2
+[gate]
+enabled = true
+[thinker]
+enabled = true
+[speech]
+enabled = false
+[voice]
+enabled = false
+[tools]
+enabled = false
+[actions]
+mpris = false
+""")
+    argv = child_specs(port, config, widget=False)[0].argv
+    assert argv[1:3] == ["-m", "strawberry_crab.strawberryd"]
+    argv = [argv[0], "-c", _DOUBLE_SIGTERM_CHILD, *argv[3:]]
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    output = result.stdout + result.stderr
+    assert "sessions: 3 opened, 0 left open" in output, output
+    assert "Unclosed" not in output, output
+    assert "SIGTERM during shutdown ignored" in output, output
+    assert "shut down; sessions closed" in output, output
+    assert result.returncode == 0, output
 
 
 async def test_stopped_during_startup_still_closes_the_daemon(daemon, monkeypatch):

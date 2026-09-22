@@ -56,7 +56,6 @@ def create_app(daemon: Daemon) -> web.Application:
     app = web.Application()
     app[DAEMON] = daemon
     app.on_startup.append(_start_daemon)
-    app.on_shutdown.append(_hold_signals)
     app.on_shutdown.append(_close_widgets)
     app.on_cleanup.append(_close_daemon)
     app.add_routes(
@@ -87,26 +86,6 @@ async def _start_daemon(app: web.Application) -> None:
 
 async def _close_daemon(app: web.Application) -> None:
     await app[DAEMON].close()
-
-
-async def _hold_signals(app: web.Application) -> None:
-    """One SIGTERM is enough: ignore the rest while shutting down.
-
-    Stopping the tray unit signals its whole cgroup, and the tray terminates its children as
-    well, so the daemon gets SIGTERM twice. aiohttp's handler would raise GracefulExit again in
-    the middle of cleanup, cancel it, and leave the Ollama sessions to the garbage collector
-    ("Unclosed client session" in the journal). runner.cleanup() removes these handlers at its end.
-    """
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _already_stopping, sig)
-        except (NotImplementedError, RuntimeError, ValueError):
-            pass     # not the main thread (tests), or no signals on this platform
-
-
-def _already_stopping(sig: signal.Signals) -> None:
-    log.info("%s during shutdown ignored; already stopping", signal.Signals(sig).name)
 
 
 async def _close_widgets(app: web.Application) -> None:
@@ -407,5 +386,81 @@ def run(config: Config) -> None:
              config.daemon.host, config.daemon.port, config.path or "defaults")
     if firstrun.pending():
         log.info("%s", firstrun.log_text(config))
-    # Short shutdown: widgets are closed explicitly in on_shutdown, nothing else is long-lived.
-    web.run_app(app, host=config.daemon.host, port=config.daemon.port, print=None, shutdown_timeout=2.0)
+    # The loop is handled the way aiohttp's run_app handles it (asyncio.run would also wait on
+    # the default executor before returning); only the signal handling differs, in serve().
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(serve(app, config.daemon.host, config.daemon.port))
+    finally:
+        try:
+            _cancel_all(loop)
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+
+# Short shutdown: widgets are closed explicitly in on_shutdown, nothing else is long-lived.
+SHUTDOWN_TIMEOUT_S = 2.0
+
+
+async def serve(app: web.Application, host: str, port: int) -> None:
+    """Serve `app` until SIGTERM or SIGINT, then shut down all the way: on_shutdown, on_cleanup.
+
+    Not web.run_app: its signal handler raises GracefulExit out of the loop, and a second SIGTERM
+    read while aiohttp is still closing the listening socket, before any on_shutdown hook of ours
+    runs, raises it again in the middle of the cleanup. That is the normal stop under the tray:
+    systemd signals the whole cgroup and the tray terminates the daemon a millisecond later. The
+    cleanup was cancelled half way and the brain, gate and thinker sessions went to the garbage
+    collector ("Unclosed client session"). Here a signal only sets an event, so any number of
+    them is one stop (WIRING.md §2).
+    """
+    loop = asyncio.get_running_loop()
+    stop = asyncio.Event()
+
+    def on_signal(sig: signal.Signals) -> None:
+        name = signal.Signals(sig).name
+        if stop.is_set():
+            log.info("%s during shutdown ignored; already stopping", name)
+        else:
+            log.info("%s: shutting down", name)
+        stop.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, on_signal, sig)
+        except (NotImplementedError, RuntimeError, ValueError):
+            pass     # not the main thread (tests), or no signals on this platform
+    # Left in place until the loop closes: a signal during cleanup is one more no-op, not a kill.
+
+    runner = web.AppRunner(app, handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT_S)
+    setup = asyncio.ensure_future(runner.setup())      # on_startup: the models load here
+    stopped = asyncio.ensure_future(stop.wait())
+    try:
+        await asyncio.wait({setup, stopped}, return_when=asyncio.FIRST_COMPLETED)
+        if not setup.done():
+            # Stopped while the models load: _start_daemon closes what it had opened. aiohttp
+            # runs no on_cleanup for an app that never started, so there is nothing else to do.
+            setup.cancel()
+            await asyncio.gather(setup, return_exceptions=True)
+            log.info("stopped during startup")
+            return
+        setup.result()                                  # a startup error ends the daemon here
+        try:
+            site = web.TCPSite(runner, host, port)
+            await site.start()
+            await stopped
+        finally:
+            await runner.cleanup()
+            log.info("shut down; sessions closed")
+    finally:
+        stopped.cancel()
+
+
+def _cancel_all(loop: asyncio.AbstractEventLoop) -> None:
+    tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
