@@ -52,3 +52,4 @@ include = ["/src/strawberry_crab", "/tests", "/scripts", "/README.md", "/WIRING.
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]   # tests import their shared fakes as `tests.*`
