@@ -13,7 +13,7 @@ What gets forwarded is decided by [notifications] in ~/.config/strawberry/config
 ignored apps, an urgency floor, which apps' message bodies may leave the watcher, and a short
 coalescing window so twenty Slack pings become one "20 notifications" event.
 
-    python -m strawberry.doorways.notify_watch [--daemon http://127.0.0.1:8770] [--log-level DEBUG]
+    python -m strawberry_crab.doorways.notify_watch [--daemon http://127.0.0.1:8770] [--log-level DEBUG]
 
 Two rules for the monitor connection, both learned the hard way:
 

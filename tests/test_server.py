@@ -2,16 +2,16 @@ import asyncio
 
 import pytest
 
-from strawberry.contract import ONE_SHOTS
-from strawberry.daemon import Daemon
-from strawberry.server import create_app
+from strawberry_crab.contract import ONE_SHOTS
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.server import create_app
 
 
 @pytest.fixture
 def daemon():
     # Plumbing tests run against the canned reactor; the model path has its own tests.
-    from strawberry.config import Config
-    from strawberry.events import CannedReactor
+    from strawberry_crab.config import Config
+    from strawberry_crab.events import CannedReactor
 
     config = Config()
     config.brain.enabled = False
@@ -280,7 +280,7 @@ async def test_health_carries_the_state_the_tray_shows(client):
 
 
 async def test_a_stale_transient_falls_back_to_her_resting_state(daemon):
-    from strawberry.contract import Performance
+    from strawberry_crab.contract import Performance
 
     await daemon.perform(Performance(state="dancing"))
     await daemon.perform(Performance(state="talking"))
@@ -292,7 +292,7 @@ async def test_a_stale_transient_falls_back_to_her_resting_state(daemon):
 # --- the version handshake (WIRING.md §1) --------------------------------------------
 
 def test_version_verdicts():
-    from strawberry.server import version_verdict
+    from strawberry_crab.server import version_verdict
 
     assert version_verdict("dev", "0.1.0") == "dev"
     assert version_verdict("0.1.0", "0.1.0") == "same"
@@ -310,13 +310,13 @@ async def test_a_dev_widget_is_served_and_health_shows_its_version(client):
     await asyncio.sleep(0.05)
     body = await (await client.get("/health")).json()
     assert body["widgets"] == 1 and body["widget_versions"] == ["dev"]
-    from strawberry import __version__
+    from strawberry_crab import __version__
     assert body["version"] == __version__
     await ws.close()
 
 
 async def test_a_minor_mismatch_is_logged_and_served(client, caplog):
-    from strawberry import __version__
+    from strawberry_crab import __version__
     major, minor, *_ = __version__.split(".")
     other = f"{major}.{int(minor) + 1}.0"
     ws = await client.ws_connect("/ws")
@@ -329,8 +329,8 @@ async def test_a_minor_mismatch_is_logged_and_served(client, caplog):
 
 
 async def test_a_major_mismatch_is_refused(client, caplog):
-    from strawberry import __version__
-    from strawberry.server import CLOSE_VERSION_REFUSED
+    from strawberry_crab import __version__
+    from strawberry_crab.server import CLOSE_VERSION_REFUSED
 
     other = f"{int(__version__.split('.')[0]) + 1}.0.0"
     ws = await client.ws_connect("/ws")
@@ -345,7 +345,7 @@ async def test_a_major_mismatch_is_refused(client, caplog):
 
 def test_the_close_code_matches_the_widget():
     from pathlib import Path
-    from strawberry.server import CLOSE_VERSION_REFUSED
+    from strawberry_crab.server import CLOSE_VERSION_REFUSED
 
     ws_client = (Path(__file__).parents[1] / "widget" / "ws_client.gd").read_text()
     assert f"const CLOSE_VERSION_REFUSED := {CLOSE_VERSION_REFUSED}" in ws_client

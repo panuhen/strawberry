@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import pytest
 
-from strawberry.actions import Actor
-from strawberry.adapters import REGISTRY, Adapter, adapter_for, gate_examples, load
-from strawberry.adapters.spotify import SPOTIFY
-from strawberry.config import ActionsConfig, Config, GateConfig, ToolsConfig
-from strawberry.daemon import Daemon
-from strawberry.events import CannedReactor
-from strawberry.mpris import Mpris
-from strawberry.tools import Toolbox
+from strawberry_crab.actions import Actor
+from strawberry_crab.adapters import REGISTRY, Adapter, adapter_for, gate_examples, load
+from strawberry_crab.adapters.spotify import SPOTIFY
+from strawberry_crab.config import ActionsConfig, Config, GateConfig, ToolsConfig
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.events import CannedReactor
+from strawberry_crab.mpris import Mpris
+from strawberry_crab.tools import Toolbox
 from tests.fake_spotify import make
 from tests.test_actions import route
 from tests.test_mpris import FakeBus, FakePlayer
@@ -29,7 +29,7 @@ RESTRICTED = ('{"error": "Permission denied. Check app scopes.", "status": 403, 
 def no_settle_wait(monkeypatch):
     import asyncio
 
-    import strawberry.actions as actions
+    import strawberry_crab.actions as actions
 
     real_sleep = asyncio.sleep
     monkeypatch.setattr(actions.asyncio, "sleep", lambda s: real_sleep(0))
@@ -184,7 +184,7 @@ async def test_mpris_can_be_turned_off_and_the_adapter_phrases_reach_the_gate():
 
 
 def test_the_gate_keeps_the_config_examples_after_the_adapters():
-    from strawberry.systemone import Gate
+    from strawberry_crab.systemone import Gate
 
     gate = Gate(GateConfig(enabled=False, examples={"kind.request": ["put the kettle on"]}),
                 examples={"kind.request": ["save this song"]})

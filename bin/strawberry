@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Strawberry from a source checkout: run the `strawberry` CLI (src/strawberry/cli.py) from the
+# Strawberry from a source checkout: run the `strawberry` CLI (src/strawberry_crab/cli.py) from the
 # checkout's own venv, creating it on first use. Every command and flag is the CLI's:
 #
 #   bin/strawberry --help        the commands (widget, daemon, tray, status, install, say, ...)

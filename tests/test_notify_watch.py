@@ -9,8 +9,8 @@ import asyncio
 import pytest
 from jeepney import DBusAddress, Parser, new_method_call
 
-from strawberry.config import NotificationsConfig
-from strawberry.doorways import notify_watch
+from strawberry_crab.config import NotificationsConfig
+from strawberry_crab.doorways import notify_watch
 
 parse_notify, allowed, to_event, summarise, clean = (
     notify_watch.parse_notify, notify_watch.allowed, notify_watch.to_event, notify_watch.summarise, notify_watch.clean

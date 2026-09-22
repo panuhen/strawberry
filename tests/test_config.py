@@ -1,7 +1,7 @@
 import pytest
 
-from strawberry import persona
-from strawberry.config import ConfigError, default_toml, load
+from strawberry_crab import persona
+from strawberry_crab.config import ConfigError, default_toml, load
 
 
 def test_defaults_when_no_file(tmp_path):

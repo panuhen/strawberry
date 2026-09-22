@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from strawberry.doorways import beat_watch
+from strawberry_crab.doorways import beat_watch
 
 
 def node(id_, name, media_class, app="", state="running", serial=None):

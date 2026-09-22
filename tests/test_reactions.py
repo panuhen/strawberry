@@ -1,6 +1,6 @@
-from strawberry.contract import Performance
-from strawberry.events import Event
-from strawberry.reactions import Choice, choose, decorate, is_message
+from strawberry_crab.contract import Performance
+from strawberry_crab.events import Event
+from strawberry_crab.reactions import Choice, choose, decorate, is_message
 
 
 def note(app="", title="", body="", urgency="normal", category="", icon=""):

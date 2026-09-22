@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 from jeepney import DBusAddress, HeaderFields, Parser, new_method_call
 
-from strawberry import icons, tray
-from strawberry.paths import checkout_root
-from strawberry.tray import Child, Children, Tray, TrayState, layout, menu_items
+from strawberry_crab import icons, tray
+from strawberry_crab.paths import checkout_root
+from strawberry_crab.tray import Child, Children, Tray, TrayState, layout, menu_items
 
 ITEM = DBusAddress(tray.ITEM_PATH, bus_name="org.kde.StatusNotifierItem-1-1", interface=tray.SNI_IFACE)
 MENU = DBusAddress(tray.MENU_PATH, bus_name="org.kde.StatusNotifierItem-1-1", interface=tray.MENU_IFACE)
@@ -351,17 +351,17 @@ def test_iconname_is_claimed_only_when_the_icon_is_in_a_theme(tmp_path):
 # --- the children ------------------------------------------------------------------
 
 def test_the_children_are_the_daemon_the_doorways_and_the_widget(tmp_path):
-    from strawberry import widgetbin
+    from strawberry_crab import widgetbin
 
     dev = lambda: widgetbin.Widget("checkout", Path("/opt/godot"), tmp_path / "widget")
     specs = tray.child_specs(8771, None, resolve_widget=dev)
     assert [c.name for c in specs] == ["daemon", "mpris_watch", "notify_watch", "beat_watch", "widget"]
     python = specs[0].argv[0]
     assert all(c.argv[0] == python for c in specs)          # one interpreter, nothing from a checkout
-    assert specs[0].argv[1:] == ["-m", "strawberry.strawberryd", "--port", "8771"]
-    assert specs[1].argv[1:] == ["-m", "strawberry.doorways.mpris_watch", "--daemon", "http://127.0.0.1:8771"]
-    assert specs[3].argv[1:] == ["-m", "strawberry.doorways.beat_watch", "--daemon", "http://127.0.0.1:8771"]
-    assert specs[4].argv[1:] == ["-m", "strawberry", "widget"]  # developer mode: the CLI imports and runs godot
+    assert specs[0].argv[1:] == ["-m", "strawberry_crab.strawberryd", "--port", "8771"]
+    assert specs[1].argv[1:] == ["-m", "strawberry_crab.doorways.mpris_watch", "--daemon", "http://127.0.0.1:8771"]
+    assert specs[3].argv[1:] == ["-m", "strawberry_crab.doorways.beat_watch", "--daemon", "http://127.0.0.1:8771"]
+    assert specs[4].argv[1:] == ["-m", "strawberry_crab", "widget"]  # developer mode: the CLI imports and runs godot
     assert specs[4].env["STRAWBERRYD_PORT"] == "8771"
     assert [c.name for c in tray.child_specs(8771, None, widget=False, resolve_widget=dev)][-1] == "beat_watch"
     config = tmp_path / "c.toml"
@@ -369,7 +369,7 @@ def test_the_children_are_the_daemon_the_doorways_and_the_widget(tmp_path):
 
 
 def test_the_widget_child_is_the_binary_when_installed(tmp_path):
-    from strawberry import widgetbin
+    from strawberry_crab import widgetbin
 
     binary = tmp_path / "strawberry-widget"
     specs = tray.child_specs(8771, None, resolve_widget=lambda: widgetbin.Widget("binary", binary))
@@ -379,7 +379,7 @@ def test_the_widget_child_is_the_binary_when_installed(tmp_path):
 
 
 def test_no_widget_to_run_leaves_the_rest(tmp_path, caplog):
-    from strawberry import widgetbin
+    from strawberry_crab import widgetbin
 
     def missing():
         raise widgetbin.WidgetMissing("no widget binary at X. Get it with: strawberry widget --fetch")

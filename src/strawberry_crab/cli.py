@@ -33,8 +33,8 @@ from . import paths
 DEFAULT_PORT = 8770
 TRAY_UNIT = "strawberry-tray.service"
 LEGACY_UNIT = "strawberryd.service"
-DAEMON_MODULE = "strawberry.strawberryd"
-DOORWAYS = ("mpris_watch", "notify_watch", "beat_watch")   # = strawberry.doorways.DOORWAYS, without importing it
+DAEMON_MODULE = "strawberry_crab.strawberryd"
+DOORWAYS = ("mpris_watch", "notify_watch", "beat_watch")   # = strawberry_crab.doorways.DOORWAYS, without importing it
 OLD_UNITS = (LEGACY_UNIT, *(f"strawberry-{name}.service" for name in DOORWAYS))
 SESSION_ENV = ("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "DBUS_SESSION_BUS_ADDRESS")
 AUDITION_LINE = "James, hold the phone, the time is up! Your commit landed, nice work."
@@ -80,11 +80,11 @@ def config_port() -> int:
 
 def cli_argv() -> list[str]:
     """How to run this very CLI again from a unit, a hook or a shortcut: the absolute path of the
-    `strawberry` executable that is running, or this interpreter with `-m strawberry`."""
+    `strawberry` executable that is running, or this interpreter with `-m strawberry_crab`."""
     exe = Path(sys.argv[0]) if sys.argv and sys.argv[0] else None
     if exe is not None and exe.name == "strawberry" and exe.is_file() and os.access(exe, os.X_OK):
         return [str(exe.absolute())]
-    return [sys.executable, "-m", "strawberry"]
+    return [sys.executable, "-m", "strawberry_crab"]
 
 
 def module_argv(module: str, *args: str) -> list[str]:
@@ -225,7 +225,7 @@ def start_watcher(here: Here, name: str) -> None:
     if pid_alive(read_pid(pidfile)):
         return
     print(f"starting {name} (log: {logfile})")
-    spawn(module_argv(f"strawberry.doorways.{name}", "--daemon", here.base), logfile, pidfile)
+    spawn(module_argv(f"strawberry_crab.doorways.{name}", "--daemon", here.base), logfile, pidfile)
 
 
 def start_watchers(here: Here) -> None:
@@ -416,7 +416,7 @@ def unit_text(port: int, argv: list[str] | None = None) -> str:
     """The one systemd user unit: the tray, which starts the daemon, the doorways and the widget.
 
     ExecStart is the installed entry point (this CLI's own executable, or this interpreter with
-    -m strawberry), never a path into a checkout's scripts.
+    -m strawberry_crab), never a path into a checkout's scripts.
     """
     exec_start = shlex.join([*(argv or cli_argv()), "tray", "--port", str(port)])
     return f"""[Unit]

@@ -1,7 +1,7 @@
 """`strawberryd`: the daemon, and the by-hand tools that share its config (--route, --say, ...).
 
 The `strawberry` CLI (cli.py) calls main() for its route/tools/tool/think/talk/tray commands, and
-the tray runs it as `python -m strawberry.strawberryd` for the daemon child.
+the tray runs it as `python -m strawberry_crab.strawberryd` for the daemon child.
 """
 
 from __future__ import annotations

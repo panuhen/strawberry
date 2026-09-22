@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from strawberry.config import Config, ConfigError, SpeechConfig, load
-from strawberry.contract import Performance
-from strawberry.daemon import Daemon
-from strawberry.events import CannedReactor
-from strawberry.speech import (
+from strawberry_crab.config import Config, ConfigError, SpeechConfig, load
+from strawberry_crab.contract import Performance
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.events import CannedReactor
+from strawberry_crab.speech import (
     Speaker,
     in_quiet_hours,
     parse_quiet_hours,

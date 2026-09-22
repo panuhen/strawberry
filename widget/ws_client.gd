@@ -12,7 +12,7 @@ signal message_received(data: Dictionary)
 signal refused(reason: String)
 
 const MAX_BACKOFF := 8.0
-const CLOSE_VERSION_REFUSED := 4001   # = strawberry.server.CLOSE_VERSION_REFUSED
+const CLOSE_VERSION_REFUSED := 4001   # = strawberry_crab.server.CLOSE_VERSION_REFUSED
 const REFUSED_BACKOFF := 60.0
 const Paths = preload("res://paths.gd")
 const PING_INTERVAL := 5.0

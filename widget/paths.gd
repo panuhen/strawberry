@@ -1,6 +1,6 @@
 extends RefCounted
 ## Where the widget finds things outside its own pack (WIRING.md §13, §15). The same XDG rules as
-## src/strawberry/paths.py: an unset, empty or relative variable falls back to the default.
+## src/strawberry_crab/paths.py: an unset, empty or relative variable falls back to the default.
 ## Nothing here points into a source checkout, so the exported binary and a source run agree.
 ##
 ##   preferences   $XDG_CONFIG_HOME/strawberry/widget.cfg      (the tray reads it back, §14)

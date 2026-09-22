@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from strawberry import cli, paths
+from strawberry_crab import cli, paths
 
 COMMANDS = ("widget", "daemon", "tray", "tray-autostart", "status", "stop", "restart", "install", "uninstall",
             "config", "listen", "hotkey", "route", "tools", "tool", "think", "talk", "say", "voices", "audition",
@@ -62,15 +62,15 @@ def test_cli_argv_is_the_running_executable_or_this_interpreter(monkeypatch, tmp
     monkeypatch.setattr(sys, "argv", [str(exe), "install"])
     assert cli.cli_argv() == [str(exe)]
     monkeypatch.setattr(sys, "argv", ["/somewhere/strawberry/__main__.py"])
-    assert cli.cli_argv() == [sys.executable, "-m", "strawberry"]
+    assert cli.cli_argv() == [sys.executable, "-m", "strawberry_crab"]
 
 
 def test_the_unit_starts_the_installed_tray_not_the_repo():
     text = cli.unit_text(8770, ["/home/u/.local/bin/strawberry"])
     assert "ExecStart=/home/u/.local/bin/strawberry tray --port 8770\n" in text
     assert "WantedBy=graphical-session.target" in text
-    fallback = cli.unit_text(8771, [sys.executable, "-m", "strawberry"])
-    assert f"ExecStart={sys.executable} -m strawberry tray --port 8771\n" in fallback
+    fallback = cli.unit_text(8771, [sys.executable, "-m", "strawberry_crab"])
+    assert f"ExecStart={sys.executable} -m strawberry_crab tray --port 8771\n" in fallback
     assert "Exec=/x/strawberry tray-autostart\n" in cli.autostart_text(["/x/strawberry"])
 
 
@@ -83,7 +83,7 @@ def test_install_rewrites_an_old_unit_and_restarts_it(isolated, monkeypatch, cap
     old.write_text("[Service]\nExecStart=/old/checkout/strawberryd/.venv/bin/strawberryd --tray --port 8770\n")
     (here.unit_dir / "strawberryd.service").write_text("")
     assert cli.cmd_install(here) == 0
-    assert f"ExecStart={sys.executable} -m strawberry tray --port 8770" in old.read_text()
+    assert f"ExecStart={sys.executable} -m strawberry_crab tray --port 8770" in old.read_text()
     assert not (here.unit_dir / "strawberryd.service").exists()
     assert here.autostart.read_text().startswith("[Desktop Entry]")
     verbs = [call[0] for call in isolated]

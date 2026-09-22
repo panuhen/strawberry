@@ -7,11 +7,11 @@ import math
 
 import pytest
 
-from strawberry.config import Config, ConfigError, GateConfig, _validate
-from strawberry.daemon import Daemon
-from strawberry.events import CannedReactor, Event
-from strawberry.server import create_app
-from strawberry.systemone import (
+from strawberry_crab.config import Config, ConfigError, GateConfig, _validate
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.events import CannedReactor, Event
+from strawberry_crab.server import create_app
+from strawberry_crab.systemone import (
     IS_ABOUT_HER, KIND, ROUTING, TOPIC, Choice, Gate, GateError, Noul, Option, Score, SystemOne, confidence, decide,
     softmax,
 )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from strawberry import config, paths, speech, tray
+from strawberry_crab import config, paths, speech, tray
 
 
 def test_xdg_variables_are_respected(monkeypatch, tmp_path):

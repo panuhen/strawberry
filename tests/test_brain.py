@@ -4,10 +4,10 @@ import json
 import pytest
 from aiohttp import web
 
-from strawberry.brain import OllamaReactor, describe, tidy
-from strawberry.config import BrainConfig
-from strawberry.events import CannedReactor, Event
-from strawberry.persona import BODY_RULE, EXAMPLES
+from strawberry_crab.brain import OllamaReactor, describe, tidy
+from strawberry_crab.config import BrainConfig
+from strawberry_crab.events import CannedReactor, Event
+from strawberry_crab.persona import BODY_RULE, EXAMPLES
 
 
 def fake_ollama(reply=None, *, delay=0.0, raw=None, status=200):
@@ -175,7 +175,7 @@ async def test_examples_are_shuffled_between_calls(aiohttp_server):
 
 
 def test_stale_words():
-    from strawberry.brain import stale_words
+    from strawberry_crab.brain import stale_words
 
     recent = ["Lovely tune, that.", "Space 92? Lovely music.", "Three tracks. A lovely diversion."]
     assert stale_words("A lovely quiet moment.", recent) == ["lovely"]
@@ -210,9 +210,9 @@ async def test_timeout_schedules_a_background_rewarm(monkeypatch):
     """A reaction timeout means the model is reloading; the short calls must not keep aborting it."""
     import asyncio
 
-    from strawberry.brain import OllamaReactor
-    from strawberry.config import BrainConfig
-    from strawberry.events import CannedReactor, Event
+    from strawberry_crab.brain import OllamaReactor
+    from strawberry_crab.config import BrainConfig
+    from strawberry_crab.events import CannedReactor, Event
 
     reactor = OllamaReactor(BrainConfig(timeout_s=0.05), fallback=CannedReactor())
     reactor.session = object()  # "started"; _ask and warm_up are stubbed below
@@ -242,8 +242,8 @@ async def test_timeout_schedules_a_background_rewarm(monkeypatch):
 
 
 def test_describe_adds_the_ledger_to_a_voice_event_only():
-    from strawberry.brain import describe
-    from strawberry.events import Event
+    from strawberry_crab.brain import describe
+    from strawberry_crab.events import Event
 
     voice = Event(source="voice", title="the other one")
     assert describe(voice, "Recent exchanges:\n- x").endswith("said: the other one\nRecent exchanges:\n- x")

@@ -4,8 +4,8 @@ import asyncio
 
 from jeepney import DBusAddress, Parser, new_signal
 
-from strawberry.doorways import mpris_watch
-from strawberry.doorways.mpris_watch import Player, Watcher, apply_properties, describe, wanted
+from strawberry_crab.doorways import mpris_watch
+from strawberry_crab.doorways.mpris_watch import Player, Watcher, apply_properties, describe, wanted
 
 PLAYER = DBusAddress("/org/mpris/MediaPlayer2", bus_name="org.mpris.MediaPlayer2.spotify",
                      interface="org.freedesktop.DBus.Properties")

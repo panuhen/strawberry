@@ -2,7 +2,7 @@
 """Run the sensitive-body filter over scripts/sensitive_phrases.json against live Ollama (WIRING.md §4).
 
 The filter is what the daemon runs before a notification body reaches the model: the patterns
-(src/strawberry/privacy.py), then IS_SENSITIVE on the gate. Prints every miss, then the tally for the
+(src/strawberry_crab/privacy.py), then IS_SENSITIVE on the gate. Prints every miss, then the tally for the
 whole filter and for the gate alone, and the gate's latency. Exit code 1 on any miss of the filter.
 
     scripts/sensitive_check.py [--config ~/.config/strawberry/config.toml] [--verbose]
@@ -23,10 +23,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from strawberry import privacy  # noqa: E402
-from strawberry.adapters import gate_examples, load as load_adapters  # noqa: E402
-from strawberry.config import default_path, load  # noqa: E402
-from strawberry.systemone import Gate  # noqa: E402
+from strawberry_crab import privacy  # noqa: E402
+from strawberry_crab.adapters import gate_examples, load as load_adapters  # noqa: E402
+from strawberry_crab.config import default_path, load  # noqa: E402
+from strawberry_crab.systemone import Gate  # noqa: E402
 
 
 async def main() -> int:

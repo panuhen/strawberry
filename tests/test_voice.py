@@ -9,10 +9,10 @@ import threading
 import numpy as np
 import pytest
 
-from strawberry.config import Config, VoiceConfig
-from strawberry.daemon import Daemon
-from strawberry.events import CannedReactor
-from strawberry.voice import DIDNT_CATCH, Listener, Recording, dbfs
+from strawberry_crab.config import Config, VoiceConfig
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.events import CannedReactor
+from strawberry_crab.voice import DIDNT_CATCH, Listener, Recording, dbfs
 
 
 class Sink:
@@ -115,7 +115,7 @@ async def test_disabled_or_missing_microphone():
 
 
 async def test_listen_route(aiohttp_client):
-    from strawberry.server import create_app
+    from strawberry_crab.server import create_app
 
     daemon, sink = make_daemon("route test")
     client = await aiohttp_client(create_app(daemon))
@@ -166,7 +166,7 @@ Card #61
 
 
 def test_parse_cards_finds_the_headset_and_its_best_profile():
-    from strawberry.voice import parse_cards
+    from strawberry_crab.voice import parse_cards
 
     cards = parse_cards(PACTL_CARDS)
     assert len(cards) == 1

@@ -10,15 +10,15 @@ import logging
 import pytest
 from aiohttp import web
 
-from strawberry import privacy
-from strawberry.brain import OllamaReactor
-from strawberry.config import Config, GateConfig, NotificationsConfig
-from strawberry.contract import Performance
-from strawberry.daemon import Daemon
-from strawberry.doorways import notify_watch
-from strawberry.events import CannedReactor, Event
-from strawberry.server import create_app
-from strawberry.systemone import Gate
+from strawberry_crab import privacy
+from strawberry_crab.brain import OllamaReactor
+from strawberry_crab.config import Config, GateConfig, NotificationsConfig
+from strawberry_crab.contract import Performance
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.doorways import notify_watch
+from strawberry_crab.events import CannedReactor, Event
+from strawberry_crab.server import create_app
+from strawberry_crab.systemone import Gate
 from tests.test_notify_watch import bus_notify
 from tests.test_systemone import FakeEmbedder
 
@@ -354,7 +354,7 @@ async def test_no_message_text_in_any_log_record(aiohttp_server, caplog, monkeyp
 
 
 def test_short_quip_keeps_whole_sentences_only():
-    from strawberry.daemon import short_quip
+    from strawberry_crab.daemon import short_quip
     assert short_quip("Lunchtime. Be careful of the wait time and those servers!", 8) == "Lunchtime."
     assert short_quip("Moving things? Good luck.", 8) == "Moving things? Good luck."
     assert short_quip("One very long sentence that goes on and on past the limit.", 8) == ""

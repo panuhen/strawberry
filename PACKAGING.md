@@ -1,4 +1,4 @@
-# Packaging plan: from developer checkout to `uv tool install strawberry`
+# Packaging plan: from developer checkout to `uv tool install strawberry-crab`
 
 Status: agreed 2026-09-22, work starts the same day. Built by Opus agents step by step; the
 orchestrator verifies each step (tests, acceptance, live run) before the next starts.
@@ -10,7 +10,7 @@ the models and a voice fetched on first run from where they are published. No Go
 cloning, no hunting for apt packages.
 
 ```bash
-uv tool install strawberry        # or: pipx install strawberry
+uv tool install strawberry-crab        # or: pipx install strawberry-crab
 strawberry setup                  # widget binary, Ollama + models, a voice; explains each step
 strawberry                        # she appears, with a 🍓 in the top bar
 strawberry install                # optional: start on login
@@ -105,7 +105,7 @@ Evidence: `strawberryd/.venv/bin/python -m pytest -q` → 230 passed (186 before
 
 ### 2. One Python package (`strawberry`) and the CLI — **done 2026-09-22**
 
-Evidence: `pyproject.toml` at the root with `src/strawberry/` and `tests/`; `.venv/bin/python -m pytest -q` → 280 passed (262 before the CLI tests); `scripts/check_phase1.sh`, `scripts/check_tray.sh` pass and `scripts/gate_check.py` is 71/71; `uv build` makes a wheel with the icons inside; `uv tool install <checkout>` into a throwaway tool dir, run from `/tmp` with throwaway XDG dirs, did `--help`, `status`, `route "skip this"`, `strawberryd --port 8773` + `/health`, `say`, `strawberry-doorway beat_watch --help`, and `strawberry tray` with its daemon and three doorways all on the tool's own interpreter (no widget: no checkout). Choices made on the way: the daemon's module is `strawberry.strawberryd` (so `python -m strawberry` is the CLI); logger names stay `strawberryd.*` so the journal reads as before; `install` writes `ExecStart=<the running strawberry> tray --port N` and *restarts* the unit, which is also the migration from the old ExecStart; the git hooks are one-line files written by `strawberry git-hooks install`, replacing the old symlinks; `gpu` is both a dependency group (checkout) and an extra (`uv tool install 'strawberry[gpu] @ <path>'`). Left for step 4: the widget child and `strawberry widget` need a checkout with `widget/` and Godot on PATH, and `menu.gd` still calls the checkout's `.venv/bin/strawberryd --init-config` and `bin/strawberry restart`. Left for step 5: `setup` and `doctor` exist and say "step 5". Before publishing (6): the name `strawberry` is taken on PyPI (an unrelated project, version 3.0), and `strawberry-graphql` also imports as `strawberry`, so the distribution needs another name and perhaps the import name too.
+Evidence: `pyproject.toml` at the root with `src/strawberry_crab/` and `tests/`; `.venv/bin/python -m pytest -q` → 280 passed (262 before the CLI tests); `scripts/check_phase1.sh`, `scripts/check_tray.sh` pass and `scripts/gate_check.py` is 71/71; `uv build` makes a wheel with the icons inside; `uv tool install <checkout>` into a throwaway tool dir, run from `/tmp` with throwaway XDG dirs, did `--help`, `status`, `route "skip this"`, `strawberryd --port 8773` + `/health`, `say`, `strawberry-doorway beat_watch --help`, and `strawberry tray` with its daemon and three doorways all on the tool's own interpreter (no widget: no checkout). Choices made on the way: the daemon's module is `strawberry_crab.strawberryd` (so `python -m strawberry_crab` is the CLI); logger names stay `strawberryd.*` so the journal reads as before; `install` writes `ExecStart=<the running strawberry> tray --port N` and *restarts* the unit, which is also the migration from the old ExecStart; the git hooks are one-line files written by `strawberry git-hooks install`, replacing the old symlinks; `gpu` is both a dependency group (checkout) and an extra (`uv tool install 'strawberry[gpu] @ <path>'`). Left for step 4: the widget child and `strawberry widget` need a checkout with `widget/` and Godot on PATH, and `menu.gd` still calls the checkout's `.venv/bin/strawberryd --init-config` and `bin/strawberry restart`. Left for step 5: `setup` and `doctor` exist and say "step 5". Before publishing (6): the name `strawberry` is taken on PyPI (an unrelated project, version 3.0), and `strawberry-graphql` also imports as `strawberry`, so the distribution needs another name and perhaps the import name too.
 
 The plan as written:
 

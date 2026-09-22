@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from strawberry.config import Config, ThinkerConfig
-from strawberry.contract import Performance
-from strawberry.daemon import Daemon
-from strawberry.ledger import Ledger
-from strawberry.server import create_app
+from strawberry_crab.config import Config, ThinkerConfig
+from strawberry_crab.contract import Performance
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.ledger import Ledger
+from strawberry_crab.server import create_app
 from tests.test_thinker import ScriptedGate, make as make_thinker
 
 

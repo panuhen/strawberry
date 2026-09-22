@@ -10,7 +10,7 @@ Every couple of seconds the current estimate goes to the daemon, which forwards 
 widget as {"tempo": {...}}; the widget picks a dance style from it (WIRING.md §4c).
 
 Runs on the package's interpreter (numpy is a normal dependency): `strawberry-doorway
-beat_watch`, or `python -m strawberry.doorways.beat_watch` as the tray starts it. Silence, a
+beat_watch`, or `python -m strawberry_crab.doorways.beat_watch` as the tray starts it. Silence, a
 paused player or a beatless piece give a low-confidence estimate; the widget treats that as
 "just sway".
 """

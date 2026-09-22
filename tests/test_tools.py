@@ -11,11 +11,11 @@ from typing import Any
 
 import pytest
 
-from strawberry.config import Config, ConfigError, ToolsConfig, _validate
-from strawberry.daemon import Daemon
-from strawberry.events import CannedReactor
-from strawberry.server import create_app
-from strawberry.tools import Toolbox, ToolSpec, clarify_error, looks_like_error, result_text
+from strawberry_crab.config import Config, ConfigError, ToolsConfig, _validate
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.events import CannedReactor
+from strawberry_crab.server import create_app
+from strawberry_crab.tools import Toolbox, ToolSpec, clarify_error, looks_like_error, result_text
 
 ECHO_SERVER = Path(__file__).with_name("mcp_echo_server.py")
 

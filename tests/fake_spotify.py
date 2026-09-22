@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from strawberry.actions import Actor
-from strawberry.config import ActionsConfig, ToolsConfig
-from strawberry.tools import Toolbox
+from strawberry_crab.actions import Actor
+from strawberry_crab.config import ActionsConfig, ToolsConfig
+from strawberry_crab.tools import Toolbox
 from tests.test_tools import FakeContent, FakeResult, FakeSession, FakeTool, make_connect
 
 TRACKS = [
@@ -89,9 +89,9 @@ def make(broken: bool = False, actions: ActionsConfig | None = None, name: str =
 def fake_gate(toolbox: Toolbox):
     """The gate the daemon would build for this toolbox: a fake embedder, and the phrases the
     configured servers' adapters bring with them."""
-    from strawberry.adapters import gate_examples
-    from strawberry.config import GateConfig
-    from strawberry.systemone import Gate
+    from strawberry_crab.adapters import gate_examples
+    from strawberry_crab.config import GateConfig
+    from strawberry_crab.systemone import Gate
     from tests.test_systemone import FakeEmbedder
 
     return Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder(),

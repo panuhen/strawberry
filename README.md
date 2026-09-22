@@ -3,9 +3,9 @@
 A local desktop AI mascot: a cel-shaded crab that lives on the desktop and reacts to what happens on the machine.
 
 - **`WIRING.md`** — the harness spec: message contract, `strawberryd`, doorways, build order, widget shell. Start here.
-- **`PACKAGING.md`** — the plan for shipping her as `uv tool install strawberry` plus a standalone widget binary.
+- **`PACKAGING.md`** — the plan for shipping her as `uv tool install strawberry-crab` plus a standalone widget binary.
 - **`ADAPTERS.md`** — adding an MCP server, and writing an adapter for one (Spotify as the worked example).
-- **`src/strawberry/`** — the one Python package: the daemon (`strawberryd`: HTTP intake + websocket to the widget), the doorways (`strawberry-doorway <name>`), the tray and the `strawberry` CLI. Tests in `tests/`.
+- **`src/strawberry_crab/`** — the one Python package: the daemon (`strawberryd`: HTTP intake + websocket to the widget), the doorways (`strawberry-doorway <name>`), the tray and the `strawberry` CLI. Tests in `tests/`.
 - **`widget/`** — Godot 4.7 desktop widget: transparent, always-on-top, click-through. Installed, she is one executable, `~/.local/share/strawberry/widget/strawberry-widget` (`strawberry widget --fetch` downloads it from the release and checks its SHA-256); in a checkout without that binary, `bin/strawberry` runs the Godot project with `godot` from PATH (developer mode). `scripts/build_widget.sh` exports the binary.
 - **Voice** — Piper TTS, on when `[speech] enabled = true` in `~/.config/strawberry/config.toml`. `strawberry voices` lists or downloads voices, `strawberry audition` compares them, `strawberry say "…"` makes her talk.
 - **The gate** — every sentence you say is sorted locally by `embeddinggemma` (kind, topic, which tool, is there an argument) before anyone answers; `strawberry route "skip this song"` shows the reading, `scripts/gate_check.py` runs the phrase set. A plain music command ("skip this song", "pause", "louder", "what song is this") is a **reflex**: she does it herself in well under a second, with no model in the loop, then tells you the fact plus a quip.

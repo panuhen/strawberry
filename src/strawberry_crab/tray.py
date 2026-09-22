@@ -391,21 +391,21 @@ def child_specs(port: int, config: Path | None, widget: bool = True,
     """The daemon, the three doorways and the widget, in the order they should come up.
 
     Everything Python runs on this same interpreter as a module of the package (`python -m
-    strawberry.strawberryd`, `python -m strawberry.doorways.<name>`), so an installed tray never
+    strawberry_crab.strawberryd`, `python -m strawberry_crab.doorways.<name>`), so an installed tray never
     reaches back into a checkout. The widget is the exported binary when it is installed, run
-    directly on the X11 backend; else developer mode, `python -m strawberry widget` with the
+    directly on the X11 backend; else developer mode, `python -m strawberry_crab widget` with the
     checkout's Godot project (it imports the project first when needed); else no widget child,
     and the log says how to get one (widgetbin.resolve). STRAWBERRY_CLI tells the widget's menu
     which `strawberry` to run for "Settings file…" and "Apply settings".
     """
     python = sys.executable
     url = f"http://127.0.0.1:{port}"
-    daemon = [python, "-m", "strawberry.strawberryd", "--port", str(port)]
+    daemon = [python, "-m", "strawberry_crab.strawberryd", "--port", str(port)]
     if config:
         daemon += ["--config", str(config)]
     children = [Child("daemon", daemon)]
     for module in DOORWAYS:
-        children.append(Child(module, [python, "-m", f"strawberry.doorways.{module}", "--daemon", url]))
+        children.append(Child(module, [python, "-m", f"strawberry_crab.doorways.{module}", "--daemon", url]))
     if not widget:
         return children
     try:
@@ -420,7 +420,7 @@ def child_specs(port: int, config: Path | None, widget: bool = True,
     if found.kind == "binary":
         children.append(Child("widget", found.argv(port), env))
     else:
-        children.append(Child("widget", [python, "-m", "strawberry", "widget"], env))
+        children.append(Child("widget", [python, "-m", "strawberry_crab", "widget"], env))
     return children
 
 
@@ -726,7 +726,7 @@ class Tray:
 
         path = default_path()
         if not path.exists():
-            process = await asyncio.create_subprocess_exec(sys.executable, "-m", "strawberry.strawberryd", "--init-config",
+            process = await asyncio.create_subprocess_exec(sys.executable, "-m", "strawberry_crab.strawberryd", "--init-config",
                                                            stdout=asyncio.subprocess.DEVNULL)
             await process.wait()
         await self.open_path(path)

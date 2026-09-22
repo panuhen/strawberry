@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from strawberry import mpris
+from strawberry_crab import mpris
 
 
 @pytest.fixture(autouse=True)

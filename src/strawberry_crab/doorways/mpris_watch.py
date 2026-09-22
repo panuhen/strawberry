@@ -13,7 +13,7 @@ what a known player is doing, and `NameOwnerChanged` for players appearing and d
 jeepney speaks the bus, so this runs on the daemon's venv; the calls to the daemon are
 short-lived HTTP, never a websocket (WIRING.md §0, §4b).
 
-    python -m strawberry.doorways.mpris_watch [--daemon http://127.0.0.1:8770] [--only spotify,vlc] [--ignore firefox]
+    python -m strawberry_crab.doorways.mpris_watch [--daemon http://127.0.0.1:8770] [--only spotify,vlc] [--ignore firefox]
 """
 
 from __future__ import annotations

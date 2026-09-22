@@ -1,7 +1,7 @@
 import pytest
 
-from strawberry.contract import EMOTION_ANIM, ONE_SHOTS, STATE_CLIPS, ContractError, Performance, anim_for
-from strawberry.events import Event
+from strawberry_crab.contract import EMOTION_ANIM, ONE_SHOTS, STATE_CLIPS, ContractError, Performance, anim_for
+from strawberry_crab.events import Event
 
 
 def test_minimal_blob_round_trips():

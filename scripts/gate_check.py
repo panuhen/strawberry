@@ -22,9 +22,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from strawberry.adapters import gate_examples, load as load_adapters  # noqa: E402
-from strawberry.config import default_path, load  # noqa: E402
-from strawberry.systemone import Gate  # noqa: E402
+from strawberry_crab.adapters import gate_examples, load as load_adapters  # noqa: E402
+from strawberry_crab.config import default_path, load  # noqa: E402
+from strawberry_crab.systemone import Gate  # noqa: E402
 
 
 async def main() -> int:

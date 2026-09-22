@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-from strawberry.actions import Actor, Outcome, carries_argument
-from strawberry.brain import describe
-from strawberry.config import ActionsConfig, Config
-from strawberry.daemon import Daemon
-from strawberry.events import CannedReactor
-from strawberry.systemone import Route
+from strawberry_crab.actions import Actor, Outcome, carries_argument
+from strawberry_crab.brain import describe
+from strawberry_crab.config import ActionsConfig, Config
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.events import CannedReactor
+from strawberry_crab.systemone import Route
 from tests.fake_spotify import make
 
 
@@ -28,7 +28,7 @@ def no_settle_wait(monkeypatch):
     """The reflexes wait for the player to catch up; not in tests."""
     import asyncio
 
-    import strawberry.actions as actions
+    import strawberry_crab.actions as actions
 
     real_sleep = asyncio.sleep
     monkeypatch.setattr(actions.asyncio, "sleep", lambda s: real_sleep(0))
@@ -84,7 +84,7 @@ async def test_a_hung_tool_is_a_failure_not_a_stall():
 
 
 async def test_no_quip_after_a_paragraph_long_fact():
-    from strawberry.contract import Performance
+    from strawberry_crab.contract import Performance
 
     class Quipper:
         async def react(self, event, context=""):

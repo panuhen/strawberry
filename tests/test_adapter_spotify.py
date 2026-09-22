@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from strawberry.adapters.spotify import SPOTIFY, _track, clarify_error
-from strawberry.config import Config
-from strawberry.daemon import Daemon
-from strawberry.events import CannedReactor
-from strawberry.server import create_app
-from strawberry.tools import looks_like_error
+from strawberry_crab.adapters.spotify import SPOTIFY, _track, clarify_error
+from strawberry_crab.config import Config
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.events import CannedReactor
+from strawberry_crab.server import create_app
+from strawberry_crab.tools import looks_like_error
 from tests.fake_spotify import TRACKS, fake_gate, make
 from tests.test_actions import route
 
@@ -19,7 +19,7 @@ def no_settle_wait(monkeypatch):
     """The reflexes wait 0.6 s for Spotify to catch up; not in tests."""
     import asyncio
 
-    import strawberry.actions as actions
+    import strawberry_crab.actions as actions
 
     real_sleep = asyncio.sleep
     monkeypatch.setattr(actions.asyncio, "sleep", lambda s: real_sleep(0))

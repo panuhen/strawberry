@@ -129,7 +129,7 @@ def icons_dir() -> Path:
 def checkout_root() -> Path | None:
     """The source checkout this package runs from, or None when it is installed on its own.
 
-    `src/strawberry/paths.py` -> the repo root, recognised by the widget project in it.
+    `src/strawberry_crab/paths.py` -> the repo root, recognised by the widget project in it.
     """
     root = Path(__file__).resolve().parents[2]
     if (root / "widget" / "project.godot").is_file() and (root / "pyproject.toml").is_file():

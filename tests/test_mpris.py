@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from strawberry.mpris import MPRIS_PREFIX, Mpris, MprisError, Player, unvariant
+from strawberry_crab.mpris import MPRIS_PREFIX, Mpris, MprisError, Player, unvariant
 
 TRACKS = [
     {"title": "Feeling Good", "artists": ["Nina Simone"], "album": "I Put a Spell on You"},

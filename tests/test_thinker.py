@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 
-from strawberry.config import ActionsConfig, Config, GateConfig, ThinkerConfig, ToolsConfig
-from strawberry.contract import Performance
-from strawberry.daemon import Daemon
-from strawberry.events import CannedReactor
-from strawberry.server import create_app
-from strawberry.systemone import Gate, Route
-from strawberry.thinker import NO_TOOLS, TOOLS_GUIDE, VOICE, Thinker, ThinkerError, split_emotion, tidy_sentence
-from strawberry.tools import Toolbox
+from strawberry_crab.config import ActionsConfig, Config, GateConfig, ThinkerConfig, ToolsConfig
+from strawberry_crab.contract import Performance
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.events import CannedReactor
+from strawberry_crab.server import create_app
+from strawberry_crab.systemone import Gate, Route
+from strawberry_crab.thinker import NO_TOOLS, TOOLS_GUIDE, VOICE, Thinker, ThinkerError, split_emotion, tidy_sentence
+from strawberry_crab.tools import Toolbox
 from tests.fake_spotify import TOOLS, FakeSpotify, fake_gate
 from tests.test_systemone import FakeEmbedder
 from tests.test_tools import FakeContent, FakeResult, FakeSession, FakeTool, make_connect

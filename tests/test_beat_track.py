@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from strawberry.doorways import beat_track
+from strawberry_crab.doorways import beat_track
 
 SR = 22050
 

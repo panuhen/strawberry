@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from strawberry import __version__, cli, paths, widgetbin
+from strawberry_crab import __version__, cli, paths, widgetbin
 
 
 @pytest.fixture(autouse=True)
