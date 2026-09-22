@@ -27,6 +27,9 @@ class Event:
     urgency: str = "normal"
     category: str = ""   # freedesktop notification category, e.g. im.received
     icon: str = ""       # path to the app's icon, resolved by the doorway
+    # Set by the daemon, never read from HTTP: what she has already said about this event (a
+    # notification's gist, WIRING.md §4). The reactor then adds a short quip after it.
+    said: str = ""
 
     @classmethod
     def from_dict(cls, data: Any) -> Event:
@@ -85,9 +88,11 @@ class CannedReactor:
                 return f"Commit in {event.title}: {event.body}"
             return f"Something got committed in {event.title or 'a repo'}."
         if event.source == "notification":
+            # App and sender only: the canned line never reads a message body out (§4).
+            if event.said:
+                return ""  # the gist is already said by the daemon; nothing to add
             who = event.app or "Something"
-            what = event.title or event.body
-            return f"{who}: {what}" if what else f"{who} wants your attention."
+            return f"{who}: {event.title}" if event.title else f"{who} wants your attention."
         if event.source == "media":
             return f"Now playing: {event.title or event.body}" if (event.title or event.body) else "Music!"
         if event.source == "voice":

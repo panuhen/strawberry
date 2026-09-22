@@ -45,9 +45,9 @@ def test_a_real_notify_message_becomes_an_event():
         "urgency": "normal", "category": "im.received", "replaces_id": 0, "app_icon": "",
     }
     assert to_event(n, NotificationsConfig()) == {
-        "source": "notification", "app": "WhatsApp", "title": "James", "urgency": "normal",
-        "body": "Are we still on?", "category": "im.received",
+        "source": "notification", "app": "WhatsApp", "title": "James", "urgency": "normal", "category": "im.received",
     }
+    assert to_event(n, NotificationsConfig(body="react"))["body"] == "Are we still on?"
 
 
 def test_the_watcher_batches_and_posts_what_it_hears(monkeypatch):
@@ -158,12 +158,59 @@ def test_only_apps_and_urgency_floor():
     assert "below" in allowed(parse_notify(notify(app="Slack", urgency=0)), cfg)
 
 
-def test_include_body_false_keeps_who_but_not_what():
+def test_body_off_by_default_keeps_who_but_not_what():
     n = parse_notify(notify())
-    assert to_event(n, NotificationsConfig())["body"] == "Are we still on for tonight?"
-    private = to_event(n, NotificationsConfig(include_body=False))
+    private = to_event(n, NotificationsConfig())
     assert "body" not in private
     assert private["title"] == "James" and private["app"] == "WhatsApp"
+    for mode in ("react", "glance"):
+        assert to_event(n, NotificationsConfig(body=mode))["body"] == "Are we still on for tonight?"
+
+
+def test_body_apps_override_the_default_by_app_or_desktop_entry():
+    cfg = NotificationsConfig(body="off", body_apps={"slack": "glance", "org.telegram.desktop": "react"})
+    assert "body" in to_event(parse_notify(notify(app="Slack")), cfg)
+    assert "body" in to_event(parse_notify(notify(app="", **{"desktop-entry": "org.telegram.desktop"})), cfg)
+    assert "body" not in to_event(parse_notify(notify(app="WhatsApp")), cfg)
+    loud = NotificationsConfig(body="react", body_apps={"WhatsApp": "off"})
+    assert "body" not in to_event(parse_notify(notify(app="whatsapp")), loud)
+    assert "body" in to_event(parse_notify(notify(app="Slack")), loud)
+
+
+def test_the_watcher_never_posts_or_logs_an_off_body(monkeypatch, caplog):
+    """parse_notify -> forward decision, end to end in the watcher: mode off, the body stays here."""
+    posted = []
+    watcher = notify_watch.Watcher("http://127.0.0.1:1", NotificationsConfig(coalesce_s=0.01, body_apps={"Slack": "react"}))
+
+    async def fake_post(path, payload):
+        posted.append(payload)
+        return True
+
+    monkeypatch.setattr(watcher.daemon, "post", fake_post)
+    monkeypatch.setattr(notify_watch, "resolve_icon", lambda *a, **k: None)
+
+    async def run():
+        await watcher.handle(bus_notify(app="WhatsApp", summary="James", body="canary-off-7f3a"))
+        await asyncio.sleep(0.05)
+        await watcher.handle(bus_notify(app="Slack", summary="Alex", body="canary-react-9c1d"))
+        await asyncio.sleep(0.05)
+
+    with caplog.at_level("DEBUG"):
+        asyncio.run(run())
+    assert "body" not in posted[0] and posted[0]["title"] == "James"
+    assert posted[1]["body"] == "canary-react-9c1d"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "canary" not in text and "body_len=15" in text
+
+
+def test_long_bodies_are_cut_at_a_word_boundary():
+    body = "word " * 300
+    n = parse_notify(notify(body=body), max_body_chars=1000)
+    assert len(n["body"]) <= 1000 and n["body"].endswith("word…")
+    assert parse_notify(notify(body=body))["body"] == n["body"]           # 1000 is the default
+    assert clean("the quick brown fox jumps", 18) == "the quick brown…"
+    assert clean("short enough", 18) == "short enough"
+    assert clean("supercalifragilistic", 10) == "supercali…"               # no space: a hard cut
 
 
 def test_deduper_drops_the_relay_copy_but_not_a_later_repeat():
@@ -176,7 +223,7 @@ def test_deduper_drops_the_relay_copy_but_not_a_later_repeat():
 
 
 def test_single_notification_passes_through_unsummarised():
-    cfg = NotificationsConfig()
+    cfg = NotificationsConfig(body="react")
     assert summarise([parse_notify(notify())], cfg) == {
         "source": "notification", "app": "WhatsApp", "title": "James", "body": "Are we still on for tonight?", "urgency": "normal",
     }
