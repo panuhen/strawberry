@@ -13,7 +13,7 @@ from strawberryd.server import create_app
 from strawberryd.systemone import Gate, Route
 from strawberryd.thinker import NO_TOOLS, TOOLS_GUIDE, VOICE, Thinker, ThinkerError, split_emotion, tidy_sentence
 from strawberryd.tools import Toolbox
-from tests.test_actions import TOOLS, FakeSpotify
+from tests.fake_spotify import TOOLS, FakeSpotify, fake_gate
 from tests.test_systemone import FakeEmbedder
 from tests.test_tools import FakeContent, FakeResult, FakeSession, FakeTool, make_connect
 from tests.test_voice import Sink
@@ -210,6 +210,62 @@ async def test_careful_tools_appear_only_when_the_sentence_asks_for_a_library_ch
     await toolbox.close()
 
 
+def two_servers(max_tools: int = 30):
+    """A music server with an adapter (ten tools) and a plain notes server (eight)."""
+    spotify = FakeSpotify()
+    notes = FakeSession([FakeTool(f"note_{i}") for i in range(8)], spotify.handle)
+    toolbox = Toolbox(ToolsConfig(servers={"spotify": {"topic": "music", "command": "spotify"},
+                                           "notes": {"topic": "notes", "command": "notes"}}, preconnect=False),
+                      connect=make_connect({"spotify": FakeSession(TOOLS, spotify.handle), "notes": notes}))
+    return toolbox, Thinker(ThinkerConfig(max_tools=max_tools), toolbox, "qwen-test", chat=FakeQwen([]))
+
+
+async def test_every_tool_is_offered_while_they_fit():
+    toolbox, thinker = two_servers()
+    specs = await thinker.tools(topic="music")
+    assert len(specs) == 18
+    assert [s.server for s in specs[:10]] == ["spotify"] * 10   # the gate's topic first
+    assert [s.server for s in specs[10:]] == ["notes"] * 8
+    assert [s.server for s in await thinker.tools(topic="notes")][:8] == ["notes"] * 8
+    await toolbox.close()
+
+
+async def test_over_max_tools_the_topic_and_the_common_tools_survive(caplog):
+    toolbox, thinker = two_servers(max_tools=6)
+    with caplog.at_level("INFO", logger="strawberryd.thinker"):
+        specs = await thinker.tools(topic="music")
+    # The music server's own common tools, in the adapter's order; the notes server is out.
+    assert [s.name for s in specs] == ["play", "pause", "next", "previous", "get_current_track", "get_playlists"]
+    assert "18 tools is more than max_tools=6" in caplog.text
+    assert "spotify.get_devices" in caplog.text and "notes.note_0" in caplog.text
+    # A sentence the gate read as notes keeps the notes tools instead.
+    assert [s.name for s in await thinker.tools(topic="notes")] == [f"note_{i}" for i in range(6)]
+    # No topic (the gate is off, or it read "other") keeps the alphabetical order it had before.
+    assert [s.server for s in await thinker.tools(topic="")] == ["spotify"] * 6
+    await toolbox.close()
+
+
+async def test_the_gates_topic_reaches_the_thinker(aiohttp_client):
+    config = plain_config()
+    spotify, toolbox, qwen, thinker = make(["[neutral] Nothing much."])
+    gate = ScriptedGate({"what is playing": reading("what is playing", kind="question", topic="music", decision="act",
+                                                    tool="other")})
+    daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)  # type: ignore[arg-type]
+    client = await aiohttp_client(create_app(daemon))
+    await daemon.start()
+    seen: list[str] = []
+    real = thinker.tools
+
+    async def watched(careful=False, topic=""):
+        seen.append(topic)
+        return await real(careful, topic)
+
+    thinker.tools = watched  # type: ignore[assignment]
+    await client.post("/event", json={"source": "voice", "title": "what is playing"})
+    assert seen == ["music"]
+    await daemon.close()
+
+
 def voice_daemon(config: Config, toolbox, thinker, gate=None, actor=None):
     daemon = Daemon(reactor=CannedReactor(), config=config, gate=gate, toolbox=toolbox, thinker=thinker, actor=actor)
     sink = Sink()
@@ -230,7 +286,7 @@ async def test_a_quick_qwen_reply_gets_the_pose_but_no_spoken_ack(aiohttp_client
     spotify, toolbox, qwen, thinker = make([])
     thinker.chat = FakeQwen(["[neutral] Just some Mozart drifting through."])
     thinker.config = config.thinker
-    gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
+    gate = fake_gate(toolbox)
     daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)
     client = await aiohttp_client(create_app(daemon))
     await daemon.start()
@@ -254,7 +310,7 @@ async def test_an_argument_request_goes_to_qwen_with_cover(aiohttp_client):
 
     thinker.chat = SlowFirst(["[happy] Jazz it is. Feeling Good is on.", "[neutral] Queued."])
     thinker.config = config.thinker
-    gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
+    gate = fake_gate(toolbox)
     daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)
     client = await aiohttp_client(create_app(daemon))
     await daemon.start()
@@ -308,7 +364,7 @@ async def test_small_talk_is_her_line_from_qwen_not_a_canned_echo(aiohttp_client
 async def test_a_bare_reflex_never_reaches_qwen(aiohttp_client):
     config = plain_config()
     spotify, toolbox, qwen, thinker = make(["[happy] unused"])
-    gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
+    gate = fake_gate(toolbox)
     daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)
     client = await aiohttp_client(create_app(daemon))
     await daemon.start()
@@ -345,7 +401,7 @@ async def test_with_the_thinker_off_gemma_still_answers(aiohttp_client):
     config.thinker.enabled = False
     spotify, toolbox, qwen, thinker = make(["[happy] never asked"])
     thinker.config = config.thinker
-    gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
+    gate = fake_gate(toolbox)
     daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)
     client = await aiohttp_client(create_app(daemon))
     await daemon.start()

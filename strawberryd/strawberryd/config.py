@@ -138,13 +138,11 @@ class ToolsConfig:
     result_chars: int = 2000       # a tool result is cut here before any model reads it
     connect_timeout_s: float = 20.0
     call_timeout_s: float = 20.0
-    # name -> {topic, command, args, env, cwd, careful}; topic is one of the gate's (music, calendar, notes,
-    # system); careful lists tools with consequences, offered to the thinker only when you ask for such a change
-    servers: dict[str, dict[str, Any]] = field(default_factory=lambda: {
-        "spotify": {"topic": "music", "command": "spotify-mcp",
-                    "careful": ["save_tracks", "remove_saved_tracks", "add_to_playlist", "favorite_current",
-                                "remove_favorite", "clear_favorites"]},
-    })
+    # name -> {topic, command, args, env, cwd, careful, adapter}; topic is one of the gate's (music, calendar,
+    # notes, system); careful lists tools with consequences, offered to the thinker only when you ask for such a
+    # change; adapter names one of strawberryd/adapters/ when the server's own name does not (ADAPTERS.md).
+    # Empty by default: no server ships configured, and music control works over MPRIS without one.
+    servers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -152,6 +150,8 @@ class ActionsConfig:
     """Acting on what you said (WIRING.md §8b): the reflex tier, and the thinker behind it."""
 
     enabled: bool = True
+    mpris: bool = True             # skip/pause/resume/volume/what's playing over MPRIS for any desktop
+                                   # player, when no configured server has a reflex for it (mpris.py)
     reflex: float = 0.6            # tool confidence at which a plain command fires the tool directly
     argument: float = 0.5          # p(has_argument) above this needs the thinker (Qwen) to fill it in
     timeout_s: float = 25.0        # the whole action, tools included; then she says it failed
@@ -169,6 +169,8 @@ class ThinkerConfig:
     keep_alive: int | str = "30m"  # stays loaded this long after a request; a cold load is 7-17 s
     num_ctx: int = 8192
     num_predict: int = 300
+    max_tools: int = 30            # more schemas than this and the list is cut: the gate's topic first,
+                                   # then each adapter's common tools (25 Spotify tools are ~360 tokens)
     max_rounds: int = 6            # tool rounds before she has to answer honestly with what she has
     timeout_s: float = 45.0        # the whole request, cold load included
     ack_after_s: float = 2.5       # silent thinking pose first; a spoken ack only if the reply takes longer
@@ -301,7 +303,9 @@ def _validate(config: Config) -> None:
             raise ConfigError(f"tools.servers.{name}.env must be a table of strings")
         if not all(isinstance(t, str) for t in server.get("careful", [])):
             raise ConfigError(f"tools.servers.{name}.careful must be a list of tool names")
-        unknown = set(server) - {"topic", "command", "args", "env", "cwd", "careful"}
+        if "adapter" in server and not (isinstance(server["adapter"], str) and server["adapter"].strip()):
+            raise ConfigError(f"tools.servers.{name}.adapter must be an adapter name, e.g. \"spotify\" (ADAPTERS.md)")
+        unknown = set(server) - {"topic", "command", "args", "env", "cwd", "careful", "adapter"}
         if unknown:
             raise ConfigError(f"tools.servers.{name}: unknown keys {sorted(unknown)}")
     if config.tools.result_chars < 100:
@@ -312,6 +316,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("actions.ledger_turns >= 1 and actions.ledger_age_s > 0 are required")
     if config.thinker.max_rounds < 1 or config.thinker.timeout_s <= 0 or config.thinker.num_ctx < 1024:
         raise ConfigError("thinker.max_rounds >= 1, timeout_s > 0 and num_ctx >= 1024 are required")
+    if config.thinker.max_tools < 1:
+        raise ConfigError("thinker.max_tools must be >= 1 (it caps the tool schemas in the prompt)")
     if not config.thinker.acks or not all(isinstance(a, str) and a for a in config.thinker.acks):
         raise ConfigError("thinker.acks must be a non-empty list of strings")
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
@@ -427,15 +433,24 @@ def default_toml() -> str:
         "[tools]",
         "enabled = true                 # MCP servers she acts through; the servers you list are the servers",
         "result_chars = 2000            # tool results are cut here before a model reads them",
-        "[tools.servers.spotify]",
-        'topic = "music"                # one of the gate\'s topics: music, calendar, notes, system',
-        'command = "spotify-mcp"        # or a full path, e.g. ~/spotify-mcp/.venv/bin/spotify-mcp',
+        "",
+        "# No server is configured by default: skip, pause, resume, volume and \"what's playing\" already",
+        "# work for any desktop player over MPRIS. Add a server to give her more, one table each.",
+        "# A server whose name (or `adapter`) matches one of strawberryd/adapters/ also gets that adapter:",
+        "# its reflexes, its situation line, names for the recogniser, its error wording. See ADAPTERS.md.",
+        "#",
+        "# [tools.servers.spotify]                # the name matches the shipped Spotify adapter",
+        '# topic = "music"                        # one of the gate\'s topics: music, calendar, notes, system',
+        '# command = "spotify-mcp"                # or a full path, e.g. ~/spotify-mcp/.venv/bin/spotify-mcp',
         "# args = []",
         "# env = {}",
-        '# careful = ["save_tracks", "remove_saved_tracks", "add_to_playlist", "favorite_current", "remove_favorite", "clear_favorites"]',
+        '# adapter = "spotify"                    # only when the server\'s own name does not say so',
+        "# careful = [\"save_tracks\", \"remove_saved_tracks\", \"add_to_playlist\", \"favorite_current\",",
+        '#            "remove_favorite", "clear_favorites"]   # offered only when you ask for such a change',
         "",
         "[actions]",
-        "enabled = true                 # the reflexes: skip, pause, what's playing… (needs [tools] and [gate])",
+        "enabled = true                 # the reflexes: skip, pause, what's playing… (needs [gate])",
+        "mpris = true                   # do the bare music commands over MPRIS when no server covers them",
         "reflex = 0.6                   # how sure the gate must be to fire a plain command straight away",
         "ledger_turns = 6               # her memory: this many recent exchanges, given to whoever answers",
         "",
@@ -444,6 +459,7 @@ def default_toml() -> str:
         'model = ""                     # empty = brain.action_model',
         'think = false                  # false | "low" | "medium" | true; off is fine, the gate already routed',
         'keep_alive = "30m"             # a cold load is 7-17 s; she says an acknowledgement while it happens',
+        "max_tools = 30                 # more tool schemas than this and the least likely are cut (§8b)",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

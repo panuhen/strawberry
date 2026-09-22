@@ -10,11 +10,13 @@ from dataclasses import replace
 from typing import Any
 
 from .actions import Actor, Outcome
+from .adapters import gate_examples
 from .config import Config
 from .contract import Performance
 from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
 from .ledger import Ledger
+from .mpris import Mpris
 from .reactions import decorate
 from .speech import Speaker
 from .systemone import Gate, Route
@@ -36,9 +38,14 @@ class Daemon:
         self.reactor: Reactor = reactor or self._default_reactor()
         self.speaker = speaker or Speaker(self.config.speech)
         self.listener = listener or Listener(self.config.voice)
-        self.gate = gate or Gate(self.config.gate, self.config.brain.ollama_url)
         self.toolbox = toolbox or Toolbox(self.config.tools)
-        self.actor = actor or Actor(self.config.actions, self.toolbox)
+        # A configured server with an adapter brings its own phrases for the gate ("save this song"
+        # only means something with a library behind it) and its own reflexes; the bare music
+        # commands no server covers go to MPRIS, which every desktop player speaks (§8b).
+        self.gate = gate or Gate(self.config.gate, self.config.brain.ollama_url,
+                                 examples=gate_examples(self.toolbox.adapters))
+        self.mpris = Mpris() if actor is None and self.config.actions.mpris else None
+        self.actor = actor or Actor(self.config.actions, self.toolbox, mpris=self.mpris)
         self.thinker = thinker or Thinker(self.config.thinker, self.toolbox, self.config.brain.action_model,
                                           self.config.brain.ollama_url)
         self.rng = random.Random()
@@ -113,6 +120,8 @@ class Daemon:
         await self.gate.close()
         await self.toolbox.close()
         await self.thinker.close()
+        if self.mpris:
+            await self.mpris.close()
         if self.vocabulary_task and not self.vocabulary_task.done():
             self.vocabulary_task.cancel()
         if self.listen_task and not self.listen_task.done():
@@ -280,7 +289,8 @@ class Daemon:
         reminder = asyncio.get_running_loop().create_task(cover())
         try:
             careful = route is not None and route.library_change >= 0.5
-            return await self.thinker.run(text, await self.situation(), careful=careful)
+            return await self.thinker.run(text, await self.situation(), careful=careful,
+                                          topic=route.topic if route is not None else "")
         finally:
             reminder.cancel()
 

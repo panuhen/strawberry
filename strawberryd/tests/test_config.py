@@ -83,6 +83,19 @@ def test_default_template_round_trips(tmp_path):
     assert config.brain.keep_alive == -1
     assert config.thinker.keep_alive == "30m"   # she is rarely cold; a cold load is 7-17 s
     assert config.actions.ledger_turns == 6
+    assert config.actions.mpris is True and config.thinker.max_tools == 30
+    # No MCP server ships configured; the template shows how to add one (ADAPTERS.md).
+    assert config.tools.servers == {}
+    assert "# [tools.servers.spotify]" in default_toml() and "ADAPTERS.md" in default_toml()
+
+
+def test_a_server_may_name_its_adapter(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[tools.servers.music-at-home]\ncommand = "x"\ntopic = "music"\nadapter = "spotify"\n')
+    assert load(path, env={}).tools.servers["music-at-home"]["adapter"] == "spotify"
+    path.write_text('[tools.servers.tunes]\ncommand = "x"\nadapter = ""\n')
+    with pytest.raises(ConfigError, match="adapter"):
+        load(path, env={})
 
 
 def test_keep_alive_accepts_seconds_or_duration_string(tmp_path):

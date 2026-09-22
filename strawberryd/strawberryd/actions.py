@@ -1,26 +1,28 @@
 """Acting on what you said (WIRING.md §8b): the reflex tier, and the seam for the thinker.
 
 The gate has already decided a spoken sentence is a request or a question with a topic, and,
-on the same embedding, which tool it is like and whether it carries an argument. Three tiers
+on the same embedding, which tool it is like and whether it carries an argument. Two tiers
 by cost:
 
-    reflex   the gate is sure about the tool and there is nothing to fill in -> call it now
+    reflex   the gate is sure about the tool and there is nothing to fill in -> do it now
              (a skip is ~0.25 s end to end: no model in the loop until she phrases the result)
     thinker  everything else the user says -> Qwen with the tools, in her voice (thinker.py)
 
-When a reflex acted, the outcome is one plain sentence of fact written by code ("Skipped.
-Now Blue Monday by New Order.") and the reaction path adds a short quip in her voice after it
-(the `action` event). A 1B model will not reliably carry a track name or a number from a
-structured result into a sentence, so the fact never depends on it; Spotify's JSON never
-reaches the bubble, and a failure says it failed.
+A reflex is done in one of two places. A configured server with an *adapter* (adapters/) has
+its own, in that server's tool names: a Spotify adapter can name the next track before the
+desktop player's metadata catches up, so it wins when it is there. With no such server the
+bare music commands run over **MPRIS** (mpris.py), which every desktop player speaks, so skip,
+pause, resume, volume and "what's playing" work out of the box with nothing configured.
 
-Reflexes are per server (the tool names are the server's), keyed by the gate's tool option.
+Either way the outcome is one plain sentence of fact written by code ("Skipped. Now Blue
+Monday by New Order.") and the reaction path adds a short quip in her voice after it (the
+`action` event). A 1B model will not reliably carry a track name or a number from a structured
+result into a sentence, so the fact never depends on it, and a failure says it failed.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -33,6 +35,10 @@ from .systemone import Route
 from .tools import Toolbox, ToolResult
 
 log = logging.getLogger("strawberryd.actions")
+
+# The gate topic whose bare tools MPRIS covers (mpris.TOPIC; named here so actions.py
+# needs no import of it, and mpris.py can import Outcome from here).
+MPRIS_TOPIC = "music"
 
 
 @dataclass(frozen=True)
@@ -54,168 +60,6 @@ class Outcome:
 Reflex = Callable[[Toolbox, str], Awaitable[Outcome]]
 
 
-# ----------------------------------------------------------------------------- spotify reflexes
-
-
-def _json(result: ToolResult) -> dict[str, Any]:
-    try:
-        data = json.loads(result.text)
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _track(data: dict[str, Any]) -> str:
-    """'Blue Monday by New Order' from a get_current_track result; '' when nothing is playing."""
-    track = data.get("track") or {}
-    if not track:
-        return ""
-    name = track.get("name", "something")
-    artists = ", ".join(track.get("artists", [])) or "an unknown artist"
-    return f"{name} by {artists}"
-
-
-def _failed(verb: str, result: ToolResult) -> Outcome:
-    data = _json(result)
-    detail = (data.get("error") or result.text.strip().splitlines()[0][:160]) if result.text else "no answer"
-    detail = str(detail).removeprefix("error: ")
-    if "No active device" in str(data.get("details", "")):
-        said = "Spotify has no active device; open Spotify on the computer or phone first"
-    elif "Restriction violated" in str(data.get("details", "")):
-        said = "Spotify won't do that right now (already doing it, or the device refuses)"
-    elif data.get("status") == 403:
-        said = "Spotify says that's not allowed for this app"
-    else:
-        said = f"Spotify said: {detail[:120]}"
-    return Outcome(f"tried to {verb}", f"I tried to {verb}, but {said}.", False, (result,))
-
-
-async def _current(toolbox: Toolbox, server: str) -> tuple[str, dict[str, Any], ToolResult]:
-    now = await toolbox.call(server, "get_current_track")
-    data = _json(now) if now.ok else {}
-    return _track(data), data, now
-
-
-async def _spotify_now(toolbox: Toolbox, server: str) -> Outcome:
-    track, data, result = await _current(toolbox, server)
-    if not result.ok:
-        return _failed("look at the player", result)
-    if not track:
-        return Outcome("looked at the player", "Nothing is playing right now.", True, (result,))
-    album = (data.get("track") or {}).get("album")
-    tail = f", from {album}" if album and album not in track else ""
-    verb = "That's" if data.get("playing", True) else "Paused on"
-    return Outcome("looked at the player", f"{verb} {track}{tail}.", True, (result,))
-
-
-async def _spotify_step(toolbox: Toolbox, server: str, tool: str, verb: str, did: str, lead: str) -> Outcome:
-    result = await toolbox.call(server, tool)
-    if not result.ok:
-        return _failed(verb, result)
-    await asyncio.sleep(0.6)  # Spotify reports the old track for a moment
-    track, _data, now = await _current(toolbox, server)
-    return Outcome(did, f"{lead} {track}." if track else f"{lead.rstrip(':')}.", True, (result, now))
-
-
-async def spotify_skip(toolbox: Toolbox, server: str) -> Outcome:
-    return await _spotify_step(toolbox, server, "next", "skip", "skipped to the next track", "Skipped. Now")
-
-
-async def spotify_previous(toolbox: Toolbox, server: str) -> Outcome:
-    return await _spotify_step(toolbox, server, "previous", "go back", "went back to the previous track", "Back to")
-
-
-async def spotify_pause(toolbox: Toolbox, server: str) -> Outcome:
-    result = await toolbox.call(server, "pause")
-    if not result.ok:
-        return _failed("pause", result)
-    return Outcome("paused the music", "Paused.", True, (result,))
-
-
-async def spotify_resume(toolbox: Toolbox, server: str) -> Outcome:
-    track, data, now = await _current(toolbox, server)
-    if now.ok and track and data.get("playing", False):
-        return Outcome("checked the player", f"It's already playing: {track}.", True, (now,))  # play() would 403
-    return await _spotify_step(toolbox, server, "play", "resume", "started the music again", "Playing again:")
-
-
-def _volume(delta: int) -> Reflex:
-    async def reflex(toolbox: Toolbox, server: str) -> Outcome:
-        # Only the devices listing carries the current volume (the active device's).
-        word = "down" if delta < 0 else "up"
-        state = await toolbox.call(server, "get_devices")
-        if not state.ok:
-            return _failed(f"turn it {word}", state)
-        active = [d for d in _json(state).get("devices", []) if isinstance(d, dict) and d.get("is_active")]
-        current = active[0].get("volume") if active else None
-        if not isinstance(current, int):
-            return Outcome(f"tried to turn it {word}", f"I tried to turn it {word}, but Spotify won't say where the volume is.",
-                           False, (state,))
-        target = max(0, min(100, current + delta))
-        result = await toolbox.call(server, "set_volume", {"volume": target})
-        if not result.ok:
-            return _failed(f"turn it {word}", result)
-        return Outcome(f"turned the volume {word}", f"Volume {word} to {target}.", True, (state, result))
-
-    return reflex
-
-
-async def spotify_situation(toolbox: Toolbox, server: str) -> str:
-    """One line of context for the thinker: 'this song' means whatever is playing now."""
-    track, data, result = await _current(toolbox, server)
-    if not result.ok:
-        return ""
-    if not track:
-        return "Nothing is playing on Spotify right now."
-    album = (data.get("track") or {}).get("album")
-    state = "Now playing" if data.get("playing", True) else "Paused"
-    return f"{state} on Spotify: {track}" + (f" (album: {album})." if album else ".")
-
-
-Situation = Callable[[Toolbox, str], Awaitable[str]]
-SITUATIONS: dict[str, Situation] = {"spotify": spotify_situation}
-
-
-async def spotify_vocabulary(toolbox: Toolbox, server: str) -> list[str]:
-    """Names whisper should know: what is playing, favourites, recent saves, playlists.
-
-    'Daft Punk' came through as Dothpunk, Duff Punk and Dove Punk before the recogniser was
-    told the names; the third one played a real artist called Dovepunk. Order matters: the
-    list is cut to voice.max_hotwords, so the most likely names come first.
-    """
-    names: list[str] = []
-
-    def add(*values: Any) -> None:
-        for value in values:
-            if isinstance(value, str) and value.strip() and value not in names and len(value) <= 40:
-                names.append(value.strip())
-
-    track, data, now = await _current(toolbox, server)
-    if now.ok:
-        add(*(data.get("track") or {}).get("artists", []))
-    whole = 500_000  # these listings are parsed here, not read by a model: no truncation
-    # Playlists next: you ask for them by name ("play Acid Techno") and they are few.
-    playlists = await toolbox.call(server, "get_playlists", {"limit": 50}, result_chars=whole)
-    if playlists.ok:
-        for item in _json(playlists).get("playlists", []):
-            name = item.get("name", "")
-            if any(ch.isalpha() for ch in name):  # emoji-only playlist names help nobody
-                add(name)
-    favourites = await toolbox.call(server, "get_favorites", result_chars=whole)
-    if favourites.ok:
-        for item in _json(favourites).get("favorites", []):
-            add(*item.get("artists", []))
-    saved = await toolbox.call(server, "get_saved_tracks", {"limit": 50}, result_chars=whole)
-    if saved.ok:
-        for item in _json(saved).get("tracks", []):
-            add(*item.get("artists", []))
-    return names
-
-
-Vocabulary = Callable[[Toolbox, str], Awaitable[list[str]]]
-VOCABULARIES: dict[str, Vocabulary] = {"spotify": spotify_vocabulary}
-
-
 # Words a bare "start the music again" sentence is made of. Anything else in a `resume` sentence
 # ("play daft punk", "play some classical") is a name or a genre the embedding under-scored as an
 # argument (live: 0.31 for "play daft punk"), and the sentence belongs to the thinker, not to a reflex
@@ -233,34 +77,34 @@ def carries_argument(text: str, tool: str) -> bool:
     return any(word not in RESUME_WORDS for word in re.findall(r"[a-z'’]+", text.lower()))
 
 
-REFLEXES: dict[str, dict[str, Reflex]] = {
-    "spotify": {
-        "skip": spotify_skip,
-        "previous": spotify_previous,
-        "pause": spotify_pause,
-        "resume": spotify_resume,
-        "volume_down": _volume(-15),
-        "volume_up": _volume(15),
-        "now_playing": _spotify_now,
-    },
-}
-
-
 # ----------------------------------------------------------------------------- the actor
 
 
 class Actor:
-    def __init__(self, config: ActionsConfig, toolbox: Toolbox, reflexes: dict[str, dict[str, Reflex]] | None = None) -> None:
+    """Fires the bare reflexes, and collects what the servers can tell the thinker.
+
+    `reflexes` is server name -> the gate's tool -> a reflex, taken from the adapters the
+    toolbox loaded for the configured servers. `mpris` is the fallback for the music tools no
+    configured server covers; None leaves music to the servers alone.
+    """
+
+    def __init__(self, config: ActionsConfig, toolbox: Toolbox, reflexes: dict[str, dict[str, Reflex]] | None = None,
+                 mpris: Any | None = None) -> None:
         self.config = config
         self.toolbox = toolbox
-        self.reflexes = REFLEXES if reflexes is None else reflexes
+        self.adapters = dict(getattr(toolbox, "adapters", {}))
+        self.reflexes = reflexes if reflexes is not None else {
+            name: dict(adapter.reflexes) for name, adapter in self.adapters.items() if adapter.reflexes
+        }
+        self.mpris = mpris
         self.acted = 0
         self.failed = 0
         self.deferred = 0          # would have gone to the thinker
         self.last: dict[str, Any] | None = None
 
     def reflex_for(self, route: Route) -> tuple[str, Reflex] | None:
-        """The first configured server for the route's topic that has a reflex for its tool."""
+        """Who does this sentence's bare command: a configured server's adapter if one has a
+        reflex for it, otherwise MPRIS for the music ones. None means the thinker's turn."""
         if not route.tool or route.tool == "other":
             return None
         if route.tool_confidence < self.config.reflex or route.has_argument >= self.config.argument:
@@ -270,6 +114,10 @@ class Actor:
         for name, server in self.toolbox.servers.items():
             if server.topic == route.topic and route.tool in self.reflexes.get(name, {}):
                 return name, self.reflexes[name][route.tool]
+        if self.mpris is not None and route.topic == MPRIS_TOPIC:
+            reflex = self.mpris.reflexes().get(route.tool)
+            if reflex is not None:
+                return "mpris", reflex
         return None
 
     async def act(self, text: str, route: Route) -> Outcome | None:
@@ -304,29 +152,42 @@ class Actor:
 
     async def situation(self, topic: str | None = None) -> str:
         """What the thinker should know before it starts, from the servers that can say. `topic`
-        narrows it to one topic's servers; None (the default) asks every server that has a line."""
+        narrows it to one topic's servers; None (the default) asks every server that has a line.
+        With nothing to say about music, MPRIS says what is playing, so "this song" still means
+        something with no server configured."""
         lines = []
         for name, server in self.toolbox.servers.items():
-            if (topic is None or server.topic == topic) and name in SITUATIONS:
-                try:
-                    line = await asyncio.wait_for(SITUATIONS[name](self.toolbox, name), 5.0)
-                except asyncio.TimeoutError:
-                    line = ""
-                if line:
-                    lines.append(line)
+            adapter = self.adapters.get(name)
+            if adapter is None or (topic is not None and server.topic != topic):
+                continue
+            try:
+                line = await asyncio.wait_for(adapter.situation(self.toolbox, name), 5.0)
+            except asyncio.TimeoutError:
+                line = ""
+            if line:
+                lines.append(line)
+        if not lines and self.mpris is not None and topic in (None, MPRIS_TOPIC):
+            try:
+                line = await asyncio.wait_for(self.mpris.situation(), 5.0)
+            except asyncio.TimeoutError:
+                line = ""
+            if line:
+                lines.append(line)
         return " ".join(lines)
 
     async def vocabulary(self) -> list[str]:
-        """Names from every server that can offer them, for the speech recogniser."""
+        """Names from every server whose adapter can offer them, for the speech recogniser."""
         names: list[str] = []
         for name in self.toolbox.servers:
-            if name in VOCABULARIES:
-                try:
-                    for word in await asyncio.wait_for(VOCABULARIES[name](self.toolbox, name), 20.0):
-                        if word not in names:
-                            names.append(word)
-                except asyncio.TimeoutError:
-                    log.warning("actions: %s vocabulary timed out", name)
+            adapter = self.adapters.get(name)
+            if adapter is None:
+                continue
+            try:
+                for word in await asyncio.wait_for(adapter.vocabulary(self.toolbox, name), 20.0):
+                    if word not in names:
+                        names.append(word)
+            except asyncio.TimeoutError:
+                log.warning("actions: %s vocabulary timed out", name)
         return names
 
     def stats(self) -> dict[str, Any]:

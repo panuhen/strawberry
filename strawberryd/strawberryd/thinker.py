@@ -141,22 +141,46 @@ class Thinker:
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise ThinkerError(str(exc) or type(exc).__name__) from exc
 
-    async def tools(self, careful: bool = False) -> list[ToolSpec]:
+    async def tools(self, careful: bool = False, topic: str = "") -> list[ToolSpec]:
         """Every configured server's tools: one brain, one toolbox. `careful=False` leaves out the
-        tools with consequences (save, remove, add to a playlist) until the sentence asks for one."""
-        specs: list[ToolSpec] = []
-        for topic in sorted(self.toolbox.topics()):
-            specs += await self.toolbox.tools_for(topic, careful=careful)
-        return specs
+        tools with consequences (save, remove, add to a playlist) until the sentence asks for one.
 
-    async def run(self, text: str, context: str = "", careful: bool = False) -> Outcome:
+        `topic` is the gate's reading of the sentence: that topic's servers go first, so when there
+        are more tools than `max_tools` the ones cut are the ones furthest from what was asked."""
+        topics = sorted(self.toolbox.topics())
+        order = ([topic] if topic in topics else []) + [t for t in topics if t != topic]
+        specs: list[ToolSpec] = []
+        for name in order:
+            specs += await self.toolbox.tools_for(name, careful=careful)
+        return self.fit(specs)
+
+    def fit(self, specs: list[ToolSpec]) -> list[ToolSpec]:
+        """At most `max_tools` schemas in the prompt (25 Spotify tools are ~360 tokens of an 8192
+        context). The order they arrive in is already topic-first; within a server the adapter's
+        `common_tools` come first, and the tail is cut and logged."""
+        limit = self.config.max_tools
+        if limit < 1 or len(specs) <= limit:
+            return specs
+        by_server: dict[str, list[ToolSpec]] = {}
+        for spec in specs:
+            by_server.setdefault(spec.server, []).append(spec)
+        ordered: list[ToolSpec] = []
+        for server, group in by_server.items():
+            rank = {name: i for i, name in enumerate(self.toolbox.common_tools(server))}
+            ordered += sorted(group, key=lambda s: rank.get(s.name, len(rank)))   # stable: the rest keep their order
+        kept, cut = ordered[:limit], ordered[limit:]
+        log.info("thinker: %d tools is more than max_tools=%d; offering %d, leaving out %s",
+                 len(specs), limit, len(kept), ", ".join(s.key for s in cut))
+        return kept
+
+    async def run(self, text: str, context: str = "", careful: bool = False, topic: str = "") -> Outcome:
         """One sentence, start to finish: her reply, its mood, and whatever tools it took to get
         there. Never raises: a failure is an Outcome with ok=False and something to say about it."""
         self.calls += 1
         started = time.perf_counter()
         calls: list[ToolResult] = []
         try:
-            outcome = await asyncio.wait_for(self._run(text, context, calls, careful), self.config.timeout_s)
+            outcome = await asyncio.wait_for(self._run(text, context, calls, careful, topic), self.config.timeout_s)
         except asyncio.TimeoutError:
             outcome = Outcome("thought about it too long", "I tried, but my thinking took too long. Sorry.", False,
                               tuple(calls), "alert")
@@ -174,8 +198,8 @@ class Thinker:
         log.info("thinker: %r -> %s -> [%s] %r in %.1fs", text, outcome.did, outcome.emotion, outcome.fact, self.last_s)
         return outcome
 
-    async def _run(self, text: str, context: str, calls: list[ToolResult], careful: bool) -> Outcome:
-        specs = await self.tools(careful)
+    async def _run(self, text: str, context: str, calls: list[ToolResult], careful: bool, topic: str = "") -> Outcome:
+        specs = await self.tools(careful, topic)
         tools = [s.for_ollama() for s in specs]
         user = text if not context else f"Situation: {context}\n\nThe user says: {text}"
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt(bool(tools))},

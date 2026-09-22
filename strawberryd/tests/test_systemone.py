@@ -195,6 +195,7 @@ async def test_voice_events_pass_through_the_gate(aiohttp_client):
     config.brain.enabled = False
     config.speech.enabled = False
     config.voice.enabled = False
+    config.actions.mpris = False      # this is about the routing, not about touching the player
     gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
     daemon = Daemon(reactor=CannedReactor(), config=config, gate=gate)
     client = await aiohttp_client(create_app(daemon))

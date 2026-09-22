@@ -262,7 +262,6 @@ KIND = Choice("kind", (
         "turn the volume down a bit", "make it louder", "set a timer for ten minutes",
         "remind me to call mum at five", "add this to my notes", "write down: buy milk",
         "open my email", "mute the music", "play something calmer", "queue up some Daft Punk",
-        "save this song", "like this track", "add this to my favourites", "put this on my running playlist",
         "recommend me some music", "suggest something to listen to", "play something I might like",
     )),
     Option("question", "wants a fact looked up or read out", (
@@ -356,11 +355,11 @@ MUSIC_TOOL = Choice("music_tool", (
     Option("now_playing", "say what is playing", ("what song is this", "who sings this", "what's playing",
                                                    "what are we listening to", "who is this by", "what album is this from")),
     Option("other", "something else about music: a specific song, artist or playlist, the queue, shuffle, facts", (
-        "play some jazz", "put on some Nina Simone", "queue up Blue Monday", "play my running playlist",
-        "shuffle this album", "put this on repeat", "add this to my favourites", "what year did this come out",
+        "play some jazz", "put on some Nina Simone", "queue up Blue Monday",
+        "shuffle this album", "put this on repeat", "what year did this come out",
         "tell me about this artist", "what can you tell me about the band", "who are the members of this band",
         "tell me more about the band members and the history", "what else did they make", "recommend me some music",
-        "play something similar", "play something else", "play something by this band", "play my running playlist",
+        "play something similar", "play something else", "play something by this band",
         "queue up something by Nina Simone", "put something on for cooking", "play the live version",
         "play some acid techno", "play some classical music", "no, play another classical song", "put on some techno",
         "play daft punk", "play some daft punk", "play led zeppelin",
@@ -453,7 +452,8 @@ class Gate:
 
     WARM_UP_S = 120.0
 
-    def __init__(self, config: GateConfig, ollama_url: str = "", embedder: Embedder | None = None) -> None:
+    def __init__(self, config: GateConfig, ollama_url: str = "", embedder: Embedder | None = None,
+                 examples: dict[str, list[str]] | None = None) -> None:
         self.config = config
         self.embedder = embedder
         self.owned: OllamaEmbedder | None = None
@@ -462,8 +462,14 @@ class Gate:
             self.embedder = self.owned
         self.systemone = SystemOne(self.embedder, config.temperature, config.neighbours, config.query_prefix,
                                    config.document_prefix) if self.embedder else None
+        # Extra phrases: the loaded adapters' first (a Spotify server brings "save this song"),
+        # then the config's, which are the user's own corrections and go last.
+        extra: dict[str, list[str]] = {key: list(phrases) for key, phrases in (examples or {}).items()}
+        for key, phrases in config.examples.items():
+            extra[key] = extra.get(key, []) + list(phrases)
+        self.extra_examples = extra
         self.questions: tuple[Question, ...] = tuple(
-            q.with_examples(config.examples) if isinstance(q, Choice) else q for q in ROUTING
+            q.with_examples(extra) if isinstance(q, Choice) else q for q in ROUTING
         )
         self.ready = False
         self.calls = 0

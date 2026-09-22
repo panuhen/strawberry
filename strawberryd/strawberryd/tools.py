@@ -1,8 +1,14 @@
 """MCP client: the servers she can act through, one or more per topic (WIRING.md §8b).
 
-    [tools.servers.spotify]
-    topic = "music"
-    command = "spotify-mcp"
+    [tools.servers.notes]
+    topic = "notes"
+    command = "my-notes-mcp"
+
+The servers you list are the servers; none is configured by default (ADAPTERS.md). A server
+whose name — or whose `adapter` key — matches one of `strawberryd/adapters/` also gets that
+adapter, which is where everything server-specific lives: the reflexes, the situation line,
+the recogniser's vocabulary, and the rewording of that server's confusing errors. The client
+below knows none of it.
 
 Each server runs as a child process over stdio, wrapped in the official Python MCP SDK. The
 SDK's transport must be opened and closed from the same task, so every server gets its own
@@ -110,37 +116,34 @@ def looks_like_error(text: str) -> bool:
     return set(data) <= {"error", "status", "details", "code", "message"}
 
 
-def clarify_error(text: str) -> str:
-    """Some servers label every refusal the same way. Spotify's says "Permission denied. Check app
-    scopes." for a 403 that is really "Restriction violated": already playing, already paused, or
-    the device does not allow the command. A model reading that would report a permissions problem
-    to the user, so the body is rewritten before anyone reads it (it stays an error body)."""
-    if not looks_like_error(text):
+def clarify_error(text: str, adapter: Any | None = None) -> str:
+    """Ask the server's adapter to rewrite a confusing refusal before any model reads it.
+
+    Some servers label every refusal the same way (Spotify's says "Permission denied. Check app
+    scopes." for a 403 that is really "already playing"), and a model reading that would report a
+    permissions problem to the user. The core knows no server's wording, so the rewriting lives in
+    that server's adapter; a server without one is left exactly as it answered.
+    """
+    if adapter is None or not looks_like_error(text):
         return text
-    data = json.loads(text)
-    details = str(data.get("details", ""))
-    if "Restriction violated" in details:
-        data["error"] = ("Spotify refused the command: restriction violated. Usually the player is already in that "
-                         "state (already playing or paused) or the active device does not allow it. Not a permissions problem.")
-        return json.dumps(data, ensure_ascii=False)
-    if "No active device" in details:
-        data["error"] = ("Spotify has no active device: no Spotify app is open and active on any of the user's devices, so "
-                         "nothing can be played from here until they open one. Do not retry; tell the user.")
-        return json.dumps(data, ensure_ascii=False)
-    if data.get("status") == 403 and "Forbidden" in details:
-        data["error"] = "Spotify forbids this for the app (403 Forbidden); it cannot be done from here."
-        return json.dumps(data, ensure_ascii=False)
-    return text
+    try:
+        clarified = adapter.clarify_error(text)
+    except Exception as exc:  # an adapter must never break a tool call
+        log.warning("tools: %s could not clarify an error (%s)", getattr(adapter, "name", adapter), exc)
+        return text
+    return clarified if isinstance(clarified, str) and clarified else text
 
 
 class Server:
     """One MCP server: a task owning the connection, a queue of calls into it."""
 
     def __init__(self, name: str, config: dict[str, Any], connect: Connector, connect_timeout_s: float,
-                 call_timeout_s: float) -> None:
+                 call_timeout_s: float, adapter: Any | None = None) -> None:
         self.name = name
         self.config = config
         self.topic: str = config.get("topic", "other")
+        # This server's adapter (strawberryd/adapters/), or None for a plain server of tools.
+        self.adapter = adapter
         # Tools with consequences (saving, removing, changing playlists): withheld from the thinker
         # unless the sentence asks for such a change (systemone.WANTS_LIBRARY_CHANGE).
         self.careful: frozenset[str] = frozenset(config.get("careful", []))
@@ -253,7 +256,7 @@ class Server:
             return ToolResult(self.name, name, False, str(exc), ms, arguments=arguments)
         ms = (time.perf_counter() - started) * 1000
         self.last_ms = ms
-        text = clarify_error(result_text(raw))
+        text = clarify_error(result_text(raw), self.adapter)
         ok = not getattr(raw, "is_error", False) and not looks_like_error(text)
         truncated = len(text) > result_chars
         if truncated:
@@ -282,7 +285,7 @@ class Server:
     def stats(self) -> dict[str, Any]:
         return {"topic": self.topic, "state": self.state, "tools": len(self.tools), "calls": self.calls,
                 "failures": self.failures, "last_ms": round(self.last_ms, 1) if self.last_ms is not None else None,
-                "error": self.failed or None}
+                "error": self.failed or None, "adapter": self.adapter.name if self.adapter else None}
 
 
 def _describe(exc: BaseException) -> str:
@@ -296,14 +299,26 @@ def _describe(exc: BaseException) -> str:
 class Toolbox:
     """All configured servers, looked up by topic. What the action path and Qwen see."""
 
-    def __init__(self, config: ToolsConfig, connect: Connector | None = None) -> None:
+    def __init__(self, config: ToolsConfig, connect: Connector | None = None,
+                 adapters: dict[str, Any] | None = None) -> None:
         self.config = config
         connect = connect or stdio_connect
+        if adapters is None:
+            from .adapters import load  # local: the adapters import the core, never the other way round
+
+            adapters = load(config.servers) if config.enabled else {}
+        #: server name -> its adapter, for the configured servers that matched one
+        self.adapters: dict[str, Any] = adapters
         self.servers: dict[str, Server] = {
-            name: Server(name, server, connect, config.connect_timeout_s, config.call_timeout_s)
+            name: Server(name, server, connect, config.connect_timeout_s, config.call_timeout_s, adapters.get(name))
             for name, server in (config.servers.items() if config.enabled else ())
         }
         self.functions: dict[str, ToolSpec] = {}   # model-facing function name -> spec, per last tools_for
+
+    def common_tools(self, server: str) -> tuple[str, ...]:
+        """The tools this server's adapter keeps first when the brain's context is tight (§8b)."""
+        adapter = self.adapters.get(server)
+        return tuple(getattr(adapter, "common_tools", ()) or ()) if adapter else ()
 
     def topics(self) -> dict[str, list[str]]:
         out: dict[str, list[str]] = {}

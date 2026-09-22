@@ -84,9 +84,12 @@ def route(config, text: str) -> int:
     import asyncio
     from dataclasses import replace
 
+    from .adapters import gate_examples, load
     from .systemone import Gate
 
-    gate = Gate(replace(config.gate, enabled=True), config.brain.ollama_url)
+    # The same questions the daemon asks, adapter phrases included, or the reading would differ.
+    gate = Gate(replace(config.gate, enabled=True), config.brain.ollama_url,
+                examples=gate_examples(load(config.tools.servers) if config.tools.enabled else {}))
 
     async def run_once() -> int:
         await gate.start()
@@ -205,13 +208,15 @@ def think(config, text: str) -> int:
     from dataclasses import replace
 
     from .actions import Actor
+    from .mpris import Mpris
     from .thinker import Thinker
     from .tools import Toolbox
 
     logging.basicConfig(level="INFO", format="%(levelname)-7s %(name)s: %(message)s")
     toolbox = Toolbox(replace(config.tools, enabled=True, preconnect=False))
     thinker = Thinker(replace(config.thinker, enabled=True), toolbox, config.brain.action_model, config.brain.ollama_url)
-    actor = Actor(config.actions, toolbox)
+    mpris = Mpris() if config.actions.mpris else None
+    actor = Actor(config.actions, toolbox, mpris=mpris)
 
     async def run_once() -> int:
         await thinker.start()
@@ -229,6 +234,8 @@ def think(config, text: str) -> int:
         finally:
             await thinker.close()
             await toolbox.close()
+            if mpris:
+                await mpris.close()
 
     return asyncio.run(run_once())
 

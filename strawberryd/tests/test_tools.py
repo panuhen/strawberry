@@ -218,7 +218,8 @@ async def test_daemon_exposes_tools_in_health(aiohttp_client):
     client = await aiohttp_client(create_app(daemon))
     await daemon.start()
     health = await (await client.get("/health")).json()
-    assert health["tools"]["music"] == {"topic": "music", "state": "idle", "tools": 0, "calls": 0, "failures": 0, "last_ms": None, "error": None}
+    assert health["tools"]["music"] == {"topic": "music", "state": "idle", "tools": 0, "calls": 0, "failures": 0,
+                                        "last_ms": None, "error": None, "adapter": None}
     await daemon.toolbox.tools_for("music")
     health = await (await client.get("/health")).json()
     assert health["tools"]["music"]["state"] == "ready" and health["tools"]["music"]["tools"] == 6
@@ -268,12 +269,24 @@ async def test_careful_tools_are_withheld_unless_asked():
     await box.close()
 
 
-def test_spotify_403s_are_clarified_but_stay_errors():
-    restricted = '{"error": "Permission denied. Check app scopes.", "status": 403, "details": "http 403: Player command failed: Restriction violated, reason: UNKNOWN"}'
-    text = clarify_error(restricted)
-    assert "Not a permissions problem" in text and "already playing" in text and looks_like_error(text)
-    forbidden = '{"error": "Permission denied. Check app scopes.", "status": 403, "details": "http 403: Forbidden, reason: None"}'
-    assert "forbids this for the app" in clarify_error(forbidden)
-    no_device = '{"error": "Resource not found.", "status": 404, "details": "http status: 404, code: -1 - https://api.spotify.com/v1/me/player/play:\\n Player command failed: No active device found"}'
-    assert "no active device" in clarify_error(no_device) and "Do not retry" in clarify_error(no_device) and looks_like_error(clarify_error(no_device))
-    assert clarify_error("Skipped.") == "Skipped." and clarify_error('{"error": "token expired"}') == '{"error": "token expired"}'
+def test_clarify_error_asks_the_server_adapter_and_nobody_else():
+    """The core knows no server's wording: without an adapter an error body is left alone."""
+
+    class Clearer:
+        name = "clearer"
+
+        def clarify_error(self, text: str) -> str:
+            return '{"error": "in plain words"}'
+
+    class Broken:
+        name = "broken"
+
+        def clarify_error(self, text: str) -> str:
+            raise RuntimeError("boom")
+
+    muddled = '{"error": "Permission denied. Check app scopes.", "status": 403, "details": "Restriction violated"}'
+    assert clarify_error(muddled) == muddled                      # no adapter, no rewriting
+    assert clarify_error(muddled, Clearer()) == '{"error": "in plain words"}'
+    assert looks_like_error(clarify_error(muddled, Clearer()))     # still an error, in plainer words
+    assert clarify_error("Skipped.", Clearer()) == "Skipped."      # not an error body at all
+    assert clarify_error(muddled, Broken()) == muddled             # an adapter never breaks a call
