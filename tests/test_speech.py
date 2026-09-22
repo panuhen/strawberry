@@ -149,6 +149,9 @@ def test_config_section_and_validation(tmp_path: Path):
 async def test_daemon_voices_lines_but_keeps_given_audio(voice: SpeechConfig, tmp_path: Path):
     config = Config()
     config.brain.enabled = False
+    # Speech only: no whisper model to load (it would download into a fresh cache), no Ollama.
+    for part in (config.voice, config.gate, config.tools, config.thinker):
+        part.enabled = False
     speaker = Speaker(voice, synth_factory=fake_factory)
     daemon = Daemon(reactor=CannedReactor(), config=config, speaker=speaker)
     await daemon.start()

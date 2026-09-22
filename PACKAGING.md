@@ -26,8 +26,10 @@ run; the notification, media and audio-capture doorways would each need a native
   icon. `strawberry setup` pulls the models from Ollama's library, the Piper voice from the Rhasspy
   release, and faster-whisper fetches its own weights. The user downloads each under its own terms;
   setup prints one line per model naming its licence (Gemma terms of use, Apache-2.0 for Qwen, ...).
-  Our own licence is MIT; every runtime dependency is MIT or similar (Godot, Piper, faster-whisper,
-  the MCP SDK, jeepney, aiohttp, numpy).
+  Our own licence is MIT; the runtime dependencies are MIT or similar (Godot, faster-whisper,
+  the MCP SDK, jeepney, aiohttp, numpy) except **piper-tts, which is GPL-3.0-or-later** (found in
+  step 6: the package moved to piper1-gpl and bundles espeak-ng). We do not bundle it; pip installs
+  it as a separate package. THIRD_PARTY.md says so.
 - **The default config is the tested setup**: `qwen3.8:27b` (brain), `gemma3:1b` (desktop voice),
   `embeddinggemma` (gate), whisper `medium` on CUDA, Piper `en_GB-alba-medium`. It needs a 24 GB
   card. Every slot is a config value already; setup detects VRAM and is honest about what fits
@@ -74,7 +76,7 @@ widget binary reaches every distro with the same artefact.
 | Piper voice already downloaded | `strawberry setup` downloads the default voice; `strawberry voices` for more (5) |
 | ~~`jq`, `curl` in the git hooks and `say`~~ | done (2): hooks call `strawberry git-event` (Python); `say` is Python |
 | `pw-record`, `pw-dump` | Runtime check with the apt/dnf line in the message (5) |
-| No licence | MIT (6) |
+| ~~No licence~~ | done (6): MIT, THIRD_PARTY.md, and a release workflow |
 
 ## Steps
 
@@ -198,7 +200,37 @@ the player (not a sink), systemd unit, git hooks path, versions of package and w
 short scripted conversation through the daemon with latency per slot. Exit code non-zero when
 something a user could fix is missing. Every bug report starts with its output.
 
-### 6. Releases and before shipping
+### 6. Releases and before shipping — **done 2026-09-22** (the first tag is not pushed yet)
+
+Evidence: `.github/workflows/release.yml` and `ci.yml` pass actionlint 1.7.7; `uv run pytest -q` → 365 passed (359 before), and the same suite passes in a fresh venv without the `gpu` group, with no display, session bus or CUDA device (what CI has); `uv build` makes the wheel and sdist with `LICENSE` (`License-Expression: MIT`), and `twine check` passes both; `scripts/build_widget.sh` from a checkout without an import cache (as in CI) exported the binary, and `SKIP_UNIT_TESTS=1 WIDGET=<it> scripts/check_phase1.sh` with throwaway XDG dirs and no display passed (`"passed": true`, `"widget_version": "0.1.0"`); the release-notes extraction was run against CHANGELOG.md. The workflow itself has not run: it needs a pushed tag. Choices made on the way: the Godot editor and templates are checked against SHA-512 sums pinned in the workflow (from the release's `SHA512-SUMS.txt`); `astral-sh/setup-uv` has no moving major tag, so it is pinned to `v10.2.0`, the rest to majors (`actions/checkout@v7`, `upload-artifact@v7`, `download-artifact@v8`, `pypa/gh-action-pypi-publish@release/v1`); PyPI is published after the GitHub release, so `widget --fetch` never 404s for a version pip can install; the first-run privacy note is `firstrun.py` (daemon log at start, her bubble on the first served hello, a marker in the state dir). Found on the way: piper-tts is GPL-3.0-or-later (see Decisions); `uv run pytest` (as opposed to `python -m pytest`) could not import `tests.fake_spotify` until `pythonpath = ["."]`; and a speech test loaded the real whisper model, which in a fresh cache means a download (now off).
+
+#### Releasing
+
+1. Bump `version` in `pyproject.toml` and `__version__` in `src/strawberry_crab/__init__.py`
+   (tests/test_version.py and the workflow check they agree), run `uv lock`, and move the
+   `[Unreleased]` notes in CHANGELOG.md under `## [X.Y.Z] - <date>`. The widget needs no edit:
+   `scripts/build_widget.sh` stamps the package version into it.
+2. Commit, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. `release.yml` runs: the tag must equal the version (else it fails before building), the tests,
+   `uv build`, Godot 4.7.2 and the templates, `scripts/build_widget.sh`, the headless widget
+   acceptance, then a GitHub release `vX.Y.Z` with the wheel, the sdist,
+   `strawberry-widget-X.Y.Z-linux-x86_64` and its `.sha256`, and CHANGELOG.md's section as notes.
+4. The `publish-pypi` job waits for approval of the `pypi` environment: Actions → the run →
+   *Review deployments* → approve. It uploads the wheel and sdist by trusted publishing.
+5. Check: `uv tool install strawberry-crab==X.Y.Z` in a clean environment, then
+   `strawberry widget --fetch` and `strawberry doctor`.
+
+A failed run before the release job leaves nothing behind: fix, delete the tag
+(`git push --delete origin vX.Y.Z`), tag again. After the GitHub release exists, delete the
+release too before re-tagging. A version on PyPI can never be uploaded again: after a bad upload
+bump the patch version.
+
+One-time setup on GitHub and PyPI: a `pypi` environment in the repository settings with a
+required reviewer (and, if wanted, a deployment rule limiting it to `v*` tags), and a trusted
+publisher on the PyPI project `strawberry-crab` for owner `panuhen`, repository `strawberry`,
+workflow `release.yml`, environment `pypi`.
+
+The plan as written:
 
 - GitHub Actions on tag `v*`: build the wheel (uv build), export the widget (Godot headless with
   the export templates in the runner), compute checksums, attach both to the release, publish
@@ -221,4 +253,4 @@ something a user could fix is missing. Every bug report starts with its output.
 | 2. package + CLI | 1, 3 | half a day — **done 2026-09-22** |
 | 4. widget binary + XDG + handshake | 2 | half a day — **done 2026-09-22** |
 | 5. setup + doctor | 2, 4 | a day |
-| 6. releases, licence, README | 5 | half a day |
+| 6. releases, licence, README | 5 | half a day — **done 2026-09-22** |

@@ -502,15 +502,21 @@ quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 
 `strawberry config` creates the file from a commented template (`strawberryd --init-config`) and opens it in `$EDITOR`; `strawberry restart` applies it; `strawberry config --init` only writes the template if missing and prints the path (the widget's *Settings file…* runs that). `STRAWBERRYD_PORT` still overrides the port for scripts. The widget's own preferences (skin, window position, …) are `~/.config/strawberry/widget.cfg` (§13).
 
+**The first-run privacy note** (`strawberry_crab/firstrun.py`). While `$XDG_STATE_HOME/strawberry/privacy-notice-shown` is missing, the daemon logs one `privacy:` line at start: what she reads from notifications under the current `body` / `body_apps`, the three modes, and the config file to change it in. The first widget whose hello is served (not refused for its version) gets a short version in her bubble (`talking`, happy, a wave) and the marker is written before it is sent, so it is said once per user. Deleting the marker brings it back. Tests start with the marker present (tests/conftest.py gives every test throwaway XDG dirs), and `scripts/check_phase1.sh` gives its daemon a state dir that has it, so the validators see only the performances they ask for.
+
 ## 16. Repository map
 
 ```
 WIRING.md                this document
 PACKAGING.md             the plan from a developer checkout to `uv tool install strawberry-crab`
 ADAPTERS.md              adding an MCP server, and writing an adapter for one
+README.md                for users: install, setup, configuration, privacy
+CHANGELOG.md             what changed per version (by hand; the release notes are its section)
+LICENSE, THIRD_PARTY.md  MIT; what we use from others, and the models and voices the user downloads
+.github/workflows/       ci.yml (tests + build on push/PR), release.yml (v* tag -> GitHub release + PyPI, PACKAGING.md)
 pyproject.toml, uv.lock  the one Python package, `strawberry` (hatchling; `uv build`, `uv tool install .`); groups dev (pytest, Pillow) and gpu (cuBLAS/cuDNN, also the `gpu` extra)
 src/strawberry_crab/          the package: contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), thinker (Qwen tool loop), ledger (short memory), hub, server
-                         + cli.py (`strawberry`), strawberryd.py (`strawberryd`), paths.py (XDG dirs, the checkout), widgetbin.py (which widget runs; `widget --fetch`), bus.py (jeepney plumbing), client.py (HTTP to the daemon), icons.py (PNG -> ARGB32), tray.py (the StatusNotifierItem and the process that owns her, §14), mpris.py, adapters/
+                         + cli.py (`strawberry`), strawberryd.py (`strawberryd`), paths.py (XDG dirs, the checkout), firstrun.py (the one-time privacy note, §15), widgetbin.py (which widget runs; `widget --fetch`), bus.py (jeepney plumbing), client.py (HTTP to the daemon), icons.py (PNG -> ARGB32), tray.py (the StatusNotifierItem and the process that owns her, §14), mpris.py, adapters/
 src/strawberry_crab/doorways/ notify_watch.py, mpris_watch.py, beat_watch.py + beat_track.py (`strawberry-doorway <name>`, or python -m strawberry_crab.doorways.<name>)
 src/strawberry_crab/assets/icons/  the tray icon PNGs (package data), rendered by scripts/render_icons.py
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)

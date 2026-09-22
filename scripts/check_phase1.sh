@@ -4,6 +4,7 @@
 #
 #   scripts/check_phase1.sh                                   the source widget (godot on PATH)
 #   WIDGET=dist/strawberry-widget-0.1.0-linux-x86_64 scripts/check_phase1.sh   the exported binary
+#   SKIP_UNIT_TESTS=1 ...                                     the widget checks only (CI ran the tests)
 #
 # The exported binary has no --script (release templates drop it), so it runs the same
 # validators through `-- --acceptance=res://validate_*.gd` (widget.gd hands the SceneTree over).
@@ -13,8 +14,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${STRAWBERRYD_PORT:-8771}"   # off the default port so a running daemon is left alone
 BASE="http://127.0.0.1:$PORT"
 
-echo "== strawberryd unit tests"
-(cd "$ROOT" && uv sync --quiet --inexact --group gpu && .venv/bin/python -m pytest -q)
+if [ -z "${SKIP_UNIT_TESTS:-}" ]; then
+  echo "== strawberryd unit tests"
+  (cd "$ROOT" && uv sync --quiet --inexact --group gpu && .venv/bin/python -m pytest -q)
+fi
 
 WIDGET="${WIDGET:-}"
 if [ -n "$WIDGET" ]; then
@@ -26,9 +29,13 @@ elif [ ! -d "$ROOT/widget/.godot" ]; then
 fi
 
 echo "== starting strawberryd on :$PORT"
-"$ROOT/.venv/bin/strawberryd" --port "$PORT" --config "$ROOT/scripts/check_config.toml" &
+# Its own state dir, with the first-run privacy note marked as shown: the validators expect
+# exactly the performances they ask for, not her one-time bubble (firstrun.py).
+DSTATE="$(mktemp -d)"
+mkdir -p "$DSTATE/strawberry" && touch "$DSTATE/strawberry/privacy-notice-shown"
+XDG_STATE_HOME="$DSTATE" "$ROOT/.venv/bin/strawberryd" --port "$PORT" --config "$ROOT/scripts/check_config.toml" &
 DPID=$!
-cleanup() { kill "$DPID" 2>/dev/null || true; wait "$DPID" 2>/dev/null || true; }
+cleanup() { kill "$DPID" 2>/dev/null || true; wait "$DPID" 2>/dev/null || true; rm -rf "$DSTATE"; }
 trap cleanup EXIT
 for _ in $(seq 1 50); do
   curl -fsS "$BASE/health" >/dev/null 2>&1 && break
