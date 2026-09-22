@@ -59,7 +59,7 @@ class FakeSpotify:
             return FakeResult([FakeContent(json.dumps({"playing": self.playing, "track": TRACKS[self.index]}))])
         if name == "get_devices":
             return FakeResult([FakeContent(json.dumps({"devices": [{"name": "x", "is_active": False, "volume": 100},
-                                                                   {"name": "Panu-Ubuntu", "is_active": True, "volume": self.volume}]}))])
+                                                                   {"name": "Desk-PC", "is_active": True, "volume": self.volume}]}))])
         if name == "set_volume":
             self.volume = arguments["volume"]
             return FakeResult([FakeContent(json.dumps({"success": True}))])
@@ -244,17 +244,17 @@ async def test_vocabulary_comes_from_the_library_in_order_of_likelihood():
 async def test_daemon_merges_config_vocabulary_with_the_library(aiohttp_client):
     config = Config()
     config.brain.enabled = config.speech.enabled = config.voice.enabled = config.gate.enabled = config.thinker.enabled = False
-    config.voice.vocabulary = ["Kaelon", "Daft Punk"]
+    config.voice.vocabulary = ["Lighthouse", "Daft Punk"]
     spotify, toolbox, actor = make()
     daemon = Daemon(reactor=CannedReactor(), config=config, toolbox=toolbox, actor=actor)
     client = await aiohttp_client(create_app(daemon))
     await daemon.start()
     assert daemon.vocabulary_task is None  # voice is off: no background refresh
     await daemon.refresh_vocabulary()
-    assert daemon.vocabulary == ["Kaelon", "Daft Punk", "Nina Simone", "Acid Techno", "New Order", "Erik Satie"]
-    assert daemon.hotwords() == "Kaelon, Daft Punk, Nina Simone, Acid Techno, New Order, Erik Satie"
+    assert daemon.vocabulary == ["Lighthouse", "Daft Punk", "Nina Simone", "Acid Techno", "New Order", "Erik Satie"]
+    assert daemon.hotwords() == "Lighthouse, Daft Punk, Nina Simone, Acid Techno, New Order, Erik Satie"
     config.voice.max_hotwords = 2
-    assert daemon.hotwords() == "Kaelon, Daft Punk"
+    assert daemon.hotwords() == "Lighthouse, Daft Punk"
     assert (await (await client.get("/health")).json())["voice"]["hotwords"] == 6
     await daemon.close()
 

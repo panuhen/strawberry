@@ -234,15 +234,15 @@ async def test_the_recogniser_gets_the_daemons_hotwords():
 
     config = Config()
     config.brain.enabled = config.speech.enabled = config.gate.enabled = config.tools.enabled = config.thinker.enabled = False
-    config.voice = VoiceConfig(enabled=True, vocabulary=["Daft Punk", "Kaelon"])
+    config.voice = VoiceConfig(enabled=True, vocabulary=["Daft Punk", "Lighthouse"])
     listener = Listener(config.voice, transcriber_factory=lambda cfg: transcriber, recorder=lambda *a, **k: fake_recording(),
                         source_picker=lambda preferred: "alsa_input.test")
     daemon = Daemon(reactor=CannedReactor(), config=config, listener=listener)
     await daemon.start()
-    assert daemon.hotwords() == "Daft Punk, Kaelon"
+    assert daemon.hotwords() == "Daft Punk, Lighthouse"
     daemon.listen()
     await daemon.listen_task
-    assert heard["hotwords"] == "Daft Punk, Kaelon"
+    assert heard["hotwords"] == "Daft Punk, Lighthouse"
     config.voice.hotwords = False
     assert daemon.hotwords() == ""
     await daemon.close()

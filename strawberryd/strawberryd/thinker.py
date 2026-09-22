@@ -14,7 +14,7 @@ gut-check tool choices, not puzzles. Every call is a fresh conversation bounded 
 tool rounds, truncated tool results (tools.result_chars), `num_ctx`, and one overall timeout;
 nothing accumulates across requests but the ledger.
 
-Measured on the RTX 3090 (qwen3.8:27b Q4_K_M): cold load 7-17 s, a warm round ~2 s.
+Measured on a 24 GB RTX 3090 (qwen3.8:27b Q4_K_M): cold load 7-17 s, a warm round ~2 s.
 """
 
 from __future__ import annotations

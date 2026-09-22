@@ -7,9 +7,9 @@ Right-click **Restart widget** to reload the widget and its model while keeping 
 For a widget that was launched before the Restart widget menu existed: right-click **Quit** (or press Q), then run:
 
 ```sh
-/home/panu/strawberry/bin/strawberry widget
+~/strawberry/bin/strawberry widget
 ```
 
-The live widget loads `widget/strawberry_v2.glb`; Blender iterations are exported to `v2/strawberry_v2.glb`. After a new export, copy that file into `widget/` and run `godot --headless --path /home/panu/strawberry/widget --editor --import` before restarting. The current widget copy includes the lighter belly.
+The live widget loads `widget/strawberry_v2.glb`; Blender iterations are exported to `v2/strawberry_v2.glb`. After a new export, copy that file into `widget/` and run `godot --headless --path ~/strawberry/widget --editor --import` before restarting. The current widget copy includes the lighter belly.
 
 `validate_hat.gd` checks the menu, preference persistence, palette band, bounded dance bounce, squash attachment and belly model in an isolated widget with no daemon connection. Headless: `godot --headless --path widget --script res://validate_hat.gd`. Add `-- --capture-dir=/absolute/folder` in a graphical run to capture idle and dance poses.

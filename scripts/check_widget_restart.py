@@ -4,7 +4,7 @@ import os
 import subprocess
 import time
 
-root=Path('/home/panu/strawberry')
+root=Path(__file__).resolve().parents[1]
 data=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'godot/app_userdata/Strawberry'
 for name in ['widget_restart_test.json','widget_restart_test.cfg']:
     (data/name).unlink(missing_ok=True)

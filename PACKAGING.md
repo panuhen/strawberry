@@ -39,7 +39,7 @@ widget binary reaches every distro with the same artefact.
 | Piper voice already downloaded | `strawberry setup` downloads the default voice; `strawberry voices` for more |
 | `jq`, `curl` in the git hooks and `say` | Hooks call `strawberry git-event` (Python); `say` is Python |
 | `pw-record`, `pw-dump` | Runtime check with the apt/dnf line in the message (pipewire tools ship with every PipeWire desktop) |
-| No licence | Add one (MIT unless Panu prefers otherwise) |
+| No licence | Add one (MIT) |
 
 ## Steps
 

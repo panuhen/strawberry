@@ -18,7 +18,7 @@ PERSONA = (
 
 EXAMPLES = [
     {
-        "event": "source: git\napp: post-commit\ntitle: kaelon\nbody: Fix flaky login test",
+        "event": "source: git\napp: post-commit\ntitle: lighthouse\nbody: Fix flaky login test",
         "line": "A fix! Has that wobbly login test finally behaved itself?",
         "emotion": "happy",
     },

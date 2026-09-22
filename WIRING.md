@@ -213,7 +213,7 @@ One session (`Listener.session`):
 
 `/health` shows `voice` (model, ready, phase, sessions, empty, last_transcript, last_ms). If whisper cannot load (no model, no network for the first download), voice is disabled with the reason and the rest of the daemon is unaffected. `scripts/check_config.toml` disables voice for the acceptance run; the flow is unit-tested with fake recorder and transcriber (`tests/test_voice.py`).
 
-**Names.** Whisper `small` hears "Daft Punk" as Dothpunk, Duff Punk, Dove Punk (2026-09-21, three tries; the thinker then played a real artist called Dovepunk). faster-whisper's `hotwords` biases decoding toward given names, so the daemon keeps a vocabulary: `[voice] vocabulary` from the config (your own names) plus what the music server knows, in order of likelihood: the artist playing now, favourites, the last 50 saved tracks' artists, playlist names (`actions.spotify_vocabulary`, refreshed every `vocabulary_refresh_s` = 10 min, first 2 s after start). The first `max_hotwords` (60) go to every transcription. An artist you have never saved gets no help from this; `[voice] model = "medium"` is the next lever. Measured on Piper-synthesised phrases (8 artist sentences): small 3/8 plain, 7/8 with hotwords, 1.5 s; medium 5/8 plain, 7/8 with hotwords, 3.2 s per sentence on the CPU. Panu runs `medium` (the real microphone and a Finnish accent are harder than Piper: `small` heard "Kashmir by Led Zeppelin" as "Cosmere Pie, Let's Cheppelin'"). Whisper on CUDA (`[voice] device = "cuda"`, `compute_type = "int8_float16"`; `uv sync --group gpu` installs the cuBLAS and cuDNN wheels, which `voice.preload_cuda_libraries` loads by path) (the scripts sync with `--inexact` so a plain `uv sync` in `bin/strawberry` or the acceptance run does not prune that group again; a bare `uv sync` does, and whisper then logs `No module named 'nvidia'` and falls back to the CPU) is 0.13 s per sentence for `medium` and takes 1.2 GB of VRAM; measured next to Qwen and both Gemmas it fits with ~3.7 GB spare and nothing evicted. Panu runs that. `/health.voice.hotwords` is the count.
+**Names.** Whisper `small` hears "Daft Punk" as Dothpunk, Duff Punk, Dove Punk (2026-09-21, three tries; the thinker then played a real artist called Dovepunk). faster-whisper's `hotwords` biases decoding toward given names, so the daemon keeps a vocabulary: `[voice] vocabulary` from the config (your own names) plus what the music server knows, in order of likelihood: the artist playing now, favourites, the last 50 saved tracks' artists, playlist names (`actions.spotify_vocabulary`, refreshed every `vocabulary_refresh_s` = 10 min, first 2 s after start). The first `max_hotwords` (60) go to every transcription. An artist you have never saved gets no help from this; `[voice] model = "medium"` is the next lever. Measured on Piper-synthesised phrases (8 artist sentences): small 3/8 plain, 7/8 with hotwords, 1.5 s; medium 5/8 plain, 7/8 with hotwords, 3.2 s per sentence on the CPU. A real microphone and a non-native accent are harder than Piper (`small` heard "Kashmir by Led Zeppelin" as "Cosmere Pie, Let's Cheppelin'"), so `medium` is the recommendation. Whisper on CUDA (`[voice] device = "cuda"`, `compute_type = "int8_float16"`; `uv sync --group gpu` installs the cuBLAS and cuDNN wheels, which `voice.preload_cuda_libraries` loads by path) (the scripts sync with `--inexact` so a plain `uv sync` in `bin/strawberry` or the acceptance run does not prune that group again; a bare `uv sync` does, and whisper then logs `No module named 'nvidia'` and falls back to the CPU) is 0.13 s per sentence for `medium` and takes 1.2 GB of VRAM; measured next to Qwen and both Gemmas it fits with ~3.7 GB spare and nothing evicted. `/health.voice.hotwords` is the count.
 
 **Hotkey.** `bin/strawberry hotkey [COMBO]` writes a GNOME custom keyboard shortcut (`gsettings`, default `<Super><Shift>space`; `<Super><Alt>s` is GNOME's screen-reader toggle) that runs `bin/strawberry listen`, i.e. `curl -X POST /listen`. GNOME owns the key, so it is identical on X11 and Wayland and the daemon never grabs keyboard input. `--remove` undoes it. Phase 6 routes voice through the action model with tools; today it goes to the reaction path like everything else.
 
@@ -331,13 +331,13 @@ Stop after any phase and you still have something that works.
 
 ---
 
-## 12. Notes for the human (Panu)
+## 12. Notes for the human
 
 - **Two hops, not one.** Hooks hit the daemon over HTTP; only the daemon talks to Godot. Don't let a git hook open a websocket.
 - **Godot is the ws client**, daemon is the server. Simpler, and it reconnects cleanly if you restart either side while iterating.
 - **Silent-first** is the whole de-risking trick: you can prove the entire loop before touching audio.
 - **One audio rule:** Piper's wav plays *through Godot*, or the analyser is blind and the clack dies.
-- **CPU/GPU split:** whisper + Piper on CPU, Qwen keeps the 3090.
+- **CPU/GPU split:** whisper + Piper on CPU, Qwen keeps the GPU.
 - **The MCP fork (§8)** is the one open design decision. Recommend the Python-SDK-in-daemon route so the action path stays in one process.
 
 ---
@@ -403,7 +403,7 @@ keep_alive = -1                  # seconds; -1 = stay in VRAM, or "10m" to unloa
 # persona = """..."""           # her system prompt
 
 [[brain.examples]]               # replaces the built-in five; the real lever on her voice
-event = "source: git\napp: post-commit\ntitle: kaelon\nbody: Fix flaky login test"
+event = "source: git\napp: post-commit\ntitle: lighthouse\nbody: Fix flaky login test"
 line = "A fix! Did that wobbly login test finally stop wiggling?"
 emotion = "happy"
 

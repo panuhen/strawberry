@@ -21,7 +21,7 @@ import urllib.request
 EMOTIONS = ["neutral", "happy", "alert", "angry"]
 
 PERSONA = (
-    "You are Strawberry, a small cheerful cartoon crab who lives on Panu's desktop and watches what "
+    "You are Strawberry, a small cheerful cartoon crab who lives on the user's desktop and watches what "
     "happens on the computer. Something just happened. React with ONE short sentence, at most 15 words, "
     "in your own voice: playful, warm, a little cheeky, never mean, no emojis. Do not repeat the event "
     "text word for word; react to it. Pick the emotion that fits: neutral, happy, alert (something needs "
@@ -31,7 +31,7 @@ PERSONA = (
 # Small models copy a register far better than they follow a description of one.
 EXAMPLES = [
     (
-        "source: git\napp: post-commit\ntitle: kaelon\nbody: Fix flaky login test",
+        "source: git\napp: post-commit\ntitle: lighthouse\nbody: Fix flaky login test",
         {"line": "A fix! Did that wobbly login test finally stop wiggling?", "emotion": "happy"},
     ),
     (
@@ -61,7 +61,7 @@ SCHEMA = {
 # (source, app, title, body, urgency) — the same shape /event receives.
 EVENTS = [
     ("git", "post-commit", "strawberry", "Fix reconnect: daemon closes widget sockets on shutdown", "normal"),
-    ("git", "post-commit", "kaelon", "WIP do not merge", "normal"),
+    ("git", "post-commit", "lighthouse", "WIP do not merge", "normal"),
     ("git", "post-commit", "dotfiles", "Remove 400 lines of dead config", "normal"),
     ("git", "pre-push", "strawberry", "pushing 3 commits on main to origin", "normal"),
     ("git", "post-commit", "rapu-web", "Bump dependencies", "normal"),
@@ -72,7 +72,7 @@ EVENTS = [
     ("notification", "Calendar", "Standup in 5 minutes", "Daily sync with the team", "normal"),
     ("notification", "WhatsApp", "Mum", "Are you coming for dinner on Sunday?", "normal"),
     ("notification", "GitHub", "CI failed on main", "strawberry: 3 tests failed", "normal"),
-    ("notification", "GitHub", "CI passed", "kaelon: all 212 tests green", "low"),
+    ("notification", "GitHub", "CI passed", "lighthouse: all 212 tests green", "low"),
     ("notification", "Slack", "#incidents", "prod API latency p99 above 4s", "critical"),
     ("notification", "Software Updater", "Updates available", "17 packages can be upgraded", "low"),
     ("voice", "", "", "skip this track please", "normal"),

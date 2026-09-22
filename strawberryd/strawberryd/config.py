@@ -413,7 +413,7 @@ def default_toml() -> str:
         "bluetooth = true               # auto prefers a Bluetooth headset mic (its profile is switched while she listens)",
         "max_seconds = 15.0",
         "silence_s = 1.1                # quiet after speech that ends the recording",
-        'vocabulary = []                # names she should recognise, e.g. ["Kaelon", "Panu"]; artists come from Spotify',
+        'vocabulary = []                # names she should recognise, e.g. ["Lighthouse", "Alex"]; artists come from Spotify',
         "",
         "[gate]",
         "enabled = true                 # sorts what you said: chat, or a request/question for the action path",

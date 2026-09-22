@@ -48,7 +48,7 @@ Validated in Godot 4.7.2: clean import, exact bone/animation/morph names, all cl
 
 The ready-to-run test project is `godot_check/project.godot`; open it and press F5. Keys 1–6 select clips, Space opens/closes claws, and B blinks. It includes the required import settings and loop flags. `godot_check/godot_checks.json` records the checks.
 
-To rerun: `godot --headless --path /home/panu/strawberry/godot_check --editor --import`, then `godot --headless --path /home/panu/strawberry/godot_check --script res://validate.gd`. After regenerating the GLB, copy the new file into `godot_check/` first.
+To rerun: `godot --headless --path ~/strawberry/godot_check --editor --import`, then `godot --headless --path ~/strawberry/godot_check --script res://validate.gd`. After regenerating the GLB, copy the new file into `godot_check/` first.
 
 ## Regenerate
 
@@ -57,20 +57,20 @@ These steps replace the current Blender scene. Output directory is the `OUT` con
 In Blender's Python console, run:
 
 ```python
-exec(compile(open('/home/panu/strawberry/build_strawberry.py').read(), 'build_strawberry.py', 'exec'))
+exec(compile(open('~/strawberry/build_strawberry.py').read(), 'build_strawberry.py', 'exec'))
 build(6)
 ```
 
 Then, in a **separate console command or MCP call**, export and check:
 
 ```python
-exec(compile(open('/home/panu/strawberry/export_validate.py').read(), 'export_validate.py', 'exec'))
+exec(compile(open('~/strawberry/export_validate.py').read(), 'export_validate.py', 'exec'))
 ```
 
 Then check the exported file in a clean scene:
 
 ```python
-exec(compile(open('/home/panu/strawberry/reimport_validate.py').read(), 'reimport_validate.py', 'exec'))
+exec(compile(open('~/strawberry/reimport_validate.py').read(), 'reimport_validate.py', 'exec'))
 ```
 
 The separate export invocation lets Blender refresh dependencies after procedural Action/NLA creation. `build(n)` regenerates phases 1 through n. `run_phase(n)` reruns one phase if its prerequisites exist; after geometry/rig edits, regenerate dependent phases too. Each phase saves `strawberry_v1.blend` and front render `phase_NN.png` plus a JPEG preview. `check_morphs.py` separately checks every morph and saves full-value previews.

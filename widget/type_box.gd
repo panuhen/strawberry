@@ -9,7 +9,7 @@ extends PanelContainer
 ## The field is smoked glass: a dark tint at 40 % with a hairline rim and square corners
 ## (the desktop behind the window is not in Godot's viewport, so there is nothing to blur;
 ## a tint with a rim is what every transparent-window glass effect is). Rounded corners
-## were tried and dropped (Panu, 2026-09-22).
+## were tried and dropped (2026-09-22).
 
 signal submitted(text: String)
 
