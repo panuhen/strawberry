@@ -17,7 +17,8 @@ from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
 from .ledger import Ledger
 from .mpris import Mpris
-from .reactions import decorate
+from . import privacy
+from .reactions import decorate, is_burst
 from .speech import Speaker
 from .systemone import Gate, Route
 from .thinker import Thinker
@@ -237,7 +238,9 @@ class Daemon:
     QUIET_MEDIA_S = 8.0
 
     async def handle_event(self, event: Event) -> tuple[Performance, int]:
-        log.info("event %s app=%r title=%r urgency=%s", event.source, event.app, event.title, event.urgency)
+        # The body is never logged: a notification's text stays out of the journal (§4).
+        log.info("event %s app=%r title=%r urgency=%s body_len=%d", event.source, event.app, event.title,
+                 event.urgency, len(event.body))
         if event.source == "media" and time.monotonic() < self.quiet_media_until:
             log.info("media event swallowed: she caused it (%r)", event.title)
             return Performance(state=self.rest_state), 0
@@ -246,9 +249,66 @@ class Daemon:
             return await self.report(event, event.category != "failed")
         if event.source == "voice" and event.title:
             return await self.handle_voice(event)
+        if event.source == "notification":
+            return await self.handle_notification(event)
         performance = decorate(event, await self.reactor.react(event))
         sent = await self.perform(performance)
         return performance, sent
+
+    GLANCE_QUIP_WORDS = 8
+
+    async def handle_notification(self, event: Event) -> tuple[Performance, int]:
+        """A desktop notification, by the app's body mode (WIRING.md §4).
+
+        off: the body is dropped (the watcher should not have sent it; this holds the line too).
+        react / glance: patterns, then IS_SENSITIVE on the gate; a hit, or a gate that cannot answer,
+        drops the body and she says only that the app sent something private. glance: a neutral gist
+        first (like report(): the fact, then her quip). A burst's body is the senders' titles, so it
+        is only pattern-checked. Nothing of the body goes into a log line.
+        """
+        mode = self.config.notifications.mode_for(event.app)
+        burst = is_burst(event)
+        if event.body and mode == "off" and not burst:
+            log.info("notification %r: body dropped, mode off (%d chars)", event.app, len(event.body))
+            event = replace(event, body="")
+        verdict = await privacy.check(self.gate, event.title, event.body, ask_gate=bool(event.body) and not burst)
+        if verdict.sensitive:
+            log.info("notification %r: private, %s; body_len=%d dropped", event.app, verdict.summary, len(event.body))
+            quiet = replace(event, body="", title="")
+            performance = decorate(quiet, Performance(state="talking", text=privacy.private_line(event.app),
+                                                      emotion="neutral"))
+            return performance, await self.perform(performance)
+        if event.body and not burst:
+            log.info("notification %r: body read, mode %s, %s; body_len=%d", event.app, mode, verdict.summary,
+                     len(event.body))
+        if event.body and not burst and mode == "glance":
+            glanced = await self.glance(event)
+            if glanced is not None:
+                return glanced, await self.perform(glanced)
+        performance = decorate(event, await self.reactor.react(event))
+        why = privacy.leaks(performance.text or "", event.body) if event.body and not burst else None
+        if why:
+            # She quoted the message anyway: say the canned app-and-sender line instead.
+            log.info("notification %r: her line gave away %s; canned line instead", event.app, why)
+            performance = decorate(event, await CannedReactor().react(replace(event, body="")))
+        return performance, await self.perform(performance)
+
+    async def glance(self, event: Event) -> Performance | None:
+        """Step one, a neutral gist of the message (no persona, no numbers or links); step two, her
+        quip after it, written from the gist alone. None when there is no usable gist."""
+        gist_of = getattr(self.reactor, "gist", None)
+        gist = await gist_of(event) if gist_of else None
+        why = privacy.leaks(gist, event.body, strict=True) if gist else None
+        if why:
+            log.info("notification %r: gist refused, it carried %s", event.app, why)
+            gist = None
+        if not gist:
+            return None
+        said = replace(event, body="", said=gist)
+        quip_performance = await self.reactor.react(said)
+        quip = " ".join((quip_performance.text or "").split()[: self.GLANCE_QUIP_WORDS]).strip()
+        text = f"{gist} {quip}".strip() if quip else gist
+        return decorate(event, replace(quip_performance, text=text))
 
     async def handle_voice(self, event: Event) -> tuple[Performance, int]:
         """A sentence the user said or typed: the gate (§8a), a bare reflex if it is plainly one,

@@ -20,6 +20,7 @@ import aiohttp
 from .config import BrainConfig
 from .contract import EMOTIONS, Performance, anim_for
 from .events import MAX_LINE, Event, Reactor
+from .persona import BODY_RULE
 
 log = logging.getLogger("strawberryd.brain")
 
@@ -47,6 +48,11 @@ def describe(event: Event, context: str = "") -> str:
         return (f"source: action (you did this for the user and have just said: \"{event.body}\" "
                 f"Add ONE short quip to follow it, at most 8 words, no facts, no repetition)\n"
                 f"asked: {event.title}\ndid: {event.app}")
+    if event.source == "notification" and event.said:
+        # Glance (§4): the gist is said already and she never sees the message itself.
+        return (f"source: notification (you have just told the user: \"{event.said}\" "
+                f"Add ONE short quip to follow it, at most 8 words, no facts, no repetition)\n"
+                f"app: {event.app}" + (f"\ntitle: {event.title}" if event.title else ""))
     parts = [f"source: {event.source}"]
     if event.app:
         parts.append(f"app: {event.app}")
@@ -56,7 +62,27 @@ def describe(event: Event, context: str = "") -> str:
         parts.append(f"body: {event.body}")
     if event.urgency != "normal":
         parts.append(f"urgency: {event.urgency}")
+    if event.source == "notification" and event.body:
+        parts.append(BODY_RULE)
     return "\n".join(parts)
+
+
+GIST_SYSTEM = (
+    "You summarise one desktop notification for the user in ONE plain sentence of at most 12 words, "
+    "in the third person, starting with the sender when there is one: who wants what, or what happened. "
+    "Say what it is about, never what it says: no quotes, no numbers, no codes, no links, no addresses. "
+    "No opinion, no jokes. Answer only with JSON."
+)
+GIST_EXAMPLES = [
+    ("app: Slack\ntitle: Alex\nbody: are we still doing lunch at 12? the usual place", "Alex asks about lunch at noon."),
+    ("app: Thunderbird\ntitle: Priya Shah\nbody: Invoice 2024-118 attached, due 30 September. "
+     "Pay at https://pay.example.com/i/118", "Priya Shah sent an invoice due at the end of September."),
+    ("app: Signal\ntitle: Sam\nbody: running 10 min late sorry!! start without me", "Sam is running late and says to start without them."),
+    ("app: GitHub\ntitle: CI failed on main\nbody: 3 tests failed in test_login.py (commit 8f2c1d9)",
+     "The build on main failed with a few login tests."),
+]
+GIST_SCHEMA = {"type": "object", "properties": {"gist": {"type": "string"}}, "required": ["gist"]}
+GIST_WORDS = 12
 
 
 STOPWORDS = frozenset("""
@@ -108,6 +134,7 @@ class OllamaReactor:
         self.calls = 0
         self.fallbacks = 0
         self.retries = 0
+        self.gists = 0
         self.last_latency: float | None = None
         self.loaded = False
         self.recent: deque[str] = deque(maxlen=RECENT_LINES)
@@ -121,6 +148,7 @@ class OllamaReactor:
             "calls": self.calls,
             "fallbacks": self.fallbacks,
             "retries": self.retries,
+            "gists": self.gists,
             "last_latency_s": round(self.last_latency, 3) if self.last_latency is not None else None,
         }
 
@@ -201,6 +229,45 @@ class OllamaReactor:
         if not isinstance(data, dict) or not isinstance(data.get("line"), str) or data.get("emotion") not in EMOTIONS:
             raise BrainError(f"schema miss: {content[:120]!r}")
         return data
+
+    async def gist(self, event: Event) -> str | None:
+        """Glance mode (§4), step one: a neutral third-person line saying what a message is about.
+
+        Not her voice: its own system prompt and examples, low temperature. None on any failure;
+        the daemon then falls back to her plain reaction. The prompt is never logged.
+        """
+        if not self.session:
+            return None
+        messages = [{"role": "system", "content": GIST_SYSTEM}]
+        for shown, gist in GIST_EXAMPLES:
+            messages.append({"role": "user", "content": shown})
+            messages.append({"role": "assistant", "content": json.dumps({"gist": gist})})
+        shown = f"app: {event.app}\n" + (f"title: {event.title}\n" if event.title else "") + f"body: {event.body}"
+        messages.append({"role": "user", "content": shown})
+        payload = {
+            "model": self.brain.reaction_model, "messages": messages, "format": GIST_SCHEMA, "think": False,
+            "stream": False, "keep_alive": self.brain.keep_alive, "options": {"temperature": 0.2, "num_predict": 60},
+        }
+        self.gists += 1
+        started = time.perf_counter()
+        try:
+            async with self.session.post(
+                "/api/chat", json=payload, timeout=aiohttp.ClientTimeout(total=self.brain.timeout_s)
+            ) as response:
+                if response.status != 200:
+                    raise BrainError(f"HTTP {response.status}")
+                reply = await response.json()
+            data = json.loads(reply.get("message", {}).get("content", ""))
+            if not isinstance(data, dict) or not isinstance(data.get("gist"), str):
+                raise BrainError("schema miss")
+        except (aiohttp.ClientError, asyncio.TimeoutError, BrainError, json.JSONDecodeError) as exc:
+            log.warning("brain: no gist after %.2fs (%s)", time.perf_counter() - started, type(exc).__name__)
+            if isinstance(exc, asyncio.TimeoutError):
+                self.schedule_rewarm()
+            return None
+        line = tidy(data["gist"], GIST_WORDS)
+        log.info("brain: gist in %.2fs (%d words)", time.perf_counter() - started, len(line.split()))
+        return line or None
 
     async def react(self, event: Event, context: str = "") -> Performance:
         if not self.session:

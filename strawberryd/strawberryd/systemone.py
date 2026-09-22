@@ -393,6 +393,35 @@ WANTS_LIBRARY_CHANGE = Noul(
     )),
 )
 
+# Not a routing question: asked of a notification body before any model reads it (WIRING.md §4,
+# strawberryd/privacy.py). Same embedder, its own call; scripts/sensitive_check.py is its contract.
+IS_SENSITIVE = Noul(
+    "is_sensitive",
+    yes=Option("yes", "a code, a sign-in, a bank or card alert, an account security notice", (
+        "Your verification code is 482913", "Use this code to sign in. Do not share it with anyone.",
+        "is your Google verification code", "Your one-time passcode expires in 10 minutes",
+        "Your password was changed. If this wasn't you, secure your account now.",
+        "We received a request to reset your password", "New sign-in to your account from Chrome on Windows",
+        "A new device just logged in to your account", "Was this you? Confirm this login attempt",
+        "Approve the sign-in request on your phone", "Card payment of 45.20 EUR at the supermarket approved",
+        "You spent 129.00 with your card ending in 4421", "Incoming transfer to your account received",
+        "Your account balance is below your limit", "Suspicious activity detected on your account",
+        "Your account has been locked after too many failed attempts",
+        "Two-factor authentication was turned off for your account", "Security alert: unusual login attempt blocked",
+        "Your recovery email address was changed", "Tap this link to log in to your account",
+        "Direct debit collected from your current account", "Your card was declined",
+    )),
+    no=Option("no", "ordinary chat, work, builds, calendar, updates, music, the computer", (
+        "are we still on for lunch tomorrow?", "can you review my PR when you get a sec", "haha that's brilliant",
+        "Build passed on main", "3 tests failed in CI", "PR merged into main", "the deploy is done, looks good",
+        "Meeting with the design team at 14:00", "Standup starts in 10 minutes",
+        "Reminder: dentist appointment tomorrow morning", "17 updates available", "Download complete",
+        "Now playing a new song", "Battery low, 10% remaining", "happy birthday!!", "Your order has been shipped",
+        "New comment on your document", "shared a file with you", "running late, be there in 15",
+        "Your meeting is starting now", "did you see the match last night", "Backup finished successfully",
+    )),
+)
+
 TOOL_QUESTIONS: dict[str, Choice] = {"music": MUSIC_TOOL}
 ROUTING: tuple[Question, ...] = (KIND, TOPIC, IS_URGENT, IS_ABOUT_HER, HAS_ARGUMENT, WANTS_LIBRARY_CHANGE,
                                  *TOOL_QUESTIONS.values())
@@ -473,6 +502,7 @@ class Gate:
         )
         self.ready = False
         self.calls = 0
+        self.sensitive_calls = 0
         self.failures = 0
         self.last_route: Route | None = None
         self.last_ms: float | None = None
@@ -490,7 +520,7 @@ class Gate:
             # timeout would cut it off. Same allowance the brain's warm-up gets.
             if self.owned:
                 self.owned.timeout_s = self.WARM_UP_S
-            await self.systemone.prepare(*self.questions)
+            await self.systemone.prepare(*self.questions, IS_SENSITIVE)
         except GateError as exc:
             self.disabled_reason = f"could not embed the examples: {exc}"
             log.warning("gate: %s; routing every sentence to chat", self.disabled_reason)
@@ -548,6 +578,26 @@ class Gate:
                  route.has_argument, ms, {k: round(v, 2) for k, v in kind.probabilities.items()})
         return route
 
+    async def sensitive(self, text: str) -> tuple[float, float] | None:
+        """p(yes) of IS_SENSITIVE for a notification's text, and the milliseconds it took; None when
+        the gate is off or failing (the caller then treats the text as sensitive). Never logs the text."""
+        if not self.ready or not self.systemone:
+            return None
+        self.sensitive_calls += 1
+        started = time.perf_counter()
+        try:
+            answers = await self.systemone.ask(text, IS_SENSITIVE)
+        except GateError as exc:
+            self.failures += 1
+            log.warning("gate: %s; the notification body counts as sensitive", exc)
+            if "Timeout" in str(exc):
+                self.schedule_rewarm()
+            return None
+        ms = (time.perf_counter() - started) * 1000
+        p = answers[IS_SENSITIVE.name].score or 0.0
+        log.debug("gate: is_sensitive %.2f (%.0f ms, %d chars)", p, ms, len(text))
+        return p, ms
+
     def schedule_rewarm(self) -> None:
         """After a timeout the embedding model is most likely reloading after being evicted; a
         short call hanging up aborts that load (Ollama), so reload it once with the long allowance."""
@@ -577,6 +627,7 @@ class Gate:
             "model": self.config.model if self.config.enabled else None,
             "ready": self.ready,
             "calls": self.calls,
+            "sensitive_calls": self.sensitive_calls,
             "failures": self.failures,
             "last_ms": round(self.last_ms, 1) if self.last_ms is not None else None,
             "last_route": {k: v for k, v in self.last_route.to_dict().items() if k != "answers"} if self.last_route else None,

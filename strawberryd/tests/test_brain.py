@@ -7,6 +7,7 @@ from aiohttp import web
 from strawberryd.brain import OllamaReactor, describe, tidy
 from strawberryd.config import BrainConfig
 from strawberryd.events import CannedReactor, Event
+from strawberryd.persona import BODY_RULE, EXAMPLES
 
 
 def fake_ollama(reply=None, *, delay=0.0, raw=None, status=200):
@@ -195,8 +196,13 @@ def test_tidy_collapses_and_caps():
 
 def test_describe_matches_the_example_shape():
     assert describe(Event(source="notification", app="Power", title="Low", body="5%", urgency="critical")) == (
-        "source: notification\napp: Power\ntitle: Low\nbody: 5%\nurgency: critical"
+        "source: notification\napp: Power\ntitle: Low\nbody: 5%\nurgency: critical\n" + BODY_RULE
     )
+    assert describe(Event(source="notification", app="Signal", title="Sam")) == "source: notification\napp: Signal\ntitle: Sam"
+    # every notification example with a body carries the rule, so the examples match what she is shown
+    for example in EXAMPLES:
+        if example["event"].startswith("source: notification\n") and "\nbody: " in example["event"]:
+            assert example["event"].endswith("\n" + BODY_RULE)
     assert describe(Event(source="media", app="Spotify", title="X — Y")) == "source: media\napp: Spotify\ntitle: X — Y"
 
 
