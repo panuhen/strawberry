@@ -5,7 +5,7 @@ func _initialize() -> void:
 
 func run() -> void:
 	var monitor = load("res://sleep_controller.gd").new()
-	monitor.helper_path = ProjectSettings.globalize_path("res://desktop_idle.py")
+	monitor.helper_path = preload("res://paths.gd").on_disk("res://desktop_idle.py")
 	var error: int = monitor.probe.start(monitor.read_idle)
 	if error != OK:
 		push_error("Idle worker did not start")

@@ -1,8 +1,12 @@
 extends PopupMenu
 ## Right-click menu on the crab (WIRING.md §13): type to her, mute, quiet hour, voice volume, skin,
-## always-on-top, the settings file, and quit. Preferences persist in user://widget.cfg
-## through the widget's save_settings(); daemon-side settings live in config.toml, which
-## "Settings file…" opens in the desktop's text editor.
+## always-on-top, the settings file, and quit. Preferences persist in
+## $XDG_CONFIG_HOME/strawberry/widget.cfg through the widget's save_settings(); daemon-side
+## settings live in config.toml, which "Settings file…" opens in the desktop's text editor.
+## Both that and "Apply settings" go through the `strawberry` CLI (paths.gd: STRAWBERRY_CLI
+## from the tray, else PATH), never into a source checkout.
+
+const Paths = preload("res://paths.gd")
 
 # Explicit ids for every item: items added without one get their index as id, and a
 # submenu row would then collide with a real id and take its check mark.
@@ -99,9 +103,9 @@ func _on_pressed(id: int) -> void:
 		SETTINGS_FILE:
 			open_settings_file()
 		APPLY_SETTINGS:
-			OS.create_process(repo_root().path_join("bin/strawberry"), ["restart"])
+			apply_settings()
 		VOICES_FOLDER:
-			var dir := data_home().path_join("strawberry/voices")
+			var dir := Paths.voices_dir()
 			DirAccess.make_dir_recursive_absolute(dir)
 			OS.shell_open("file://" + dir)
 		RESET_POSITION:
@@ -109,20 +113,21 @@ func _on_pressed(id: int) -> void:
 		QUIT:
 			widget.get_tree().quit()
 
+## The daemon's config.toml; a missing one is first written from the commented template by
+## `strawberry config --init` (the CLI owns the template, WIRING.md §15).
 func open_settings_file() -> void:
-	var path := config_home().path_join("strawberry/config.toml")
+	var path := Paths.config_file()
 	if not FileAccess.file_exists(path):
-		# Same as `bin/strawberry config`: write the commented template first.
-		OS.execute(repo_root().path_join(".venv/bin/strawberryd"), ["--init-config"])
+		var output: Array = []
+		var code := OS.execute(Paths.cli(), ["config", "--init"], output, true)
+		if code != 0 or not FileAccess.file_exists(path):
+			push_warning("%s config --init failed (%d): %s" % [Paths.cli(), code, "".join(output)])
+			widget.bubble.speak("I couldn't find the strawberry command to write my settings file.", "alert")
+			return
 	OS.shell_open("file://" + path)
 
-static func repo_root() -> String:
-	return ProjectSettings.globalize_path("res://").rstrip("/").get_base_dir()
-
-static func config_home() -> String:
-	var xdg := OS.get_environment("XDG_CONFIG_HOME")
-	return xdg if xdg != "" else OS.get_environment("HOME").path_join(".config")
-
-static func data_home() -> String:
-	var xdg := OS.get_environment("XDG_DATA_HOME")
-	return xdg if xdg != "" else OS.get_environment("HOME").path_join(".local/share")
+## "Apply settings": `strawberry restart`, which restarts the tray's unit (and with it the daemon)
+## when she runs under it, or the daemon on its own. Never a script inside a checkout.
+func apply_settings() -> void:
+	if OS.create_process(Paths.cli(), ["restart"]) == -1:
+		widget.bubble.speak("I couldn't find the strawberry command to restart my daemon.", "alert")

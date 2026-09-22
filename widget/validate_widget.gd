@@ -4,10 +4,14 @@ extends SceneTree
 ## the bubble, speech ending returns her to idle, /event round-trips, bad blobs are 400.
 ##
 ## godot --headless --path widget --script res://validate_widget.gd -- --daemon=http://127.0.0.1:8770 --ws=ws://127.0.0.1:8770/ws
+## The exported binary has no --script (release templates drop it):
+## strawberry-widget --headless -- --acceptance=res://validate_widget.gd --daemon=... --ws=... --report=/tmp/checks.json
 
 var daemon_url := "http://127.0.0.1:8770"
+var report_path := "res://widget_checks.json"   # an exported binary's res:// is read-only: pass --report=
 var failures: Array[String] = []
-var report: Dictionary = {"godot_version": Engine.get_version_info().string}
+var report: Dictionary = {"godot_version": Engine.get_version_info().string,
+	"widget_version": preload("res://paths.gd").version(), "exported": OS.has_feature("template")}
 var widget: Node3D
 var http: HTTPRequest
 
@@ -15,6 +19,8 @@ func _initialize() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--daemon="):
 			daemon_url = arg.trim_prefix("--daemon=")
+		elif arg.begins_with("--report="):
+			report_path = arg.trim_prefix("--report=")
 	report["daemon"] = daemon_url
 	call_deferred("run")
 
@@ -177,7 +183,7 @@ func run() -> void:
 	var skeleton := widget.model.find_child("Skeleton3D", true, false) as Skeleton3D
 	var claw_i := skeleton.find_bone("claw_arm_L")
 	var claw_before: Quaternion = skeleton.get_bone_global_pose(claw_i).basis.get_rotation_quaternion()
-	var icon := ProjectSettings.globalize_path("res://capture_phase1.png")
+	var icon: String = preload("res://paths.gd").on_disk("res://capture_phase1.png")
 	var wave := await post("/perform", {"state": "talking", "reaction": "wave", "hop": true, "icon": icon, "text": "James says hi", "emotion": "happy"})
 	check(wave[1] == 200, "/perform with reaction/icon/hop should be accepted")
 	await wait(0.6)
@@ -387,8 +393,12 @@ func finish() -> void:
 	report["failures"] = failures
 	report["passed"] = failures.is_empty()
 	report["performances"] = widget.performances if widget else 0
-	var file := FileAccess.open("res://widget_checks.json", FileAccess.WRITE)
-	file.store_string(JSON.stringify(report, "\t"))
-	file.close()
+	var file := FileAccess.open(report_path, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(report, "\t"))
+		file.close()
+	else:
+		push_error("could not write %s: %s" % [report_path, error_string(FileAccess.get_open_error())])
+		failures.append("report not written to " + report_path)
 	print("widget checks: ", "PASSED" if failures.is_empty() else "FAILED (%d)" % failures.size())
 	quit(0 if failures.is_empty() else 1)

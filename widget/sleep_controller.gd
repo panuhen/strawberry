@@ -19,7 +19,7 @@ var sleep_started_at := 0.0
 func setup(owner: Node3D) -> void:
 	widget = owner
 	process_priority = 80
-	helper_path = ProjectSettings.globalize_path("res://desktop_idle.py")
+	helper_path = preload("res://paths.gd").on_disk("res://desktop_idle.py")
 	monitor_enabled = not widget.is_headless()
 	widget.player.animation_finished.connect(animation_finished)
 
