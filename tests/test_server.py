@@ -349,3 +349,38 @@ def test_the_close_code_matches_the_widget():
 
     ws_client = (Path(__file__).parents[1] / "widget" / "ws_client.gd").read_text()
     assert f"const CLOSE_VERSION_REFUSED := {CLOSE_VERSION_REFUSED}" in ws_client
+
+
+async def test_a_second_sigterm_during_shutdown_is_held(monkeypatch):
+    # systemd signals the tray's whole cgroup and the tray terminates its children too; the
+    # second SIGTERM must not raise GracefulExit into the cleanup that closes the sessions.
+    import signal
+
+    from strawberry_crab import server
+
+    installed = {}
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "add_signal_handler", lambda sig, fn, *args: installed.__setitem__(sig, (fn, args)))
+    await server._hold_signals(None)
+    assert set(installed) == {signal.SIGINT, signal.SIGTERM}
+    fn, args = installed[signal.SIGTERM]
+    fn(*args)      # logs, raises nothing
+
+
+async def test_close_closes_every_part_even_when_one_fails(daemon):
+    closed = []
+
+    class Part:
+        def __init__(self, name, fail=False):
+            self.name, self.fail = name, fail
+
+        async def close(self):
+            closed.append(self.name)
+            if self.fail:
+                raise RuntimeError("boom")
+
+    daemon.reactor = Part("reactor", fail=True)
+    daemon.gate = Part("gate")
+    daemon.thinker = Part("thinker")
+    await daemon.close()
+    assert closed == ["reactor", "gate", "thinker"]

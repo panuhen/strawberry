@@ -11,9 +11,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import signal
 from typing import Any
 
 from aiohttp import WSMsgType, web
@@ -53,6 +55,7 @@ def create_app(daemon: Daemon) -> web.Application:
     app = web.Application()
     app[DAEMON] = daemon
     app.on_startup.append(_start_daemon)
+    app.on_shutdown.append(_hold_signals)
     app.on_shutdown.append(_close_widgets)
     app.on_cleanup.append(_close_daemon)
     app.add_routes(
@@ -76,6 +79,26 @@ async def _start_daemon(app: web.Application) -> None:
 
 async def _close_daemon(app: web.Application) -> None:
     await app[DAEMON].close()
+
+
+async def _hold_signals(app: web.Application) -> None:
+    """One SIGTERM is enough: ignore the rest while shutting down.
+
+    Stopping the tray unit signals its whole cgroup, and the tray terminates its children as
+    well, so the daemon gets SIGTERM twice. aiohttp's handler would raise GracefulExit again in
+    the middle of cleanup, cancel it, and leave the Ollama sessions to the garbage collector
+    ("Unclosed client session" in the journal). runner.cleanup() removes these handlers at its end.
+    """
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _already_stopping, sig)
+        except (NotImplementedError, RuntimeError, ValueError):
+            pass     # not the main thread (tests), or no signals on this platform
+
+
+def _already_stopping(sig: signal.Signals) -> None:
+    log.info("%s during shutdown ignored; already stopping", signal.Signals(sig).name)
 
 
 async def _close_widgets(app: web.Application) -> None:

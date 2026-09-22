@@ -118,16 +118,18 @@ class Daemon:
     async def close(self) -> None:
         for task in list(self.background_tasks):
             task.cancel()
-        close = getattr(self.reactor, "close", None)
-        if close:
-            await close()
-        await self.speaker.close()
-        await self.listener.close()
-        await self.gate.close()
-        await self.toolbox.close()
-        await self.thinker.close()
-        if self.mpris:
-            await self.mpris.close()
+        # Each part is closed even if another one fails: an HTTP session left open is an
+        # "Unclosed client session" error in the journal at exit.
+        parts = [("reactor", self.reactor), ("speaker", self.speaker), ("listener", self.listener),
+                 ("gate", self.gate), ("toolbox", self.toolbox), ("thinker", self.thinker), ("mpris", self.mpris)]
+        for name, part in parts:
+            close = getattr(part, "close", None)
+            if close is None:
+                continue
+            try:
+                await close()
+            except Exception as exc:   # noqa: BLE001 - shutting down; say it and carry on
+                log.warning("closing %s failed: %r", name, exc)
         if self.vocabulary_task and not self.vocabulary_task.done():
             self.vocabulary_task.cancel()
         if self.listen_task and not self.listen_task.done():
