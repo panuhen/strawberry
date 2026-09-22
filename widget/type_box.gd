@@ -54,7 +54,6 @@ func setup(owner: Node3D) -> void:
 func field_style(state_name: String) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = CREAM if state_name != "read_only" else CREAM.darkened(0.06)
-	style.set_corner_radius_all(10)
 	style.set_border_width_all(2 if state_name == "focus" else 1)
 	style.border_color = Color(INK, 0.35)
 	style.anti_aliasing = true
