@@ -47,7 +47,7 @@ packages = ["src/strawberry"]
 [tool.hatch.build.targets.sdist]
 # The Python package and what builds or checks it; the Godot project and the Blender sources
 # (widget/, model/) ship as the widget binary instead (PACKAGING.md step 4).
-include = ["src/strawberry", "tests", "scripts", "README.md", "WIRING.md", "PACKAGING.md", "ADAPTERS.md"]
+include = ["/src/strawberry", "/tests", "/scripts", "/README.md", "/WIRING.md", "/PACKAGING.md", "/ADAPTERS.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

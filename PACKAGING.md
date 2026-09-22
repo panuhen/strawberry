@@ -60,13 +60,13 @@ widget binary reaches every distro with the same artefact.
 |---|---|
 | `godot` on PATH; the widget runs from `widget/` source | Export a standalone Linux binary per release; the CLI downloads the matching one (4) |
 | Doorways run on `/usr/bin/python3` for PyGObject (`gi`) | Rewrite the two D-Bus watchers on jeepney so they live in the package (1) |
-| `numpy` from the system for the beat watcher | Package dependency (2) |
-| `bin/strawberry` bash launcher finds files via the repo | Python CLI entry point; assets in XDG data dir (2) |
+| ~~`numpy` from the system for the beat watcher~~ | done (2): package dependency |
+| ~~`bin/strawberry` bash launcher finds files via the repo~~ | done (2): `strawberry` CLI entry point, XDG paths, icons as package data; the widget still runs from a checkout (4) |
 | Widget finds the repo via `res://..` (menu: settings file, restart) | XDG paths and daemon commands (4) |
 | ~~Music control needs the Spotify MCP server~~ | done (3): MPRIS reflexes for any player; Spotify is an adapter |
 | Ollama present with the models pulled | `strawberry setup` installs Ollama (their script) and pulls the models (5) |
 | Piper voice already downloaded | `strawberry setup` downloads the default voice; `strawberry voices` for more (5) |
-| `jq`, `curl` in the git hooks and `say` | Hooks call `strawberry git-event` (Python); `say` is Python (2) |
+| ~~`jq`, `curl` in the git hooks and `say`~~ | done (2): hooks call `strawberry git-event` (Python); `say` is Python |
 | `pw-record`, `pw-dump` | Runtime check with the apt/dnf line in the message (5) |
 | No licence | MIT (6) |
 
@@ -97,7 +97,12 @@ Evidence: `strawberryd/.venv/bin/python -m pytest -q` → 230 passed (186 before
 - Tests: jeepney message building/parsing on recorded bus traffic (no live bus in unit tests), the
   tray's menu model and command mapping, a live check script that registers the item and lists it.
 
-### 2. One Python package (`strawberry`) and the CLI
+### 2. One Python package (`strawberry`) and the CLI — **done 2026-09-22**
+
+Evidence: `pyproject.toml` at the root with `src/strawberry/` and `tests/`; `.venv/bin/python -m pytest -q` → 280 passed (262 before the CLI tests); `scripts/check_phase1.sh`, `scripts/check_tray.sh` pass and `scripts/gate_check.py` is 71/71; `uv build` makes a wheel with the icons inside; `uv tool install <checkout>` into a throwaway tool dir, run from `/tmp` with throwaway XDG dirs, did `--help`, `status`, `route "skip this"`, `strawberryd --port 8773` + `/health`, `say`, `strawberry-doorway beat_watch --help`, and `strawberry tray` with its daemon and three doorways all on the tool's own interpreter (no widget: no checkout). Choices made on the way: the daemon's module is `strawberry.strawberryd` (so `python -m strawberry` is the CLI); logger names stay `strawberryd.*` so the journal reads as before; `install` writes `ExecStart=<the running strawberry> tray --port N` and *restarts* the unit, which is also the migration from the old ExecStart; the git hooks are one-line files written by `strawberry git-hooks install`, replacing the old symlinks; `gpu` is both a dependency group (checkout) and an extra (`uv tool install 'strawberry[gpu] @ <path>'`). Left for step 4: the widget child and `strawberry widget` need a checkout with `widget/` and Godot on PATH, and `menu.gd` still calls the checkout's `.venv/bin/strawberryd --init-config` and `bin/strawberry restart`. Left for step 5: `setup` and `doctor` exist and say "step 5". Before publishing (6): the name `strawberry` is taken on PyPI (an unrelated project, version 3.0), and `strawberry-graphql` also imports as `strawberry`, so the distribution needs another name and perhaps the import name too.
+
+The plan as written:
+
 
 - Rename the project `strawberryd` → `strawberry`; keep `strawberryd` as a console script alias.
   `strawberry/doorways/` holds the watchers and the beat tracker. Entry points: `strawberry` (CLI),
@@ -202,7 +207,7 @@ something a user could fix is missing. Every bug report starts with its output.
 |---|---|---|
 | 1. jeepney watchers + tray | – | a day — **done 2026-09-22** |
 | 3. MPRIS reflexes + adapters | – (parallel with 1) | a day |
-| 2. package + CLI | 1, 3 | half a day |
+| 2. package + CLI | 1, 3 | half a day — **done 2026-09-22** |
 | 4. widget binary + XDG + handshake | 2 | half a day |
 | 5. setup + doctor | 2, 4 | a day |
 | 6. releases, licence, README | 5 | half a day |

@@ -7,7 +7,7 @@ levels, and the second is optional:
 | | what it is | what it takes |
 |---|---|---|
 | **A server** | an MCP server in `[tools.servers.<name>]`; its tools reach the brain | four lines of config |
-| **An adapter** | Python in `strawberryd/adapters/<name>.py` that makes one server feel native | a file and a line in the registry |
+| **An adapter** | Python in `strawberry/adapters/<name>.py` that makes one server feel native | a file and a line in the registry |
 
 Nothing ships configured. Skip, previous, pause, resume, volume and "what song is this" already
 work for any desktop player over MPRIS (WIRING §8b), so the shipped install needs no server at all.
@@ -32,7 +32,7 @@ go first when the tool list has to be cut (`[thinker] max_tools`). `careful` lis
 change something the user would miss; they reach the brain only when the gate's
 `wants_library_change` is ≥ 0.5 ("save this song", not "play this song").
 
-Check it: `bin/strawberry tools` lists everything she can reach, `bin/strawberry tool notes search
+Check it: `strawberry tools` lists everything she can reach, `strawberry tool notes search
 '{"q": "garden"}'` calls one by hand, and `/health.tools` shows each server's state and which
 adapter (if any) it got. A server that fails to start is skipped with a warning and retried on the
 next use; it never takes the daemon down.
@@ -62,7 +62,7 @@ alone, so it can also say "this server is *not* the one that name suggests" by n
 
 ## Writing one
 
-`strawberryd/adapters/base.py` is the whole interface; subclass it and set what you have.
+`strawberry/adapters/base.py` is the whole interface; subclass it and set what you have.
 
 ```python
 from ..actions import Outcome
@@ -88,7 +88,7 @@ class NotesAdapter(Adapter):
         return f"Today's note: {result.text}" if result.ok else ""
 ```
 
-Then add it to the registry in `strawberryd/adapters/__init__.py`:
+Then add it to the registry in `strawberry/adapters/__init__.py` (the package lives under `src/` in the checkout):
 
 ```python
 from .notes import NOTES
@@ -121,7 +121,7 @@ adapter wants the same pair.
 
 ## The Spotify adapter
 
-The worked example, `strawberryd/adapters/spotify.py`. Its server is a separate MCP wrapper around
+The worked example, `strawberry/adapters/spotify.py`. Its server is a separate MCP wrapper around
 the Spotify Web API, not shipped with her: you install it, register a Spotify app and authorise it
 once. The one this adapter was written against is
 [panuhen/spotify-mcp](https://github.com/panuhen/spotify-mcp) (25 tools over the Web API). The adapter binds to the tool names that wrapper exposes (`next`, `previous`,
