@@ -180,26 +180,44 @@ Changes are debounced 400 ms (players fire several property updates per track), 
 
 ## 4c. Doorway: the beat — `strawberry/doorways/beat_watch.py` + `beat_track.py`
 
-MPRIS says *that* music plays; this says *how it goes*. Like the other two it is a package module on the same interpreter (`strawberry-doorway beat_watch`; numpy is a normal dependency). The watcher captures the player's own PipeWire output stream (`pw-record --target <node>`: never the microphone, never the whole mixer, so her voice, calls and system sounds stay out) and feeds it to a pure-numpy beat tracker: spectral-flux onset envelope at ~43 frames/s, autocorrelation over the last 8 s for the period (60–190 BPM, mild prior around 120), a comb filter over the last 4 s for the phase, with kick-band onsets leading the phase search so she lands on the kick rather than the hi-hats. Every 2 s it posts to `POST /tempo`:
+MPRIS says *that* music plays; this says *how it goes*. Like the other two it is a package module on the same interpreter (`strawberry-doorway beat_watch`; numpy is a normal dependency). The watcher captures the player's own PipeWire output stream (`pw-record --target <node>`: never the microphone, never the whole mixer, so her voice, calls and system sounds stay out) and feeds it to a pure-numpy beat tracker: spectral flux at ~43 frames/s in three bands (kick < 150 Hz, mid, high), each normalised by its own mean so the kick's few bins count as much as the hats' many; autocorrelation over the last 8 s for the period (55–215 BPM, ac(lag) + ½·ac(2·lag), log-Gaussian prior around 118 BPM, half/double of the winner re-scored side by side); hysteresis (a new tempo must score 15 % better twice in a row), a second vote from the last 4 s alone so a tempo change re-locks in two estimates, and the median of the last three estimates as the reported BPM; a comb at the fractional period over the last 4 s for the phase, led by the kick band in linear magnitude so she lands on the kick rather than on off-beat hats or an off-beat bass, blended with the grid the previous estimate predicted. Every 2 s it posts to `POST /tempo`:
 
 ```json
 {"bpm": 128.4, "period_s": 0.467, "confidence": 0.71, "next_beat": 1789935826.592,
- "evenness": 0.62, "low_ratio": 0.55, "density": 4.1, "loudness_db": -18.0}
+ "evenness": 0.62, "low_ratio": 0.55, "density": 4.1, "loudness_db": -18.0, "steady": true}
 ```
 
-or `{"silent": true}`. `next_beat` is wall-clock, so the widget computes the beat phase itself every frame. `evenness` (autocorrelation at 1, 2 and 4 periods: four-on-the-floor scores high), `low_ratio` (energy below 150 Hz), `density` (onsets/s) and loudness are the style features. The daemon validates ranges, forwards `{"tempo": {...}}` to the widgets, shows the fresh estimate in `/health`, and hands it to a widget that connects while it is fresh (6 s). Stream discovery is automatic (a running `Stream/Output/Audio` node from a known player, else any running stream that is not ours) or pinned with `[beat].target`. Only a *running* stream is ever targeted, and after the first second of data the watcher reads the graph (`pw-dump` links into its own `strawberry-beat` node) to confirm the bytes come from that stream: Spotify keeps a second, idle stream node, and when the watcher once targeted it at a track change PipeWire quietly linked the capture to the default sink's monitor instead. From then on the beat followed the headset, went dead across an A2DP→handsfree profile switch, and came back as 8 kHz telephone audio (2026-09-22). A capture fed by an `Audio/Sink` node is dropped and the next strategy tried; the explicit `sink-monitor` strategy is the last resort and says so in the log.
+or `{"silent": true}`. `next_beat` is wall-clock, so the widget computes the beat phase itself every frame. `steady` is true once the same tempo has held for two estimates and two seconds since the last lock, with confidence ≥ 0.3 and sound in the last second; it is optional in the protocol (the daemon accepts estimates without it, a widget treats a missing flag as steady), so an older watcher still works. `evenness` (autocorrelation at 1, 2 and 4 periods: four-on-the-floor scores high), `low_ratio` (energy below 150 Hz), `density` (onsets/s) and loudness are the style features. The daemon validates ranges, forwards `{"tempo": {...}}` to the widgets, shows the fresh estimate in `/health`, and hands it to a widget that connects while it is fresh (6 s). Stream discovery is automatic (a running `Stream/Output/Audio` node from a known player, else any running stream that is not ours) or pinned with `[beat].target`. Only a *running* stream is ever targeted, and after the first second of data the watcher reads the graph (`pw-dump` links into its own `strawberry-beat` node) to confirm the bytes come from that stream: Spotify keeps a second, idle stream node, and when the watcher once targeted it at a track change PipeWire quietly linked the capture to the default sink's monitor instead. From then on the beat followed the headset, went dead across an A2DP→handsfree profile switch, and came back as 8 kHz telephone audio (2026-09-22). A capture fed by an `Audio/Sink` node is dropped and the next strategy tried; the explicit `sink-monitor` strategy is the last resort and says so in the log.
 
 **Dance styles (`widget/dance_style.gd`).** While she is dancing with a fresh estimate the node runs `dance_loop` at the music's tempo (one leg lift per beat: the clip's natural rate is 119 BPM, halved or doubled to stay within 0.65–1.6×) and layers beat-locked moves over it, the same bone-offset-after-the-AnimationPlayer technique as the reactions. The rule table, in order:
 
 | style | when | moves |
 |---|---|---|
-| `sway` | confidence < 0.3, or < 76 BPM, or quieter than −38 dB | slow roll, clip at 0.75×, happy eyes; no beat lock |
+| `sway` | confidence < 0.3, or < 76 BPM, or quieter than −48 dB, or `steady` is false | slow roll, clip at 0.75×, happy eyes; no beat lock |
 | `rave` | ≥ 118 BPM, evenness ≥ 0.45, low_ratio ≥ 0.25 (techno, house, trance, hardstyle) | stomp squash on every beat, arms pump alternately, eyes wide |
 | `headbang` | ≥ 132 BPM, density ≥ 4 (rock, metal) | forward nod on the beat, claws half up, squint |
 | `groove` | ≤ 108 BPM, low_ratio ≥ 0.2 (hip hop, funk) | two-beat roll, claw pumps on alternate beats |
 | `bounce` | everything else with a beat | squash and a small nod on the beat |
 
 A new style must win two estimates in a row (4 s) before she switches, so borderline songs do not flicker. Silence or a stale estimate resets speed and layers. The thresholds are constants at the top of the script and the watcher logs the same features per song, so tuning is: play the song, read the journal, adjust. First live reading: Schrotthagen at 161 BPM, evenness 0.5, low 0.77 → rave. Not built yet: a build-up/drop detector for rave (energy rising over bars, then a crouch and a drop back in) and a genre hint from the brain.
+
+**Measuring the tracker (`scripts/beat_eval.py`).** An offline harness feeds wav files through `BeatTracker` exactly as the watcher does (2048-sample chunks, an estimate every 2 s) and scores every estimate against the true beat grid: `acc1` (within 4 % of the true tempo), `octave` (within 4 % of half or double), `acc2` (either), time to lock (first correct estimate that the next two confirm), jitter (mean BPM change between locked estimates), phase (locked `next_beat` within 70 ms of a true beat), phase jumps (the grid moved more than 0.2 beat between estimates), beatless claims (a beat claimed over noise, silence or bare pads: `steady`, or confidence ≥ 0.3 for a tracker without the flag) and CPU per second of audio. `scripts/beat_eval.py gen DIR` writes the generated test set (35 clips of 30 s: click tracks at 70–175 BPM; house, techno, trance, rock, punk, swung hip hop and funk, half-time trap, drum and bass, one-drop, swung jazz, a waltz; loud pads and arpeggios over quiet drums; pink noise at 0 dB SNR; a breakdown, a silence gap, abrupt 100→128 and 140→92 changes, a 118→134 ramp; noise, pads and hum without a beat); `run DIR --tracker OLD.py` compares another version on the same set. No recorded audio is committed. `tests/test_beat_eval.py` runs the set at 20 s per clip and holds the scores.
+
+| on the generated set | first tracker | now |
+|---|---|---|
+| acc1 (right tempo) | 0.56 | 0.84 |
+| octave errors | 0.31 | 0.09 |
+| acc2 (right up to an octave) | 0.87 | 0.92 |
+| other errors | 0.06 | 0.00 |
+| time to lock, mean over sections (median) | 13.3 s (4.1 s) | 6.3 s (4.1 s) |
+| jitter while locked | 0.12 BPM | 0.08 BPM |
+| phase on the beat (±70 ms) | 0.82 | 0.91 |
+| phase jumps between estimates | 0.067 | 0.018 |
+| beats claimed where there are none | 0.023 | 0.000 |
+| estimates `steady` / of those right | — | 0.85 / 0.90 |
+| CPU per second of audio (one core) | 1.96 ms | 2.04 ms |
+
+The first estimate of every clip comes at 2 s and is always empty (the tracker needs 4 s), which is why acc1 tops out at 0.93 per clip and time to lock bottoms out at 4 s. What the old tracker got wrong: 120 and 140 BPM click tracks came out at 60 and 70 (the beat period fell between two integer frame lags, the doubled lag did not), four-on-the-floor techno and trance halved, swung hip hop doubled by the hats, and the phase landed on an off-beat bass. What the new one still gets "wrong" is the metrical level of half-time material: trap at 140 comes out at 70, drum and bass at 174 as 87, a one-drop at 75 as 150, all counted as octave errors though a dancer could pick either. Its phase still goes to the off-beat on a funk pattern whose kicks mostly sit off the beat (the snare would say otherwise, but weighting the mid band lets off-beat hats and bass win on minimal techno, which matters more), flips on one syncopated hip-hop pattern, and trails a steep tempo ramp by about a fifth of a beat. The set is synthetic; the numbers say which mistakes are gone, not how she does on a given record.
 
 ## 5. Doorway: git — `strawberry git-event`
 
@@ -369,7 +387,7 @@ Stop after any phase and you still have something that works.
 - [x] Speech ends → crab returns to `idle` with no follow-up message from the daemon.
 - [x] A `/event` round-trips through the reactor to the widget. (Canned reactor; model in Phase 2.)
 - [x] Play/pause in any MPRIS media player makes her dance/idle; a track change shows a "Now playing" bubble and she returns to dancing. (`strawberry/doorways/mpris_watch.py`)
-- [x] The beat of the playing music picks a dance style and the clip runs at its tempo; synthetic 128/92/168 BPM drums are tracked to within 2 BPM with the phase on the kick. (`strawberry/doorways/beat_watch.py`, `check_phase1.sh` step 14, `tests/test_beat_track.py`)
+- [x] The beat of the playing music picks a dance style and the clip runs at its tempo; synthetic 128/92/168 BPM drums are tracked to within 2 BPM with the phase on the kick; an unsteady tempo sways. Scored offline by `scripts/beat_eval.py` (§4c). (`strawberry/doorways/beat_watch.py`, `check_phase1.sh` step 14, `tests/test_beat_track.py`, `tests/test_beat_eval.py`)
 - [x] Browser origins are refused on HTTP and `/ws`; POSTs need the JSON content type.
 - [x] A git commit makes Strawberry show a model-written bubble (silent). (`gemma3:1b` via `OllamaReactor`)
 - [x] A desktop notification (any app) triggers a reaction. (`notify-send -a WhatsApp James "…"` → Gemma line in the bubble)
@@ -523,6 +541,7 @@ scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless
 scripts/check_tray.sh    register the tray on the real session bus and read it back with busctl (§14)
 scripts/gate_check.py    the gate over scripts/gate_phrases.json against live Ollama; add sentences she misreads
 scripts/sensitive_check.py  the notification-body filter over scripts/sensitive_phrases.json against live Ollama (§4)
+scripts/beat_eval.py     the beat tracker offline: generate the synthetic set, score tempo/octave/lock/jitter/phase/CPU (§4c)
 model/                   the asset: GLB, editable Blender scene, procedural build script
 ```
 

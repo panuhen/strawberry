@@ -126,6 +126,17 @@ async def test_tempo_is_forwarded_validated_and_remembered(client):
     await late.close()
 
 
+async def test_tempo_steady_flag_is_optional_and_boolean(client):
+    ws = await client.ws_connect("/ws")
+    assert (await client.post("/tempo", json={**TEMPO, "steady": False})).status == 200
+    assert await ws.receive_json(timeout=2) == {"tempo": {**TEMPO, "steady": False}}
+    assert (await client.post("/tempo", json=TEMPO)).status == 200      # an older watcher: no flag at all
+    assert await ws.receive_json(timeout=2) == {"tempo": TEMPO}
+    for bad in ({**TEMPO, "steady": 1}, {**TEMPO, "steady": "yes"}):
+        assert (await client.post("/tempo", json=bad)).status == 400, bad
+    await ws.close()
+
+
 async def test_health_counts_connected_widget(client):
     ws = await client.ws_connect("/ws")
     await ws.send_json({"type": "hello", "client": "test"})

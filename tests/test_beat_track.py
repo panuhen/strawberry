@@ -114,5 +114,94 @@ def test_needs_four_seconds_first():
 def test_to_dict_rounds():
     _, tempo, _ = run(drums(120.0, 8.0))
     d = tempo.to_dict()
-    assert set(d) == {"bpm", "period_s", "confidence", "next_beat", "evenness", "low_ratio", "density", "loudness_db"}
+    assert set(d) == {"bpm", "period_s", "confidence", "next_beat", "evenness", "low_ratio", "density", "loudness_db",
+                      "steady"}
     assert isinstance(d["bpm"], float)
+    assert isinstance(d["steady"], bool)
+
+
+def clicks(bpm: float, seconds: float) -> np.ndarray:
+    out = np.zeros(int(seconds * SR), dtype=np.float32)
+    t = np.arange(int(0.03 * SR)) / SR
+    click = (np.sin(2 * np.pi * 1000 * t) * np.exp(-t * 150)).astype(np.float32)
+    for beat in np.arange(0, seconds, 60.0 / bpm):
+        i = int(beat * SR)
+        out[i:i + len(click)] += click[: len(out) - i]
+    return out
+
+
+def estimates(signal: np.ndarray, every_s: float = 2.0, chunk: int = 2048, start_time: float = 1000.0):
+    """Feed like beat_watch does and collect one estimate every `every_s`."""
+    tracker = beat_track.BeatTracker(sample_rate=SR)
+    out, due = [], every_s
+    for i in range(0, len(signal), chunk):
+        piece = signal[i:i + chunk]
+        t = (i + len(piece)) / SR
+        tracker.feed(piece, start_time + t)
+        if t >= due:
+            due = t + every_s
+            out.append((t, tracker.estimate(start_time + t)))
+    return out
+
+
+@pytest.mark.parametrize("bpm", [120.0, 140.0])
+def test_a_period_between_two_frame_lags_is_not_halved(bpm):
+    """120 BPM is 21.5 frames: integer lags used to miss the peak and report 60."""
+    _, tempo, _ = run(clicks(bpm, 10.0))
+    assert tempo is not None and abs(tempo.bpm - bpm) < 1.5, tempo
+
+
+def test_sixteenth_hats_do_not_double_hip_hop():
+    rng = np.random.default_rng(5)
+    bpm, seconds = 94.0, 12.0
+    period = 60.0 / bpm
+    signal = drums(bpm, seconds, kicks_on=(0, 2), hats=False)
+    t_hat = np.arange(0, 0.04, 1 / SR)
+    hat = (np.diff(np.concatenate([[0.0], rng.standard_normal(len(t_hat))])) * np.exp(-t_hat * 90) * 0.2).astype(np.float32)
+    for k in np.arange(0, seconds, period / 4):
+        i = int(k * SR)
+        signal[i:i + len(hat)] += hat[: len(signal) - i]
+    _, tempo, _ = run(signal)
+    assert tempo is not None and abs(tempo.bpm - bpm) < 1.5, tempo.bpm
+
+
+def test_steady_takes_a_few_estimates_and_never_comes_from_noise():
+    runs = estimates(drums(128.0, 12.0))
+    flags = [e.steady for _, e in runs if e is not None]
+    assert flags[0] is False                       # the first estimate is never steady
+    assert all(flags[2:]), flags                   # from the third on, a clean beat is
+    rng = np.random.default_rng(3)
+    noise = estimates(rng.standard_normal(int(12 * SR)).astype(np.float32) * 0.1)
+    assert not any(e.steady for _, e in noise if e is not None)
+
+
+def test_a_tempo_change_relocks_within_two_estimates():
+    signal = np.concatenate([drums(100.0, 14.0, kicks_on=(0, 2)), drums(128.0, 14.0, seed=2)])
+    after = [(t, e) for t, e in estimates(signal) if t > 14.0]
+    locked = [t for t, e in after if abs(e.bpm - 128.0) < 2.0]
+    assert locked and locked[0] - 14.0 <= 4.5, [(t, round(e.bpm, 1)) for t, e in after]
+    assert all(abs(e.bpm - 128.0) < 2.0 for t, e in after if t >= locked[0])
+
+
+def test_an_offbeat_bass_does_not_pull_the_phase_off_the_kick():
+    bpm, seconds = 124.0, 12.0
+    period = 60.0 / bpm
+    signal = drums(bpm, seconds)
+    t = np.arange(int(period * 0.45 * SR)) / SR
+    note = sum(np.sin(2 * np.pi * 55.0 * k * t) / k for k in range(1, 6)) * np.minimum(1.0, t / 0.005) * np.exp(-t * 4)
+    note = (note * 0.35).astype(np.float32)
+    for beat in np.arange(period / 2, seconds, period):
+        i = int(beat * SR)
+        signal[i:i + len(note)] += note[: len(signal) - i]
+    _, tempo, _ = run(signal)
+    assert tempo is not None and abs(tempo.bpm - bpm) < 1.5
+    assert phase_error(tempo.next_beat, 1000.0, bpm) < 0.05
+
+
+def test_chunk_size_does_not_change_the_answer():
+    signal = drums(128.0, 10.0)
+    _, a, _ = run(signal, chunk=2048)
+    _, b, _ = run(signal, chunk=331)
+    assert a is not None and b is not None
+    assert abs(a.bpm - b.bpm) < 0.5
+    assert phase_error(b.next_beat, 1000.0, 128.0) < 0.04

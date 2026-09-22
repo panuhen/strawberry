@@ -164,13 +164,19 @@ TEMPO_FIELDS = {
 }
 
 
+# Optional flags: a watcher from before they existed leaves them out, and the widget treats a
+# missing flag as the old behaviour.
+TEMPO_FLAGS = ("steady",)
+
+
 def parse_tempo(data: Any) -> dict[str, Any]:
-    """Either {"silent": true} or every TEMPO_FIELDS number within range; nothing else."""
+    """Either {"silent": true} or every TEMPO_FIELDS number within range, plus the optional
+    boolean TEMPO_FLAGS; nothing else."""
     if not isinstance(data, dict):
         raise ContractError("tempo must be an object")
     if data.get("silent") is True:
         return {"silent": True}
-    unknown = set(data) - set(TEMPO_FIELDS)
+    unknown = set(data) - set(TEMPO_FIELDS) - set(TEMPO_FLAGS)
     if unknown:
         raise ContractError(f"unknown tempo fields: {sorted(unknown)}")
     out: dict[str, Any] = {}
@@ -181,6 +187,11 @@ def parse_tempo(data: Any) -> dict[str, Any]:
         if not (low <= value <= high):
             raise ContractError(f"tempo.{key} out of range")
         out[key] = float(value)
+    for key in TEMPO_FLAGS:
+        if key in data:
+            if not isinstance(data[key], bool):
+                raise ContractError(f"tempo.{key} must be true or false")
+            out[key] = data[key]
     return out
 
 
