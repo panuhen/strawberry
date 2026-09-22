@@ -12,5 +12,8 @@ enabled = false   # no Ollama in the acceptance run; tests/test_systemone.py cov
 [tools]
 enabled = false   # no MCP servers in the acceptance run; tests/test_tools.py covers the client
 
+[actions]
+mpris = false     # the acceptance run must not touch whatever is playing on the machine
+
 [thinker]
 enabled = false   # no Qwen in the acceptance run; tests/test_thinker.py covers the loop

@@ -338,6 +338,7 @@ Stop after any phase and you still have something that works.
 - [x] A desktop notification (any app) triggers a reaction. (`notify-send -a WhatsApp James "…"` → Gemma line in the bubble)
 - [x] With TTS on, the wav plays through Godot and the claws clack to the audio; `claw_open_*` is 0 when idle. (`check_phase1.sh` step 11: 0 → 0.78 → 0; a missing wav is a 400)
 - [x] A voice command routed through MCP successfully calls one real tool. (Live 2026-09-22: "skip this" → `spotify.next` + `get_current_track` in 1.1 s as a reflex; "play some daft punk" → Qwen `search` + `play` in 6.4 s, answered in her own voice.)
+- [x] The same plain music commands work with no server configured at all. (Live 2026-09-22, a daemon on port 8772 with an empty `[tools.servers]`: "what song is this" → `mpris.now_playing` 9 ms, "skip this" → `mpris.skip` 403 ms, "pause" → `mpris.pause` 7 ms, "turn it down"/"turn it up" → `mpris.volume_*` 1–2 ms; with the Spotify server back, the same sentences went to `spotify.*`.)
 
 ---
 
