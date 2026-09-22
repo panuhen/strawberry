@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import signal
+import time
 from typing import Any
 
 from aiohttp import WSMsgType, web
@@ -143,6 +144,8 @@ async def health(request: web.Request) -> web.Response:
             "state": daemon.current_state(),
             "rest_state": daemon.rest_state,
             "tempo": daemon.fresh_tempo(),
+            # seconds since beat_watch last posted (None: never), for `strawberry doctor`
+            "tempo_age_s": None if daemon.tempo is None else round(time.monotonic() - daemon.tempo_at, 1),
         }
     )
 

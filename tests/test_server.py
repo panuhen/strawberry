@@ -112,10 +112,12 @@ TEMPO = {"bpm": 128.0, "period_s": 0.469, "confidence": 0.8, "next_beat": 1_800_
 
 async def test_tempo_is_forwarded_validated_and_remembered(client):
     ws = await client.ws_connect("/ws")
+    assert (await (await client.get("/health")).json())["tempo_age_s"] is None     # beat_watch never posted
     response = await client.post("/tempo", json=TEMPO)
     assert response.status == 200 and (await response.json())["sent"] == 1
     assert await ws.receive_json(timeout=2) == {"tempo": TEMPO}
-    assert (await (await client.get("/health")).json())["tempo"] == TEMPO
+    health = await (await client.get("/health")).json()
+    assert health["tempo"] == TEMPO and 0 <= health["tempo_age_s"] < 5
     late = await client.ws_connect("/ws")                       # a newcomer hears the fresh beat
     assert await late.receive_json(timeout=2) == {"tempo": TEMPO}
     assert (await client.post("/tempo", json={"silent": True})).status == 200
