@@ -131,12 +131,34 @@ Without PyGObject there is no `Gio.DesktopAppInfo`, so the `.desktop` file's `Ic
 | `ignore_apps` | `["Spotify"]` | music is already covered by the media doorway |
 | `only_apps` | `[]` | non-empty: forward these apps only |
 | `min_urgency` | `"low"` | drop anything below |
-| `include_body` | `true` | `false`: she knows *who* wrote, not *what* ("message from James", body never reaches the model) |
-| `max_body_chars` | `200` | |
+| `body` | `"off"` | what she does with a message body: `off` \| `react` \| `glance` (below) |
+| `body_apps` | `{}` | per app, case-insensitive, by app name or desktop entry: `{ Slack = "glance", Signal = "off" }` |
+| `max_body_chars` | `1000` | cut at a word boundary, with an ellipsis |
 | `ignore_replacements` | `true` | updates to an existing notification (download progress) |
 | `coalesce_s` | `2.0` | several inside the window become one event: "7 notifications from Slack" / "3 notifications", highest urgency wins |
 
 Her own notifications (app `strawberry`) are always ignored. This is also how WhatsApp / Messenger reach her: you react to the **desktop notification**, never their APIs. A machine running dunst could post the same event from a `dunstrc` `script =` rule.
+
+**Message bodies** (2026-09-22). The monitor sees every notification any app posts, IM bodies included. With the old default (`include_body = true`) a test Slack message's code word went into Gemma's prompt and she said it aloud, and `client.py` wrote every body into the journal. Nothing left the machine; it is still not a default. Three modes, per app:
+
+| mode | what crosses to the daemon | what Gemma sees | what she says |
+|---|---|---|---|
+| `off` (default) | app, sender (title), urgency, category | app and sender | her line about *who* wrote ("Sam's written to you."); canned fallback `App: Sender` |
+| `react` | + the body | + the body, with the rule never to repeat its words, names, numbers or links | her own one-liner about it |
+| `glance` | + the body | call 1, no persona: the body, for a gist; call 2, her voice: the gist only | the gist ("Alex asks about lunch at noon.", ≤ 12 words, third person), then her quip (≤ 8 words) |
+
+`off` is enforced twice: the watcher does not put the body in the POST (it never crosses even localhost HTTP), and the daemon drops a body that arrives anyway (an old watcher, a `curl`). A burst's body is the senders' titles, not message text, so it stays in every mode. Glance is `Daemon.report()`'s shape: the fact first, then the quip, and the quip's prompt never contains the body. The gist is refused (and she reacts instead) if it carries any digit, link or address; a `react` line that carries a link, a number from the body, or four body words in a row is replaced by the canned `App: Sender`. The old `include_body = true|false` still reads, as `react|off`, with one deprecation warning.
+
+**The sensitive filter, fail closed** (`strawberryd/privacy.py`). Before any body reaches Gemma, in `react` or `glance`, the daemon (it owns the gate) runs two checks; either one says yes and the body is dropped and she says only `"<app> sent something private."`, whatever the mode:
+
+1. **Patterns**, plain code, on the title and the body: a 4–8 digit run (or `G-123456`, `123-456`) within 60 characters of *code, OTP, PIN, passcode, verification, one-time, 2FA, MFA, security/login/sign-in/confirmation code*; a body that is only a code; reset and magic-login wording or links (`token=`, `/reset`, `verify` in a URL); "do not share this code", "code expires". PR numbers (`#4821`), times, decimals and a number with no code word near it pass. The title is checked in `off` too: some apps put the code in the summary.
+2. **`IS_SENSITIVE`**, a Noul on the gate's embedder (§8a; `systemone.py`): yes-examples are verification codes, password changed/reset, new sign-in from a device, confirm this login, bank and card transactions, account locked or security notices; no-examples are chat, work messages, CI results, calendar reminders, updates, music, battery. It reads `"<title>: <body>"`; p(yes) ≥ 0.5 drops. A separate question on the same embedder, embedded at start with the routing examples; it does not touch the voice questions (`gate_check.py` still 71/71).
+
+**Fail closed**: a gate that is disabled, still warming, or erroring counts as a yes. So `react` and `glance` need `[gate]`; without it every body is "something private". Cost, measured 2026-09-22: one embedding call per body, **151 ms median, 182 ms max** (`scripts/sensitive_check.py`, warm); on the live daemon 141–174 ms. A glance is one more Gemma call (~0.6 s for the gist); end to end ~0.8 s for `react`, ~1.5 s for `glance`, 0 ms extra for `off`. Once, the first two calls after the gate's start hit the 2 s timeout (3.8 s; the GPU was busy): those bodies were dropped as private, as designed, and the gate reloaded in the background.
+
+`scripts/sensitive_check.py` is the contract, like `gate_check.py`: it builds the gate the way the daemon does and runs the whole filter over `scripts/sensitive_phrases.json` (38 notifications, 20 sensitive, 18 not, including "meeting at 1400", "PR #4821 merged", "3 tests failed"); it prints the gate-alone tally too and exits 1 on a miss. 38/38, the gate alone 38/38. A notification she misjudges goes in the file, and the fix goes in `IS_SENSITIVE` or the patterns.
+
+**No message text in logs, anywhere.** `client.py` logs an event's source, app, keys and `body_len`; the watcher logs app, title and `body_len`; the daemon logs the privacy decision (`private, pattern: one-time code`, `body read, mode glance, clear 0.02 (149 ms)`) and lengths; the gate logs p(yes) at DEBUG, never the text; the prompt is never logged. Her own generated line is logged, as for every event. `tests/test_privacy.py` runs a canary body through watcher → HTTP → daemon → gate → Gemma (fake) with every logger at DEBUG and fails if the canary is in any record.
 
 ## 4b. Doorway: media (MPRIS) — `strawberryd/doorways/mpris_watch.py`
 
@@ -457,7 +479,9 @@ ignore = []                      # e.g. ["firefox"]
 ignore_apps = ["Spotify"]
 only_apps = []
 min_urgency = "low"
-include_body = true              # false: "message from James", never what James wrote
+body = "off"                     # off | react | glance: what she does with a message body (§4)
+# body_apps = { Slack = "glance" } # per app, case-insensitive
+max_body_chars = 1000
 coalesce_s = 2.0
 
 [speech]
@@ -488,6 +512,7 @@ scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget agains
 scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless widget; it must reconnect
 scripts/check_tray.sh    register the tray on the real session bus and read it back with busctl (§14)
 scripts/gate_check.py    the gate over scripts/gate_phrases.json against live Ollama; add sentences she misreads
+scripts/sensitive_check.py  the notification-body filter over scripts/sensitive_phrases.json against live Ollama (§4)
 model/                   the asset: GLB, editable Blender scene, procedural build script
 ```
 
