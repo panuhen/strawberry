@@ -53,12 +53,12 @@ func setup(owner: Node3D) -> void:
 	add_child(field)
 	apply_skin()
 
-## The glass itself: dark tint, hairline rim, square. Focus thickens the rim in the skin's claw colour.
+## The glass itself: dark tint, hairline rim, square. Focus only brightens the rim; no coloured borders.
 func field_style(state_name: String) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = GLASS if state_name != "read_only" else Color(GLASS, 0.25)
-	style.set_border_width_all(2 if state_name == "focus" else 1)
-	style.border_color = RIM
+	style.set_border_width_all(1)
+	style.border_color = RIM if state_name != "focus" else Color(RIM, 0.85)
 	style.anti_aliasing = true
 	style.content_margin_left = 12.0
 	style.content_margin_right = 12.0
@@ -66,14 +66,10 @@ func field_style(state_name: String) -> StyleBoxFlat:
 	style.content_margin_bottom = 6.0
 	return style
 
-## Caret and focus ring in the skin's claw colour, so the field belongs to her.
+## Only the caret takes the skin's claw colour; the rim stays glass.
 func apply_skin() -> void:
 	var skin: Dictionary = widget.SkinPalettes.SKINS.get(widget.skin_id, widget.SkinPalettes.SKINS.strawberry)
-	var claw := Color.html(skin.claw)
-	field.add_theme_color_override("caret_color", claw.lightened(0.25))
-	var focus := field_style("focus")
-	focus.border_color = claw
-	field.add_theme_stylebox_override("focus", focus)
+	field.add_theme_color_override("caret_color", Color.html(skin.claw).lightened(0.25))
 
 func open() -> void:
 	opens += 1
