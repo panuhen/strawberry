@@ -113,7 +113,7 @@ func open_settings_file() -> void:
 	var path := config_home().path_join("strawberry/config.toml")
 	if not FileAccess.file_exists(path):
 		# Same as `bin/strawberry config`: write the commented template first.
-		OS.execute(repo_root().path_join("strawberryd/.venv/bin/strawberryd"), ["--init-config"])
+		OS.execute(repo_root().path_join(".venv/bin/strawberryd"), ["--init-config"])
 	OS.shell_open("file://" + path)
 
 static func repo_root() -> String:

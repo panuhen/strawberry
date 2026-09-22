@@ -20,11 +20,11 @@ from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "strawberryd"))
+sys.path.insert(0, str(ROOT / "src"))
 
-from strawberryd.adapters import gate_examples, load as load_adapters  # noqa: E402
-from strawberryd.config import default_path, load  # noqa: E402
-from strawberryd.systemone import Gate  # noqa: E402
+from strawberry.adapters import gate_examples, load as load_adapters  # noqa: E402
+from strawberry.config import default_path, load  # noqa: E402
+from strawberry.systemone import Gate  # noqa: E402
 
 
 async def main() -> int:

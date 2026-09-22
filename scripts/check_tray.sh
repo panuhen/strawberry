@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-8772}"          # off the default port so a running daemon is left alone
 BASE="http://127.0.0.1:$PORT"
-D="$ROOT/strawberryd/.venv/bin/strawberryd"
+D="$ROOT/.venv/bin/strawberryd"
 OWN_DAEMON=""
 
 command -v busctl >/dev/null || { echo "busctl (systemd) is needed for this check" >&2; exit 2; }

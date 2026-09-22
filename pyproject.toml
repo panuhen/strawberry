@@ -1,0 +1,53 @@
+[project]
+name = "strawberry"
+version = "0.1.0"
+description = "Strawberry, a local desktop AI mascot: the daemon, the doorways, the tray icon and the CLI"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.10",
+    "faster-whisper>=1.2.1",
+    "jeepney>=0.9.0",
+    "mcp>=1.2",
+    "numpy>=1.26",
+    "piper-tts>=1.8.0",
+]
+
+[project.optional-dependencies]
+# The same wheels as the `gpu` group, for `uv tool install 'strawberry[gpu]'` (groups are not
+# published). ctranslate2 needs them for whisper on CUDA (WIRING.md §7, voice.preload_cuda_libraries).
+gpu = [
+    "nvidia-cublas-cu12>=12.9.2.10",
+    "nvidia-cudnn-cu12>=9.26.0.51",
+]
+
+[project.scripts]
+strawberryd = "strawberry.strawberryd:main"
+strawberry-doorway = "strawberry.doorways:main"
+
+[dependency-groups]
+dev = [
+    "pillow>=12.3.0",
+    "pytest>=8",
+    "pytest-aiohttp>=1.0",
+]
+gpu = [
+    "nvidia-cublas-cu12>=12.9.2.10",
+    "nvidia-cudnn-cu12>=9.26.0.51",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/strawberry"]
+
+[tool.hatch.build.targets.sdist]
+# The Python package and what builds or checks it; the Godot project and the Blender sources
+# (widget/, model/) ship as the widget binary instead (PACKAGING.md step 4).
+include = ["src/strawberry", "tests", "scripts", "README.md", "WIRING.md", "PACKAGING.md", "ADAPTERS.md"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

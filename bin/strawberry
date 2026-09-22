@@ -27,9 +27,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/strawberry"
-D="$ROOT/strawberryd/.venv/bin/strawberryd"
-PY="$ROOT/strawberryd/.venv/bin/python"
-[ -x "$D" ] || (cd "$ROOT/strawberryd" && uv sync --quiet --inexact)
+D="$ROOT/.venv/bin/strawberryd"
+PY="$ROOT/.venv/bin/python"
+[ -x "$D" ] || (cd "$ROOT" && uv sync --quiet --inexact --group gpu)
 # The port straight from the TOML (awk, ~1 ms) rather than `strawberryd --print-port` (~300 ms of
 # Python start-up): the hotkey runs this script, and that delay was visible in her reaction.
 config_port() {
@@ -59,8 +59,8 @@ wait_daemon() {
 DOORWAYS=(mpris_watch notify_watch beat_watch)
 doorway_cmd() {  # $1 = doorway name -> the command that runs it
   case "$1" in
-    beat_watch) echo "$PY $ROOT/doorways/beat_watch.py" ;;
-    *) echo "$PY -m strawberryd.doorways.$1" ;;
+    beat_watch) echo "$PY -m strawberry.doorways.beat_watch" ;;
+    *) echo "$PY -m strawberry.doorways.$1" ;;
   esac
 }
 
@@ -125,7 +125,7 @@ remove_old_units() {
 install_login() {
   # Hand over from pidfile-managed processes, if any, so the port is free for the unit.
   stop_watchers_pidfile >/dev/null; stop_pidfile "$PIDFILE" "strawberryd" >/dev/null
-  (cd "$ROOT/strawberryd" && uv sync --quiet --inexact)
+  (cd "$ROOT" && uv sync --quiet --inexact --group gpu)
   remove_old_units
   write_units
   systemctl --user daemon-reload
@@ -211,7 +211,7 @@ start_daemon() {
     wait_daemon || exit 1
     return
   fi
-  (cd "$ROOT/strawberryd" && uv sync --quiet --inexact)
+  (cd "$ROOT" && uv sync --quiet --inexact --group gpu)
   echo "starting strawberryd on :$PORT (log: $LOG)"
   nohup "$D" --port "$PORT" >>"$LOG" 2>&1 &
   echo $! >"$PIDFILE"
@@ -326,7 +326,7 @@ PY
       echo "(download more with: strawberry voices en_US-amy-medium; catalogue: https://rhasspy.github.io/piper-samples/)"
     else
       mkdir -p "$VOICES_DIR"
-      (cd "$ROOT/strawberryd" && uv run --quiet python -m piper.download_voices --download-dir "$VOICES_DIR" "$@")
+      ("$PY" -m piper.download_voices --download-dir "$VOICES_DIR" "$@")
     fi ;;
   audition)
     shift; LINE="${*:-James, hold the phone, the time is up! Your commit landed, nice work.}"

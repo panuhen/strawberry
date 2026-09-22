@@ -8,7 +8,7 @@ PORT="${STRAWBERRYD_PORT:-8771}"   # off the default port so a running daemon is
 BASE="http://127.0.0.1:$PORT"
 
 echo "== strawberryd unit tests"
-(cd "$ROOT/strawberryd" && uv sync --quiet --inexact && uv run --quiet pytest -q)
+(cd "$ROOT" && uv sync --quiet --inexact --group gpu && .venv/bin/python -m pytest -q)
 
 if [ ! -d "$ROOT/widget/.godot" ]; then
   echo "== importing widget project"
@@ -16,7 +16,7 @@ if [ ! -d "$ROOT/widget/.godot" ]; then
 fi
 
 echo "== starting strawberryd on :$PORT"
-"$ROOT/strawberryd/.venv/bin/strawberryd" --port "$PORT" --config "$ROOT/scripts/check_config.toml" &
+"$ROOT/.venv/bin/strawberryd" --port "$PORT" --config "$ROOT/scripts/check_config.toml" &
 DPID=$!
 cleanup() { kill "$DPID" 2>/dev/null || true; wait "$DPID" 2>/dev/null || true; }
 trap cleanup EXIT

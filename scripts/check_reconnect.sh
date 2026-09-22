@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${STRAWBERRYD_PORT:-8774}"
 SIGNAL="${SIGNAL:-TERM}"
-D=("$ROOT/strawberryd/.venv/bin/strawberryd" --config "$ROOT/scripts/check_config.toml")
+D=("$ROOT/.venv/bin/strawberryd" --config "$ROOT/scripts/check_config.toml")
 RESTART_AFTER=3
 DOWN_FOR="${DOWN_FOR:-2}"
 PIDFILE="$ROOT/widget/.reconnect_daemon.pid"
