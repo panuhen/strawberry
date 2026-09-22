@@ -24,7 +24,8 @@ your own computer through [Ollama](https://ollama.com); nothing is sent anywhere
 
 ## Requirements
 
-- Linux with X11 or XWayland (GNOME and KDE on Ubuntu, Fedora, Arch and similar, 2022 or later).
+- Linux only for now; Windows and macOS are not supported yet.
+- X11 or XWayland (GNOME and KDE on Ubuntu, Fedora, Arch and similar, 2022 or later).
 - PipeWire (`pw-record`, `pw-dump`) and `systemd --user`.
 - A tray that speaks StatusNotifierItem. On GNOME that is the AppIndicator extension, which
   Ubuntu ships enabled. Without it she still works; her right-click menu has everything.

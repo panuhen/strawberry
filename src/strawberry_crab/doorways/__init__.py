@@ -15,12 +15,15 @@ from __future__ import annotations
 import importlib
 import sys
 
+from .. import osguard
+
 # In the order the tray starts them.
 DOORWAYS = ("mpris_watch", "notify_watch", "beat_watch")
 
 
 def main(argv: list[str] | None = None) -> int:
     """`strawberry-doorway <name> [args]`: run one doorway in this process."""
+    osguard.require_supported()
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help") or argv[0] not in DOORWAYS:
         stream = sys.stdout if argv and argv[0] in ("-h", "--help") else sys.stderr

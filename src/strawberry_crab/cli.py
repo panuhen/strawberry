@@ -29,7 +29,7 @@ import time
 import tomllib
 from pathlib import Path
 
-from . import paths
+from . import osguard, paths
 
 DEFAULT_PORT = 8770
 TRAY_UNIT = "strawberry-tray.service"
@@ -886,6 +886,7 @@ PASSTHROUGH = ("widget", "tray")
 
 
 def main(argv: list[str] | None = None) -> int:
+    osguard.require_supported()
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv == ["listen"]:
         try:
