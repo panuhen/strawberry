@@ -69,7 +69,10 @@ def test_the_note_follows_the_config_when_bodies_are_on():
 def test_the_daemon_logs_the_note_at_start_only_while_unseen(unseen, monkeypatch, caplog):
     from strawberry_crab import server
 
-    monkeypatch.setattr(server.web, "run_app", lambda *a, **k: None)
+    async def serve(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(server, "serve", serve)
     config = Config()
     with caplog.at_level(logging.INFO, logger="strawberryd.http"):
         server.run(config)
