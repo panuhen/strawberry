@@ -6,15 +6,18 @@ extends PanelContainer
 ## (gate, reflexes, Qwen) and she answers on the desktop. Escape closes it. The field greys
 ## out while she is listening or thinking, and when the daemon is not connected.
 ##
-## A plain field in the bubble's cream and ink, nothing behind it: a translucent "glass"
-## panel was tried first and looked odd over the desktop (Panu, 2026-09-22).
+## The field is smoked glass: a dark tint at 40 % with a hairline rim and square corners
+## (the desktop behind the window is not in Godot's viewport, so there is nothing to blur;
+## a tint with a rim is what every transparent-window glass effect is). Rounded corners
+## were tried and dropped (Panu, 2026-09-22).
 
 signal submitted(text: String)
 
 const HEIGHT := 42.0
 const MARGIN := 14.0
-const CREAM := Color("fff7ec")
-const INK := Color("201318")
+const GLASS := Color(0.13, 0.07, 0.09, 0.40)
+const RIM := Color(1.0, 0.96, 0.92, 0.55)
+const INK := Color("fff7ec")   # text on the glass
 const BUSY_STATES := ["listening", "thinking"]
 
 var widget: Node3D
@@ -40,9 +43,9 @@ func setup(owner: Node3D) -> void:
 	field.context_menu_enabled = false
 	field.add_theme_font_size_override("font_size", 16)
 	field.add_theme_color_override("font_color", INK)
-	field.add_theme_color_override("font_placeholder_color", Color(INK, 0.45))
-	field.add_theme_color_override("font_uneditable_color", Color(INK, 0.5))
-	field.add_theme_color_override("selection_color", Color(INK, 0.18))
+	field.add_theme_color_override("font_placeholder_color", Color(INK, 0.5))
+	field.add_theme_color_override("font_uneditable_color", Color(INK, 0.6))
+	field.add_theme_color_override("selection_color", Color(1, 1, 1, 0.25))
 	for state_name in ["normal", "focus", "read_only"]:
 		field.add_theme_stylebox_override(state_name, field_style(state_name))
 	field.text_submitted.connect(submit)
@@ -50,12 +53,12 @@ func setup(owner: Node3D) -> void:
 	add_child(field)
 	apply_skin()
 
-## The field itself: cream, ink border, rounded. Focus thickens the border in the skin's claw colour.
+## The glass itself: dark tint, hairline rim, square. Focus thickens the rim in the skin's claw colour.
 func field_style(state_name: String) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = CREAM if state_name != "read_only" else CREAM.darkened(0.06)
+	style.bg_color = GLASS if state_name != "read_only" else Color(GLASS, 0.25)
 	style.set_border_width_all(2 if state_name == "focus" else 1)
-	style.border_color = Color(INK, 0.35)
+	style.border_color = RIM
 	style.anti_aliasing = true
 	style.content_margin_left = 12.0
 	style.content_margin_right = 12.0
@@ -67,7 +70,7 @@ func field_style(state_name: String) -> StyleBoxFlat:
 func apply_skin() -> void:
 	var skin: Dictionary = widget.SkinPalettes.SKINS.get(widget.skin_id, widget.SkinPalettes.SKINS.strawberry)
 	var claw := Color.html(skin.claw)
-	field.add_theme_color_override("caret_color", claw)
+	field.add_theme_color_override("caret_color", claw.lightened(0.25))
 	var focus := field_style("focus")
 	focus.border_color = claw
 	field.add_theme_stylebox_override("focus", focus)
