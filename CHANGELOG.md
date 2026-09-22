@@ -7,6 +7,16 @@ package and the widget binary.
 
 ## [Unreleased]
 
+### Added
+
+- `strawberry doctor` checks whether the notification monitor is allowed, the MPRIS players on
+  the bus, `strawberry-tray.service` (installed, enabled, active, and a stale ExecStart after a
+  move or reinstall), the git hooks, and whether the beat watcher is posting and linked to the
+  player's stream. `/health` has `tempo_age_s` for that last one.
+- `strawberry setup` and `doctor` detect AMD cards (rocm-smi, or sysfs without ROCm). The models
+  run on them through Ollama's ROCm support; whisper runs on the CPU. Intel graphics count as no
+  usable GPU.
+
 ## [0.1.0] - 2026-09-22
 
 The first release on PyPI (`strawberry-crab`; 0.0.1 was a name placeholder) with the widget
