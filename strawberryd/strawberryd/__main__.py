@@ -27,9 +27,8 @@ def main() -> None:
     parser.add_argument("--tools", metavar="TOPIC", nargs="?", const="", default=None, help="list the MCP tools for TOPIC (or all), exit")
     parser.add_argument("--tool", metavar=("SERVER", "NAME"), nargs=2, default=None, help="call one MCP tool and print its result, exit")
     parser.add_argument("--args", metavar="JSON", default="{}", help="with --tool: the arguments as a JSON object")
-    parser.add_argument("--think", metavar="TEXT", default=None, help="run TEXT through the thinker with the topic's tools (WIRING §8b), exit")
+    parser.add_argument("--think", metavar="TEXT", default=None, help="run TEXT through the thinker (Qwen + the tools, WIRING §8b), exit")
     parser.add_argument("--talk", action="store_true", help="type to her: each line goes through the running daemon as if spoken; shows the routing")
-    parser.add_argument("--topic", default="music", help="with --think: which tools (default music)")
     parser.add_argument("--version", action="version", version=f"strawberryd {__version__}")
     args = parser.parse_args()
 
@@ -68,7 +67,7 @@ def main() -> None:
     if args.tools is not None or args.tool is not None:
         sys.exit(tools(config, args.tools, args.tool, args.args))
     if args.think is not None:
-        sys.exit(think(config, args.think, args.topic))
+        sys.exit(think(config, args.think))
     if args.talk:
         sys.exit(talk(config))
 
@@ -197,13 +196,11 @@ def talk(config) -> int:
         thought = health["thinker"].get("last") or {}
         if thought.get("asked") == line:
             calls = ", ".join(f"{c['server']}.{c['name']}" for c in thought.get("calls", [])) or "no tools"
-            print(f"     [thinker: {calls} in {thought['s']:.1f} s]")
-        if health["offers"].get("open"):
-            print("     [offer open: answer yes or no]")
+            print(f"     [thinker [{thought['emotion']}]: {calls} in {thought['s']:.1f} s]")
 
 
-def think(config, text: str, topic: str) -> int:
-    """`strawberryd --think "..."`: the thinker by hand, printing the fact, the tool calls and the time."""
+def think(config, text: str) -> int:
+    """`strawberryd --think "..."`: the thinker by hand, printing her line, the tool calls and the time."""
     import asyncio
     from dataclasses import replace
 
@@ -219,12 +216,14 @@ def think(config, text: str, topic: str) -> int:
     async def run_once() -> int:
         await thinker.start()
         try:
-            situation = await actor.situation(topic)
+            import time as _time
+
+            situation = f"{_time.strftime('Today is %A %d %B %Y, %H:%M local time.')} {await actor.situation()}".strip()
             names = await actor.vocabulary()
             if names:
                 situation = f"{situation} Names in the user's library: {', '.join(names[: config.voice.max_hotwords])}.".strip()
             print(f"situation: {situation or '(none)'}", file=sys.stderr)
-            outcome = await thinker.run(text, topic, situation)
+            outcome = await thinker.run(text, situation)
             print(json.dumps(thinker.last, indent=2, ensure_ascii=False))
             return 0 if outcome.ok else 1
         finally:

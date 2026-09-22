@@ -6,11 +6,9 @@ by cost:
 
     reflex   the gate is sure about the tool and there is nothing to fill in -> call it now
              (a skip is ~0.25 s end to end: no model in the loop until she phrases the result)
-    thinker  an argument or several steps -> Qwen with the topic's tools (not built yet: today
-             she answers as chat, and the journal says what would have gone to the thinker)
-    chat     everything else, as before
+    thinker  everything else the user says -> Qwen with the tools, in her voice (thinker.py)
 
-Whatever tier acted, the outcome is one plain sentence of fact written by code ("Skipped.
+When a reflex acted, the outcome is one plain sentence of fact written by code ("Skipped.
 Now Blue Monday by New Order.") and the reaction path adds a short quip in her voice after it
 (the `action` event). A 1B model will not reliably carry a track name or a number from a
 structured result into a sentence, so the fact never depends on it; Spotify's JSON never
@@ -45,6 +43,7 @@ class Outcome:
     fact: str           # "Skipped. Now Blue Monday by New Order."  (spoken as is)
     ok: bool
     calls: tuple[ToolResult, ...] = ()
+    emotion: str = ""   # set by the thinker (her own line, her own mood); "" = the reaction path picks
 
     def event(self, asked: str) -> Event:
         """For the reaction path: it adds a quip after `fact` (brain.describe)."""
@@ -282,7 +281,7 @@ class Actor:
         found = self.reflex_for(route)
         if found is None:
             self.deferred += 1
-            log.info("actions: %r (%s/%s tool %s %.2f arg %.2f) needs the thinker; answering as chat for now",
+            log.info("actions: %r (%s/%s tool %s %.2f arg %.2f) is not a bare reflex; over to the thinker",
                      text, route.kind, route.topic, route.tool or "-", route.tool_confidence, route.has_argument)
             return None
         server, reflex = found
@@ -303,11 +302,12 @@ class Actor:
         log.info("actions: %r -> %s.%s: %s -> %r (%.0f ms)", text, server, route.tool, outcome.did, outcome.fact, ms)
         return outcome
 
-    async def situation(self, topic: str) -> str:
-        """What the thinker should know about the topic before it starts, from the servers that can say."""
+    async def situation(self, topic: str | None = None) -> str:
+        """What the thinker should know before it starts, from the servers that can say. `topic`
+        narrows it to one topic's servers; None (the default) asks every server that has a line."""
         lines = []
         for name, server in self.toolbox.servers.items():
-            if server.topic == topic and name in SITUATIONS:
+            if (topic is None or server.topic == topic) and name in SITUATIONS:
                 try:
                     line = await asyncio.wait_for(SITUATIONS[name](self.toolbox, name), 5.0)
                 except asyncio.TimeoutError:

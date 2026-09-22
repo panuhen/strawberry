@@ -127,7 +127,7 @@ def test_decide_thresholds_per_consequence():
 
 def test_shipped_routing_questions_are_well_formed():
     names = [q.name for q in ROUTING]
-    assert names == ["kind", "topic", "is_urgent", "is_about_her", "has_argument", "wants_library_change", "is_yes", "music_tool"]
+    assert names == ["kind", "topic", "is_urgent", "is_about_her", "has_argument", "wants_library_change", "music_tool"]
     assert [o.name for o in KIND.options] == ["request", "question", "chat", "other"]
     assert [o.name for o in TOPIC.options] == ["music", "calendar", "notes", "system", "other"]
     for question in (KIND, TOPIC):
@@ -167,7 +167,7 @@ async def test_gate_routes_and_logs_a_request():
     assert route is not None
     assert route.kind == "request" and route.topic == "music"
     assert route.decision in ("act", "offer")
-    assert set(route.answers) == {"kind", "topic", "is_urgent", "is_about_her", "has_argument", "wants_library_change", "is_yes", "music_tool"}
+    assert set(route.answers) == {"kind", "topic", "is_urgent", "is_about_her", "has_argument", "wants_library_change", "music_tool"}
     assert route.tool == "skip" and route.tool_confidence > 0.0
     stats = gate.stats()
     assert stats["calls"] == 1 and stats["ready"] is True

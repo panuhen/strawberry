@@ -14,7 +14,7 @@
 #   strawberry route TEXT what the gate makes of a sentence (kind, topic, confidence, decision); for tuning
 #   strawberry tools [TOPIC]         list the MCP tools she can reach
 #   strawberry tool SERVER NAME [JSON]  call one MCP tool by hand, e.g. strawberry tool spotify next
-#   strawberry think TEXT [TOPIC]    run TEXT through the thinker (Qwen + the topic's tools) by hand
+#   strawberry think TEXT            run TEXT through the thinker (Qwen + the tools) by hand
 #   strawberry talk                  type to her: each line goes through the daemon as if spoken, routing shown
 #   strawberry hotkey [COMBO|--remove]  GNOME shortcut for `listen` (default <Super><Shift>space)
 #   strawberry install    start on login: systemd user units for daemon + watchers, autostart for the widget
@@ -245,8 +245,8 @@ PY
   talk)
     exec "$D" --talk ;;
   think)
-    shift; [ $# -ge 1 ] || { echo "usage: strawberry think TEXT [TOPIC]" >&2; exit 2; }
-    exec "$D" --think "$1" --topic "${2:-music}" ;;
+    shift; [ $# -ge 1 ] || { echo "usage: strawberry think TEXT" >&2; exit 2; }
+    exec "$D" --think "$1" ;;
   tool)
     shift; [ $# -ge 2 ] || { echo "usage: strawberry tool SERVER NAME [JSON]" >&2; exit 2; }
     exec "$D" --tool "$1" "$2" --args "${3:-{\}}" ;;

@@ -103,7 +103,6 @@ async def health(request: web.Request) -> web.Response:
             "actions": daemon.actor.stats(),
             "thinker": daemon.thinker.stats(),
             "ledger": daemon.ledger.to_list(),
-            "offers": {"made": daemon.offers, "taken": daemon.offers_taken, "open": daemon.offer is not None},
             "rest_state": daemon.rest_state,
             "tempo": daemon.fresh_tempo(),
         }

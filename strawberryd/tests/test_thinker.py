@@ -1,17 +1,17 @@
-"""The thinker (WIRING.md §8b) on a fake Ollama and the fake Spotify: tool rounds, bounds, cover."""
+"""The thinker (WIRING.md §8b) on a fake Ollama and the fake Spotify: tool rounds, voice, bounds."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 
-from strawberryd.config import Config, GateConfig, ThinkerConfig, ToolsConfig
+from strawberryd.config import ActionsConfig, Config, GateConfig, ThinkerConfig, ToolsConfig
 from strawberryd.contract import Performance
 from strawberryd.daemon import Daemon
 from strawberryd.events import CannedReactor
 from strawberryd.server import create_app
 from strawberryd.systemone import Gate, Route
-from strawberryd.thinker import KNOWLEDGE, SYSTEM, Thinker, ThinkerError, tidy_sentence
+from strawberryd.thinker import NO_TOOLS, TOOLS_GUIDE, VOICE, Thinker, ThinkerError, split_emotion, tidy_sentence
 from strawberryd.tools import Toolbox
 from tests.test_actions import TOOLS, FakeSpotify
 from tests.test_systemone import FakeEmbedder
@@ -39,6 +39,34 @@ class FakeQwen:
         return {"message": {"role": "assistant", "content": "", "tool_calls": calls}}
 
 
+class ScriptedGate:
+    """Preset readings per sentence: for tests about what the daemon does with a route."""
+
+    ready = True
+    calls = 0
+
+    def __init__(self, routes: dict[str, Route]) -> None:
+        self.routes = routes
+        self.last_route: Route | None = None
+
+    async def start(self) -> None: ...
+    async def close(self) -> None: ...
+
+    async def route(self, text: str) -> Route | None:
+        self.last_route = self.routes.get(text) or reading(text)
+        return self.last_route
+
+    def stats(self) -> dict:
+        return {"scripted": True}
+
+
+def reading(text: str, **kw) -> Route:
+    """A gate reading, chat by default; keyword arguments override any field."""
+    base = dict(text=text, kind="chat", topic="other", confidence=0.9, is_urgent=0.1, is_about_her=0.1, decision="chat")
+    base.update(kw)
+    return Route(**base)
+
+
 def make(script: list, config: ThinkerConfig | None = None, tools: list[FakeTool] | None = None, handler=None):
     spotify = FakeSpotify()
     session = FakeSession(tools or TOOLS + [FakeTool("search"), FakeTool("save_tracks")], handler or spotify.handle)
@@ -48,6 +76,13 @@ def make(script: list, config: ThinkerConfig | None = None, tools: list[FakeTool
     qwen = FakeQwen(script)
     thinker = Thinker(config or ThinkerConfig(), toolbox, "qwen-test", chat=qwen)
     return spotify, toolbox, qwen, thinker
+
+
+def bare(script: list):
+    """A thinker with no servers at all: she has to answer from what she knows."""
+    toolbox = Toolbox(ToolsConfig(servers={}, preconnect=False))
+    qwen = FakeQwen(script)
+    return toolbox, qwen, Thinker(ThinkerConfig(), toolbox, "qwen-test", chat=qwen)
 
 
 def test_tidy_sentence():
@@ -60,7 +95,17 @@ def test_tidy_sentence():
     assert tidy_sentence('She said "yes." Then she left the room quietly.', limit=20) == 'She said "yes."'
 
 
-async def test_tool_rounds_then_a_fact():
+def test_split_emotion_off_the_front_of_a_reply():
+    assert split_emotion("[happy] Skipped. Blue Monday next.") == ("happy", "Skipped. Blue Monday next.")
+    assert split_emotion("[ALERT]: Spotify is sulking.") == ("alert", "Spotify is sulking.")
+    assert split_emotion("(angry) Three tests down.") == ("angry", "Three tests down.")
+    assert split_emotion("Nothing tagged here.") == ("neutral", "Nothing tagged here.")
+    assert split_emotion("[cheerful] not one of the four") == ("neutral", "[cheerful] not one of the four")
+    assert split_emotion("[happy]") == ("neutral", "[happy]")   # a tag and nothing else keeps the words
+    assert split_emotion("", default="alert") == ("alert", "")
+
+
+async def test_tool_rounds_then_her_line():
     async def handler(name, arguments):
         if name == "search":
             return FakeResult([FakeContent(json.dumps({"tracks": [{"name": "Feeling Good", "uri": "spotify:track:1"}]}))])
@@ -69,33 +114,36 @@ async def test_tool_rounds_then_a_fact():
         return FakeResult([FakeContent("{}")])
 
     spotify, toolbox, qwen, thinker = make(
-        [[("search", {"query": "Nina Simone Feeling Good"})], [("play", {"uri": "spotify:track:1"})], "Now playing Feeling Good by Nina Simone."],
+        [[("search", {"query": "Nina Simone Feeling Good"})], [("play", {"uri": "spotify:track:1"})],
+         "[happy] Nina Simone it is. Feeling Good is on."],
         handler=handler,
     )
-    outcome = await thinker.run("play feeling good by nina simone", "music")
-    assert outcome.ok and outcome.fact == "Now playing Feeling Good by Nina Simone."
-    assert outcome.did == "used search, play"
+    outcome = await thinker.run("play feeling good by nina simone")
+    assert outcome.ok and outcome.fact == "Nina Simone it is. Feeling Good is on."
+    assert outcome.emotion == "happy" and outcome.did == "used search, play"
     assert [c.name for c in outcome.calls] == ["search", "play"]
     # The conversation Qwen saw: system, user, assistant(tool call), tool, assistant(tool call), tool.
     last = qwen.payloads[-1]
     roles = [m["role"] for m in last["messages"]]
     assert roles == ["system", "user", "assistant", "tool", "assistant", "tool"]
-    assert last["messages"][0]["content"] == SYSTEM and last["messages"][3]["tool_name"] == "search"
+    assert last["messages"][0]["content"].startswith(VOICE) and TOOLS_GUIDE in last["messages"][0]["content"]
+    assert last["messages"][3]["tool_name"] == "search"
     assert last["messages"][1]["content"] == "play feeling good by nina simone"  # no situation given: plain
     assert "Feeling Good" in last["messages"][3]["content"]
-    assert last["think"] is False and last["keep_alive"] == "10m" and last["options"]["num_ctx"] == 8192
+    assert last["think"] is False and last["keep_alive"] == "30m" and last["options"]["num_ctx"] == 8192
     assert {t["function"]["name"] for t in last["tools"]} >= {"search", "play", "next"}
     assert "save_tracks" not in {t["function"]["name"] for t in last["tools"]}  # careful, and nobody asked
-    assert thinker.stats()["calls"] == 1 and thinker.stats()["last"]["fact"] == outcome.fact
+    assert thinker.stats()["calls"] == 1 and thinker.stats()["last"]["said"] == outcome.fact
+    assert thinker.stats()["last"]["emotion"] == "happy"
     await toolbox.close()
 
 
 async def test_max_rounds_forces_an_answer_without_tools():
     spotify, toolbox, qwen, thinker = make(
-        [[("get_current_track", {})]] * 2 + ["Best I can tell, Feeling Good is playing."],
+        [[("get_current_track", {})]] * 2 + ["[neutral] Best I can tell, Feeling Good is playing."],
         config=ThinkerConfig(max_rounds=2),
     )
-    outcome = await thinker.run("what is this", "music")
+    outcome = await thinker.run("what is this")
     assert len(qwen.payloads) == 3  # two tool rounds, then the forced final
     assert "tools" not in qwen.payloads[-1]
     assert qwen.payloads[-1]["messages"][-1]["content"].startswith("You can call no more tools")
@@ -106,22 +154,26 @@ async def test_max_rounds_forces_an_answer_without_tools():
 
 
 async def test_unknown_tool_and_string_arguments_are_survivable():
-    spotify, toolbox, qwen, thinker = make([[("teleport", '{"where": "moon"}')], [("set_volume", '{"volume": 30}')], "Volume is now 30."])
-    outcome = await thinker.run("volume to thirty", "music")
+    spotify, toolbox, qwen, thinker = make([[("teleport", '{"where": "moon"}')], [("set_volume", '{"volume": 30}')],
+                                            "[neutral] Volume is thirty now."])
+    outcome = await thinker.run("volume to thirty")
     assert outcome.ok and spotify.volume == 30
     tool_messages = [m for m in qwen.payloads[-1]["messages"] if m["role"] == "tool"]
     assert "no tool named 'teleport'" in tool_messages[0]["content"]
+    # One tool said no, so the face is not cheerful about it whatever the tag said.
+    assert outcome.emotion == "alert"
     await toolbox.close()
 
 
 async def test_failures_are_outcomes_not_exceptions():
     _, toolbox, _, down = make([ThinkerError("connection refused")])
-    outcome = await down.run("play something", "music")
-    assert not outcome.ok and "not answering" in outcome.fact and down.stats()["failures"] == 1
+    outcome = await down.run("play something")
+    assert not outcome.ok and "not answering" in outcome.fact and outcome.emotion == "alert"
+    assert down.stats()["failures"] == 1
 
     _, toolbox2, _, empty = make([""])
-    outcome = await empty.run("play something", "music")
-    assert not outcome.ok and "got lost" in outcome.fact
+    outcome = await empty.run("play something")
+    assert not outcome.ok and "got lost" in outcome.fact and outcome.emotion == "alert"
 
     class Slow(FakeQwen):
         async def __call__(self, payload):
@@ -130,103 +182,157 @@ async def test_failures_are_outcomes_not_exceptions():
     _, toolbox3, _, slow = make([])
     slow.chat = Slow([])
     slow.config = ThinkerConfig(timeout_s=0.05)
-    outcome = await slow.run("play something", "music")
+    outcome = await slow.run("play something")
     assert not outcome.ok and "too long" in outcome.fact
     for box in (toolbox, toolbox2, toolbox3):
         await box.close()
 
 
-async def test_no_tools_for_the_topic_is_a_plain_failure():
-    _, toolbox, qwen, thinker = make(["unused"])
-    assert not thinker.can_handle("calendar") and thinker.can_handle("music")
-    outcome = await thinker.run("what's on tomorrow", "calendar")
-    assert not outcome.ok and "calendar tools" in outcome.fact and qwen.payloads == []
+async def test_with_no_servers_she_answers_from_what_she_knows():
+    toolbox, qwen, thinker = bare(["[neutral] Dwight D. Eisenhower was president in 1960."])
+    outcome = await thinker.run("who was the president of the united states in 1960", "Today is Monday.")
+    assert outcome.ok and outcome.fact == "Dwight D. Eisenhower was president in 1960."
+    assert outcome.did == "answered without tools" and outcome.emotion == "neutral"
+    payload = qwen.payloads[-1]
+    assert "tools" not in payload and NO_TOOLS in payload["messages"][0]["content"]
+    assert payload["messages"][1]["content"] == (
+        "Situation: Today is Monday.\n\nThe user says: who was the president of the united states in 1960")
+    assert len(qwen.payloads) == 1  # no tools means no rounds to spend
     await toolbox.close()
 
 
-async def test_an_argument_request_goes_to_the_thinker_with_cover(aiohttp_client):
-    """'put on some jazz': reflex declines (argument), she acks in the thinking pose, then reports."""
+async def test_careful_tools_appear_only_when_the_sentence_asks_for_a_library_change():
+    _, toolbox, qwen, thinker = make(["[happy] Saved.", "[happy] Played."])
+    await thinker.run("save this song", careful=True)
+    assert "save_tracks" in {t["function"]["name"] for t in qwen.payloads[-1]["tools"]}
+    await thinker.run("play some jazz", careful=False)
+    assert "save_tracks" not in {t["function"]["name"] for t in qwen.payloads[-1]["tools"]}
+    await toolbox.close()
+
+
+def voice_daemon(config: Config, toolbox, thinker, gate=None, actor=None):
+    daemon = Daemon(reactor=CannedReactor(), config=config, gate=gate, toolbox=toolbox, thinker=thinker, actor=actor)
+    sink = Sink()
+    daemon.hub.add(sink)  # type: ignore[arg-type]
+    return daemon, sink
+
+
+def plain_config() -> Config:
     config = Config()
     config.brain.enabled = config.speech.enabled = config.voice.enabled = False
+    return config
+
+
+async def test_an_argument_request_goes_to_qwen_with_cover(aiohttp_client):
+    """'put on some jazz': no reflex for it, she acks in the thinking pose, then says her line."""
+    config = plain_config()
     config.thinker = ThinkerConfig(still_on_it_s=0.02, acks=["On it."])
-    spotify, toolbox, qwen, thinker = make(["a slow one", "Now playing Feeling Good by Nina Simone."])
+    spotify, toolbox, qwen, thinker = make([])
 
     class SlowFirst(FakeQwen):
         async def __call__(self, payload):
             await asyncio.sleep(0.05)  # longer than still_on_it_s
             return await super().__call__(payload)
 
-    thinker.chat = SlowFirst(["Now playing Feeling Good by Nina Simone.", "Queued."])
+    thinker.chat = SlowFirst(["[happy] Jazz it is. Feeling Good is on.", "[neutral] Queued."])
     thinker.config = config.thinker
     gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
-    daemon = Daemon(reactor=CannedReactor(), config=config, gate=gate, toolbox=toolbox, thinker=thinker)
-    sink = Sink()
-    daemon.hub.add(sink)  # type: ignore[arg-type]
+    daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)
     client = await aiohttp_client(create_app(daemon))
     await daemon.start()
     response = await client.post("/event", json={"source": "voice", "title": "put on some jazz"})
     body = await response.json()
     route = gate.last_route
-    assert route.decision == "act" and route.has_argument > 0.5, route.to_dict()
+    assert route.has_argument > 0.5, route.to_dict()
     assert daemon.actor.stats()["deferred"] == 1 and thinker.stats()["calls"] == 1
     texts = [m.get("text") for m in sink.got if m.get("state") in ("thinking", "talking")]
-    assert texts == ["On it.", "Still on it.", "Now playing Feeling Good by Nina Simone."]
+    assert texts == ["On it.", "Still on it.", "Jazz it is. Feeling Good is on."]
     states = [m["state"] for m in sink.got if "state" in m]
     assert states[:2] == ["thinking", "thinking"] and states[-1] == "talking"
-    assert body["performance"]["text"] == "Now playing Feeling Good by Nina Simone."
+    assert body["performance"]["text"] == "Jazz it is. Feeling Good is on."
+    assert body["performance"]["emotion"] == "happy" and body["performance"]["reaction"] == "nod"
     health = await (await client.get("/health")).json()
     assert health["thinker"]["last"]["asked"] == "put on some jazz"
-    # The thinker was told what is playing, and "get_current_track" was how it learnt it.
+    assert health["ledger"][-1]["said"] == "put on some jazz"
+    assert health["ledger"][-1]["reply"] == "Jazz it is. Feeling Good is on."
+    # The situation she was given: the date, the player, then the sentence.
     first_user = thinker.chat.payloads[0]["messages"][1]["content"]
-    assert first_user.startswith("Situation: Now playing on Spotify: Feeling Good by Nina Simone (album: I Put a Spell on You).")
+    assert first_user.startswith("Situation: Today is ")
+    assert "Now playing on Spotify: Feeling Good by Nina Simone (album: I Put a Spell on You)." in first_user
+    assert first_user.endswith("The user says: put on some jazz")
     daemon.vocabulary = ["Daft Punk", "New Order"]
     await client.post("/event", json={"source": "voice", "title": "put on some jazz"})
-    assert "Names in the user's library: Daft Punk, New Order." in thinker.chat.payloads[-1]["messages"][1]["content"]
-    assert first_user.endswith("The user says: put on some jazz")
+    later = thinker.chat.payloads[-1]["messages"][1]["content"]
+    assert "Names in the user's library: Daft Punk, New Order." in later
+    assert "Recent exchanges (newest last):" in later  # the ledger reaches Qwen
     assert spotify.log[0] == "get_current_track"
     await daemon.close()
 
 
-async def test_a_question_with_no_tools_is_answered_from_memory():
-    _, toolbox, qwen, thinker = make(["Dwight D. Eisenhower was President of the United States in 1960."])
-    outcome = await thinker.answer("who was the president of the united states in 1960", "Today is Monday.")
-    assert outcome.ok and outcome.fact == "Dwight D. Eisenhower was President of the United States in 1960."
-    assert outcome.did == "answered from memory"
-    payload = qwen.payloads[-1]
-    assert payload["messages"][0]["content"] == KNOWLEDGE and "tools" not in payload
-    assert payload["messages"][1]["content"] == "Situation: Today is Monday.\n\nThe user asks: who was the president of the united states in 1960"
-    assert thinker.stats()["last"]["topic"] == "knowledge"
-    _, toolbox2, _, silent = make([""])
-    assert not (await silent.answer("anything")).ok
-    for box in (toolbox, toolbox2):
-        await box.close()
-
-
-async def test_daemon_sends_a_clear_question_without_tools_to_memory(aiohttp_client):
-    config = Config()
-    config.brain.enabled = config.speech.enabled = config.voice.enabled = False
+async def test_small_talk_is_her_line_from_qwen_not_a_canned_echo(aiohttp_client):
+    config = plain_config()
     config.thinker = ThinkerConfig(acks=["Let me see."])
-    _, toolbox, qwen, thinker = make(["Eisenhower, until January 1961."])
+    spotify, toolbox, qwen, thinker = make(["[happy] Splendid, thanks. Still judging your typing."])
     thinker.config = config.thinker
-    daemon = Daemon(reactor=CannedReactor(), config=config, toolbox=toolbox, thinker=thinker)
-    sink = Sink()
-    daemon.hub.add(sink)  # type: ignore[arg-type]
+    gate = ScriptedGate({"how are you doing today": reading("how are you doing today", is_about_her=0.9)})
+    daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)  # type: ignore[arg-type]
+    client = await aiohttp_client(create_app(daemon))
     await daemon.start()
-    route = Route(text="who was president in 1960", kind="question", topic="other", confidence=0.95, is_urgent=0.1,
-                  is_about_her=0.05, decision="act")
-    outcome = await daemon.think("who was president in 1960", route, knowledge=True)
-    assert outcome.ok and outcome.fact == "Eisenhower, until January 1961."
-    assert [m.get("text") for m in sink.got] == ["Let me see."]
-    assert qwen.payloads[-1]["messages"][1]["content"].startswith("Situation: Today is ")
-    # A request (not a question) for a topic without tools still falls through to chat.
-    assert not thinker.can_handle("other")
+    body = await (await client.post("/event", json={"source": "voice", "title": "how are you doing today"})).json()
+    assert body["performance"]["text"] == "Splendid, thanks. Still judging your typing."
+    assert body["performance"]["emotion"] == "happy"
+    assert "You said:" not in body["performance"]["text"]   # the canned reactor never speaks for her
+    assert thinker.stats()["calls"] == 1 and daemon.actor.stats()["acted"] == 0
+    assert [t["said"] for t in daemon.ledger.to_list()] == ["how are you doing today"]
     await daemon.close()
 
 
-async def test_careful_tools_appear_only_when_the_sentence_asks_for_a_library_change():
-    _, toolbox, qwen, thinker = make(["Saved.", "Played."])
-    await thinker.run("save this song", "music", careful=True)
+async def test_a_bare_reflex_never_reaches_qwen(aiohttp_client):
+    config = plain_config()
+    spotify, toolbox, qwen, thinker = make(["[happy] unused"])
+    gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
+    daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)
+    client = await aiohttp_client(create_app(daemon))
+    await daemon.start()
+    body = await (await client.post("/event", json={"source": "voice", "title": "skip this track"})).json()
+    assert spotify.log == ["next", "get_current_track"]
+    assert body["performance"]["text"] == "Skipped. Now Blue Monday by New Order."
+    assert thinker.stats()["calls"] == 0 and qwen.payloads == []
+    assert daemon.ledger.to_list()[-1]["did"] == "skipped to the next track"
+    await daemon.close()
+
+
+async def test_the_careful_tools_are_gated_by_the_gates_library_change(aiohttp_client):
+    config = plain_config()
+    spotify, toolbox, qwen, thinker = make(["[happy] Saved it.", "[neutral] Playing."])
+    gate = ScriptedGate({
+        "save this song": reading("save this song", kind="request", topic="music", decision="act", tool="other",
+                                  library_change=0.93, has_argument=0.2),
+        "play some jazz": reading("play some jazz", kind="request", topic="music", decision="act", tool="other",
+                                  library_change=0.04, has_argument=0.9),
+    })
+    daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)  # type: ignore[arg-type]
+    client = await aiohttp_client(create_app(daemon))
+    await daemon.start()
+    await client.post("/event", json={"source": "voice", "title": "save this song"})
     assert "save_tracks" in {t["function"]["name"] for t in qwen.payloads[-1]["tools"]}
-    await thinker.run("play some jazz", "music", careful=False)
+    await client.post("/event", json={"source": "voice", "title": "play some jazz"})
     assert "save_tracks" not in {t["function"]["name"] for t in qwen.payloads[-1]["tools"]}
-    await toolbox.close()
+    await daemon.close()
+
+
+async def test_with_the_thinker_off_gemma_still_answers(aiohttp_client):
+    """scripts/check_config.toml and any machine without Qwen: the old chat path is the fallback."""
+    config = plain_config()
+    config.thinker.enabled = False
+    spotify, toolbox, qwen, thinker = make(["[happy] never asked"])
+    thinker.config = config.thinker
+    gate = Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder())
+    daemon, sink = voice_daemon(config, toolbox, thinker, gate=gate)
+    client = await aiohttp_client(create_app(daemon))
+    await daemon.start()
+    body = await (await client.post("/event", json={"source": "voice", "title": "how are you doing today"})).json()
+    assert body["performance"]["text"] == "You said: how are you doing today"  # the canned reactor
+    assert qwen.payloads == [] and thinker.stats()["calls"] == 0
+    assert daemon.ledger.to_list()[-1]["reply"] == "You said: how are you doing today"
+    await daemon.close()

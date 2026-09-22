@@ -120,8 +120,8 @@ class GateConfig:
     document_prefix: str = "title: none | text: "           # empty both for a model without them
     neighbours: int = 2            # an option scores the mean of its N nearest examples
     temperature: float = 0.05      # softmax over those scores; lower = more decisive
-    act: float = 0.6               # kind confidence at which a request/question goes to the action path
-    offer: float = 0.3             # between offer and act: she answers and offers to do it
+    act: float = 0.6               # kind confidence at which a plain command may fire a reflex
+    offer: float = 0.3             # below act: a label in the journal; the sentence goes to the thinker anyway
     topic_min: float = 0.2         # below this the topic is "other" and no tools are loaded
     timeout_s: float = 2.0         # one embedding call is ~165 ms on a GPU
     # Extra phrases per option, keyed "kind.request", "topic.music", ...; a misread sentence
@@ -155,20 +155,18 @@ class ActionsConfig:
     reflex: float = 0.6            # tool confidence at which a plain command fires the tool directly
     argument: float = 0.5          # p(has_argument) above this needs the thinker (Qwen) to fill it in
     timeout_s: float = 25.0        # the whole action, tools included; then she says it failed
-    offer_line: str = "Want me to do that?"  # added when the gate is only fairly sure it was a request
-    offer_window_s: float = 10.0   # a yes within this long does it
     ledger_turns: int = 6          # her memory: this many recent exchanges…
     ledger_age_s: float = 600.0    # …no older than this, given to both models
 
 
 @dataclass
 class ThinkerConfig:
-    """The big model with a topic's tools, for requests the reflexes cannot do (WIRING.md §8b)."""
+    """The big model with the tools, in her voice, for everything but a bare reflex (WIRING.md §8b)."""
 
-    enabled: bool = True
+    enabled: bool = True           # false: Gemma answers spoken sentences as chat, as she used to
     model: str = ""                # "" = brain.action_model
     think: bool | str = False      # Ollama: false | "low" | "medium" | true (= xhigh); off: the gate routed already
-    keep_alive: int | str = "10m"  # stays loaded this long after a request; a cold load is 7-17 s
+    keep_alive: int | str = "30m"  # stays loaded this long after a request; a cold load is 7-17 s
     num_ctx: int = 8192
     num_predict: int = 300
     max_rounds: int = 6            # tool rounds before she has to answer honestly with what she has
@@ -309,8 +307,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("tools.result_chars must be >= 100")
     if not (0.0 <= config.actions.reflex <= 1.0 and 0.0 <= config.actions.argument <= 1.0):
         raise ConfigError("actions.reflex and actions.argument must be between 0 and 1")
-    if config.actions.ledger_turns < 1 or config.actions.offer_window_s <= 0:
-        raise ConfigError("actions.ledger_turns >= 1 and actions.offer_window_s > 0 are required")
+    if config.actions.ledger_turns < 1 or config.actions.ledger_age_s <= 0:
+        raise ConfigError("actions.ledger_turns >= 1 and actions.ledger_age_s > 0 are required")
     if config.thinker.max_rounds < 1 or config.thinker.timeout_s <= 0 or config.thinker.num_ctx < 1024:
         raise ConfigError("thinker.max_rounds >= 1, timeout_s > 0 and num_ctx >= 1024 are required")
     if not config.thinker.acks or not all(isinstance(a, str) and a for a in config.thinker.acks):
@@ -419,8 +417,8 @@ def default_toml() -> str:
         "[gate]",
         "enabled = true                 # sorts what you said: chat, or a request/question for the action path",
         'model = "embeddinggemma"       # Ollama embedding model (ollama pull embeddinggemma)',
-        "act = 0.6                      # confidence at which she acts on a request without asking",
-        "offer = 0.3                    # between offer and act she answers and offers to do it",
+        "act = 0.6                      # confidence at which a plain command may fire a reflex",
+        "offer = 0.3                    # below act: a label in the journal; the sentence goes to the thinker",
         "# [gate.examples]              # a sentence she misreads goes under the option it belongs to",
         '# \"kind.request\" = ["put the kettle on"]',
         '# \"topic.music\" = ["what year is this from"]',
@@ -436,14 +434,15 @@ def default_toml() -> str:
         '# careful = ["save_tracks", "remove_saved_tracks", "add_to_playlist", "favorite_current", "remove_favorite", "clear_favorites"]',
         "",
         "[actions]",
-        "enabled = true                 # act on requests: skip, pause, what's playing… (needs [tools] and [gate])",
+        "enabled = true                 # the reflexes: skip, pause, what's playing… (needs [tools] and [gate])",
         "reflex = 0.6                   # how sure the gate must be to fire a plain command straight away",
+        "ledger_turns = 6               # her memory: this many recent exchanges, given to whoever answers",
         "",
         "[thinker]",
-        "enabled = true                 # the big model with the topic's tools, for \"play some Nina Simone\"",
+        "enabled = true                 # the big model with the tools; she answers you herself through it",
         'model = ""                     # empty = brain.action_model',
         'think = false                  # false | "low" | "medium" | true; off is fine, the gate already routed',
-        'keep_alive = "10m"             # a cold load is 7-17 s; she says an acknowledgement while it happens',
+        'keep_alive = "30m"             # a cold load is 7-17 s; she says an acknowledgement while it happens',
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

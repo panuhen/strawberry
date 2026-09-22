@@ -81,6 +81,8 @@ def test_default_template_round_trips(tmp_path):
     config = load(path, env={})
     assert config.brain.reaction_model == "gemma3:1b"
     assert config.brain.keep_alive == -1
+    assert config.thinker.keep_alive == "30m"   # she is rarely cold; a cold load is 7-17 s
+    assert config.actions.ledger_turns == 6
 
 
 def test_keep_alive_accepts_seconds_or_duration_string(tmp_path):
