@@ -63,7 +63,7 @@ widget binary reaches every distro with the same artefact.
 | `numpy` from the system for the beat watcher | Package dependency (2) |
 | `bin/strawberry` bash launcher finds files via the repo | Python CLI entry point; assets in XDG data dir (2) |
 | Widget finds the repo via `res://..` (menu: settings file, restart) | XDG paths and daemon commands (4) |
-| Music control needs the Spotify MCP server | MPRIS reflexes for any player; Spotify is an adapter (3) |
+| ~~Music control needs the Spotify MCP server~~ | done (3): MPRIS reflexes for any player; Spotify is an adapter |
 | Ollama present with the models pulled | `strawberry setup` installs Ollama (their script) and pulls the models (5) |
 | Piper voice already downloaded | `strawberry setup` downloads the default voice; `strawberry voices` for more (5) |
 | `jq`, `curl` in the git hooks and `say` | Hooks call `strawberry git-event` (Python); `say` is Python (2) |
@@ -109,7 +109,15 @@ widget binary reaches every distro with the same artefact.
   `~/.local/share/strawberry/`, state (token caches, logs) `~/.local/state/strawberry/`.
 - Tests move with the code; `check_phase1.sh` stays a dev script.
 
-### 3. Shell and adapters
+### 3. Shell and adapters ✅ (2026-09-22)
+
+Done: `strawberryd/mpris.py` (jeepney), `strawberryd/adapters/{base,spotify}.py` with the registry,
+`[thinker] max_tools`, and an empty `[tools.servers]` default. Evidence: 215 tests pass (was 186),
+`scripts/gate_check.py` 71/71 with a Spotify server and 69/71 without (only the two library
+sentences that need one), and a daemon on port 8772 did "what song is this", "skip this", "pause"
+and the volume pair over `mpris.*` with no server configured, then the same sentences over
+`spotify.*` with the server back — MPRIS 9/403/7 ms against Spotify's 463/1201/425 ms. The 25
+Spotify tool schemas measure 2382 prompt tokens, not the ~360 assumed below.
 
 - **MPRIS reflexes**: skip, previous, pause, resume, volume up/down, now playing over
   `org.mpris.MediaPlayer2.Player` (jeepney, session bus) for the active player. The gate's bare

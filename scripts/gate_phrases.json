@@ -3,7 +3,9 @@
     "Sentences the gate must read right (WIRING.md §8a). Run: scripts/gate_check.py",
     "Each entry: text, expected kind (request|question|chat|other), optional topic, decision, tool (the topic's tool question).",
     "Add the ones she gets wrong in real use; the fix is an example under [gate.examples] in the config,",
-    "or in KIND/TOPIC in strawberryd/systemone.py when it should ship for everyone."
+    "or in KIND/TOPIC in strawberryd/systemone.py when it should ship for everyone.",
+    "Run it against your own config: 'save this song' and 'play my running playlist' only mean something",
+    "with a library server configured, and are read right when its adapter is loaded (ADAPTERS.md)."
   ],
   "phrases": [
     {
