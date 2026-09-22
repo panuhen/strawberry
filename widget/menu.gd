@@ -20,7 +20,7 @@ var opened := 0
 func setup(owner: Node3D) -> void:
 	widget = owner
 	add_theme_font_size_override("font_size", 15)
-	add_item("Type to her…", TYPE_BOX)
+	add_item("Chat with Strawberry…", TYPE_BOX)
 	add_check_item("Mute her voice", MUTE)
 	add_check_item("Quiet for an hour", QUIET_HOUR)
 	volume_menu = PopupMenu.new()

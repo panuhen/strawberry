@@ -1,22 +1,20 @@
 extends PanelContainer
-## Glass text field under the crab (WIRING.md §13): type to her instead of speaking.
+## Text field under the crab (WIRING.md §13): type to her instead of speaking.
 ##
-## Hidden until "Type to her…" in the menu or the T key opens it. Enter sends the line to
+## Hidden until "Chat with Strawberry…" in the menu or the T key opens it. Enter sends the line to
 ## strawberryd as a heard sentence, so it takes the same path as speech and `strawberry talk`
 ## (gate, reflexes, Qwen) and she answers on the desktop. Escape closes it. The field greys
 ## out while she is listening or thinking, and when the daemon is not connected.
 ##
-## The "glass" is a tint with a hairline rim: the desktop behind the window is not in
-## Godot's viewport, so there is nothing to blur; this is what every transparent-window
-## glass effect is.
+## A plain field in the bubble's cream and ink, nothing behind it: a translucent "glass"
+## panel was tried first and looked odd over the desktop (Panu, 2026-09-22).
 
 signal submitted(text: String)
 
 const HEIGHT := 42.0
 const MARGIN := 14.0
-const GLASS := Color(0.13, 0.07, 0.09, 0.40)
-const RIM := Color(1.0, 0.96, 0.92, 0.55)
-const INK := Color("fff7ec")
+const CREAM := Color("fff7ec")
+const INK := Color("201318")
 const BUSY_STATES := ["listening", "thinking"]
 
 var widget: Node3D
@@ -34,39 +32,46 @@ func setup(owner: Node3D) -> void:
 	custom_minimum_size = Vector2(w - 2.0 * MARGIN, HEIGHT)
 	size = custom_minimum_size
 
-	var glass := StyleBoxFlat.new()
-	glass.bg_color = GLASS
-	glass.set_corner_radius_all(int(HEIGHT / 2.0))
-	glass.set_border_width_all(1)
-	glass.border_color = RIM
-	glass.anti_aliasing = true
-	glass.shadow_color = Color(0, 0, 0, 0.22)
-	glass.shadow_size = 6
-	glass.content_margin_left = 16.0
-	glass.content_margin_right = 16.0
-	glass.content_margin_top = 4.0
-	glass.content_margin_bottom = 4.0
-	add_theme_stylebox_override("panel", glass)
+	add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 
 	field = LineEdit.new()
-	field.flat = true
-	field.placeholder_text = "Type to her…"
+	field.placeholder_text = "Chat with Strawberry…"
 	field.max_length = 400
 	field.context_menu_enabled = false
 	field.add_theme_font_size_override("font_size", 16)
 	field.add_theme_color_override("font_color", INK)
-	field.add_theme_color_override("font_placeholder_color", Color(INK, 0.5))
-	field.add_theme_color_override("font_uneditable_color", Color(INK, 0.6))
-	field.add_theme_color_override("selection_color", Color(1, 1, 1, 0.25))
+	field.add_theme_color_override("font_placeholder_color", Color(INK, 0.45))
+	field.add_theme_color_override("font_uneditable_color", Color(INK, 0.5))
+	field.add_theme_color_override("selection_color", Color(INK, 0.18))
+	for state_name in ["normal", "focus", "read_only"]:
+		field.add_theme_stylebox_override(state_name, field_style(state_name))
 	field.text_submitted.connect(submit)
 	field.gui_input.connect(_on_field_input)
 	add_child(field)
 	apply_skin()
 
-## Caret and selection in the skin's claw colour, so the box belongs to her.
+## The field itself: cream, ink border, rounded. Focus thickens the border in the skin's claw colour.
+func field_style(state_name: String) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = CREAM if state_name != "read_only" else CREAM.darkened(0.06)
+	style.set_corner_radius_all(10)
+	style.set_border_width_all(2 if state_name == "focus" else 1)
+	style.border_color = Color(INK, 0.35)
+	style.anti_aliasing = true
+	style.content_margin_left = 12.0
+	style.content_margin_right = 12.0
+	style.content_margin_top = 6.0
+	style.content_margin_bottom = 6.0
+	return style
+
+## Caret and focus ring in the skin's claw colour, so the field belongs to her.
 func apply_skin() -> void:
 	var skin: Dictionary = widget.SkinPalettes.SKINS.get(widget.skin_id, widget.SkinPalettes.SKINS.strawberry)
-	field.add_theme_color_override("caret_color", Color.html(skin.claw).lightened(0.25))
+	var claw := Color.html(skin.claw)
+	field.add_theme_color_override("caret_color", claw)
+	var focus := field_style("focus")
+	focus.border_color = claw
+	field.add_theme_stylebox_override("focus", focus)
 
 func open() -> void:
 	opens += 1
@@ -120,4 +125,4 @@ func _refresh() -> void:
 	elif busy:
 		field.placeholder_text = "She's on it…"
 	else:
-		field.placeholder_text = "Type to her…"
+		field.placeholder_text = "Chat with Strawberry…"
