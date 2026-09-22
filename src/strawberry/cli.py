@@ -126,11 +126,15 @@ def daemon_up(here: Here) -> bool:
     return http(here, "GET", "/health") is not None
 
 
-def wait_daemon(here: Here) -> bool:
-    for _ in range(80):
+WAIT_DAEMON_S = 45.0   # the port opens after the voice, whisper and gate models load (~8-10 s warm, longer cold)
+
+
+def wait_daemon(here: Here, timeout_s: float = WAIT_DAEMON_S) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
         if daemon_up(here):
             return True
-        time.sleep(0.1)
+        time.sleep(0.25)
     print(f"strawberryd did not come up; see {here.log} (or: journalctl --user -u {TRAY_UNIT[:-8]})",
           file=sys.stderr)
     return False
