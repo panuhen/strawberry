@@ -109,6 +109,10 @@ What she reads:
   - `"glance"`: she first says a plain one-line gist ("Alex asks about lunch at noon."), then
     her reaction.
 
+  To switch without editing the file, use the tray menu: **Message bodies ▸ Off / React /
+  Glance**. It writes `body` into your config (backing it up first) and applies it at once;
+  `body_apps` entries still win for their apps.
+
   In every mode a sensitive filter drops one-time codes, sign-in and password-reset messages and
   bank or card alerts before any model sees them; she says only "Slack sent something private."
   The filter fails closed: if its model check is unavailable, every body counts as private.

@@ -258,6 +258,16 @@ class Daemon:
         sent = await self.perform(performance)
         return performance, sent
 
+    def reload_notifications(self) -> str:
+        """Read [notifications] from the config file again and use it from the next event on
+        (the tray's "Message bodies" rows, §14). Only this section: the rest needs a restart.
+        Raises ConfigError, keeping the settings she has, when the file does not load."""
+        from .config import default_path, load
+
+        fresh = load(self.config.path or default_path()).notifications
+        self.config.notifications = fresh
+        return fresh.body
+
     GLANCE_QUIP_WORDS = 8
 
     async def handle_notification(self, event: Event) -> tuple[Performance, int]:

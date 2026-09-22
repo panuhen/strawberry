@@ -57,7 +57,7 @@ def test_the_rows_are_the_crabs_menu_plus_show_hide_and_a_status_line():
     assert [(r.id, r.action) for r in rows] == [
         (1, "status"), (2, "hide"), (3, "chat"), (4, "separator"), (5, "mute"), (6, "quiet"),
         (7, "submenu"), (8, "submenu"), (9, "submenu"), (10, "sleep_now"), (11, "hat"), (12, "on_top"),
-        (13, "separator"), (14, "settings_file"), (15, "voices_folder"), (16, "reset_position"),
+        (50, "submenu"), (13, "separator"), (14, "settings_file"), (15, "voices_folder"), (16, "reset_position"),
         (17, "separator"), (18, "restart"), (19, "quit")]
     assert rows[0].label == "Idle" and rows[0].enabled is False
     assert rows[1].label == "Hide her"
@@ -131,7 +131,7 @@ def test_the_layout_carries_the_submenus_under_one_root():
     root_id, root_props, children = root
     assert revision == 3 and root_id == 0
     assert root_props["children-display"] == ("s", "submenu")
-    assert [child[1][0] for child in children] == list(range(1, 20))
+    assert [child[1][0] for child in children] == list(range(1, 13)) + [50] + list(range(13, 20))
     assert all(child[0] == "(ia{sv}av)" for child in children)
     volume = children[6][1]
     assert [grandchild[1][0] for grandchild in volume[2]] == [20, 21, 22, 23]
@@ -163,7 +163,7 @@ async def test_getgroupproperties_answers_only_the_ids_asked_for():
     reply = await answer(item, MENU, "GetGroupProperties", "aias", ([2, 19, 31], []))
     assert [entry[0] for entry in reply.body[0]] == [2, 31, 19]      # menu order, submenus in place
     reply = await answer(item, MENU, "GetGroupProperties", "aias", ([], []))
-    assert len(reply.body[0]) == 19 + 4 + 5 + 5          # the rows plus the three submenus
+    assert len(reply.body[0]) == 20 + 4 + 5 + 5 + 5      # the rows plus the four submenus
 
 
 async def test_abouttoshow_refreshes_the_status_row():
@@ -427,3 +427,196 @@ def test_the_checkout_holds_the_launcher_and_the_icons_ship_in_the_package():
     assert root is not None and (root / "bin" / "strawberry").is_file()
     assert Path(icons.icons_dir()) == Path(tray.__file__).parent / "assets" / "icons"
     assert (icons.icons_dir() / "strawberry-22.png").is_file()
+
+
+# --- Message bodies: config.toml, then live ---------------------------------------
+
+USER_CONFIG = """# my settings
+[notifications]
+ignore_apps = ["Spotify"]
+body = "off"   # keep bodies here
+body_apps = { Slack = "react" }
+
+[voice]
+enabled = false
+"""
+
+
+class FakeChildren:
+    """What set_body_mode asks of the supervisor, recorded instead of done."""
+
+    def __init__(self):
+        self.restarted = []
+
+    def restart_child(self, name):
+        self.restarted.append(name)
+        return True
+
+
+def body_rows(items):
+    row = next(r for r in items if r.id == 50)
+    return row, row.children
+
+
+def test_message_bodies_is_a_radio_submenu_with_the_current_mode_checked():
+    from strawberry_crab.config import BODY_MODES
+
+    row, children = body_rows(menu_items(TrayState(body_mode="react")))
+    assert (row.label, row.properties()["children-display"]) == ("Message bodies", ("s", "submenu"))
+    assert [c.id for c in children] == [51, 52, 53, 54, 55]
+    radios = children[:3]
+    assert [(c.label, c.value) for c in radios] == [("Off", "off"), ("React", "react"), ("Glance", "glance")]
+    assert tuple(c.value for c in radios) == BODY_MODES
+    assert all(c.properties()["toggle-type"] == ("s", "radio") for c in radios)
+    assert [c.properties()["toggle-state"] for c in radios] == [("i", 0), ("i", 1), ("i", 0)]
+    # No body_apps: the note and its separator are there but hidden, so no row moves.
+    assert children[3].properties() == {"type": ("s", "separator"), "visible": ("b", False)}
+    assert children[4].properties()["visible"] == ("b", False)
+    _, shown = body_rows(menu_items(TrayState(body_overrides=True)))
+    assert shown[3].properties() == {"type": ("s", "separator")}
+    assert shown[4].label == "Per-app overrides in config"
+    assert shown[4].properties()["visible"] == ("b", True) and shown[4].enabled is False
+
+
+def test_the_body_setting_is_read_from_the_config_file(tmp_path):
+    path = tmp_path / "config.toml"
+    assert tray.read_body_setting(path) == ("off", False)              # no file: the default
+    path.write_text(USER_CONFIG)
+    assert tray.read_body_setting(path) == ("off", True)
+    path.write_text('[notifications]\ninclude_body = true\n')         # the old key, read as config.py does
+    assert tray.read_body_setting(path) == ("react", False)
+    path.write_text('[notifications]\nbody = "glance"\nbody_apps = {}\n')
+    assert tray.read_body_setting(path) == ("glance", False)
+    path.write_text('[notifications\nbody = "glance"\n')             # half-saved: keep what the menu shows
+    assert tray.read_body_setting(path) is None
+
+
+async def test_the_menu_follows_the_file_and_shows_the_note_with_overrides(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[notifications]\nbody = "react"\n')
+    item = tray_for()
+    item.config_path = path
+    await item.refresh()
+    _, children = body_rows(item.items)
+    assert [c.label for c in children if c.checked] == ["React"] and children[4].visible is False
+    path.write_text(USER_CONFIG)
+    await item.refresh()
+    _, children = body_rows(item.items)
+    assert [c.label for c in children if c.checked] == ["Off"] and children[4].visible is True
+    path.write_text('[notifications\n')                              # broken mid-edit
+    await item.refresh()
+    assert item.state.body_mode == "off" and item.state.body_overrides is True
+
+
+async def test_the_disabled_overrides_note_does_nothing(tmp_path):
+    item = tray_for(body_overrides=True)
+    await item.clicked(55)
+    assert item.daemon.posts == []
+
+
+async def test_choosing_a_mode_writes_the_file_and_applies_it_live(tmp_path, caplog):
+    import logging
+    import tomllib
+
+    path = tmp_path / "config.toml"
+    path.write_text(USER_CONFIG)
+    item = tray_for(daemon_ok=True)
+    item.config_path = path
+    item.children = FakeChildren()
+    caplog.set_level(logging.INFO, logger="strawberryd.tray")
+    await item.clicked(53)                                          # Message bodies -> Glance
+
+    text = path.read_text()
+    assert 'body = "glance"   # keep bodies here' in text             # the value changed, the comment stayed
+    assert tomllib.loads(text)["notifications"]["body_apps"] == {"Slack": "react"}   # overrides untouched
+    assert text.replace('"glance"', '"off"', 1) == USER_CONFIG         # nothing else in the file moved
+    backups = sorted(tmp_path.glob("config.toml.bak-*"))
+    assert len(backups) == 1 and backups[0].read_text() == USER_CONFIG
+    # Live: the daemon re-reads [notifications], then the watcher restarts with the new mode.
+    assert item.daemon.posts[-1] == ("/command", {"command": "reload_notifications"})
+    assert item.children.restarted == ["notify_watch"]
+    assert item.state.body_mode == "glance"
+    assert [c.label for c in body_rows(item.items)[1] if c.checked] == ["Glance"]
+    assert "message bodies: glance" in caplog.text
+    assert "Slack" not in caplog.text and "keep bodies here" not in caplog.text   # the mode, nothing else
+
+
+async def test_a_missing_file_starts_as_the_template(tmp_path):
+    import tomllib
+
+    path = tmp_path / "strawberry" / "config.toml"
+    item = tray_for()
+    item.config_path = path
+    item.children = FakeChildren()
+    await item.clicked(52)                                          # React
+    text = path.read_text()
+    assert tomllib.loads(text)["notifications"]["body"] == "react"
+    assert "# Message bodies. off:" in text                           # the commented template, not a bare line
+    assert list(path.parent.glob("*.bak-*")) == []                     # nothing to back up
+    assert item.children.restarted == ["notify_watch"]
+
+
+async def test_a_file_that_would_not_load_is_left_alone_and_nothing_is_applied(tmp_path):
+    path = tmp_path / "config.toml"
+    broken = USER_CONFIG.replace("enabled = false", 'device = "tpu"')    # config.load refuses this
+    path.write_text(broken)
+    item = tray_for(daemon_ok=True)
+    item.config_path = path
+    item.children = FakeChildren()
+    await item.clicked(53)
+    assert path.read_text() == broken and list(tmp_path.glob("*.bak-*")) == []
+    assert item.daemon.posts == [] and item.children.restarted == []
+    assert item.state.body_mode == "off"
+
+
+async def test_a_multi_line_body_is_not_claimed_as_set(tmp_path):
+    path = tmp_path / "config.toml"
+    odd = '[notifications]\nbody = """\nreact"""\n'
+    path.write_text(odd)
+    item = tray_for()
+    item.config_path = path
+    item.children = FakeChildren()
+    await item.clicked(53)
+    assert path.read_text() == odd and item.daemon.posts == [] and item.children.restarted == []
+
+
+async def test_without_children_the_daemon_is_still_told(tmp_path, caplog):
+    item = tray_for()
+    item.config_path = tmp_path / "config.toml"
+    assert item.children is None
+    await item.clicked(51)
+    assert item.daemon.posts[-1] == ("/command", {"command": "reload_notifications"})
+    assert "restart notify_watch yourself" in caplog.text
+
+
+async def test_restart_child_restarts_just_that_one_at_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(Children, "FIRST_BACKOFF_S", 30.0)          # a crash would wait this long
+    watcher = Child("notify_watch", ["/bin/sh", "-c", "sleep 30"])
+    other = Child("mpris_watch", ["/bin/sh", "-c", "sleep 30"])
+    children = Children([watcher, other], state_path=tmp_path / "tray.json")
+    children.start()
+    await asyncio.sleep(0.1)
+    first, untouched = watcher.pid, other.pid
+    assert first is not None
+    assert children.restart_child("notify_watch") is True
+    for _ in range(50):
+        await asyncio.sleep(0.05)
+        if watcher.pid not in (None, first):
+            break
+    assert watcher.pid not in (None, first)                         # a new process, no 30 s backoff
+    assert watcher.restarts == 0                                     # asked for, not a crash
+    assert other.pid == untouched
+    assert children.restart_child("nothing_by_that_name") is False
+    await children.stop()
+
+
+def test_the_notification_watcher_reads_the_trays_config_file(tmp_path):
+    from strawberry_crab import widgetbin
+
+    dev = lambda: widgetbin.Widget("checkout", Path("/opt/godot"), tmp_path / "widget")
+    config = tmp_path / "c.toml"
+    specs = {c.name: c for c in tray.child_specs(8771, config, resolve_widget=dev)}
+    assert specs["notify_watch"].argv[-2:] == ["--config", str(config)]
+    assert "--config" not in specs["mpris_watch"].argv
+    default = {c.name: c for c in tray.child_specs(8771, None, resolve_widget=dev)}
+    assert "--config" not in default["notify_watch"].argv
