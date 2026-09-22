@@ -343,7 +343,7 @@ func run() -> void:
 	widget.open_type_box()
 	check(widget.type_box.visible and widget.type_box.field.has_focus(), "type box should open with focus")
 	check(widget.type_box.field.editable, "type box should be editable while she is idle and connected")
-	var typed_before := widget.performances
+	var typed_before: int = widget.performances
 	widget.type_box.submit("hello from the keyboard")
 	check(widget.type_box.sent == 1 and widget.type_box.field.text == "", "type box should clear after sending")
 	waited = 0.0
