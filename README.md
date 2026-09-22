@@ -6,7 +6,7 @@ A local desktop AI mascot: a cel-shaded crab that lives on the desktop and react
 - **`PACKAGING.md`** — the plan for shipping her as `uv tool install strawberry` plus a standalone widget binary.
 - **`ADAPTERS.md`** — adding an MCP server, and writing an adapter for one (Spotify as the worked example).
 - **`src/strawberry/`** — the one Python package: the daemon (`strawberryd`: HTTP intake + websocket to the widget), the doorways (`strawberry-doorway <name>`), the tray and the `strawberry` CLI. Tests in `tests/`.
-- **`widget/`** — Godot 4.7 desktop widget: transparent, always-on-top, click-through. Run with `bin/strawberry` (it needs `godot` on PATH and this checkout until the widget ships as a binary, PACKAGING.md step 4).
+- **`widget/`** — Godot 4.7 desktop widget: transparent, always-on-top, click-through. Installed, she is one executable, `~/.local/share/strawberry/widget/strawberry-widget` (`strawberry widget --fetch` downloads it from the release and checks its SHA-256); in a checkout without that binary, `bin/strawberry` runs the Godot project with `godot` from PATH (developer mode). `scripts/build_widget.sh` exports the binary.
 - **Voice** — Piper TTS, on when `[speech] enabled = true` in `~/.config/strawberry/config.toml`. `strawberry voices` lists or downloads voices, `strawberry audition` compares them, `strawberry say "…"` makes her talk.
 - **The gate** — every sentence you say is sorted locally by `embeddinggemma` (kind, topic, which tool, is there an argument) before anyone answers; `strawberry route "skip this song"` shows the reading, `scripts/gate_check.py` runs the phrase set. A plain music command ("skip this song", "pause", "louder", "what song is this") is a **reflex**: she does it herself in well under a second, with no model in the loop, then tells you the fact plus a quip.
 - **Notifications, privately** — she sees every desktop notification (a D-Bus monitor, nothing leaves the machine) and by default reads only the app and the sender, never the message: `[notifications] body = "off"`. `"react"` lets the small model read the body and react in its own words; `"glance"` has it say a plain one-line gist first ("Alex asks about lunch at noon."), then a quip; `body_apps` sets it per app. In every mode codes, sign-ins, password resets and bank or card alerts are dropped before any model reads them (patterns plus an `embeddinggemma` check; if that check is down the body counts as private), and she says only "Slack sent something private." No message text is written to any log. `scripts/sensitive_check.py` runs the filter's test set (WIRING §4).
@@ -31,13 +31,16 @@ bin/strawberry git-hooks install     # she reacts to commits and pushes on this 
 .venv/bin/python -m pytest -q        # tests
 ```
 
-As a tool, without a checkout (`strawberry setup` for the widget binary and the models is PACKAGING.md step 5; until then the widget needs a checkout):
+As a tool, without a checkout (`strawberry setup` for the models and a voice is PACKAGING.md step 5):
 
 ```bash
 uv tool install /path/to/strawberry  # or 'strawberry[gpu] @ /path/to/strawberry' for whisper on CUDA
-strawberry daemon                    # or strawberry tray / strawberry install
+strawberry widget --fetch            # the widget binary for this version, from the GitHub release
+strawberry                           # or strawberry tray / strawberry install
 ```
 
-Entry points: `strawberry` (the CLI; `strawberry --help`), `strawberryd` (the daemon alone), `strawberry-doorway mpris_watch|notify_watch|beat_watch`. Files: config `~/.config/strawberry/`, voices `~/.local/share/strawberry/voices/`, state and logs `~/.local/state/strawberry/` (XDG variables respected). `uv build` makes the wheel.
+**Which widget runs.** `strawberry widget` and the tray run the installed binary when it is there, else the checkout's Godot project with `godot` on PATH, else they say to run `strawberry widget --fetch`. A binary built from a checkout (`scripts/build_widget.sh`, needs Godot 4.7.2 and its export templates) can be tried by hand: `dist/strawberry-widget-<version>-linux-x86_64 --display-driver x11 -- --ws=ws://127.0.0.1:8770/ws`. The widget tells the daemon its version; a source run says `dev` and is always accepted, a release on another major version is refused (WIRING §1).
 
-End-to-end check: `scripts/check_phase1.sh` (unit tests, then a headless widget against a real daemon); `scripts/check_tray.sh` registers the tray and reads it back.
+Entry points: `strawberry` (the CLI; `strawberry --help`), `strawberryd` (the daemon alone), `strawberry-doorway mpris_watch|notify_watch|beat_watch`. Files: config and the widget's preferences `~/.config/strawberry/` (`config.toml`, `widget.cfg`), voices and the widget binary `~/.local/share/strawberry/` (`voices/`, `widget/`), state and logs `~/.local/state/strawberry/` (XDG variables respected). `uv build` makes the wheel.
+
+End-to-end check: `scripts/check_phase1.sh` (unit tests, then a headless widget against a real daemon; `WIDGET=dist/strawberry-widget-… scripts/check_phase1.sh` runs the same checks in the exported binary); `scripts/check_tray.sh` registers the tray and reads it back.

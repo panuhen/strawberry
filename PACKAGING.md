@@ -58,11 +58,11 @@ widget binary reaches every distro with the same artefact.
 
 | Assumption now | Fix (step) |
 |---|---|
-| `godot` on PATH; the widget runs from `widget/` source | Export a standalone Linux binary per release; the CLI downloads the matching one (4) |
+| ~~`godot` on PATH; the widget runs from `widget/` source~~ | done (4): exported binary in the data dir, `strawberry widget --fetch`; the checkout + godot is developer mode |
 | Doorways run on `/usr/bin/python3` for PyGObject (`gi`) | Rewrite the two D-Bus watchers on jeepney so they live in the package (1) |
 | ~~`numpy` from the system for the beat watcher~~ | done (2): package dependency |
 | ~~`bin/strawberry` bash launcher finds files via the repo~~ | done (2): `strawberry` CLI entry point, XDG paths, icons as package data; the widget still runs from a checkout (4) |
-| Widget finds the repo via `res://..` (menu: settings file, restart) | XDG paths and daemon commands (4) |
+| ~~Widget finds the repo via `res://..` (menu: settings file, restart)~~ | done (4): XDG paths, `strawberry config --init` / `restart` through `$STRAWBERRY_CLI` |
 | ~~Music control needs the Spotify MCP server~~ | done (3): MPRIS reflexes for any player; Spotify is an adapter |
 | Ollama present with the models pulled | `strawberry setup` installs Ollama (their script) and pulls the models (5) |
 | Piper voice already downloaded | `strawberry setup` downloads the default voice; `strawberry voices` for more (5) |
@@ -143,7 +143,12 @@ Spotify tool schemas measure 2382 prompt tokens, not the ~360 assumed below.
 - Tests: MPRIS reflexes on a fake bus, adapter loading with and without a matching server, the
   existing Spotify tests moved under the adapter.
 
-### 4. Widget as a standalone binary
+### 4. Widget as a standalone binary — **done 2026-09-22**
+
+Evidence: `scripts/build_widget.sh` exports `dist/strawberry-widget-0.1.0-linux-x86_64` (74.7 MB, PCK embedded) with the official 4.7.2 templates (the `.tpz` checked against the release's `SHA512-SUMS.txt`); `WIDGET=<that binary> scripts/check_phase1.sh` passes the same headless acceptance as the source project (`"exported": true`, `"widget_version": "0.1.0"`; source: `"dev"`), and `.venv/bin/python -m pytest -q` → 359 passed (337 before); on X11 the binary's window has a 32-bit ARGB visual, `_NET_WM_STATE_ABOVE`, no decorations, a 117-rectangle input shape, sound through PulseAudio, and its `--capture` PNG has a transparent background; `strawberry widget --fetch` from a local server holding `dist/` installed it, refused a wrong checksum and kept the old binary, and `strawberry widget` then ran it; a widget stamped 9.0.0 was refused by the 0.1.0 daemon (close 4001). Choices made on the way: release templates have no `--script`, so the binary runs validators with `-- --acceptance=res://validate_*.gd`; files an outside program needs are copied out of the pack to `$XDG_CACHE_HOME/strawberry/widget/`; the preferences are `~/.config/strawberry/widget.cfg`, copied once from `user://widget.cfg` (never deleted); the tray runs the binary itself as its widget child and passes `STRAWBERRY_CLI` and `STRAWBERRYD_PORT`. Left for step 5: `setup` calls `widgetbin.fetch()` when `widgetbin.installed_version()` is missing or not the package's version, and `doctor` can report both versions from `/health` (`version`, `widget_versions`). Left for step 6: the release itself (CI runs `scripts/build_widget.sh` and attaches the binary and its `.sha256` to `v<version>`); until it exists `--fetch` gets a 404 and says so.
+
+The plan as written:
+
 
 - Godot export preset `Linux/X11` (x86_64, embedded PCK), built with the 4.7.2 export templates.
   Output `strawberry-widget-<version>-linux-x86_64`. Test: transparent window, always-on-top,
@@ -208,6 +213,6 @@ something a user could fix is missing. Every bug report starts with its output.
 | 1. jeepney watchers + tray | – | a day — **done 2026-09-22** |
 | 3. MPRIS reflexes + adapters | – (parallel with 1) | a day |
 | 2. package + CLI | 1, 3 | half a day — **done 2026-09-22** |
-| 4. widget binary + XDG + handshake | 2 | half a day |
+| 4. widget binary + XDG + handshake | 2 | half a day — **done 2026-09-22** |
 | 5. setup + doctor | 2, 4 | a day |
 | 6. releases, licence, README | 5 | half a day |
