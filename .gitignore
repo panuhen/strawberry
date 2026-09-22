@@ -20,3 +20,6 @@ widget/*.png.import
 
 # Agent worktrees
 .claude/worktrees/
+
+# Built widget binaries (scripts/build_widget.sh)
+dist/
