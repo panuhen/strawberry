@@ -11,6 +11,7 @@ levels, and the second is optional:
 
 Nothing ships configured. Skip, previous, pause, resume, volume and "what song is this" already
 work for any desktop player over MPRIS (WIRING §8b), so the shipped install needs no server at all.
+Finding particular music does not: with no music server, "play daft punk" or "put on my liked songs" gets her line that choosing music needs a music add-on, like the Spotify one (below).
 
 ## Adding a server
 

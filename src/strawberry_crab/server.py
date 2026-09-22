@@ -22,6 +22,7 @@ import time
 from typing import Any
 
 from aiohttp import WSMsgType, web
+from aiohttp.web_log import AccessLogger
 
 from . import __version__, firstrun, paths
 from .config import Config, ConfigError
@@ -52,6 +53,20 @@ def version_verdict(widget: str | None, daemon: str = __version__) -> str:
     if ours.group(1) != theirs.group(1):
         return "major"
     return "same" if ours.groups("0") == theirs.groups("0") else "minor"
+
+
+# The access log, minus the polling: the tray asks GET /health every 2 s and beat_watch posts
+# /tempo every interval_s, and a journal line for each buries everything else. A poll that fails
+# (4xx/5xx) is still logged. The line is aiohttp's default (request line, status, size, agent):
+# it has no request body in it, and nothing here adds one.
+QUIET_ROUTES = frozenset({("GET", "/health"), ("POST", "/tempo")})
+
+
+class QuietAccessLogger(AccessLogger):
+    def log(self, request: web.BaseRequest, response: web.StreamResponse, time: float) -> None:
+        if (request.method, request.path) in QUIET_ROUTES and response.status < 400:
+            return
+        super().log(request, response, time)
 
 
 def create_app(daemon: Daemon) -> web.Application:
@@ -452,7 +467,8 @@ async def serve(app: web.Application, host: str, port: int) -> None:
             pass     # not the main thread (tests), or no signals on this platform
     # Left in place until the loop closes: a signal during cleanup is one more no-op, not a kill.
 
-    runner = web.AppRunner(app, handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT_S)
+    runner = web.AppRunner(app, handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT_S,
+                           access_log_class=QuietAccessLogger)
     setup = asyncio.ensure_future(runner.setup())      # on_startup: the models load here
     stopped = asyncio.ensure_future(stop.wait())
     try:
