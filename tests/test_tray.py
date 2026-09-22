@@ -351,21 +351,41 @@ def test_iconname_is_claimed_only_when_the_icon_is_in_a_theme(tmp_path):
 # --- the children ------------------------------------------------------------------
 
 def test_the_children_are_the_daemon_the_doorways_and_the_widget(tmp_path):
-    (tmp_path / "widget").mkdir()
-    (tmp_path / "widget" / "project.godot").write_text("")
-    specs = tray.child_specs(8771, None, checkout=tmp_path)
+    from strawberry import widgetbin
+
+    dev = lambda: widgetbin.Widget("checkout", Path("/opt/godot"), tmp_path / "widget")
+    specs = tray.child_specs(8771, None, resolve_widget=dev)
     assert [c.name for c in specs] == ["daemon", "mpris_watch", "notify_watch", "beat_watch", "widget"]
     python = specs[0].argv[0]
     assert all(c.argv[0] == python for c in specs)          # one interpreter, nothing from a checkout
     assert specs[0].argv[1:] == ["-m", "strawberry.strawberryd", "--port", "8771"]
     assert specs[1].argv[1:] == ["-m", "strawberry.doorways.mpris_watch", "--daemon", "http://127.0.0.1:8771"]
     assert specs[3].argv[1:] == ["-m", "strawberry.doorways.beat_watch", "--daemon", "http://127.0.0.1:8771"]
-    assert specs[4].argv[1:] == ["-m", "strawberry", "widget"]
-    assert [c.name for c in tray.child_specs(8771, None, widget=False, checkout=tmp_path)][-1] == "beat_watch"
-    # Installed without a checkout: everything but the widget, which needs the Godot project.
-    assert [c.name for c in tray.child_specs(8771, None, checkout=None)][-1] == "beat_watch"
+    assert specs[4].argv[1:] == ["-m", "strawberry", "widget"]  # developer mode: the CLI imports and runs godot
+    assert specs[4].env["STRAWBERRYD_PORT"] == "8771"
+    assert [c.name for c in tray.child_specs(8771, None, widget=False, resolve_widget=dev)][-1] == "beat_watch"
     config = tmp_path / "c.toml"
-    assert tray.child_specs(8771, config, checkout=None)[0].argv[-2:] == ["--config", str(config)]
+    assert tray.child_specs(8771, config, resolve_widget=dev)[0].argv[-2:] == ["--config", str(config)]
+
+
+def test_the_widget_child_is_the_binary_when_installed(tmp_path):
+    from strawberry import widgetbin
+
+    binary = tmp_path / "strawberry-widget"
+    specs = tray.child_specs(8771, None, resolve_widget=lambda: widgetbin.Widget("binary", binary))
+    assert specs[-1].name == "widget"
+    assert specs[-1].argv == [str(binary), "--display-driver", "x11", "--", "--ws=ws://127.0.0.1:8771/ws"]
+    assert Children([])._env(specs[-1])["STRAWBERRY_TRAY"] == "1"
+
+
+def test_no_widget_to_run_leaves_the_rest(tmp_path, caplog):
+    from strawberry import widgetbin
+
+    def missing():
+        raise widgetbin.WidgetMissing("no widget binary at X. Get it with: strawberry widget --fetch")
+
+    assert [c.name for c in tray.child_specs(8771, None, resolve_widget=missing)][-1] == "beat_watch"
+    assert "strawberry widget --fetch" in caplog.text
 
 
 async def test_a_child_that_exits_is_started_again_and_stop_ends_it(tmp_path, monkeypatch):

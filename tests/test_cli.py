@@ -140,10 +140,18 @@ def test_voices_lists_what_is_installed(capsys):
     assert capsys.readouterr().out.splitlines() == ["en_GB-alba-medium", "en_US-amy-medium", cli.VOICES_HINT]
 
 
-def test_the_widget_without_a_checkout_says_why(monkeypatch, capsys):
+def test_the_widget_without_a_binary_or_a_checkout_says_why(monkeypatch, capsys):
     monkeypatch.setattr(paths, "widget_project", lambda: None)
     assert cli.main(["widget"]) == 2
-    assert "source checkout" in capsys.readouterr().err
+    assert "no widget binary" in capsys.readouterr().err
+
+
+def test_config_init_only_writes_the_template(monkeypatch, capsys):
+    monkeypatch.setenv("EDITOR", "false")              # would fail the command if it were run
+    assert cli.main(["config", "--init"]) == 0
+    assert paths.config_file().read_text().startswith("#")
+    assert cli.main(["config", "--init"]) == 0         # already there: says where, changes nothing
+    assert capsys.readouterr().out.splitlines() == [str(paths.config_file())] * 2
 
 
 def test_setup_and_doctor_are_placeholders_for_step_5(capsys):

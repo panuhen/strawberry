@@ -18,6 +18,15 @@ log = logging.getLogger("strawberryd.hub")
 class WidgetHub:
     def __init__(self) -> None:
         self._sockets: set[web.WebSocketResponse] = set()
+        self._versions: dict[web.WebSocketResponse, str] = {}   # from each widget's hello
+
+    def set_version(self, ws: web.WebSocketResponse, version: str) -> None:
+        self._versions[ws] = version
+
+    @property
+    def versions(self) -> list[str]:
+        """The versions the open widgets reported in their hello (`/health`, WIRING.md §1)."""
+        return sorted(v for ws, v in self._versions.items() if ws in self._sockets and not ws.closed)
 
     @property
     def count(self) -> int:
@@ -28,6 +37,7 @@ class WidgetHub:
 
     def discard(self, ws: web.WebSocketResponse) -> None:
         self._sockets.discard(ws)
+        self._versions.pop(ws, None)
 
     async def close_all(self, reason: str = "strawberryd shutting down") -> int:
         """Tell every widget we are going away so it reconnects at once instead of
