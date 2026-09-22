@@ -72,7 +72,10 @@ widget binary reaches every distro with the same artefact.
 
 ## Steps
 
-### 1. jeepney: the D-Bus watchers and the tray
+### 1. jeepney: the D-Bus watchers and the tray — **done 2026-09-22**
+
+Evidence: `strawberryd/.venv/bin/python -m pytest -q` → 230 passed (186 before); `scripts/check_tray.sh` registered `org.kde.StatusNotifierItem-<pid>-1`, `busctl --user` read back its properties and the whole menu, and the watcher listed it; the 🍓 showed in the GNOME top bar (screenshot), and `show` / `hide` / `chat` / `skin` / `hat` / `volume` / `mute` / `sleep_after` reached a live widget through `POST /command`. Two departures from the plan below, both deliberate: the tray menu carries **every** preference her right-click menu has, appearance included (asked for during the work), and `IconName` is left empty unless the icon is installed in a theme, because GNOME's AppIndicator extension draws a placeholder for a name it cannot resolve.
+
 
 - Rewrite `doorways/mpris_watch.py` and `doorways/notify_watch.py` on **jeepney** (pure Python,
   asyncio-friendly, supports `BecomeMonitor` via raw messages and `PropertiesChanged` signals),
@@ -189,7 +192,7 @@ something a user could fix is missing. Every bug report starts with its output.
 
 | Step | Depends on | Size |
 |---|---|---|
-| 1. jeepney watchers + tray | – | a day |
+| 1. jeepney watchers + tray | – | a day — **done 2026-09-22** |
 | 3. MPRIS reflexes + adapters | – (parallel with 1) | a day |
 | 2. package + CLI | 1, 3 | half a day |
 | 4. widget binary + XDG + handshake | 2 | half a day |

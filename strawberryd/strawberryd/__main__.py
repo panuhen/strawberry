@@ -29,6 +29,9 @@ def main() -> None:
     parser.add_argument("--args", metavar="JSON", default="{}", help="with --tool: the arguments as a JSON object")
     parser.add_argument("--think", metavar="TEXT", default=None, help="run TEXT through the thinker (Qwen + the tools, WIRING §8b), exit")
     parser.add_argument("--talk", action="store_true", help="type to her: each line goes through the running daemon as if spoken; shows the routing")
+    parser.add_argument("--tray", action="store_true", help="run the tray icon: the login process that starts everything else (WIRING §14)")
+    parser.add_argument("--no-children", action="store_true", help="with --tray: just the icon, against a daemon that is already up")
+    parser.add_argument("--no-widget", action="store_true", help="with --tray: start the daemon and doorways but not the widget")
     parser.add_argument("--version", action="version", version=f"strawberryd {__version__}")
     args = parser.parse_args()
 
@@ -70,6 +73,8 @@ def main() -> None:
         sys.exit(think(config, args.think))
     if args.talk:
         sys.exit(talk(config))
+    if args.tray:
+        sys.exit(tray(config, children=not args.no_children, widget=not args.no_widget, config_path=args.config))
 
     logging.basicConfig(
         level=config.daemon.log_level.upper(),
@@ -77,6 +82,20 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
     run(config)
+
+
+def tray(config, children: bool = True, widget: bool = True, config_path: Path | None = None) -> int:
+    """`strawberryd --tray`: the 🍓 in the top bar, and (unless --no-children) everything under it."""
+    import asyncio
+
+    from .tray import run_tray
+
+    logging.basicConfig(level=config.daemon.log_level.upper(),
+                        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
+    try:
+        return asyncio.run(run_tray(config.daemon.port, children=children, widget=widget, config=config_path))
+    except KeyboardInterrupt:
+        return 0
 
 
 def route(config, text: str) -> int:

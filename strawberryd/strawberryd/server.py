@@ -3,6 +3,7 @@
   POST /event    {source, app, title, body, urgency}  <- what the hooks hit
   POST /perform  a raw contract blob                  <- curl / tests / future TTS-less callers
   POST /tempo    a beat estimate                      <- doorways/beat_watch.py (§4c)
+  POST /command  {command, value}                     <- the tray, to the widgets (§14)
   POST /listen   the hotkey: listen once (again = stop early)   (§7)
   GET  /health
   GET  /ws       the Godot widget connects here and stays connected
@@ -39,6 +40,7 @@ def create_app(daemon: Daemon) -> web.Application:
             web.post("/perform", perform),
             web.post("/event", event),
             web.post("/tempo", tempo),
+            web.post("/command", command),
             web.post("/listen", listen),
             web.get("/ws", websocket),
         ]
@@ -103,6 +105,7 @@ async def health(request: web.Request) -> web.Response:
             "actions": daemon.actor.stats(),
             "thinker": daemon.thinker.stats(),
             "ledger": daemon.ledger.to_list(),
+            "state": daemon.current_state(),
             "rest_state": daemon.rest_state,
             "tempo": daemon.fresh_tempo(),
         }
@@ -155,6 +158,62 @@ def parse_tempo(data: Any) -> dict[str, Any]:
             raise ContractError(f"tempo.{key} out of range")
         out[key] = float(value)
     return out
+
+
+# What a widget will act on (widget.gd run_command). Anything else is refused here rather
+# than sent on, so a typo in a script does not end up as a push_warning nobody reads.
+COMMANDS = {
+    "quit": None,            # no value
+    "show": None,
+    "hide": None,
+    "chat": None,
+    "sleep_now": None,
+    "reset_position": None,
+    "skin": str,
+    "mute": bool,
+    "on_top": bool,
+    "hat": bool,
+    "quiet": (int, float),   # seconds from now; 0 clears
+    "volume": (int, float),  # 0…1
+    "sleep_after": (int, float),   # minutes of quiet before she dozes off; 0 = never
+}
+
+
+def parse_command(data: Any) -> dict[str, Any]:
+    """{"command": "mute", "value": true} -> the message the widgets receive (WIRING.md §14)."""
+    if not isinstance(data, dict):
+        raise ContractError("command must be an object")
+    name = data.get("command")
+    if name not in COMMANDS:
+        raise ContractError(f"unknown command {name!r}; one of {sorted(COMMANDS)}")
+    unknown = set(data) - {"command", "value"}
+    if unknown:
+        raise ContractError(f"unknown fields: {sorted(unknown)}")
+    expected = COMMANDS[name]
+    message: dict[str, Any] = {"command": name}
+    if expected is None:
+        return message
+    value = data.get("value")
+    if isinstance(value, bool) != (expected is bool) or not isinstance(value, expected):
+        raise ContractError(f"{name} needs a {getattr(expected, '__name__', 'number')} value")
+    if name in ("quiet", "sleep_after") and value < 0:
+        raise ContractError(f"{name} needs a value >= 0")
+    if name == "volume" and not (0.0 <= value <= 1.0):
+        raise ContractError("volume must be between 0 and 1")
+    message["value"] = value
+    return message
+
+
+async def command(request: web.Request) -> web.Response:
+    """The tray's way to the widget: one command, broadcast to every open widget socket."""
+    daemon = request.app[DAEMON]
+    try:
+        message = parse_command(await _body(request))
+    except ContractError as exc:
+        return _error(str(exc))
+    sent = await daemon.hub.send(message)
+    log.info("command -> %d widget(s): %s", sent, message)
+    return web.json_response({"sent": sent, "command": message})
 
 
 async def listen(request: web.Request) -> web.Response:
