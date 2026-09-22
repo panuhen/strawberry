@@ -1,3 +1,9 @@
+"""`strawberryd`: the daemon, and the by-hand tools that share its config (--route, --say, ...).
+
+The `strawberry` CLI (cli.py) calls main() for its route/tools/tool/think/talk/tray commands, and
+the tray runs it as `python -m strawberry.strawberryd` for the daemon child.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -11,7 +17,7 @@ from .config import ConfigError, default_path, default_toml, load
 from .server import run
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="strawberryd", description="Strawberry mascot daemon")
     parser.add_argument("--config", type=Path, default=None, help=f"settings file (default {default_path()})")
     parser.add_argument("--host", default=None, help="override daemon.host")
@@ -33,7 +39,7 @@ def main() -> None:
     parser.add_argument("--no-children", action="store_true", help="with --tray: just the icon, against a daemon that is already up")
     parser.add_argument("--no-widget", action="store_true", help="with --tray: start the daemon and doorways but not the widget")
     parser.add_argument("--version", action="version", version=f"strawberryd {__version__}")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     path = args.config or default_path()
     if args.init_config:

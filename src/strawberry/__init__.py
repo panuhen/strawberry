@@ -1,6 +1,6 @@
-"""strawberryd: the always-running half of the Strawberry mascot.
+"""strawberry: the desktop mascot's Python half (the daemon, the doorways, the tray and the CLI).
 
-Short-lived event scripts POST to it over HTTP; it holds the one websocket to the
+The daemon (`strawberryd`) is the always-running part: event scripts POST to it over HTTP; it holds the one websocket to the
 Godot widget and turns every event into one performance message (WIRING.md §0).
 """
 

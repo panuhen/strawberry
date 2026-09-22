@@ -15,7 +15,6 @@ package's source, and an installed package without a checkout has no widget.
 from __future__ import annotations
 
 import os
-from importlib import resources
 from pathlib import Path
 
 APP = "strawberry"
@@ -90,6 +89,8 @@ def package_file(*parts: str) -> Path:
     Wheels install unzipped, so the resource is a file already; `as_file` would only matter
     for a zipped import, which this package does not support (the icons are read by path).
     """
+    from importlib import resources   # here, not at the top: `strawberry listen` starts fast
+
     return Path(str(resources.files(__package__ or APP).joinpath(*parts)))
 
 
