@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 from aiohttp import WSMsgType, web
+from aiohttp.web_log import AccessLogger
 
 from . import __version__
 from .config import Config
@@ -47,6 +48,20 @@ def version_verdict(widget: str | None, daemon: str = __version__) -> str:
     if ours.group(1) != theirs.group(1):
         return "major"
     return "same" if ours.groups("0") == theirs.groups("0") else "minor"
+
+
+# The access log, minus the polling: the tray asks GET /health every 2 s and beat_watch posts
+# /tempo every interval_s, and a journal line for each buries everything else. A poll that fails
+# (4xx/5xx) is still logged. The line is aiohttp's default (request line, status, size, agent):
+# it has no request body in it, and nothing here adds one.
+QUIET_ROUTES = frozenset({("GET", "/health"), ("POST", "/tempo")})
+
+
+class QuietAccessLogger(AccessLogger):
+    def log(self, request: web.BaseRequest, response: web.StreamResponse, time: float) -> None:
+        if (request.method, request.path) in QUIET_ROUTES and response.status < 400:
+            return
+        super().log(request, response, time)
 
 
 def create_app(daemon: Daemon) -> web.Application:
@@ -340,4 +355,5 @@ def run(config: Config) -> None:
     log.info("strawberryd listening on http://%s:%d (ws at /ws); config %s",
              config.daemon.host, config.daemon.port, config.path or "defaults")
     # Short shutdown: widgets are closed explicitly in on_shutdown, nothing else is long-lived.
-    web.run_app(app, host=config.daemon.host, port=config.daemon.port, print=None, shutdown_timeout=2.0)
+    web.run_app(app, host=config.daemon.host, port=config.daemon.port, print=None, shutdown_timeout=2.0,
+                access_log_class=QuietAccessLogger)
