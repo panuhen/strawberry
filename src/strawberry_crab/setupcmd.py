@@ -1,8 +1,8 @@
 """`strawberry setup`: the models, a voice and the widget, fetched from where they are published
 (PACKAGING.md step 5).
 
-    1. what fits: VRAM from nvidia-smi picks a tier (the tested setup needs a 24 GB card); every
-       slot can be overridden; the choices go into config.toml, backed up first
+    1. what fits: VRAM (nvidia-smi; AMD: rocm-smi or sysfs) picks a tier (the tested setup needs a
+       24 GB card); every slot can be overridden; the choices go into config.toml, backed up first
     2. Ollama and the models: one licence line per model, then `ollama pull`
     3. the Piper voice, into the voices dir
     4. the widget binary, unless the installed one is this package's version
@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 import tomllib
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -40,7 +40,8 @@ APACHE = "Apache-2.0, https://www.apache.org/licenses/LICENSE-2.0"
 @dataclass(frozen=True)
 class Tier:
     """One row of "what fits": a model per slot and the VRAM it wants (total, not free: the
-    user's Ollama may already hold these very models)."""
+    user's Ollama may already hold these very models). `summary` names the brain; `describe()`
+    adds whisper, which depends on the card's vendor (see `tiers_for`)."""
 
     name: str
     min_vram_mb: int
@@ -54,20 +55,33 @@ class Tier:
     whisper_compute: str = "int8_float16"
     piper: str = "en_GB-alba-medium"
 
+    def describe(self) -> str:
+        where = "on CUDA" if self.whisper_device == "cuda" else "on the CPU"
+        return f"{self.summary}, whisper {self.whisper} {where}"
+
 
 # The first is the tested setup and the default; the others trade the brain (and whisper's device)
 # for VRAM. Below ~8B parameters tool calling gets unreliable, so the smallest GPU tier is honest
 # about it, and without a usable GPU the thinker is off: reflexes, chat and the desktop voice work.
 TIERS = (
-    Tier("24gb", 22000, "the tested setup: Qwen 27B brain, whisper medium on CUDA"),
-    Tier("16gb", 15000, "Qwen3 14B brain, whisper medium on CUDA", brain="qwen3:14b"),
-    Tier("10gb", 9500, "Qwen3 8B brain, whisper small on CUDA", brain="qwen3:8b", whisper="small"),
-    Tier("6gb", 5800, "Qwen3 4B brain (tool use gets shaky), whisper small on the CPU", brain="qwen3:4b",
+    Tier("24gb", 22000, "the tested setup: Qwen 27B brain"),
+    Tier("16gb", 15000, "Qwen3 14B brain", brain="qwen3:14b"),
+    Tier("10gb", 9500, "Qwen3 8B brain", brain="qwen3:8b", whisper="small"),
+    Tier("6gb", 5800, "Qwen3 4B brain (tool use gets shaky)", brain="qwen3:4b",
          whisper="small", whisper_device="cpu", whisper_compute="int8"),
-    Tier("cpu", 0, "no brain (thinker off): reflexes, chat and the desktop voice; whisper small on the CPU",
+    Tier("cpu", 0, "no brain (thinker off): reflexes, chat and the desktop voice",
          thinker=False, whisper="small", whisper_device="cpu", whisper_compute="int8"),
 )
 DEFAULT_TIER = TIERS[0]
+
+
+def tiers_for(vendor: str | None) -> tuple[Tier, ...]:
+    """The tier table for a card. On AMD, Ollama runs the models on ROCm and the brain rows stay
+    the same, but faster-whisper's GPU engine is CUDA only, so whisper runs `small` on the CPU."""
+    if vendor != "amd":
+        return TIERS
+    return tuple(replace(t, whisper="small", whisper_device="cpu", whisper_compute="int8") for t in TIERS)
+
 
 # slot -> the config key its value goes to, and the question asked for it
 SLOTS = (
@@ -92,37 +106,103 @@ class Gpu:
     name: str
     total_mb: int
     free_mb: int
+    vendor: str = "nvidia"      # "nvidia" or "amd"; other cards are not a usable GPU for the brain
 
 
-def detect_gpu(run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Gpu | None:
-    """The largest NVIDIA card nvidia-smi reports, or None (no nvidia-smi, no card, an error)."""
-    if shutil.which("nvidia-smi") is None and run is subprocess.run:
+DRM_ROOT = Path("/sys/class/drm")      # tests point this at a throwaway directory
+AMD_VENDOR = "0x1002"
+
+
+def detect_gpu(run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+               drm_root: Path | None = None) -> Gpu | None:
+    """The largest usable card: NVIDIA from nvidia-smi, else AMD from rocm-smi, else AMD from
+    sysfs (amdgpu's mem_info_vram_total, there without ROCm installed). Intel and other cards
+    give None: Ollama does not run the brain on them, so she plans for the CPU."""
+    return _nvidia(run) or _rocm(run) or _amd_sysfs(DRM_ROOT if drm_root is None else drm_root)
+
+
+def _run_quiet(run: Callable[..., subprocess.CompletedProcess], argv: list[str]) -> str | None:
+    """stdout of a zero exit, else None (the tool missing, an error, a timeout)."""
+    if run is subprocess.run and shutil.which(argv[0]) is None:
         return None
     try:
-        result = run(["nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"],
-                     capture_output=True, text=True, timeout=10)
+        result = run(argv, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if result.returncode != 0:
-        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _nvidia(run: Callable[..., subprocess.CompletedProcess]) -> Gpu | None:
+    out = _run_quiet(run, ["nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"])
     gpus = []
-    for line in result.stdout.splitlines():
+    for line in (out or "").splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
             gpus.append(Gpu(parts[0], int(parts[1]), int(parts[2])))
     return max(gpus, key=lambda g: g.total_mb) if gpus else None
 
 
+def _rocm(run: Callable[..., subprocess.CompletedProcess]) -> Gpu | None:
+    """`rocm-smi --showmeminfo vram --json`: {"card0": {"VRAM Total Memory (B)": "...",
+    "VRAM Total Used Memory (B)": "..."}, ...}."""
+    out = _run_quiet(run, ["rocm-smi", "--showmeminfo", "vram", "--json"])
+    try:
+        data = json.loads(out) if out else {}
+    except ValueError:
+        return None
+    gpus = []
+    for card, info in data.items() if isinstance(data, dict) else ():
+        if not isinstance(info, dict):
+            continue
+        total = _int(info.get("VRAM Total Memory (B)"))
+        used = _int(info.get("VRAM Total Used Memory (B)")) or 0
+        if total:
+            gpus.append(Gpu(f"AMD GPU ({card})", total // 2**20, max(total - used, 0) // 2**20, "amd"))
+    return max(gpus, key=lambda g: g.total_mb) if gpus else None
+
+
+def _amd_sysfs(drm_root: Path) -> Gpu | None:
+    gpus = []
+    for card in sorted(drm_root.glob("card*")):
+        if "-" in card.name:                  # card0-DP-1 and the like are connectors
+            continue
+        device = card / "device"
+        if _read(device / "vendor") != AMD_VENDOR:
+            continue
+        total = _int(_read(device / "mem_info_vram_total"))
+        if not total:
+            continue
+        used = _int(_read(device / "mem_info_vram_used")) or 0
+        name = _read(device / "product_name") or f"AMD GPU ({card.name})"
+        gpus.append(Gpu(name, total // 2**20, max(total - used, 0) // 2**20, "amd"))
+    return max(gpus, key=lambda g: g.total_mb) if gpus else None
+
+
+def _read(path: Path) -> str | None:
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return None
+
+
+def _int(value: Any) -> int | None:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def pick_tier(gpu: Gpu | None) -> Tier:
     total = gpu.total_mb if gpu else 0
-    for tier in TIERS:
+    tiers = tiers_for(gpu.vendor if gpu else None)
+    for tier in tiers:
         if total >= tier.min_vram_mb:
             return tier
-    return TIERS[-1]
+    return tiers[-1]
 
 
-def tier_named(name: str) -> Tier:
-    for tier in TIERS:
+def tier_named(name: str, vendor: str | None = None) -> Tier:
+    for tier in tiers_for(vendor):
         if tier.name == name:
             return tier
     raise ValueError(f"no tier {name!r}; one of {', '.join(t.name for t in TIERS)}")
@@ -397,21 +477,26 @@ class Setup:
         """Choose a tier and per-slot overrides; write them. Returns the effective slot values."""
         self.say("1. What fits")
         gpu = detect_gpu(self.run)
+        vendor = gpu.vendor if gpu else None
+        tiers = tiers_for(vendor)
         if gpu:
             self.say(f"  GPU: {gpu.name}, {gpu.total_mb} MiB ({gpu.free_mb} MiB free now)")
+            if vendor == "amd":
+                self.say("  AMD: Ollama runs the models on ROCm; whisper runs on the CPU (its GPU engine is CUDA only)")
         else:
-            self.say("  no NVIDIA GPU found (nvidia-smi); Ollama and whisper would run on the CPU")
-        proposed = tier_named(self.tier_name) if self.tier_name else pick_tier(gpu)
-        for i, tier in enumerate(TIERS, 1):
+            self.say("  no usable GPU found (NVIDIA: nvidia-smi; AMD: rocm-smi or sysfs); "
+                     "Ollama and whisper would run on the CPU")
+        proposed = tier_named(self.tier_name, vendor) if self.tier_name else pick_tier(gpu)
+        for i, tier in enumerate(tiers, 1):
             mark = "*" if tier == proposed else " "
-            self.say(f"  {mark}{i}. {tier.name:5s} {tier.summary}")
-        if proposed != DEFAULT_TIER:
+            self.say(f"  {mark}{i}. {tier.name:5s} {tier.describe()}")
+        if proposed.name != DEFAULT_TIER.name:
             self.say(f"  the default ({DEFAULT_TIER.brain}) needs a ~24 GB card; proposing {proposed.name}")
-        answer = self.ask(f"  tier [{TIERS.index(proposed) + 1}]", str(TIERS.index(proposed) + 1)).strip()
+        answer = self.ask(f"  tier [{tiers.index(proposed) + 1}]", str(tiers.index(proposed) + 1)).strip()
         tier = proposed
         if answer:
             try:
-                tier = TIERS[int(answer) - 1] if answer.isdigit() else tier_named(answer)
+                tier = tiers[int(answer) - 1] if answer.isdigit() else tier_named(answer, vendor)
             except (IndexError, ValueError):
                 self.say(f"  no tier {answer!r}; keeping {proposed.name}")
         values = tier_values(tier)

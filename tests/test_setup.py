@@ -19,13 +19,52 @@ def isolated(monkeypatch, tmp_path):
         monkeypatch.setenv(f"XDG_{name}_HOME", str(tmp_path / name.lower()))
     monkeypatch.delenv("STRAWBERRYD_PORT", raising=False)
     monkeypatch.setattr(cli, "systemctl", lambda *a, capture=True: subprocess.CompletedProcess(a, 1, "", ""))
+    monkeypatch.setattr(setupcmd, "DRM_ROOT", tmp_path / "drm")       # never this machine's sysfs
 
 
-def smi(stdout: str, code: int = 0):
+def smi(stdout: str, code: int = 0, rocm: str | None = None):
     def run(argv, **kwargs):
+        if argv[0] == "rocm-smi":
+            return subprocess.CompletedProcess(argv, 127 if rocm is None else 0, rocm or "", "")
         assert argv[0] == "nvidia-smi"
         return subprocess.CompletedProcess(argv, code, stdout, "")
     return run
+
+
+def amd_card(root, name="card0", total_mb=16384, used_mb=1024, vendor="0x1002", product=""):
+    device = root / name / "device"
+    device.mkdir(parents=True)
+    (device / "vendor").write_text(vendor + "\n")
+    (device / "mem_info_vram_total").write_text(f"{total_mb * 2**20}\n")
+    (device / "mem_info_vram_used").write_text(f"{used_mb * 2**20}\n")
+    if product:
+        (device / "product_name").write_text(product + "\n")
+
+
+def test_amd_cards_come_from_rocm_smi_then_sysfs_and_intel_is_no_gpu(tmp_path):
+    rocm = '{"card0": {"VRAM Total Memory (B)": "25753026560", "VRAM Total Used Memory (B)": "1073741824"}}'
+    gpu = setupcmd.detect_gpu(smi("", code=9, rocm=rocm))
+    assert gpu == setupcmd.Gpu("AMD GPU (card0)", 24560, 23536, "amd")
+    assert setupcmd.detect_gpu(smi("", code=9, rocm="not json")) is None
+    root = tmp_path / "sys"
+    amd_card(root, "card0", total_mb=512, vendor="0x8086")               # Intel: not counted
+    amd_card(root, "card1", total_mb=12288, product="Radeon RX 6700 XT")
+    (root / "card1-HDMI-A-1").mkdir()
+    gpu = setupcmd.detect_gpu(smi("", code=9), drm_root=root)
+    assert gpu == setupcmd.Gpu("Radeon RX 6700 XT", 12288, 11264, "amd")
+    assert setupcmd.detect_gpu(smi("", code=9), drm_root=tmp_path / "none") is None
+    nvidia = setupcmd.detect_gpu(smi("NVIDIA GeForce RTX 3090, 24576, 20000\n"), drm_root=root)
+    assert nvidia.vendor == "nvidia"                                     # nvidia-smi comes first
+
+
+def test_amd_tiers_keep_the_brain_and_put_whisper_on_the_cpu():
+    tier = setupcmd.pick_tier(setupcmd.Gpu("AMD GPU (card0)", 24560, 20000, "amd"))
+    assert tier.name == "24gb" and tier.brain == setupcmd.DEFAULT_TIER.brain
+    assert (tier.whisper, tier.whisper_device, tier.whisper_compute) == ("small", "cpu", "int8")
+    assert "whisper small on the CPU" in tier.describe()
+    assert setupcmd.tier_named("10gb", "amd").whisper_device == "cpu"
+    assert setupcmd.tier_named("10gb").whisper_device == "cuda"
+    assert "whisper medium on CUDA" in setupcmd.DEFAULT_TIER.describe()
 
 
 # --- what fits -------------------------------------------------------------------
@@ -142,6 +181,7 @@ class World:
 
     def __init__(self, gpu: str = "NVIDIA GeForce RTX 3090, 24576, 20000", models=("embeddinggemma:latest",)):
         self.gpu = gpu
+        self.rocm = ""
         self.models = list(models)
         self.commands: list[list[str]] = []
 
@@ -149,6 +189,8 @@ class World:
         self.commands.append(list(argv))
         if argv[0] == "nvidia-smi":
             return subprocess.CompletedProcess(argv, 0 if self.gpu else 9, self.gpu + "\n", "")
+        if argv[0] == "rocm-smi":
+            return subprocess.CompletedProcess(argv, 0 if self.rocm else 127, self.rocm, "")
         if argv[:2] == ["ollama", "pull"]:
             self.models.append(argv[2])
             return subprocess.CompletedProcess(argv, 0, "", "")
@@ -256,6 +298,17 @@ def test_a_small_card_gets_a_smaller_brain_and_no_gpu_turns_the_thinker_off(worl
     assert not config.thinker.enabled and config.voice.device == "cpu"
     assert "qwen3:8b" not in world.pulls() and "qwen3.8:27b" not in world.pulls()
     assert "needs a ~24 GB card" in out
+
+
+def test_an_amd_card_keeps_the_brain_and_runs_whisper_on_the_cpu(world):
+    world.gpu = ""
+    world.rocm = '{"card0": {"VRAM Total Memory (B)": "25753026560", "VRAM Total Used Memory (B)": "0"}}'
+    code, out, _ = run_setup(world, yes=True)
+    assert code == 0, out
+    config = load(paths.config_file())
+    assert config.thinker.enabled and config.brain.action_model == "qwen3.8:27b"
+    assert (config.voice.model, config.voice.device, config.voice.compute_type) == ("small", "cpu", "int8")
+    assert "Ollama runs the models on ROCm" in out and "whisper small on the CPU" in out
 
 
 def test_no_ollama_is_a_failure_with_the_installer_named(world, monkeypatch):
