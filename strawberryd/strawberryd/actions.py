@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -216,6 +217,23 @@ Vocabulary = Callable[[Toolbox, str], Awaitable[list[str]]]
 VOCABULARIES: dict[str, Vocabulary] = {"spotify": spotify_vocabulary}
 
 
+# Words a bare "start the music again" sentence is made of. Anything else in a `resume` sentence
+# ("play daft punk", "play some classical") is a name or a genre the embedding under-scored as an
+# argument (live: 0.31 for "play daft punk"), and the sentence belongs to the thinker, not to a reflex
+# that would answer "it's already playing".
+RESUME_WORDS = frozenset((
+    "play playing resume unpause start continue carry go press put turn hit keep music song track it on again back the a "
+    "please ok okay yes yeah sure now then just can could you would will do that this let's lets and up her him"
+).split())
+
+
+def carries_argument(text: str, tool: str) -> bool:
+    """A `resume` sentence with a word that is not part of a bare "play" names something to play."""
+    if tool != "resume":
+        return False
+    return any(word not in RESUME_WORDS for word in re.findall(r"[a-z'’]+", text.lower()))
+
+
 REFLEXES: dict[str, dict[str, Reflex]] = {
     "spotify": {
         "skip": spotify_skip,
@@ -247,6 +265,8 @@ class Actor:
         if not route.tool or route.tool == "other":
             return None
         if route.tool_confidence < self.config.reflex or route.has_argument >= self.config.argument:
+            return None
+        if carries_argument(route.text, route.tool):
             return None
         for name, server in self.toolbox.servers.items():
             if server.topic == route.topic and route.tool in self.reflexes.get(name, {}):

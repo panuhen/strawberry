@@ -381,6 +381,27 @@
       "topic": "music",
       "decision": "act",
       "tool": "other"
+    },
+    {
+      "text": "play daft punk",
+      "kind": "request",
+      "topic": "music",
+      "decision": "act",
+      "tool": "other"
+    },
+    {
+      "text": "play soem daft punk",
+      "kind": "request",
+      "topic": "music",
+      "decision": "act",
+      "tool": "other"
+    },
+    {
+      "text": "play led zeppelin",
+      "kind": "request",
+      "topic": "music",
+      "decision": "act",
+      "tool": "other"
     }
   ]
 }

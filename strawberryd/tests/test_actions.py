@@ -175,9 +175,14 @@ async def test_when_the_reflex_does_not_apply_she_answers_as_chat():
     assert await actor.act("play some jazz", route("play some jazz", "other")) is None
     assert await actor.act("play Nina Simone", route("play Nina Simone", "resume", has_argument=0.9)) is None
     assert await actor.act("skip maybe", route("skip maybe", "skip", tool_confidence=0.3)) is None
+    # A name the embedding under-scored as an argument (live: "play daft punk" -> resume 0.71, argument 0.31).
+    assert await actor.act("play daft punk", route("play daft punk", "resume", has_argument=0.31)) is None
+    assert await actor.act("play some classical music", route("play some classical music", "resume", has_argument=0.37)) is None
+    for bare in ("play", "ok play it", "play it please", "music back on please", "go on, play", "put it on again"):
+        assert actor.reflex_for(route(bare, "resume")) is not None, bare
     assert await actor.act("skip", route("skip", "skip", decision="offer")) is None
     assert await actor.act("lock the screen", route("lock the screen", "", topic="system")) is None
-    assert spotify.log == [] and actor.stats()["deferred"] == 4  # other, argument, low confidence, no reflex for system
+    assert spotify.log == [] and actor.stats()["deferred"] == 6  # other, argument, low confidence, no reflex for system
     disabled = Actor(ActionsConfig(enabled=False), toolbox)
     assert await disabled.act("skip this song", route("skip this song", "skip")) is None
     await toolbox.close()
