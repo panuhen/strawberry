@@ -170,7 +170,7 @@ class ThinkerConfig:
     num_ctx: int = 8192
     num_predict: int = 300
     max_tools: int = 30            # more schemas than this and the list is cut: the gate's topic first,
-                                   # then each adapter's common tools (25 Spotify tools are ~360 tokens)
+                                   # then each adapter's common tools (25 Spotify tools are ~2400 tokens)
     max_rounds: int = 6            # tool rounds before she has to answer honestly with what she has
     timeout_s: float = 45.0        # the whole request, cold load included
     ack_after_s: float = 2.5       # silent thinking pose first; a spoken ack only if the reply takes longer
