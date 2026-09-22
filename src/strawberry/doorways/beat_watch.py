@@ -23,11 +23,9 @@ import logging
 import os
 import select
 import subprocess
-import sys
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import numpy as np
 

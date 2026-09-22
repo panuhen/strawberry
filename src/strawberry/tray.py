@@ -36,6 +36,7 @@ from .bus import BusClient, BusError, field as header_field, open_session_bus
 from .client import DaemonClient, configure_logging, stop_on_signals
 from .doorways import DOORWAYS
 from .icons import pixmaps
+from . import paths
 from .paths import checkout_root
 
 log = logging.getLogger("strawberryd.tray")
@@ -196,8 +197,7 @@ def group_properties(items: list[MenuItem], ids: list[int] | None = None) -> lis
 
 def widget_prefs_path() -> Path:
     """Where the widget keeps its preferences today: Godot's user:// (step 4 moves it to XDG)."""
-    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
-    return base / "godot" / "app_userdata" / "Strawberry" / "widget.cfg"
+    return paths.godot_user_dir() / "widget.cfg"
 
 
 def read_widget_prefs(path: Path | None = None) -> dict[str, Any]:
@@ -239,7 +239,7 @@ def themed_icon_name(name: str = "strawberry", roots: list[Path] | None = None) 
     the berry should be, and with it empty the pixmaps came through (measured 2026-09-22). So
     an unresolvable name is worse than no name at all, and we only claim one we can prove.
     """
-    roots = roots if roots is not None else [Path.home() / ".local/share/icons", Path("/usr/share/icons")]
+    roots = roots if roots is not None else [paths.xdg_data_home() / "icons", Path("/usr/share/icons")]
     for root in roots:
         for size in ICON_THEME_SIZES:
             for extension in (".svg", ".png"):
@@ -497,10 +497,6 @@ class Children:
             self.state_path.unlink(missing_ok=True)
 
 
-def state_dir() -> Path:
-    base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
-    return base / "strawberry"
-
 
 # --- the tray itself ---------------------------------------------------------------
 
@@ -690,7 +686,7 @@ class Tray:
         elif action == "settings_file":
             await self.open_settings_file()
         elif action == "voices_folder":
-            folder = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "strawberry" / "voices"
+            folder = paths.voices_dir()
             folder.mkdir(parents=True, exist_ok=True)
             await self.open_path(folder)
         elif action == "restart":
@@ -820,7 +816,7 @@ async def run_tray(port: int, children: bool = True, widget: bool = True, config
     tray = Tray(f"http://127.0.0.1:{port}")
     if children:
         tray.children = Children(child_specs(port, config, widget=widget, checkout=checkout_root()),
-                                 state_path=state_dir() / "tray.json")
+                                 state_path=paths.tray_state_file())
     stop_on_signals(tray.stopping)
     return await tray.run()
 

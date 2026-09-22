@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from . import persona
+from . import paths, persona
 
 log = logging.getLogger("strawberryd.config")
 
@@ -26,8 +26,7 @@ class ConfigError(ValueError):
 
 
 def default_path() -> Path:
-    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return base / "strawberry" / "config.toml"
+    return paths.config_file()
 
 
 @dataclass

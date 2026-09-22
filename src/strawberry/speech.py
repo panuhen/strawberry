@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import tempfile
 import time
@@ -23,11 +22,12 @@ from datetime import datetime, time as dtime
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from . import paths
 from .config import SpeechConfig
 
 log = logging.getLogger("strawberryd.speech")
 
-DOWNLOAD_HINT = "cd strawberryd && uv run python -m piper.download_voices --download-dir {dir} {voice}"
+DOWNLOAD_HINT = "strawberry voices {voice} (or: python -m piper.download_voices --download-dir {dir} {voice})"
 _QUIET_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$")
 
 
@@ -38,8 +38,7 @@ class Synth(Protocol):
 
 
 def default_voices_dir() -> Path:
-    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-    return base / "strawberry" / "voices"
+    return paths.voices_dir()
 
 
 def resolve_voice(voice: str, voices_dir: Path) -> Path:

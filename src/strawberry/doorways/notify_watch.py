@@ -41,6 +41,7 @@ from jeepney import DBusAddress, MatchRule, new_method_call
 
 from ..bus import is_call, open_session_bus, plain
 from ..config import NotificationsConfig, load
+from ..paths import xdg_data_home
 from ..client import DaemonClient, configure_logging, stop_on_signals
 
 log = logging.getLogger("notify_watch")
@@ -142,9 +143,8 @@ ICON_SIZES = ("scalable", "512x512", "256x256", "128x128", "96x96", "64x64", "48
 
 
 def icon_search_dirs() -> list[Path]:
-    home = Path.home()
     dirs: list[Path] = []
-    for base in (home / ".local/share/icons", Path("/usr/share/icons"), Path("/var/lib/snapd/desktop/icons")):
+    for base in (xdg_data_home() / "icons", Path("/usr/share/icons"), Path("/var/lib/snapd/desktop/icons")):
         for theme in ("hicolor", "Yaru", "Adwaita"):
             for size in ICON_SIZES:
                 dirs.append(base / theme / size / "apps")
@@ -185,7 +185,7 @@ def resolve_icon(app_icon: str, desktop_entry: str, app_name: str, search_dirs: 
 
 def desktop_dirs() -> list[Path]:
     """Where .desktop files live, in XDG order (GLib's search path, without GLib)."""
-    home_data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+    home_data = xdg_data_home()
     raw = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
     dirs = [home_data] + [Path(part) for part in raw.split(":") if part]
     dirs.append(Path("/var/lib/snapd/desktop"))
