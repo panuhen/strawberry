@@ -121,9 +121,10 @@ adapter wants the same pair.
 
 ## The Spotify adapter
 
-The worked example, `strawberryd/adapters/spotify.py`. Its server is a community MCP wrapper around
-the Spotify Web API — not ours, and not shipped: you install it, register a Spotify app and
-authorise it once. The adapter binds to the tool names that wrapper exposes (`next`, `previous`,
+The worked example, `strawberryd/adapters/spotify.py`. Its server is a separate MCP wrapper around
+the Spotify Web API, not shipped with her: you install it, register a Spotify app and authorise it
+once. The one this adapter was written against is
+[panuhen/spotify-mcp](https://github.com/panuhen/spotify-mcp) (25 tools over the Web API). The adapter binds to the tool names that wrapper exposes (`next`, `previous`,
 `pause`, `play`, `get_current_track`, `get_devices`, `set_volume`, `get_playlists`,
 `get_favorites`, `get_saved_tracks`); a different wrapper with other names needs its own adapter.
 Then:
