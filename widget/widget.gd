@@ -479,7 +479,8 @@ func perform(data: Dictionary) -> void:
 		timer.timeout.connect(func(): if state == "talking" and not bubble.speaking: set_state(rest_state))
 
 func run_command(data: Dictionary) -> void:
-	match str(data.get("command", "")):
+	var command := str(data.get("command", ""))
+	match command:
 		"quit":
 			get_tree().quit()
 		"skin":
@@ -488,6 +489,43 @@ func run_command(data: Dictionary) -> void:
 				skin_id = id
 				apply_appearance()
 				save_settings()
+		"show", "hide", "chat":
+			# The tray's Show her / Hide her / Chat with Strawberry… (WIRING.md §14).
+			var shown := command != "hide"
+			visible = shown
+			if not shown and type_box:
+				close_type_box()
+			if not is_headless():
+				if shown:
+					update_passthrough()
+				else:
+					# Nothing is drawn: every click over the window goes to the desktop.
+					get_window().mouse_passthrough_polygon = PackedVector2Array([Vector2(-2, -2), Vector2(-1, -2), Vector2(-1, -1)])
+			if command == "chat":
+				open_type_box()
+		"mute":
+			set_muted(bool(data.get("value", true)))
+		"quiet":
+			# Seconds from now, as the tray sends them; 0 cancels.
+			var seconds := float(data.get("value", 0))
+			if seconds > 0.0:
+				set_quiet_until(Time.get_unix_time_from_system() + seconds)
+			else:
+				set_quiet_until(0.0)
+		"volume":
+			set_voice_volume(float(data.get("value", 1.0)))
+		"on_top":
+			set_always_on_top(bool(data.get("value", true)))
+		"hat":
+			set_top_hat(bool(data.get("value", false)))
+		"sleep_after":
+			if sleeper:
+				sleeper.set_delay(float(data.get("value", 0.0)))
+		"sleep_now":
+			if sleeper:
+				sleeper.begin_sleep()
+		"reset_position":
+			reset_position()
 		_:
 			push_warning("unknown command: " + JSON.stringify(data))
 

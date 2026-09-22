@@ -67,8 +67,9 @@ Source of truth: `strawberryd/strawberryd/contract.py` and the constants at the 
 Long-running Python (asyncio, aiohttp). One port, default **8770**:
 
 - `POST /event` — accepts `{source, app, title, body, urgency}`. This is what the hooks hit. `source` ∈ `notification|git|voice|manual`; `urgency` is normalised from dunst's `LOW|NORMAL|CRITICAL`.
+- `POST /command` — `{command, value}` from the tray, broadcast to every widget (§14). The name and the value's type are checked here, so a typo is a 400 and not a silent nothing.
 - `POST /perform` — accepts a raw contract blob. For `curl`, tests, and callers that already know what they want.
-- `GET /health` — `{ok, widgets, performed, uptime_s, brain: {model, loaded, calls, fallbacks, last_latency_s}}`.
+- `GET /health` — `{ok, widgets, performed, uptime_s, state, rest_state, brain: {model, loaded, calls, fallbacks, last_latency_s}}`. `state` is what she is doing now (a transient older than 6 s reads as her resting state, because the widget returns to it on its own); the tray's status row is this field.
 - `GET /config` — the effective settings (§15).
 - `GET /ws` — the widget connects here.
 - **Core function:** `Daemon.perform(performance)` builds the blob, (Phase 4) runs TTS, and sends to Godot. Everything routes through it.
@@ -107,9 +108,19 @@ The interface is `Reactor` (`strawberryd/events.py`): `async react(event) -> Per
 
 ---
 
-## 4. Doorway: notifications — `doorways/notify_watch.py`
+## 4. Doorway: notifications — `strawberryd/doorways/notify_watch.py`
 
 **On this machine the notification daemon is GNOME Shell, not dunst**, and dunst cannot run beside it (both claim `org.freedesktop.Notifications`). So there is no script hook. Instead the watcher opens a private **monitor connection** to the session bus (`org.freedesktop.DBus.Monitoring.BecomeMonitor`, unprivileged for the user's own bus) with a match on `Notify` method calls, and sees every notification as it goes past. GNOME still shows it normally; the watcher only listens.
+
+**On jeepney, not PyGObject** (2026-09-22). Both D-Bus watchers are modules in the daemon's package and run on its venv (`python -m strawberryd.doorways.notify_watch`), so a packaged install needs no system `gi`. `strawberryd/bus.py` is the whole of the plumbing: jeepney hands over raw messages, and it matches replies to calls by serial, queues everything else for a consumer task, and **notices when the socket dies** — a watcher whose bus went away exits non-zero and is started again rather than going quietly deaf. `doorways/notify_watch.py` and `doorways/mpris_watch.py` stay in the checkout as shims that exec the package module, so an old unit keeps working.
+
+Three things the monitor connection insists on:
+
+- **It is a connection of its own, and it may only listen.** `BecomeMonitor` is an ordinary method call (`asu`: the match rules and a flags word that must be 0) sent right after the Hello handshake; from the reply onwards the bus stops routing normal traffic to it, and a monitor that *sends* anything is disconnected. That is why the daemon is reached over HTTP from here and never from the bus connection. (With GDBus this was also the reason the filter had to return `None` and swallow the message; jeepney never answers anything, so there is nothing to swallow.)
+- **Every Notify crosses the bus twice** on this desktop: the app sends it to a relay, and the relay re-sends it to the shell with a new sender and serial. Only the content is shared, so repeats are dropped by content inside a 1.5 s window (`Deduper`).
+- **The match rule is `type='method_call',interface='org.freedesktop.Notifications',member='Notify'`** — calls, not signals: the notification never comes back as one.
+
+Without PyGObject there is no `Gio.DesktopAppInfo`, so the `.desktop` file's `Icon=` is read by hand from the XDG application directories (`desktop_icon_name`).
 
 `Notify(app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout)` becomes `{source: "notification", app, title: summary, body, urgency, category, icon}`; urgency comes from the `urgency` hint byte (0/1/2 → low/normal/critical), markup and entities are stripped from the body, and `desktop-entry` stands in when an app sends no name. `icon` is the app's icon resolved on disk: `app_icon` if it is a path, else the `.desktop` file's `Icon=`, the desktop-entry id, or the app name, looked up under `~/.local/share/icons`, `/usr/share/icons/{hicolor,Yaru,Adwaita}`, `/var/lib/snapd/desktop/icons` and `/usr/share/pixmaps` (SVG or PNG). No icon found means no badge, nothing else changes.
 
@@ -127,9 +138,9 @@ The interface is `Reactor` (`strawberryd/events.py`): `async react(event) -> Per
 
 Her own notifications (app `strawberry`) are always ignored. This is also how WhatsApp / Messenger reach her: you react to the **desktop notification**, never their APIs. A machine running dunst could post the same event from a `dunstrc` `script =` rule.
 
-## 4b. Doorway: media (MPRIS) — `doorways/mpris_watch.py`
+## 4b. Doorway: media (MPRIS) — `strawberryd/doorways/mpris_watch.py`
 
-Any player that speaks MPRIS (Spotify, VLC, Rhythmbox, browser tabs with media) registers as `org.mpris.MediaPlayer2.<name>` on the session bus. The watcher follows **all of them at once** with PyGObject/Gio, no extra tools, and reacts to the union:
+Any player that speaks MPRIS (Spotify, VLC, Rhythmbox, browser tabs with media) registers as `org.mpris.MediaPlayer2.<name>` on the session bus. The watcher follows **all of them at once** with jeepney, no extra tools, and reacts to the union:
 
 | Change | Daemon call |
 |---|---|
@@ -137,7 +148,9 @@ Any player that speaks MPRIS (Spotify, VLC, Rhythmbox, browser tabs with media) 
 | nothing playing / player quits | `POST /perform {"state":"idle"}` |
 | a playing player changes track | `POST /event {"source":"media","app":"<player Identity>","title":"Artist — Title"}` |
 
-Changes are debounced 400 ms (players fire several property updates per track), a track is announced once per player, and un-pausing the same song is not an announcement. A dance/idle post the daemon could not take (it restarts at the same moment as the watcher under systemd) is retried every 2 s until it lands; track announcements are not. The daemon in turn remembers her resting state (`idle`|`dancing`, shown in `/health`) and sends it to any widget the moment it connects, so a relaunched widget does not stand still while the music plays. `--only spotify,vlc` or `--ignore firefox` narrow it. `bin/strawberry` starts the watcher next to the daemon. This is why the widget returns to `dancing` rather than `idle` after a line (§1): the music context outlives the reaction.
+Two subscriptions carry it: `PropertiesChanged` on `org.mpris.MediaPlayer2.Player` (matched by path, `/org/mpris/MediaPlayer2`) for what a known player is doing, and `NameOwnerChanged` with `arg0namespace='org.mpris.MediaPlayer2'` for players appearing and disappearing — a player is tracked by its **unique owner name** (`:1.494`), which is what a signal's sender field carries. Every value arrives as a variant, `Metadata` as a variant holding a whole `a{sv}`, so `bus.plain()` unwraps them before anything reads `xesam:title`.
+
+Changes are debounced 400 ms (players fire several property updates per track), a track is announced once per player, and un-pausing the same song is not an announcement. A dance/idle post the daemon could not take (it restarts at the same moment as the watcher under the tray) is retried every 2 s until it lands; track announcements are not. The daemon in turn remembers her resting state (`idle`|`dancing`, shown in `/health`) and sends it to any widget the moment it connects, so a relaunched widget does not stand still while the music plays. `--only spotify,vlc` or `--ignore firefox` narrow it. `bin/strawberry` starts the watcher next to the daemon. This is why the widget returns to `dancing` rather than `idle` after a line (§1): the music context outlives the reaction.
 
 ---
 
@@ -374,7 +387,7 @@ Strawberry lives on the desktop as a pet: a **frameless, transparent, always-on-
 
 **Pupils follow the cursor (`widget/gaze.gd`, `widget/strawberry_pupil.gdshader`).** No pupil bones: the pupil is a small ellipsoid baked into each eye mesh's ink surface, and the eye mesh is bound rigidly (weight 1) to its eyestalk bone. So each frame the widget passes the bone's pose to a variant of the cel shader as `to_rest`/`from_rest` (authored rest space ⇄ posed skeleton space); vertices that land within 0.034 of the authored pupil centre are rotated about the authored eyeball centre by a shared yaw/pitch, then sent back through the pose. Exact under any eyestalk bend or stretch, and the blend shapes (lids) are untouched. The gaze itself: the cursor's screen position (readable without focus on X11) is mapped to the crab's plane from the project window size and the orthographic camera (not `Camera3D.project_position`, which needs a real viewport), the direction from the midpoint between the eyes to that point, with the cursor imagined `LOOK_DEPTH` = 2.5 units in front of her, gives the angles, clamped to ±0.7 rad and eased at 14/s. Both pupils share one gaze. After 12 s of a still cursor she looks straight ahead. `--look=x,y` pins the cursor for captures and the headless check (step 13). `CelStyle.apply()` replaces surface materials on a skin change, so the widget re-applies the pupil material after it.
 
-**Start on login.** `bin/strawberry install` writes three `systemd --user` units (`strawberryd.service`, which `Wants=` the two watcher units; the watchers are `PartOf=` it so a restart takes them along), enables them, and drops `~/.config/autostart/strawberry.desktop` that runs `bin/strawberry widget` a few seconds after the session starts. Once installed, `daemon/stop/restart/status` drive `systemctl --user` instead of pidfiles; logs move to `journalctl --user -u strawberryd`. `bin/strawberry uninstall` reverses it. The user manager already carries `DISPLAY` and the session bus address on this GNOME session, so the notification monitor works from a unit.
+**Start on login.** One unit now: `bin/strawberry install` writes `strawberry-tray.service` (`Type=simple`, `After=`/`WantedBy=graphical-session.target`, `Restart=on-failure`), runs `systemctl --user import-environment DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS`, enables it, and drops `~/.config/autostart/strawberry.desktop` as a fallback for a session that never reaches that target — the entry runs `bin/strawberry tray-autostart`, which does nothing when the unit is enabled, so two trays can never start. The old per-doorway units and `strawberryd.service` are removed by the same command. Everything else is the tray's to start (§14). Once installed, `daemon/stop/restart/status` drive the tray unit instead of pidfiles; logs move to `journalctl --user -u strawberry-tray`. `bin/strawberry uninstall` reverses it.
 
 **Layout.** 380×560 window, orthographic camera (`KEEP_WIDTH`, size 1.25) centred at y 0.78, so the view spans y −0.14…1.70: the crab sits low and a bubble anchored at y 0.98 has room for five lines above her. The bubble lays each line out with `TextParagraph` (same font, width and wrapping as the `Label3D`) and shrinks the font in steps of 2 (44 → no smaller than 28) until the block fits the height between its anchor and the top of the view, so nothing is ever cut off; the badge sits at (0.5, 0.86), between the eyes and the bubble's bottom line, out of the text's way. `run/max_fps=60`, `gl_compatibility` renderer (same as the v2 preview).
 
@@ -393,6 +406,24 @@ Eye morphs go through `blink_controller` (`extra_wide` / `extra_happy` / `extra_
 **Badge (`widget/badge.gd`).** A billboarded `Sprite3D` at the bubble's upper left showing the `icon` image (PNG/JPG, or SVG rasterised at load), visible while she talks, hidden with the bubble. **Window hop.** `hop: true` tweens the X11 window 26 px up and back with a small second bounce (0.47 s total); skipped while dragging or headless.
 
 ---
+
+## 14. The tray — `strawberryd/tray.py`
+
+`strawberryd --tray` puts a 🍓 in the top bar and is **the one process that starts at login**. It launches the daemon, the doorways and the widget as children, restarts a child that exits, and stops them all on Quit. `--tray --no-children` runs just the icon against a daemon that is already up (development, and `scripts/check_tray.sh`).
+
+**The icon is a StatusNotifierItem, written by hand on jeepney.** The tray takes a bus name of its own (`org.kde.StatusNotifierItem-<pid>-1`), exports `org.kde.StatusNotifierItem` on `/StatusNotifierItem` and a `com.canonical.dbusmenu` menu on `/MenuBar`, and calls `RegisterStatusNotifierItem` on `org.kde.StatusNotifierWatcher`. Incoming method calls are answered from one dispatch table (`Properties.Get/GetAll`, `Introspectable.Introspect`, `Peer.Ping`, `Activate`/`SecondaryActivate`/`ContextMenu`/`Scroll`, and the dbusmenu's `GetLayout`/`GetGroupProperties`/`GetProperty`/`Event`/`EventGroup`/`AboutToShow(Group)`), and changes go out as `LayoutUpdated`, `ItemsPropertiesUpdated` and `NewToolTip`. When the watcher is missing (GNOME without the AppIndicator extension) nothing breaks: the tray says so once, watches `NameOwnerChanged` for it, and registers the moment it appears — a GNOME Shell restart re-registers by itself.
+
+**The icon pixels.** `IconPixmap` is `a(iiay)`: width, height and the pixels as **ARGB32 in network byte order**, which is not what a PNG stores. `assets/icons/render_icons.py` renders 🍓 from Noto Color Emoji (Apache-2.0, a CBDT bitmap font: Pillow loads it only at its one 109 ppem strike) to `assets/icons/strawberry-{16,22,24,32,48,64}.png`, checked in with the script; `strawberryd/icons.py` reads them at runtime with `zlib` alone and reorders RGBA to ARGB, so Pillow stays a dev dependency. **`IconName` is left empty unless the icon really is in an icon theme**: GNOME's AppIndicator extension prefers the name over the pixmaps and draws a placeholder for one it cannot resolve — with `IconName = "strawberry"` the panel showed "…" where the berry should be, and with it empty the pixmaps came through (measured 2026-09-22).
+
+**The menu is her right-click menu, in the top bar** (§13): a disabled status row (`Idle` / `Listening` / `Thinking…` / `Talking` / `Dancing`, or "strawberryd is not running"), Show her / Hide her, Chat with Strawberry…, then Mute her voice, Quiet for an hour (counting down), Voice volume, Skin, Sleep after inactivity, Sleep now, Top hat, Always on top, then Settings file…, Voices folder…, Reset position, Restart (which is her menu's "apply settings": the children come back with the new config) and Quit. The choices are the same lists as `widget/menu.gd` and a test compares the two files, because that is the seam that would drift.
+
+**How the tray knows anything.** `GET /health` every two seconds gives the status row (`state`: the last state performed, with the transients expiring after 6 s since the widget leaves them on its own). The check marks are read back from the widget's own settings file (`~/.local/share/godot/app_userdata/Strawberry/widget.cfg` today, XDG after step 4 of PACKAGING.md), so the tray and her right-click menu agree whichever one you used last.
+
+**Clicks go through the daemon, never straight at the widget**: `POST /command {"command": ..., "value": ...}` broadcasts to every open widget socket, and `widget.gd`'s `run_command` acts on it (`show`, `hide`, `chat`, `mute`, `quiet`, `volume`, `skin`, `on_top`, `hat`, `sleep_after`, `sleep_now`, `reset_position`, `quit`). The daemon validates the name and the value type, so a typo is a 400 rather than a `push_warning` nobody reads. Settings file… and Voices folder… are the tray's own business (`xdg-open`, writing the commented config template first if it is missing).
+
+**The children.** `daemon` (`python -m strawberryd`), `mpris_watch`, `notify_watch` (package modules on the same interpreter), `beat_watch` (still a script; numpy only) and the widget (`bin/strawberry widget`, with `STRAWBERRY_TRAY=1` so the launcher does not start a second daemon or a second set of doorways). A child that exits is restarted after a backoff that doubles from 1 s to 30 s and resets once the child has stayed up for 30 s; Quit terminates them all, killing what does not go in 5 s. The tray writes `~/.local/state/strawberry/tray.json` (its own pid, each child's pid and restart count) and `bin/strawberry status` prints it.
+
+Acceptance: `scripts/check_tray.sh` registers the item on the real session bus and reads it back with `busctl --user` (introspect the item, `GetLayout`, the watcher's registered list). Unit tests build every reply as a jeepney message, serialise it and parse it back, which is how a hand-written D-Bus server catches a signature that does not match its data.
 
 ## 15. Settings
 
@@ -439,18 +470,23 @@ quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 
 `bin/strawberry config` creates the file from a commented template (`strawberryd --init-config`) and opens it in `$EDITOR`; `bin/strawberry restart` applies it. `STRAWBERRYD_PORT` still overrides the port for scripts. The widget's own preferences (skin, window position) stay in Godot's `user://widget.cfg` for now.
 
-## 14. Repository map
+## 16. Repository map
 
 ```
 WIRING.md                this document
-strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), mpris (music control over D-Bus for any player), adapters/ (per-server extras; spotify is the example), thinker (Qwen tool loop), ledger (short memory), hub, server, tests
+PACKAGING.md             the plan from a developer checkout to `uv tool install strawberry`
 ADAPTERS.md              adding an MCP server, and writing an adapter for one
+strawberryd/             Python daemon (uv project): contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), thinker (Qwen tool loop), ledger (short memory), hub, server, tests
+                         + bus.py (jeepney plumbing), client.py (HTTP to the daemon), icons.py (PNG -> ARGB32), tray.py (the StatusNotifierItem and the process that owns her, §14)
+strawberryd/strawberryd/doorways/   the D-Bus watchers as package modules: notify_watch.py, mpris_watch.py (python -m strawberryd.doorways.<name>)
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, gaze.gd, menu.gd, type_box.gd, validate_widget.gd
                          + strawberry_v2.glb and the shaders/controllers
-doorways/                event producers: mpris_watch.py (any MPRIS media player), notify_watch.py (desktop notifications via D-Bus monitor), beat_watch.py + beat_track.py (tempo from the player's audio), git/ (global post-commit + pre-push hooks)
-bin/strawberry           launcher: daemon + doorway watchers up, then widget on the X11 backend; say / voices / audition / listen / route / tools / tool / think / install (start on login)
+doorways/                beat_watch.py + beat_track.py (tempo from the player's audio), git/ (global post-commit + pre-push hooks), and thin shims for the two watchers that moved into the package
+assets/icons/            the tray icon: render_icons.py (🍓 from Noto Color Emoji, run once) and the PNGs it wrote
+bin/strawberry           launcher: tray / daemon / widget on the X11 backend; say / voices / audition / listen / route / tools / tool / think / install (one systemd unit for the tray)
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon
 scripts/check_reconnect.sh  restart (or SIGNAL=KILL) the daemon under a headless widget; it must reconnect
+scripts/check_tray.sh    register the tray on the real session bus and read it back with busctl (§14)
 scripts/gate_check.py    the gate over scripts/gate_phrases.json against live Ollama; add sentences she misreads
 model/                   the asset: GLB, editable Blender scene, procedural build script
 ```

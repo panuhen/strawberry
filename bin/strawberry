@@ -17,22 +17,27 @@
 #   strawberry think TEXT            run TEXT through the thinker (Qwen + the tools) by hand
 #   strawberry talk                  type to her: each line goes through the daemon as if spoken, routing shown
 #   strawberry hotkey [COMBO|--remove]  GNOME shortcut for `listen` (default <Super><Shift>space)
-#   strawberry install    start on login: systemd user units for daemon + watchers, autostart for the widget
+#   strawberry tray       the tray icon, and under it the daemon, the doorways and the widget
+#   strawberry install    start on login: one systemd user unit for the tray, autostart as a fallback
 #   strawberry uninstall  undo install (she only runs when you launch her)
 #
-# After `install`, daemon/stop/restart/status drive the systemd units instead of pidfiles.
+# After `install`, daemon/stop/restart/status drive the tray unit instead of pidfiles.
 # Settings live in ~/.config/strawberry/config.toml (WIRING.md §15); STRAWBERRYD_PORT still overrides.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/strawberry"
 D="$ROOT/strawberryd/.venv/bin/strawberryd"
+PY="$ROOT/strawberryd/.venv/bin/python"
 [ -x "$D" ] || (cd "$ROOT/strawberryd" && uv sync --quiet --inexact)
 # The port straight from the TOML (awk, ~1 ms) rather than `strawberryd --print-port` (~300 ms of
 # Python start-up): the hotkey runs this script, and that delay was visible in her reaction.
 config_port() {
   local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/strawberry/config.toml"
-  [ -f "$cfg" ] && awk -F'=' '/^\[/{s=$0} s=="[daemon]" && $1 ~ /^port[ \t]*$/ {gsub(/[^0-9]/,"",$2); print $2; exit}' "$cfg"
+  # No file yet (a fresh machine) is not an error: the default port stands. Returning non-zero
+  # here would end the script, because `set -e` sees the assignment that calls this.
+  [ -f "$cfg" ] || return 0
+  awk -F'=' '/^\[/{s=$0} s=="[daemon]" && $1 ~ /^port[ \t]*$/ {gsub(/[^0-9]/,"",$2); print $2; exit}' "$cfg"
 }
 PORT="${STRAWBERRYD_PORT:-$(config_port)}"; PORT="${PORT:-8770}"
 HEALTH="http://127.0.0.1:$PORT/health"
@@ -49,84 +54,105 @@ wait_daemon() {
   return 1
 }
 
-# Doorways run as background watchers on the system python3 (they need PyGObject, which Ubuntu ships).
+# Doorways run on the daemon's venv now: the two D-Bus watchers are package modules (jeepney,
+# no PyGObject), the beat watcher is still a script and needs only numpy, which the venv has.
 DOORWAYS=(mpris_watch notify_watch beat_watch)
+doorway_cmd() {  # $1 = doorway name -> the command that runs it
+  case "$1" in
+    beat_watch) echo "$PY $ROOT/doorways/beat_watch.py" ;;
+    *) echo "$PY -m strawberryd.doorways.$1" ;;
+  esac
+}
 
-# --- start on login (systemd --user + XDG autostart) --------------------------------
+# --- start on login (one systemd --user unit + an XDG autostart fallback) ------------
+# The tray is the login process: it starts the daemon, the doorways and the widget itself
+# and restarts what dies, so there is one unit instead of five (WIRING.md §14).
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/strawberry.desktop"
-UNITS=(strawberryd.service); for w in "${DOORWAYS[@]}"; do UNITS+=("strawberry-$w.service"); done
-WATCHER_UNITS="${UNITS[*]:1}"
-managed() { systemctl --user is-enabled strawberryd.service >/dev/null 2>&1; }
+TRAY_UNIT=strawberry-tray.service
+TRAY_STATE="$STATE_DIR/tray.json"
+OLD_UNITS=(strawberryd.service); for w in "${DOORWAYS[@]}"; do OLD_UNITS+=("strawberry-$w.service"); done
+tray_managed() { systemctl --user is-enabled "$TRAY_UNIT" >/dev/null 2>&1; }
+legacy_managed() { systemctl --user is-enabled strawberryd.service >/dev/null 2>&1; }
+managed() { tray_managed || legacy_managed; }
+tray_pid() {  # the pid of a tray that is actually running, or nothing (the file outlives a crash)
+  [ -f "$TRAY_STATE" ] || return 1
+  local pid; pid="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["pid"])' "$TRAY_STATE" 2>/dev/null)" || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo "$pid"
+}
 
 write_units() {
   mkdir -p "$UNIT_DIR" "$(dirname "$AUTOSTART")"
-  cat >"$UNIT_DIR/strawberryd.service" <<EOF
+  cat >"$UNIT_DIR/$TRAY_UNIT" <<EOF
 [Unit]
-Description=Strawberry mascot daemon (event intake, brain, voice, websocket to the widget)
+Description=Strawberry: the tray icon, and under it the daemon, the doorways and the widget
 After=graphical-session.target
-Wants=$WATCHER_UNITS
+PartOf=graphical-session.target
 
 [Service]
-ExecStart=$D --port $PORT
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-EOF
-  for w in "${DOORWAYS[@]}"; do
-    cat >"$UNIT_DIR/strawberry-$w.service" <<EOF
-[Unit]
-Description=Strawberry doorway: $w
-After=strawberryd.service
-PartOf=strawberryd.service
-
-[Service]
-ExecStart=/usr/bin/python3 $ROOT/doorways/$w.py --daemon http://127.0.0.1:$PORT
+Type=simple
+ExecStart=$D --tray --port $PORT
 Restart=on-failure
 RestartSec=3
 
 [Install]
-WantedBy=strawberryd.service
+WantedBy=graphical-session.target
 EOF
-  done
+  # The fallback for a session that never reaches graphical-session.target. It defers to the
+  # unit when that is enabled, so the two can never start two trays.
   cat >"$AUTOSTART" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Strawberry
 Comment=Desktop crab
-Exec=$ROOT/bin/strawberry widget
+Exec=$ROOT/bin/strawberry tray-autostart
 X-GNOME-Autostart-Delay=3
 StartupNotify=false
 EOF
+}
+
+remove_old_units() {
+  local found=0
+  for u in "${OLD_UNITS[@]}"; do
+    if [ -f "$UNIT_DIR/$u" ]; then found=1; fi
+  done
+  [ "$found" = 1 ] || return 0
+  echo "removing the old per-doorway units (the tray starts them now)"
+  systemctl --user disable --now "${OLD_UNITS[@]}" 2>/dev/null || true
+  for u in "${OLD_UNITS[@]}"; do rm -f "$UNIT_DIR/$u"; done
 }
 
 install_login() {
   # Hand over from pidfile-managed processes, if any, so the port is free for the unit.
   stop_watchers_pidfile >/dev/null; stop_pidfile "$PIDFILE" "strawberryd" >/dev/null
   (cd "$ROOT/strawberryd" && uv sync --quiet --inexact)
+  remove_old_units
   write_units
   systemctl --user daemon-reload
-  systemctl --user enable --now "${UNITS[@]}"
-  wait_daemon && echo "installed: strawberryd + watchers run under systemd --user; the widget autostarts at login ($AUTOSTART)"
-  echo "logs: journalctl --user -u strawberryd -f"
+  # The user manager needs the session's DISPLAY and bus address to run the widget and to
+  # reach the notification bus; on GNOME they are usually there already, but not always.
+  systemctl --user import-environment DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS 2>/dev/null || true
+  systemctl --user enable --now "$TRAY_UNIT"
+  wait_daemon && echo "installed: $TRAY_UNIT runs the tray, the daemon, the doorways and the widget (autostart fallback: $AUTOSTART)"
+  echo "logs: journalctl --user -u ${TRAY_UNIT%.service} -f"
 }
 
 uninstall_login() {
-  systemctl --user disable --now "${UNITS[@]}" 2>/dev/null || true
-  for u in "${UNITS[@]}"; do rm -f "$UNIT_DIR/$u"; done
+  systemctl --user disable --now "$TRAY_UNIT" 2>/dev/null || true
+  rm -f "$UNIT_DIR/$TRAY_UNIT"
+  remove_old_units
   systemctl --user daemon-reload
   rm -f "$AUTOSTART"
   echo "uninstalled: she now runs only when you start her with bin/strawberry"
 }
 
 # --- pidfile-managed processes (when not installed) ---------------------------------
-start_watcher() {  # $1 = doorway script name without .py
+start_watcher() {  # $1 = doorway name
   local pidfile="$STATE_DIR/$1.pid" logfile="$STATE_DIR/$1.log"
   if pid_alive "$pidfile"; then return; fi
   echo "starting $1 (log: $logfile)"
-  nohup /usr/bin/python3 "$ROOT/doorways/$1.py" --daemon "http://127.0.0.1:$PORT" >>"$logfile" 2>&1 &
+  # shellcheck disable=SC2046  # the command is ours, not user input
+  nohup $(doorway_cmd "$1") --daemon "http://127.0.0.1:$PORT" >>"$logfile" 2>&1 &
   echo $! >"$pidfile"
 }
 stop_watchers_pidfile() { for w in "${DOORWAYS[@]}"; do stop_pidfile "$STATE_DIR/$w.pid" "$w"; done; }
@@ -136,24 +162,51 @@ stop_pidfile() {
   rm -f "$1"
 }
 
+tray_owns_children() { tray_managed || tray_pid >/dev/null || [ "${STRAWBERRY_TRAY:-}" = "1" ]; }
+
 start_watchers() {
-  if managed; then return; fi   # the daemon unit Wants the watcher units
+  if managed || tray_owns_children; then return; fi   # the tray (or the old units) start them
   for w in "${DOORWAYS[@]}"; do start_watcher "$w"; done
 }
 stop_watchers() {
-  if managed; then return; fi   # PartOf= stops them with the daemon unit
+  if managed || tray_owns_children; then return; fi   # they go with the tray, or with the old daemon unit
   stop_watchers_pidfile
 }
 status_watchers() {
+  # Under the tray the doorways are its children; it writes what it has to tray.json.
+  if tray_pid >/dev/null; then
+    "$PY" - "$TRAY_STATE" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+for child in state["children"]:
+    print(f"{child['name']}: {'up' if child['running'] else 'down'}"
+          f"{' pid ' + str(child['pid']) if child['pid'] else ''}"
+          f"{' (' + str(child['restarts']) + ' restarts)' if child['restarts'] else ''}")
+PY
+    return
+  fi
   for w in "${DOORWAYS[@]}"; do
-    if managed; then echo "$w: $(systemctl --user is-active "strawberry-$w.service")"
+    if legacy_managed; then echo "$w: $(systemctl --user is-active "strawberry-$w.service")"
     elif pid_alive "$STATE_DIR/$w.pid"; then echo "$w: up"; else echo "$w: down"; fi
   done
 }
 
+status_tray() {
+  local pid; pid="$(tray_pid || true)"
+  if tray_managed; then echo "tray: $(systemctl --user is-active "$TRAY_UNIT") ($TRAY_UNIT${pid:+, pid $pid})"
+  elif [ -n "$pid" ]; then echo "tray: up (pid $pid, started by hand)"
+  else echo "tray: down"; fi
+}
+
 start_daemon() {
   if daemon_up; then return; fi
-  if managed; then
+  if [ "${STRAWBERRY_TRAY:-}" = "1" ]; then return; fi   # the tray starts the daemon itself
+  if tray_managed; then
+    systemctl --user start "$TRAY_UNIT"
+    wait_daemon || exit 1
+    return
+  fi
+  if legacy_managed; then
     systemctl --user start strawberryd.service
     wait_daemon || exit 1
     return
@@ -166,7 +219,10 @@ start_daemon() {
 }
 
 stop_daemon() {
-  if managed; then systemctl --user stop strawberryd.service && echo "strawberryd stopped (systemd)"; return; fi
+  if tray_managed; then systemctl --user stop "$TRAY_UNIT" && echo "tray stopped (with the daemon, the doorways and the widget)"; return; fi
+  if legacy_managed; then systemctl --user stop strawberryd.service && echo "strawberryd stopped (systemd)"; return; fi
+  local pid; pid="$(tray_pid || true)"
+  if [ -n "$pid" ] && kill "$pid" 2>/dev/null; then echo "tray stopped (pid $pid, with its children)"; return; fi
   stop_pidfile "$PIDFILE" "strawberryd"
 }
 
@@ -184,8 +240,15 @@ start_widget() {
 case "${1:-widget}" in
   widget) shift || true; start_daemon; start_watchers; start_widget "$@" ;;
   daemon) start_daemon; start_watchers; echo "strawberryd up on :$PORT" ;;
+  tray) shift || true; exec "$D" --tray --port "$PORT" "$@" ;;
+  tray-autostart)
+    # The XDG autostart entry: the unit wins when it is enabled, so only one tray ever runs.
+    if tray_managed; then echo "$TRAY_UNIT is enabled; leaving the tray to systemd"; exit 0; fi
+    exec "$D" --tray --port "$PORT" ;;
   status)
-    if managed; then echo "managed by systemd --user (strawberry uninstall to stop that)"; fi
+    if tray_managed; then echo "managed by systemd --user ($TRAY_UNIT; strawberry uninstall to stop that)"
+    elif legacy_managed; then echo "managed by the old systemd units (strawberry install moves her to the tray)"; fi
+    status_tray
     if daemon_up; then curl -fsS "$HEALTH"; echo; else echo "strawberryd: down"; fi
     status_watchers
     daemon_up ;;
@@ -193,7 +256,8 @@ case "${1:-widget}" in
     stop_watchers
     stop_daemon ;;
   restart)
-    if managed; then systemctl --user restart strawberryd.service; wait_daemon && echo "strawberryd restarted (systemd)"
+    if tray_managed; then systemctl --user restart "$TRAY_UNIT"; wait_daemon && echo "restarted (systemd)"
+    elif legacy_managed; then systemctl --user restart strawberryd.service; wait_daemon && echo "strawberryd restarted (systemd)"
     else "$0" stop; sleep 0.5; "$0" daemon; fi ;;
   install) install_login ;;
   uninstall) uninstall_login ;;
@@ -270,5 +334,5 @@ PY
       WAV="$("$D" --say "$LINE" --voice "$v" 2>/dev/null)" || { echo "$v: failed" >&2; continue; }
       echo "$v"; paplay "$WAV" 2>/dev/null || aplay -q "$WAV"
     done ;;
-  *) sed -n '2,17p' "$0"; exit 2 ;;
+  *) sed -n '2,22p' "$0"; exit 2 ;;
 esac

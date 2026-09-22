@@ -56,6 +56,10 @@ class Daemon:
         # Her resting state (idle|dancing) outlives any one widget: a widget that (re)connects
         # while music plays gets it on arrival instead of standing still until the next pause.
         self.rest_state = "idle"
+        # The last state she was sent, for the tray's status row (§14). listening/thinking/talking
+        # are transients the widget leaves on its own, so they expire here instead of sticking.
+        self.state = "idle"
+        self.state_at = 0.0
         # Latest beat estimate from doorways/beat_watch.py and when it arrived (§4c).
         self.tempo: dict[str, Any] | None = None
         self.tempo_at = 0.0
@@ -164,6 +168,8 @@ class Daemon:
                 performance = replace(performance, audio=audio)
         if performance.state in PERSISTENT_STATES:
             self.rest_state = performance.state
+        self.state = performance.state
+        self.state_at = time.monotonic()
         payload = performance.to_dict()
         sent = await self.hub.send(payload)
         self.performed += 1
@@ -172,6 +178,20 @@ class Daemon:
         else:
             log.info("perform -> %d widget(s): %s", sent, payload)
         return sent
+
+    TRANSIENT_S = 6.0
+
+    def current_state(self) -> str:
+        """What she is doing now, as the tray's status row says it (§14).
+
+        The widget returns to its resting state on its own when a line ends, and the daemon is
+        not told, so a transient older than a few seconds is reported as the resting state.
+        """
+        if self.state in PERSISTENT_STATES:
+            return self.rest_state
+        if time.monotonic() - self.state_at < self.TRANSIENT_S:
+            return self.state
+        return self.rest_state
 
     TEMPO_FRESH_S = 6.0
 

@@ -235,3 +235,55 @@ async def test_hub_forgets_a_closed_widget(client):
         await asyncio.sleep(0.05)
     assert (await (await client.get("/health")).json())["widgets"] == 0
     assert (await (await client.post("/perform", json={"state": "idle"})).json())["sent"] == 0
+
+
+async def test_command_reaches_the_widget(client):
+    """The tray's way in: POST /command, out to every widget socket (WIRING.md §14)."""
+    ws = await client.ws_connect("/ws")
+    response = await client.post("/command", json={"command": "hide"})
+    assert response.status == 200
+    assert (await response.json()) == {"sent": 1, "command": {"command": "hide"}}
+    assert await ws.receive_json(timeout=2) == {"command": "hide"}
+
+    await client.post("/command", json={"command": "quiet", "value": 3600})
+    assert await ws.receive_json(timeout=2) == {"command": "quiet", "value": 3600}
+    await client.post("/command", json={"command": "mute", "value": True})
+    assert await ws.receive_json(timeout=2) == {"command": "mute", "value": True}
+    await ws.close()
+
+
+async def test_command_refuses_what_a_widget_would_not_understand(client):
+    for bad, reason in (
+        ({"command": "explode"}, "unknown command"),
+        ({"command": "mute", "value": "yes"}, "needs a bool"),
+        ({"command": "quiet", "value": -1}, "value >= 0"),
+        ({"command": "quiet", "value": True}, "needs a number"),
+        ({"command": "volume", "value": 2}, "between 0 and 1"),
+        ({"command": "sleep_after", "value": -5}, "value >= 0"),
+        ({"command": "skin"}, "needs a str"),
+        ({"command": "hide", "colour": "blue"}, "unknown fields"),
+    ):
+        response = await client.post("/command", json=bad)
+        assert response.status == 400, bad
+        assert reason in (await response.json())["error"], bad
+    assert (await client.post("/command", json={"command": "quit"},
+                              headers={"Origin": "https://evil.example"})).status == 403
+
+
+async def test_health_carries_the_state_the_tray_shows(client):
+    assert (await (await client.get("/health")).json())["state"] == "idle"
+    await client.post("/perform", json={"state": "thinking"})
+    assert (await (await client.get("/health")).json())["state"] == "thinking"
+    await client.post("/perform", json={"state": "dancing"})
+    body = await (await client.get("/health")).json()
+    assert body["state"] == "dancing" and body["rest_state"] == "dancing"
+
+
+async def test_a_stale_transient_falls_back_to_her_resting_state(daemon):
+    from strawberryd.contract import Performance
+
+    await daemon.perform(Performance(state="dancing"))
+    await daemon.perform(Performance(state="talking"))
+    assert daemon.current_state() == "talking"
+    daemon.state_at -= daemon.TRANSIENT_S + 1      # the widget went back to dancing on its own
+    assert daemon.current_state() == "dancing"

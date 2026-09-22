@@ -1,28 +1,91 @@
-"""The notification doorway's pure parts: parsing, filtering, coalescing (no bus needed)."""
+"""The notification doorway: parsing, filtering, coalescing, and one real D-Bus message.
 
-import importlib.util
-import sys
-from pathlib import Path
+Nothing here needs a bus. The Notify case is built as a jeepney message, serialised and
+parsed back, so the variant unwrapping is exercised exactly as it is on the session bus.
+"""
+
+import asyncio
 
 import pytest
+from jeepney import DBusAddress, Parser, new_method_call
 
 from strawberryd.config import NotificationsConfig
-
-_spec = importlib.util.spec_from_file_location(
-    "notify_watch", Path(__file__).resolve().parents[2] / "doorways" / "notify_watch.py"
-)
-notify_watch = importlib.util.module_from_spec(_spec)
-sys.modules["notify_watch"] = notify_watch
-_spec.loader.exec_module(notify_watch)
+from strawberryd.doorways import notify_watch
 
 parse_notify, allowed, to_event, summarise, clean = (
     notify_watch.parse_notify, notify_watch.allowed, notify_watch.to_event, notify_watch.summarise, notify_watch.clean
 )
 
+NOTIFICATIONS = DBusAddress("/org/freedesktop/Notifications", bus_name="org.freedesktop.Notifications",
+                            interface="org.freedesktop.Notifications")
+
 
 def notify(app="WhatsApp", summary="James", body="Are we still on for tonight?", urgency=1, replaces=0, **hints):
     h = {"urgency": urgency, **hints}
     return (app, replaces, "", summary, body, [], h, -1)
+
+
+def bus_notify(app="WhatsApp", summary="James", body="Are we still on?", urgency=1, replaces=0,
+               icon="", desktop_entry="whatsapp", category="im.received"):
+    """A Notify method call as it really goes past a monitor connection: serialised, then parsed."""
+    hints = {"urgency": ("y", urgency), "desktop-entry": ("s", desktop_entry), "category": ("s", category)}
+    message = new_method_call(NOTIFICATIONS, "Notify", "susssasa{sv}i",
+                              (app, replaces, icon, summary, body, [], hints, -1))
+    parser = Parser()
+    parser.add_data(message.serialise(serial=42))
+    return parser.get_next_message()
+
+
+def test_a_real_notify_message_becomes_an_event():
+    message = bus_notify()
+    assert notify_watch.is_call(message, "org.freedesktop.Notifications", "Notify")
+    n = parse_notify(message.body)
+    assert n == {
+        "app": "WhatsApp", "desktop_entry": "whatsapp", "title": "James", "body": "Are we still on?",
+        "urgency": "normal", "category": "im.received", "replaces_id": 0, "app_icon": "",
+    }
+    assert to_event(n, NotificationsConfig()) == {
+        "source": "notification", "app": "WhatsApp", "title": "James", "urgency": "normal",
+        "body": "Are we still on?", "category": "im.received",
+    }
+
+
+def test_the_watcher_batches_and_posts_what_it_hears(monkeypatch):
+    """One notification in, one /event out, with the coalescing window shortened."""
+    posted = []
+    cfg = NotificationsConfig(coalesce_s=0.01)
+    watcher = notify_watch.Watcher("http://127.0.0.1:1", cfg)
+
+    async def fake_post(path, payload):
+        posted.append((path, payload))
+        return True
+
+    monkeypatch.setattr(watcher.daemon, "post", fake_post)
+    monkeypatch.setattr(notify_watch, "resolve_icon", lambda *a, **k: None)
+
+    async def run():
+        await watcher.handle(bus_notify(summary="James", body="Pub?"))
+        await watcher.handle(bus_notify(summary="James", body="Pub?"))   # the relay's copy
+        await watcher.handle(bus_notify(app="Slack", summary="#general", body="deploy done"))
+        await asyncio.sleep(0.05)
+
+    asyncio.run(run())
+    assert len(posted) == 1
+    path, payload = posted[0]
+    assert path == "/event"
+    assert payload["title"] == "2 notifications" and payload["app"] == "several apps"
+    assert watcher.seen == 3
+
+
+def test_desktop_icon_name_reads_the_desktop_file(tmp_path):
+    apps = tmp_path / "applications"
+    apps.mkdir()
+    (apps / "whatsapp.desktop").write_text(
+        "[Desktop Entry]\nName=WhatsApp\nIcon=whatsapp\n\n[Desktop Action new]\nIcon=other\n")
+    assert notify_watch.desktop_icon_name("whatsapp", dirs=[apps]) == "whatsapp"
+    assert notify_watch.desktop_icon_name("whatsapp.desktop", dirs=[apps]) == "whatsapp"
+    assert notify_watch.desktop_icon_name("missing", dirs=[apps]) is None
+    assert notify_watch.desktop_icon_name("", dirs=[apps]) is None
 
 
 def test_parse_maps_the_notify_tuple():
@@ -138,3 +201,8 @@ def test_burst_across_apps_keeps_the_highest_urgency():
     assert event["title"] == "2 notifications"
     assert event["body"] == "WhatsApp: James · Power: Battery low"
     assert event["urgency"] == "critical"
+
+
+def test_the_match_rule_is_the_one_the_bus_needs():
+    assert notify_watch.MATCH_RULE.serialise() == (
+        "interface='org.freedesktop.Notifications',member='Notify',type='method_call'")

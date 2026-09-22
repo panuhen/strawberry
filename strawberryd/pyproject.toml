@@ -17,6 +17,7 @@ strawberryd = "strawberryd.__main__:main"
 [dependency-groups]
 dev = [
     "numpy>=1.26",
+    "pillow>=12.3.0",
     "pytest>=8",
     "pytest-aiohttp>=1.0",
 ]
