@@ -4,6 +4,7 @@ extends Node3D
 ##
 ## Drag the crab to move her. Q quits, C cycles skins, T opens the type box. Outlines are always on.
 ## Command-line (after `--`): --ws=ws://host:port/ws   --capture=/path/out.png
+##   --acceptance=res://validate_widget.gd  run a validator instead (the exported binary has no --script)
 
 const CelStyle = preload("res://cel_style.gd")
 const SkinPalettes = preload("res://skin_palettes.gd")
@@ -17,6 +18,7 @@ const Gaze = preload("res://gaze.gd")
 const DanceStyle = preload("res://dance_style.gd")
 const TopHat = preload("res://top_hat.gd")
 const TypeBox = preload("res://type_box.gd")
+const Paths = preload("res://paths.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
 const STATE_CLIPS := {
@@ -30,8 +32,9 @@ const ONE_SHOTS := ["alert_snap", "notify_perk"]
 const LOOPING := ["idle_loop", "listen_loop", "think_loop", "talk_base", "dance_loop", "sleep_loop"]
 # States she settles back into after talking. listening/thinking are pipeline transients.
 const PERSISTENT := ["idle", "dancing"]
-const SETTINGS_PATH := "user://widget.cfg"
-const HEADLESS_SETTINGS_PATH := "user://widget_headless.cfg"  # acceptance runs never touch the live prefs
+# Preferences live in $XDG_CONFIG_HOME/strawberry/widget.cfg (paths.gd); headless runs keep
+# their own file in Godot's user dir, so acceptance runs never touch the live prefs.
+const HEADLESS_SETTINGS_PATH := "user://widget_headless.cfg"
 const PASSTHROUGH_PADDING := 18.0
 
 var ws_url := "ws://127.0.0.1:8770/ws"
@@ -64,7 +67,7 @@ var one_shots_played := 0
 var window_hops := 0
 
 var skin_id := "strawberry"
-# Preferences (right-click menu, persisted in user://widget.cfg).
+# Preferences (right-click menu, persisted in ~/.config/strawberry/widget.cfg).
 var muted := false
 var quiet_until := 0.0          # unix time; > now means "quiet for a while" is on
 var voice_volume := 1.0
@@ -77,6 +80,8 @@ var dragging := false
 var drag_offset := Vector2i.ZERO
 
 func _ready() -> void:
+	if hand_over_to_acceptance():
+		return
 	parse_args()
 	setup_window()
 	setup_scene()
@@ -113,6 +118,28 @@ func parse_args() -> void:
 			capture_typing = true
 		elif arg.begins_with("--dance="):
 			capture_dance = arg.trim_prefix("--dance=")
+
+## Release export templates drop Godot's --script, so the exported binary runs a validator this
+## way: `strawberry-widget --headless -- --acceptance=res://validate_widget.gd ...`. The SceneTree
+## takes the validator's script and this node leaves; the widget the validator then instances
+## sees a scripted tree and starts normally. Source runs keep using --script.
+func hand_over_to_acceptance() -> bool:
+	var tree := get_tree()
+	if tree.get_script() != null:
+		return false
+	for arg in OS.get_cmdline_user_args():
+		if not arg.begins_with("--acceptance="):
+			continue
+		var script := load(arg.trim_prefix("--acceptance=")) as Script
+		queue_free()
+		if script == null:
+			push_error("no such validator: " + arg)
+			tree.quit(2)
+			return true
+		tree.set_script(script)
+		tree.call_deferred("_initialize")
+		return true
+	return false
 
 func is_headless() -> bool:
 	return DisplayServer.get_name() == "headless"
@@ -398,6 +425,16 @@ func setup_ws() -> void:
 	ws.message_received.connect(_on_message)
 	ws.connected.connect(func(): print("strawberryd connected: ", ws_url))
 	ws.disconnected.connect(func(): print("strawberryd disconnected; reconnecting"))
+	ws.refused.connect(_on_refused)
+
+var told_refused := false
+
+## The daemon closed on us for a major version mismatch (WIRING.md §1). Said once, not every retry.
+func _on_refused(reason: String) -> void:
+	if told_refused:
+		return
+	told_refused = true
+	bubble.speak("My daemon and I don't match (%s). Update one of us." % reason, "alert")
 
 func apply_appearance() -> void:
 	# Cel shading and the ink outline are part of her look, not options.
@@ -566,9 +603,11 @@ func _on_speech_finished() -> void:
 # --- settings -------------------------------------------------------------------
 
 func settings_path() -> String:
-	return HEADLESS_SETTINGS_PATH if is_headless() else SETTINGS_PATH
+	return HEADLESS_SETTINGS_PATH if is_headless() else Paths.prefs_file()
 
 func restore_settings() -> void:
+	if not is_headless() and settings_path() == Paths.prefs_file():
+		Paths.migrate_prefs()
 	var config := ConfigFile.new()
 	var have := config.load(settings_path()) == OK
 	if have:
@@ -612,6 +651,7 @@ func save_settings() -> void:
 		var pos := DisplayServer.window_get_position()
 		config.set_value("window", "x", pos.x)
 		config.set_value("window", "y", pos.y)
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(settings_path()).get_base_dir())
 	var err := config.save(settings_path())
 	if err != OK:
 		push_warning("could not save widget settings: " + error_string(err))
@@ -637,7 +677,7 @@ func capture() -> void:
 		dance.set_tempo(t)
 		await get_tree().create_timer(2.0).timeout  # ~0.1 s after the beat: the pulse is near its peak
 	else:
-		var icon := ProjectSettings.globalize_path("res://capture_phase1.png")
+		var icon := Paths.on_disk("res://capture_phase1.png")
 		perform({"state": "talking", "reaction": "wave", "icon": icon, "emotion": "happy",
 			"text": "James wants to know if you are still on for tonight, and whether you remembered the cake!"})
 		await get_tree().create_timer(3.6).timeout

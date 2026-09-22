@@ -28,7 +28,7 @@ import sys
 import time
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from jeepney import DBusAddress, MessageFlag, MessageType, new_error, new_method_return, new_signal
 
@@ -37,7 +37,7 @@ from .client import DaemonClient, configure_logging, stop_on_signals
 from .doorways import DOORWAYS
 from .icons import pixmaps
 from . import paths
-from .paths import checkout_root
+from . import widgetbin
 
 log = logging.getLogger("strawberryd.tray")
 
@@ -196,14 +196,20 @@ def group_properties(items: list[MenuItem], ids: list[int] | None = None) -> lis
 
 
 def widget_prefs_path() -> Path:
-    """Where the widget keeps its preferences today: Godot's user:// (step 4 moves it to XDG)."""
-    return paths.godot_user_dir() / "widget.cfg"
+    """Where the widget keeps its preferences: $XDG_CONFIG_HOME/strawberry/widget.cfg."""
+    return paths.widget_prefs_file()
 
 
 def read_widget_prefs(path: Path | None = None) -> dict[str, Any]:
     """Godot's ConfigFile: INI with quoted strings, true/false and numbers. Keys are unique
-    across its sections, so a flat dict is enough for the menu's check marks."""
-    path = path if path is not None else widget_prefs_path()
+    across its sections, so a flat dict is enough for the menu's check marks.
+
+    With no path: the XDG file, or the pre-step-4 one in Godot's user dir until the widget has
+    copied it over (it does that on its first start with a display)."""
+    if path is None:
+        path = widget_prefs_path()
+        if not path.exists():
+            path = paths.legacy_widget_prefs_file()
     try:
         text = path.read_text()
     except OSError:
@@ -370,6 +376,7 @@ MENU_XML = f"""<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspec
 class Child:
     name: str
     argv: list[str]
+    env: dict[str, str] = dataclass_field(default_factory=dict)   # on top of the tray's own environment
     process: asyncio.subprocess.Process | None = None
     restarts: int = 0
     task: asyncio.Task | None = None
@@ -380,14 +387,16 @@ class Child:
 
 
 def child_specs(port: int, config: Path | None, widget: bool = True,
-                checkout: Path | None = None) -> list[Child]:
+                resolve_widget: Callable[[], widgetbin.Widget] | None = None) -> list[Child]:
     """The daemon, the three doorways and the widget, in the order they should come up.
 
-    Everything runs on this same interpreter as a module of the package (`python -m
+    Everything Python runs on this same interpreter as a module of the package (`python -m
     strawberry.strawberryd`, `python -m strawberry.doorways.<name>`), so an installed tray never
-    reaches back into a checkout. The widget still runs from the Godot project in a checkout
-    (`strawberry widget`); without one there is no widget child. Step 4 of PACKAGING.md replaces
-    it with the exported binary.
+    reaches back into a checkout. The widget is the exported binary when it is installed, run
+    directly on the X11 backend; else developer mode, `python -m strawberry widget` with the
+    checkout's Godot project (it imports the project first when needed); else no widget child,
+    and the log says how to get one (widgetbin.resolve). STRAWBERRY_CLI tells the widget's menu
+    which `strawberry` to run for "Settings file…" and "Apply settings".
     """
     python = sys.executable
     url = f"http://127.0.0.1:{port}"
@@ -397,10 +406,21 @@ def child_specs(port: int, config: Path | None, widget: bool = True,
     children = [Child("daemon", daemon)]
     for module in DOORWAYS:
         children.append(Child(module, [python, "-m", f"strawberry.doorways.{module}", "--daemon", url]))
-    if widget and checkout is not None and (checkout / "widget" / "project.godot").is_file():
-        children.append(Child("widget", [python, "-m", "strawberry", "widget"]))
-    elif widget:
-        log.info("no widget: the Godot project is only in a source checkout until PACKAGING.md step 4")
+    if not widget:
+        return children
+    try:
+        found = (resolve_widget or widgetbin.resolve)()
+    except widgetbin.WidgetMissing as exc:
+        log.warning("no widget: %s", exc)
+        return children
+    env = {"STRAWBERRYD_PORT": str(port)}
+    strawberry = widgetbin.strawberry_cli()
+    if strawberry:
+        env["STRAWBERRY_CLI"] = strawberry
+    if found.kind == "binary":
+        children.append(Child("widget", found.argv(port), env))
+    else:
+        children.append(Child("widget", [python, "-m", "strawberry", "widget"], env))
     return children
 
 
@@ -431,7 +451,7 @@ class Children:
             started = time.monotonic()
             try:
                 child.process = await asyncio.create_subprocess_exec(
-                    *child.argv, env=self._env(), start_new_session=False)
+                    *child.argv, env=self._env(child), start_new_session=False)
             except OSError as exc:
                 log.error("%s will not start (%s)", child.name, exc)
                 return
@@ -447,9 +467,9 @@ class Children:
             await asyncio.sleep(backoff)
             backoff = self.FIRST_BACKOFF_S if lived > self.SETTLED_S else min(backoff * 2, self.MAX_BACKOFF_S)
 
-    def _env(self) -> dict[str, str]:
+    def _env(self, child: Child | None = None) -> dict[str, str]:
         # The widget launcher must not start a daemon or doorways of its own: we own those.
-        return {**os.environ, "STRAWBERRY_TRAY": "1"}
+        return {**os.environ, "STRAWBERRY_TRAY": "1", **(child.env if child else {})}
 
     async def restart(self) -> None:
         """Ask every child to go; the supervisors bring them back."""
@@ -508,7 +528,7 @@ class Tray:
         self.state = TrayState()
         self.icons = icons if icons is not None else pixmaps()
         self.icon_name = themed_icon_name() if icon_name is None else icon_name
-        self.prefs_path = prefs_path if prefs_path is not None else widget_prefs_path()
+        self.prefs_path = prefs_path     # None: widget_prefs_path(), with the legacy fallback
         self.items = menu_items(self.state)
         self.revision = 1
         self.client: BusClient | None = None
@@ -815,7 +835,7 @@ def machine_id() -> str:
 async def run_tray(port: int, children: bool = True, widget: bool = True, config: Path | None = None) -> int:
     tray = Tray(f"http://127.0.0.1:{port}")
     if children:
-        tray.children = Children(child_specs(port, config, widget=widget, checkout=checkout_root()),
+        tray.children = Children(child_specs(port, config, widget=widget),
                                  state_path=paths.tray_state_file())
     stop_on_signals(tray.stopping)
     return await tray.run()

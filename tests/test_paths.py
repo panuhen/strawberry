@@ -19,7 +19,24 @@ def test_xdg_variables_are_respected(monkeypatch, tmp_path):
     assert paths.systemd_user_dir() == tmp_path / "c" / "systemd" / "user"
     assert paths.autostart_file() == tmp_path / "c" / "autostart" / "strawberry.desktop"
     assert paths.git_hooks_dir() == tmp_path / "c" / "git" / "hooks"
-    assert tray.widget_prefs_path() == tmp_path / "d" / "godot" / "app_userdata" / "Strawberry" / "widget.cfg"
+    assert tray.widget_prefs_path() == paths.widget_prefs_file() == tmp_path / "c" / "strawberry" / "widget.cfg"
+    assert paths.legacy_widget_prefs_file() == tmp_path / "d" / "godot" / "app_userdata" / "Strawberry" / "widget.cfg"
+    assert paths.widget_binary() == tmp_path / "d" / "strawberry" / "widget" / "strawberry-widget"
+
+
+def test_the_tray_reads_the_old_prefs_until_the_widget_has_moved_them(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "c"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "d"))
+    assert tray.read_widget_prefs() == {}
+    old = paths.legacy_widget_prefs_file()
+    old.parent.mkdir(parents=True)
+    old.write_text('[appearance]\n\nskin="mint"\n')
+    assert tray.read_widget_prefs()["skin"] == "mint"
+    new = paths.widget_prefs_file()
+    new.parent.mkdir(parents=True)
+    new.write_text('[appearance]\n\nskin="midnight"\n')
+    assert tray.read_widget_prefs()["skin"] == "midnight"
+    assert old.read_text().count("mint") == 1              # the tray never writes either file
 
 
 def test_unset_empty_or_relative_fall_back_to_the_defaults(monkeypatch):

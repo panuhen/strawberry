@@ -9,8 +9,12 @@ extends Node
 signal connected
 signal disconnected
 signal message_received(data: Dictionary)
+signal refused(reason: String)
 
 const MAX_BACKOFF := 8.0
+const CLOSE_VERSION_REFUSED := 4001   # = strawberry.server.CLOSE_VERSION_REFUSED
+const REFUSED_BACKOFF := 60.0
+const Paths = preload("res://paths.gd")
 const PING_INTERVAL := 5.0
 const SILENCE_TIMEOUT := 12.0
 
@@ -68,7 +72,8 @@ func _process(delta: float) -> void:
 				backoff = 1.0
 				since_activity = 0.0
 				since_ping = 0.0
-				send({"type": "hello", "client": "strawberry-widget", "godot": Engine.get_version_info().string})
+				send({"type": "hello", "client": "strawberry-widget", "version": Paths.version(),
+					"godot": Engine.get_version_info().string})
 				connected.emit()
 			while peer.get_available_packet_count() > 0:
 				since_activity = 0.0
@@ -97,6 +102,12 @@ func _process(delta: float) -> void:
 			if was_open:
 				was_open = false
 				disconnected.emit()
+			if peer.get_close_code() == CLOSE_VERSION_REFUSED:
+				# The daemon will not talk to this widget version (a major mismatch, §1): say so
+				# and keep trying, slowly, in case the daemon is upgraded underneath us.
+				push_error("strawberryd refused this widget: " + peer.get_close_reason())
+				refused.emit(peer.get_close_reason())
+				backoff = REFUSED_BACKOFF
 			_schedule_retry()
 		_:
 			pass  # CLOSING: keep polling until CLOSED

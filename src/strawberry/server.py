@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from aiohttp import WSMsgType, web
 
+from . import __version__
 from .config import Config
 from .contract import ContractError, Performance
 from .daemon import Daemon
@@ -25,6 +27,26 @@ from .events import Event
 log = logging.getLogger("strawberryd.http")
 
 DAEMON = web.AppKey("daemon", Daemon)
+
+# The widget says its version in the hello (WIRING.md §1). A source run says "dev" and is always
+# welcome; a released binary on another minor or patch is logged and served; another major is
+# refused: the socket is closed with this code and a reason the widget shows in its bubble.
+DEV_VERSION = "dev"
+CLOSE_VERSION_REFUSED = 4001   # = widget/ws_client.gd CLOSE_VERSION_REFUSED
+_VERSION = re.compile(r"^v?(\d+)\.(\d+)(?:\.(\d+))?")
+
+
+def version_verdict(widget: str | None, daemon: str = __version__) -> str:
+    """How a widget's version sits with ours: "same", "dev", "minor" (another minor or patch:
+    warn), "major" (refuse) or "unknown" (missing or unreadable: warn, serve)."""
+    if widget == DEV_VERSION:
+        return "dev"
+    ours, theirs = _VERSION.match(daemon), _VERSION.match(widget or "")
+    if ours is None or theirs is None:
+        return "unknown"
+    if ours.group(1) != theirs.group(1):
+        return "major"
+    return "same" if ours.groups("0") == theirs.groups("0") else "minor"
 
 
 def create_app(daemon: Daemon) -> web.Application:
@@ -95,6 +117,8 @@ async def health(request: web.Request) -> web.Response:
         {
             "ok": True,
             "widgets": daemon.hub.count,
+            "widget_versions": daemon.hub.versions,
+            "version": __version__,
             "performed": daemon.performed,
             "uptime_s": round(daemon.uptime, 1),
             "brain": daemon.brain_stats(),
@@ -279,6 +303,7 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
     kind = data.get("type") if isinstance(data, dict) else None
     if kind == "hello":
         log.info("widget hello: %s", {k: v for k, v in data.items() if k != "type"})
+        await _check_version(daemon, ws, data.get("version"))
     elif kind == "ping":
         await ws.send_str('{"type": "pong"}')
     elif kind == "heard":
@@ -291,6 +316,22 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
                               f"typed {text[:40]!r}")
     else:
         log.debug("widget message: %s", data)
+
+
+async def _check_version(daemon: Daemon, ws: web.WebSocketResponse, version: Any) -> None:
+    version = str(version) if version is not None else None
+    verdict = version_verdict(version)
+    daemon.hub.set_version(ws, version or "unknown")
+    if verdict == "major":
+        reason = f"widget {version}, daemon {__version__}"
+        log.error("refusing widget %s: its major version differs from strawberryd %s; closing its "
+                  "socket (install the matching widget: strawberry widget --fetch)", version, __version__)
+        await ws.close(code=CLOSE_VERSION_REFUSED, message=reason.encode())
+    elif verdict == "minor":
+        log.warning("widget %s and strawberryd %s differ in minor/patch version; serving it "
+                    "(`strawberry widget --fetch` gets the matching one)", version, __version__)
+    elif verdict == "unknown":
+        log.warning("widget did not say a readable version (%r); serving it", version)
 
 
 def run(config: Config) -> None:

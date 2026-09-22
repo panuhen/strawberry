@@ -286,28 +286,40 @@ def stop_daemon(here: Here) -> None:
 # --- commands: running her ------------------------------------------------------
 
 def cmd_widget(here: Here, extra: list[str]) -> int:
-    project = paths.widget_project()
-    if project is None:
-        raise CliError("the widget runs from a source checkout for now: this strawberry is installed without "
-                       "one, so there is no widget/ Godot project to open. Run bin/strawberry in a checkout of "
-                       "the repository (PACKAGING.md step 4 ships the widget as a binary).", 2)
-    godot = shutil.which("godot")
-    if godot is None:
-        raise CliError("godot is not on PATH; the widget needs Godot 4.7 until it ships as a binary "
-                       "(PACKAGING.md step 4)", 2)
+    """Open the widget: the installed binary, else the checkout's Godot project (widgetbin)."""
+    from . import widgetbin
+
+    try:
+        widget = widgetbin.resolve()
+    except widgetbin.WidgetMissing as exc:
+        raise CliError(str(exc), 2) from None
     start_daemon(here)
     start_watchers(here)
-    if not (project / ".godot").is_dir():
+    if widget.kind == "checkout" and not (widget.project / ".godot").is_dir():
         print("importing widget project (first run)")
-        subprocess.run([godot, "--headless", "--path", str(project), "--editor", "--import"],
+        subprocess.run([str(widget.program), "--headless", "--path", str(widget.project), "--editor", "--import"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # Pinned to the X11 backend on purpose: native on an X11 session, XWayland on a Wayland
     # one. Native Wayland clients on GNOME get neither always-on-top nor self-positioning,
     # which is what makes a desktop pet a pet (WIRING.md §13).
+    argv = widget.argv(here.port, extra)
+    strawberry = widgetbin.strawberry_cli()
+    if strawberry:
+        os.environ["STRAWBERRY_CLI"] = strawberry     # her menu's "Settings file…" and "Apply settings"
     sys.stdout.flush()
-    os.execv(godot, [godot, "--display-driver", "x11", "--path", str(project), "--",
-                     f"--ws=ws://127.0.0.1:{here.port}/ws", *extra])
+    os.execv(argv[0], argv)
     return 0    # not reached
+
+
+def cmd_widget_fetch(version: str | None) -> int:
+    """Download the release's widget binary into the data dir, checked against its SHA-256."""
+    from . import __version__, widgetbin
+
+    try:
+        widgetbin.fetch(version or __version__)
+    except widgetbin.FetchError as exc:
+        raise CliError(f"widget fetch failed: {exc}", 1) from None
+    return 0
 
 
 def cmd_daemon(here: Here) -> int:
@@ -486,12 +498,17 @@ def cmd_uninstall(here: Here) -> int:
 
 # --- commands: settings and small things -----------------------------------------
 
-def cmd_config() -> int:
+def cmd_config(init_only: bool = False) -> int:
     path = paths.config_file()
-    if not path.exists():
-        code = run_daemon_main(["--init-config"])
+    existed = path.exists()
+    if not existed:
+        code = run_daemon_main(["--init-config"])     # prints the path it wrote
         if code:
             return code
+    if init_only:
+        if existed:
+            print(path)
+        return 0
     editor = os.environ.get("EDITOR", "")
     if editor:
         return subprocess.call([*shlex.split(editor), str(path)])
@@ -798,7 +815,13 @@ def parser() -> argparse.ArgumentParser:
     def add(name: str, help: str, **kwargs) -> argparse.ArgumentParser:
         return sub.add_parser(name, help=help, description=help, **kwargs)
 
-    add("widget", "start daemon + doorway watchers if needed, open the widget (extra args go to the widget)")
+    p = add("widget", "start daemon + doorway watchers if needed, open the widget (extra args go to the widget); "
+                      "--fetch downloads the released widget binary")
+    p.add_argument("--fetch", action="store_true",
+                   help="download strawberry-widget for this version from the GitHub release, check its "
+                        "SHA-256 and install it in ~/.local/share/strawberry/widget/")
+    p.add_argument("--version", dest="widget_version", metavar="V", default=None,
+                   help="with --fetch: the release to fetch (default: this package's version)")
     add("daemon", "start the daemon + watchers only (idempotent)")
     add("tray", "the tray icon, and under it the daemon, the doorways and the widget "
                 "(--no-children, --no-widget, --config PATH pass through)")
@@ -808,7 +831,9 @@ def parser() -> argparse.ArgumentParser:
     add("restart", "stop + daemon (after editing the config)")
     add("install", "start on login: one systemd user unit for the tray, autostart as a fallback")
     add("uninstall", "undo install (she only runs when you launch her)")
-    add("config", "create ~/.config/strawberry/config.toml if missing, then open it in $EDITOR")
+    p = add("config", "create ~/.config/strawberry/config.toml if missing, then open it in $EDITOR")
+    p.add_argument("--init", action="store_true", help="only create it if missing and print its path "
+                                                       "(what the widget's \"Settings file…\" runs)")
     add("listen", "talk to her once (what the hotkey runs); press again to stop early")
     p = add("hotkey", f"GNOME shortcut for `listen` (default {HOTKEY_DEFAULT})")
     p.add_argument("combo", nargs="?", default=None)
@@ -874,7 +899,11 @@ def dispatch(command: str, args: argparse.Namespace, extra: list[str]) -> int:
     if command in ("setup", "doctor"):
         return cmd_later(command)
     if command == "config":
-        return cmd_config()
+        return cmd_config(init_only=args.init)
+    if command == "widget" and (args.fetch or args.widget_version):
+        if not args.fetch:
+            raise CliError("strawberry widget: --version goes with --fetch", 2)
+        return cmd_widget_fetch(args.widget_version)
     if command == "hotkey":
         return cmd_hotkey(args.combo, args.remove)
     if command == "voices":

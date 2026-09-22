@@ -287,3 +287,65 @@ async def test_a_stale_transient_falls_back_to_her_resting_state(daemon):
     assert daemon.current_state() == "talking"
     daemon.state_at -= daemon.TRANSIENT_S + 1      # the widget went back to dancing on its own
     assert daemon.current_state() == "dancing"
+
+
+# --- the version handshake (WIRING.md §1) --------------------------------------------
+
+def test_version_verdicts():
+    from strawberry.server import version_verdict
+
+    assert version_verdict("dev", "0.1.0") == "dev"
+    assert version_verdict("0.1.0", "0.1.0") == "same"
+    assert version_verdict("0.1", "0.1.0") == "same"
+    assert version_verdict("0.1.3", "0.1.0") == "minor"
+    assert version_verdict("0.4.0", "0.1.0") == "minor"
+    assert version_verdict("1.0.0", "0.1.0") == "major"
+    assert version_verdict(None, "0.1.0") == "unknown"
+    assert version_verdict("banana", "0.1.0") == "unknown"
+
+
+async def test_a_dev_widget_is_served_and_health_shows_its_version(client):
+    ws = await client.ws_connect("/ws")
+    await ws.send_json({"type": "hello", "client": "strawberry-widget", "version": "dev"})
+    await asyncio.sleep(0.05)
+    body = await (await client.get("/health")).json()
+    assert body["widgets"] == 1 and body["widget_versions"] == ["dev"]
+    from strawberry import __version__
+    assert body["version"] == __version__
+    await ws.close()
+
+
+async def test_a_minor_mismatch_is_logged_and_served(client, caplog):
+    from strawberry import __version__
+    major, minor, *_ = __version__.split(".")
+    other = f"{major}.{int(minor) + 1}.0"
+    ws = await client.ws_connect("/ws")
+    await ws.send_json({"type": "hello", "client": "strawberry-widget", "version": other})
+    await asyncio.sleep(0.05)
+    assert not ws.closed
+    assert "differ in minor/patch version" in caplog.text
+    assert (await (await client.get("/health")).json())["widget_versions"] == [other]
+    await ws.close()
+
+
+async def test_a_major_mismatch_is_refused(client, caplog):
+    from strawberry import __version__
+    from strawberry.server import CLOSE_VERSION_REFUSED
+
+    other = f"{int(__version__.split('.')[0]) + 1}.0.0"
+    ws = await client.ws_connect("/ws")
+    await ws.send_json({"type": "hello", "client": "strawberry-widget", "version": other})
+    message = await ws.receive(timeout=2)
+    assert ws.closed and ws.close_code == CLOSE_VERSION_REFUSED
+    assert f"widget {other}, daemon {__version__}" in str(message.extra)
+    assert "refusing widget" in caplog.text
+    body = await (await client.get("/health")).json()
+    assert body["widgets"] == 0 and body["widget_versions"] == []
+
+
+def test_the_close_code_matches_the_widget():
+    from pathlib import Path
+    from strawberry.server import CLOSE_VERSION_REFUSED
+
+    ws_client = (Path(__file__).parents[1] / "widget" / "ws_client.gd").read_text()
+    assert f"const CLOSE_VERSION_REFUSED := {CLOSE_VERSION_REFUSED}" in ws_client
