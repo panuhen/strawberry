@@ -46,6 +46,17 @@ package and the widget binary.
   follows at once. It is kept as `[voice] hotkey` in config.toml; a combination another program
   holds is a line in the tray's log. Whisper on CUDA (`[voice] device = "cuda"`) works on Windows
   with the `gpu` wheels alone, without a CUDA toolkit installed.
+- Warm on wake, `doctor` and `setup` on Windows, the seventh step of the port. The daemon hears
+  Windows' own suspend and resume notification and reloads the gate's model and the reaction
+  model after a resume, as it does after logind's signal on Linux, so a notification right after
+  a wake is read rather than dropped as private. `strawberry doctor` on Windows checks, in place
+  of PipeWire, D-Bus, the tray host and systemd: whether Windows lets her read notifications, how
+  many media sessions there are, the microphone and its privacy switches, whether this Windows
+  can capture a player's sound (build 19041 or later), the Startup shortcut and what it runs, and
+  whether the tray runs; it only reads. `strawberry setup` on Windows names Ollama's Windows
+  installer (or winget), and offers the Startup shortcut for start on login.
+- `strawberry setup --no-download` writes the config as usual but pulls no model and fetches no
+  voice or widget; it names each one it would have fetched.
 
 ### Changed
 
@@ -57,6 +68,11 @@ package and the widget binary.
   down as on SIGTERM on Linux) instead of ending them at once; one that does not stop within
   10 s (20 s for the tray) is still ended. `strawberry restart` there restarts the tray's
   children, as the tray's own Restart does.
+
+### Fixed
+
+- The Windows tray logged "the notification area is not there yet" every 2 s while it waited for
+  the taskbar at login; it now logs it once, and says so when the icon is added.
 
 ## [0.1.1] - 2026-09-23
 
