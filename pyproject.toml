@@ -19,10 +19,15 @@ classifiers = [
 dependencies = [
     "aiohttp>=3.10",
     "faster-whisper>=1.2.1",
-    "jeepney>=0.9.0",
+    "jeepney>=0.9.0; sys_platform == 'linux'",
     "mcp>=1.2",
     "numpy>=1.26",
     "piper-tts>=1.8.0",
+    # Media on Windows: the System Media Transport Controls (smtc.py, doorways/smtc_watch.py).
+    "winrt-runtime>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Foundation>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Foundation.Collections>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Media.Control>=3.2; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +50,8 @@ strawberry-doorway = "strawberry_crab.doorways:main"
 
 [dependency-groups]
 dev = [
+    # The D-Bus doorway and tray tests build their messages with jeepney on every system.
+    "jeepney>=0.9.0",
     "pillow>=12.3.0",
     "pytest>=8",
     "pytest-aiohttp>=1.0",
