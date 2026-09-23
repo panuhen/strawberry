@@ -84,6 +84,15 @@ static func cli() -> String:
 	var cli := OS.get_environment("STRAWBERRY_CLI")
 	return cli if cli != "" else APP
 
+## The Python that runs desktop_idle.py. Linux: the system's, which has what the X11 helper needs.
+## Windows has no system Python: `strawberry widget` and the tray put their own interpreter in
+## STRAWBERRY_PYTHON. "" when there is none; automatic sleep then stays off.
+static func python() -> String:
+	var python := OS.get_environment("STRAWBERRY_PYTHON")
+	if python != "":
+		return python
+	return "" if windows() else "/usr/bin/python3"
+
 ## One-time move of the preferences out of Godot's user dir: copy user://widget.cfg to the XDG
 ## path when that does not exist yet. The old file is left where it is. True if it copied.
 ## (The arguments are for validate_prefs.gd, which must not touch the real files.)

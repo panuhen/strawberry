@@ -153,6 +153,20 @@ def strawberry_cli() -> str | None:
     return shutil.which("strawberry")
 
 
+def idle_python() -> str | None:
+    """The interpreter for STRAWBERRY_PYTHON in the widget's environment on Windows, where there is
+    no system Python: the widget runs desktop_idle.py on it once a second while it may fall asleep.
+    This one, and its console python.exe when this is pythonw.exe (the Startup shortcut's tray):
+    Godot reads the helper's stdout, and starts it without a window either way. None elsewhere,
+    where the widget uses /usr/bin/python3 as before."""
+    if not paths.windows():
+        return None
+    executable = Path(sys.executable)
+    if executable.name.lower() == "pythonw.exe" and executable.with_name("python.exe").is_file():
+        return str(executable.with_name("python.exe"))
+    return str(executable)
+
+
 # --- fetching the release -------------------------------------------------------------
 
 def _open(url: str, timeout: float):

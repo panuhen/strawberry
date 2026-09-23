@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import http.server
+import json
 import os
 import subprocess
 import sys
@@ -82,6 +83,7 @@ def test_the_cli_execs_the_binary_with_the_x11_driver_and_the_port(monkeypatch):
     monkeypatch.setenv("STRAWBERRY_TRAY", "1")          # the tray owns the daemon: start nothing
     monkeypatch.setenv("STRAWBERRYD_PORT", "8779")
     monkeypatch.setenv("STRAWBERRY_CLI", "")            # restored afterwards: cmd_widget sets it
+    monkeypatch.setenv("STRAWBERRY_PYTHON", "")         # the same, on Windows
     monkeypatch.setattr(cli, "daemon_up", lambda here: True)
     exec_calls = []
 
@@ -102,6 +104,32 @@ def test_the_cli_execs_the_binary_with_the_x11_driver_and_the_port(monkeypatch):
     assert code == (5 if sys.platform == "win32" else 0)
     assert exec_calls == [(str(binary), [str(binary), *DISPLAY, "--",
                                          "--ws=ws://127.0.0.1:8779/ws", "--capture=/tmp/c.png"])]
+    assert os.environ["STRAWBERRY_PYTHON"] == (sys.executable if sys.platform == "win32" else "")
+
+
+def test_the_idle_helper_runs_on_this_python_on_windows_only(monkeypatch, tmp_path):
+    for name in ("python.exe", "pythonw.exe"):
+        (tmp_path / name).write_bytes(b"MZ")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python.exe"))
+    assert widgetbin.idle_python() == str(tmp_path / "python.exe")
+    # The Startup shortcut's tray is pythonw.exe; Godot reads the helper's stdout, so python.exe.
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "pythonw.exe"))
+    assert widgetbin.idle_python() == str(tmp_path / "python.exe")
+    monkeypatch.setattr(sys, "platform", "linux")     # the widget uses /usr/bin/python3 there
+    assert widgetbin.idle_python() is None
+
+
+def test_desktop_idle_reads_a_number_or_says_unavailable():
+    helper = Path(__file__).resolve().parent.parent / "widget" / "desktop_idle.py"
+    if not helper.is_file():
+        pytest.skip("no widget/ here (the sdist leaves it out)")
+    out = subprocess.run([sys.executable, str(helper)], capture_output=True, text=True, timeout=10)
+    sample = json.loads(out.stdout)
+    if sys.platform == "win32":
+        assert sample["source"] == "windows" and sample["seconds"] >= 0
+    else:                                   # no display in CI: null, and sleep stays off
+        assert sample["source"] in ("x11", "gnome", "unavailable")
 
 
 def test_strawberry_cli_prefers_what_the_tray_passed(monkeypatch, tmp_path):

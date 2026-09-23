@@ -410,6 +410,9 @@ def cmd_widget(here: Here, extra: list[str]) -> int:
     strawberry = widgetbin.strawberry_cli()
     if strawberry:
         os.environ["STRAWBERRY_CLI"] = strawberry     # her menu's "Settings file…" and "Apply settings"
+    python = widgetbin.idle_python()
+    if python and not os.environ.get("STRAWBERRY_PYTHON"):
+        os.environ["STRAWBERRY_PYTHON"] = python      # Windows: runs desktop_idle.py for her sleep
     return hand_over(argv)
 
 
