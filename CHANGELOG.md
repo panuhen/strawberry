@@ -23,6 +23,9 @@ package and the widget binary.
   off; `/health` shows it under `wake`, and the gate's `retries` and `warmups`.
 - A gate whose examples could not be embedded at start (Ollama was down) now comes up at the next
   resume from suspend instead of staying off until a restart.
+- The widget comes back on the display it was left on. Its saved position was kept inside the
+  primary screen, so a widget on a second display reappeared at the bottom of the main one.
+  *Reset position* now uses the corner of the screen she is on.
 
 ## [0.1.0] - 2026-09-22
 
