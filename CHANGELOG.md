@@ -7,6 +7,18 @@ package and the widget binary.
 
 ## [Unreleased]
 
+### Added
+
+- The first step of the Windows port (`WINDOWS.md`): the daemon and the CLI run on Windows by
+  hand with `STRAWBERRY_ALLOW_UNSUPPORTED=1`, keeping the config in `%APPDATA%\strawberry` and
+  data and state in `%LOCALAPPDATA%\strawberry`. There are no doorways, tray or start-on-login
+  there yet, and Windows is not a supported system until the port is done.
+
+### Changed
+
+- The config file and the widget's preferences are read and written as UTF-8 whatever the
+  system's locale.
+
 ## [0.1.1] - 2026-09-23
 
 ### Fixed

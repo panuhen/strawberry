@@ -7,11 +7,13 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-from strawberry_crab import cli, paths
+from strawberry_crab import cli, paths, widgetbin
+from tests.portable import point_dirs, program, sh_script
 
 COMMANDS = ("widget", "daemon", "tray", "tray-autostart", "status", "stop", "restart", "install", "uninstall",
             "config", "listen", "hotkey", "route", "tools", "tool", "think", "talk", "say", "voices", "audition",
@@ -21,8 +23,7 @@ COMMANDS = ("widget", "daemon", "tray", "tray-autostart", "status", "stop", "res
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
     """Throwaway XDG dirs and git config; systemctl is recorded, never run."""
-    for name in ("CONFIG", "DATA", "STATE"):
-        monkeypatch.setenv(f"XDG_{name}_HOME", str(tmp_path / name.lower()))
+    point_dirs(monkeypatch, tmp_path, ("CONFIG", "DATA", "STATE"))
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.delenv("STRAWBERRYD_PORT", raising=False)
@@ -55,16 +56,17 @@ def test_the_port_comes_from_the_env_then_the_config_then_the_default(monkeypatc
 
 
 def test_cli_argv_is_the_running_executable_or_this_interpreter(monkeypatch, tmp_path):
-    exe = tmp_path / "bin" / "strawberry"
-    exe.parent.mkdir()
-    exe.write_text("#!/bin/sh\n")
-    exe.chmod(0o755)
+    exe = program(tmp_path / "bin" / widgetbin.cli_name(), b"#!/bin/sh\n")
     monkeypatch.setattr(sys, "argv", [str(exe), "install"])
     assert cli.cli_argv() == [str(exe)]
+    if sys.platform == "win32":                     # a console script's argv[0] without its .exe
+        monkeypatch.setattr(sys, "argv", [str(exe.with_suffix("")), "install"])
+        assert cli.cli_argv() == [str(exe)]
     monkeypatch.setattr(sys, "argv", ["/somewhere/strawberry/__main__.py"])
     assert cli.cli_argv() == [sys.executable, "-m", "strawberry_crab"]
 
 
+@pytest.mark.linux_only     # systemd units
 def test_the_unit_starts_the_installed_tray_not_the_repo():
     text = cli.unit_text(8770, ["/home/u/.local/bin/strawberry"])
     assert "ExecStart=/home/u/.local/bin/strawberry tray --port 8770\n" in text
@@ -74,6 +76,7 @@ def test_the_unit_starts_the_installed_tray_not_the_repo():
     assert "Exec=/x/strawberry tray-autostart\n" in cli.autostart_text(["/x/strawberry"])
 
 
+@pytest.mark.linux_only     # systemd units
 def test_install_rewrites_an_old_unit_and_restarts_it(isolated, monkeypatch, capsys):
     monkeypatch.setattr(cli, "wait_daemon", lambda here: True)
     monkeypatch.setattr(sys, "argv", [sys.executable, "install"])   # not named strawberry: -m form
@@ -108,7 +111,9 @@ def test_status_without_anything_running_says_so(monkeypatch, capsys):
     assert cli.main(["status"]) == 1
     out = capsys.readouterr().out.splitlines()
     assert out[:2] == ["tray: down", "strawberryd: down"]
-    assert out[2:] == ["mpris_watch: down", "notify_watch: down", "beat_watch: down"]
+    assert out[2:] == [f"{name}: down" for name in cli.doorways()]   # none yet off Linux
+    if sys.platform.startswith("linux"):
+        assert cli.doorways() == ("mpris_watch", "notify_watch", "beat_watch")
 
 
 def test_status_reads_the_trays_children(monkeypatch, capsys):
@@ -215,15 +220,50 @@ def test_git_event_posts_detached_and_hands_over_to_the_repos_hook(repo, monkeyp
     monkeypatch.setattr(cli, "post_detached", lambda url, payload: posted.append((url, payload)))
     monkeypatch.setenv("STRAWBERRYD_URL", "http://127.0.0.1:1")
     own = repo / ".git" / "hooks" / "pre-push"
-    own.write_text("#!/bin/sh\ncat > \"$(dirname \"$0\")/seen\"\nexit 3\n")
-    own.chmod(0o755)
+    sh_script(own, "#!/bin/sh\ncat > \"$(dirname \"$0\")/seen\"\nexit 3\n")
     head = git(repo, "rev-parse", "HEAD")
     monkeypatch.setattr(sys, "stdin", type("S", (), {"isatty": lambda self: False,
                                                      "read": lambda self: f"a {head} b {cli.ZERO_SHA}\n"})())
     assert cli.cmd_git_event("pre-push", ["origin", "url"]) == 3            # the repo's hook still vetoes
     assert posted == [("http://127.0.0.1:1", {"source": "git", "app": "pre-push", "title": "myrepo",
                                               "body": "pushing 1 commit on main to origin"})]
-    assert (repo / ".git" / "hooks" / "seen").read_text() == f"a {head} b {cli.ZERO_SHA}\n"
+    assert (repo / ".git" / "hooks" / "seen").read_bytes() == f"a {head} b {cli.ZERO_SHA}\n".encode()   # no CR
+
+
+def test_post_in_child_reaches_the_daemon_without_being_waited_for():
+    # What post_detached does on Windows (no fork there); the same code runs anywhere.
+    import http.server
+    import threading
+
+    bodies: list[bytes] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            bodies.append(self.rfile.read(int(self.headers["Content-Length"])))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        payload = {"source": "git", "app": "post-commit", "title": "r", "body": 'a "quoted" subject'}
+        cli.post_in_child(f"http://127.0.0.1:{server.server_address[1]}", payload)
+        for _ in range(200):
+            if bodies:
+                break
+            time.sleep(0.05)
+        assert [json.loads(b) for b in bodies] == [payload]
+    finally:
+        server.shutdown()
+
+
+def test_a_process_that_has_exited_is_not_alive():
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    assert cli.pid_alive(os.getpid()) and not cli.pid_alive(child.pid) and not cli.pid_alive(None)
 
 
 def test_git_hooks_install_replaces_the_old_symlinks_and_remove_undoes_it(tmp_path, capsys):
@@ -233,7 +273,10 @@ def test_git_hooks_install_replaces_the_old_symlinks_and_remove_undoes_it(tmp_pa
     old.mkdir(parents=True)
     for name in ("post-commit", "pre-push", "strawberry-git-event"):
         (old / name).write_text("#!/bin/sh\n")
-        (hooks / name).symlink_to(old / name)
+        try:
+            (hooks / name).symlink_to(old / name)
+        except OSError:      # Windows without developer mode; the old installer never ran there
+            pytest.skip("no symlinks here")
     assert cli.main(["git-hooks", "install"]) == 0
     for name in cli.GIT_HOOKS:
         text = (hooks / name).read_text()
@@ -262,15 +305,13 @@ def test_git_hooks_leave_someone_elses_alone(capsys):
 def test_an_installed_hook_runs_git_event_and_never_fails_git(tmp_path, repo):
     hooks = paths.git_hooks_dir()
     hooks.mkdir(parents=True)
-    fake = tmp_path / "strawberry"
-    fake.write_text(f"#!/bin/sh\necho \"$@\" > {tmp_path / 'called'}\n")
-    fake.chmod(0o755)
-    (hooks / "post-commit").write_text(cli.hook_text("post-commit", [str(fake)]))
-    (hooks / "post-commit").chmod(0o755)
-    subprocess.run([str(hooks / "post-commit")], check=True, cwd=repo)
+    fake = sh_script(tmp_path / "strawberry", "#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/called\"\n")
+    hook = sh_script(hooks / "post-commit", cli.hook_text("post-commit", [str(fake)]))
+    run = [cli.git_sh(), hook.as_posix()] if sys.platform == "win32" else [str(hook)]   # as git runs it
+    subprocess.run(run, check=True, cwd=repo)
     assert (tmp_path / "called").read_text() == "git-event post-commit\n"
     fake.unlink()                                                     # uninstalled: the hook stays quiet
-    assert subprocess.run([str(hooks / "post-commit")], cwd=repo).returncode == 0
+    assert subprocess.run(run, cwd=repo).returncode == 0
 
 
 def test_install_gives_the_app_switcher_her_name_and_the_berry(isolated, monkeypatch):

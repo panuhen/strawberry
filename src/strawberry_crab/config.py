@@ -378,7 +378,7 @@ def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
     config = Config(path=path if path.exists() else None)
     if path.exists():
         try:
-            data = tomllib.loads(path.read_text())
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError as exc:
             raise ConfigError(f"{path}: {exc}") from exc
         for section_name, values in data.items():

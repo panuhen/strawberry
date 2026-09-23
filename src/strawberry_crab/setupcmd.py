@@ -379,7 +379,7 @@ class Setup:
                 self.say(f"  no tier {answer!r}; keeping {proposed.name}")
         values = tier_values(tier)
 
-        text = self.path.read_text() if self.path.exists() else ""
+        text = self.path.read_text(encoding="utf-8") if self.path.exists() else ""
         fresh = not text.strip()
         if fresh:
             from .config import default_toml
@@ -542,7 +542,7 @@ class Setup:
         self.say("\n5. Settings your file does not have")
         if not self.path.exists():
             return
-        text = self.path.read_text()
+        text = self.path.read_text(encoding="utf-8")
         try:
             missing = missing_keys(text)
         except tomllib.TOMLDecodeError as exc:

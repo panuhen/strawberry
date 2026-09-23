@@ -230,7 +230,7 @@ def read_widget_prefs(path: Path | None = None) -> dict[str, Any]:
         if not path.exists():
             path = paths.legacy_widget_prefs_file()
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except OSError:
         return {}
     values: dict[str, Any] = {}
@@ -252,7 +252,7 @@ def read_body_setting(path: Path) -> tuple[str, bool] | None:
     from .config import BODY_MODES, NotificationsConfig
 
     try:
-        data = tomllib.loads(path.read_text())
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return NotificationsConfig().body, False
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):

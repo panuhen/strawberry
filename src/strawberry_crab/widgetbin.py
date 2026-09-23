@@ -8,9 +8,10 @@ Resolution order, the same for `strawberry widget` and the tray's widget child:
 
 Either way she runs on the X11 backend (`--display-driver x11`): native on an X11 session,
 XWayland on a Wayland one, because native Wayland clients on GNOME get neither always-on-top nor
-self-positioning (§13).
+self-positioning (§13). Windows has one display driver, so there is no such argument there.
 
-`fetch` downloads `strawberry-widget-<version>-linux-x86_64` and its `.sha256` from the GitHub
+`fetch` downloads `strawberry-widget-<version>-linux-x86_64` (on Windows
+`strawberry-widget-<version>-windows-x86_64.exe`) and its `.sha256` from the GitHub
 release `v<version>`, checks the SHA-256 and installs it atomically. `strawberry setup`
 (PACKAGING.md step 5) calls the same function. STRAWBERRY_RELEASE_URL replaces the release base
 URL (tests serve a local directory with it).
@@ -35,6 +36,7 @@ from . import paths
 RELEASE_BASE = "https://github.com/panuhen/strawberry/releases/download"
 RELEASE_ENV = "STRAWBERRY_RELEASE_URL"
 PLATFORM = "linux-x86_64"
+WINDOWS_PLATFORM = "windows-x86_64"
 DISPLAY_ARGS = ("--display-driver", "x11")
 CHUNK = 1 << 20
 
@@ -48,7 +50,13 @@ class FetchError(Exception):
 
 
 def asset_name(version: str) -> str:
+    if paths.windows():
+        return f"strawberry-widget-{version}-{WINDOWS_PLATFORM}.exe"
     return f"strawberry-widget-{version}-{PLATFORM}"
+
+
+def display_args() -> tuple[str, ...]:
+    return () if paths.windows() else DISPLAY_ARGS
 
 
 def release_base() -> str:
@@ -72,12 +80,33 @@ class Widget:
     def argv(self, port: int, extra: list[str] | tuple[str, ...] = ()) -> list[str]:
         user = ["--", f"--ws=ws://127.0.0.1:{port}/ws", *extra]
         if self.kind == "binary":
-            return [str(self.program), *DISPLAY_ARGS, *user]
-        return [str(self.program), *DISPLAY_ARGS, "--path", str(self.project), *user]
+            return [str(self.program), *display_args(), *user]
+        return [str(self.program), *display_args(), "--path", str(self.project), *user]
 
 
 def is_runnable(path: Path) -> bool:
+    if paths.windows():
+        return path.is_file() and _windows_program(path)
     return path.is_file() and os.access(path, os.X_OK)
+
+
+def _windows_program(path: Path) -> bool:
+    """Windows has no execute bit (os.access says yes to any file): a program there has an
+    extension from PATHEXT, and an .exe starts with the "MZ" of every PE image."""
+    suffix = path.suffix.lower()
+    if suffix not in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").lower().split(";"):
+        return False
+    if suffix != ".exe":
+        return True
+    try:
+        with path.open("rb") as file:
+            return file.read(2) == b"MZ"
+    except OSError:
+        return False
+
+
+def cli_name() -> str:
+    return "strawberry.exe" if paths.windows() else "strawberry"
 
 
 def resolve(binary: Path | None = None, project: Path | None | str = "auto",
@@ -114,9 +143,11 @@ def strawberry_cli() -> str | None:
     if inherited and is_runnable(Path(inherited)):
         return inherited
     argv0 = Path(sys.argv[0]) if sys.argv and sys.argv[0] else None
-    if argv0 is not None and argv0.name == "strawberry" and is_runnable(argv0):
+    if argv0 is not None and paths.windows() and argv0.name == "strawberry":
+        argv0 = argv0.with_name(cli_name())       # a console script's argv[0] may leave out .exe
+    if argv0 is not None and argv0.name == cli_name() and is_runnable(argv0):
         return str(argv0.absolute())
-    sibling = Path(sys.executable).with_name("strawberry")
+    sibling = Path(sys.executable).with_name(cli_name())
     if is_runnable(sibling):
         return str(sibling)
     return shutil.which("strawberry")

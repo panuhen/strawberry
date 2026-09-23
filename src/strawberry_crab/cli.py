@@ -72,7 +72,7 @@ def config_port() -> int:
         except ValueError:
             raise CliError(f"STRAWBERRYD_PORT={env!r} is not a port", 2) from None
     try:
-        data = tomllib.loads(paths.config_file().read_text())
+        data = tomllib.loads(paths.config_file().read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
         return DEFAULT_PORT      # no file yet (a fresh machine) or a broken one: the daemon says which
     port = (data.get("daemon") or {}).get("port") if isinstance(data.get("daemon"), dict) else None
@@ -82,10 +82,19 @@ def config_port() -> int:
 def cli_argv() -> list[str]:
     """How to run this very CLI again from a unit, a hook or a shortcut: the absolute path of the
     `strawberry` executable that is running, or this interpreter with `-m strawberry_crab`."""
+    from .widgetbin import cli_name, is_runnable
+
     exe = Path(sys.argv[0]) if sys.argv and sys.argv[0] else None
-    if exe is not None and exe.name == "strawberry" and exe.is_file() and os.access(exe, os.X_OK):
+    if exe is not None and paths.windows() and exe.name == "strawberry":
+        exe = exe.with_name(cli_name())             # a console script's argv[0] may leave out .exe
+    if exe is not None and exe.name == cli_name() and is_runnable(exe):
         return [str(exe.absolute())]
     return [sys.executable, "-m", "strawberry_crab"]
+
+
+def doorways() -> tuple[str, ...]:
+    """The doorways this system has: all three are D-Bus or PipeWire, so none yet off Linux."""
+    return DOORWAYS if sys.platform.startswith("linux") else ()
 
 
 def module_argv(module: str, *args: str) -> list[str]:
@@ -169,6 +178,8 @@ def managed() -> bool:
 def pid_alive(pid: int | None) -> bool:
     if not pid:
         return False
+    if paths.windows():
+        return windows_pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -176,6 +187,26 @@ def pid_alive(pid: int | None) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def windows_pid_alive(pid: int) -> bool:
+    """Asked of the kernel: on Windows os.kill(pid, 0) is not a probe, it ends the process."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ctypes.get_last_error() == 5                   # ERROR_ACCESS_DENIED: there, not ours
+    try:
+        code = wintypes.DWORD()
+        return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259   # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def read_pid(pidfile: Path) -> int | None:
@@ -203,7 +234,7 @@ def stop_pidfile(pidfile: Path, name: str, quiet: bool = False) -> None:
     stopped = False
     if pid:
         try:
-            os.kill(pid, signal.SIGTERM)
+            os.kill(pid, signal.SIGTERM)     # on Windows: TerminateProcess, no clean shutdown yet
             stopped = True
         except OSError:
             pass
@@ -213,11 +244,18 @@ def stop_pidfile(pidfile: Path, name: str, quiet: bool = False) -> None:
 
 
 def spawn(argv: list[str], logfile: Path, pidfile: Path) -> None:
-    """nohup ... >>log 2>&1 &, with the pid written down."""
+    """nohup ... >>log 2>&1 &, with the pid written down.
+
+    On Windows the child gets a hidden console of its own and its own process group, so closing
+    this terminal or pressing Ctrl+C in it does not end the daemon."""
     logfile.parent.mkdir(parents=True, exist_ok=True)
+    if paths.windows():
+        detach = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        detach = {"start_new_session": True}
     with logfile.open("ab") as log:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                   start_new_session=True)
+                                   **detach)
     pidfile.write_text(f"{process.pid}\n")
 
 
@@ -232,12 +270,12 @@ def start_watcher(here: Here, name: str) -> None:
 def start_watchers(here: Here) -> None:
     if managed() or tray_owns_children(here):
         return     # the tray (or the old units) start them
-    for name in DOORWAYS:
+    for name in doorways():
         start_watcher(here, name)
 
 
 def stop_watchers_pidfile(here: Here, quiet: bool = False) -> None:
-    for name in DOORWAYS:
+    for name in doorways():
         stop_pidfile(here.state / f"{name}.pid", name, quiet=quiet)
 
 
@@ -307,7 +345,18 @@ def cmd_widget(here: Here, extra: list[str]) -> int:
     strawberry = widgetbin.strawberry_cli()
     if strawberry:
         os.environ["STRAWBERRY_CLI"] = strawberry     # her menu's "Settings file…" and "Apply settings"
+    return hand_over(argv)
+
+
+def hand_over(argv: list[str]) -> int:
+    """Become `argv` (exec), so what the caller waits on is the widget or the repo's own hook.
+
+    Windows has no exec: os.execv there starts a new process and ends this one at once, so git
+    or the shell would see us finish first. There `argv` runs as a child and its code is ours.
+    """
     sys.stdout.flush()
+    if paths.windows():
+        return subprocess.call(argv)
     os.execv(argv[0], argv)
     return 0    # not reached
 
@@ -384,7 +433,7 @@ def status_watchers(here: Here, tray: int | None) -> None:
                   f"{' (' + str(child['restarts']) + ' restarts)' if child['restarts'] else ''}")
         return
     legacy = legacy_managed()
-    for name in DOORWAYS:
+    for name in doorways():
         if legacy:
             print(f"{name}: {systemctl('is-active', f'strawberry-{name}.service').stdout.strip()}")
         else:
@@ -708,6 +757,9 @@ def git_event_payload(hook: str, args: list[str], stdin: str = "") -> dict | Non
 
 def post_detached(url: str, payload: dict) -> None:
     """POST in a forked, session-less child that gives up after a second, so git never waits."""
+    if paths.windows():
+        post_in_child(url, payload)
+        return
     try:
         pid = os.fork()
     except OSError:
@@ -728,6 +780,25 @@ def post_detached(url: str, payload: dict) -> None:
         pass
     finally:
         os._exit(0)
+
+
+POST_CHILD = """import sys, urllib.request
+request = urllib.request.Request(sys.argv[1] + "/event", data=sys.argv[2].encode(),
+                                 headers={"Content-Type": "application/json"})
+urllib.request.urlopen(request, timeout=1).close()
+"""
+
+
+def post_in_child(url: str, payload: dict) -> None:
+    """The same POST where there is no fork (Windows): a separate Python, never waited for, with
+    no console window and no handle of ours, so git does not wait for it either."""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    try:
+        subprocess.Popen([sys.executable, "-c", POST_CHILD, url, json.dumps(payload)],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=flags, close_fds=True)
+    except OSError:
+        pass
 
 
 def repo_hook(hook: str) -> Path | None:
@@ -769,14 +840,37 @@ def cmd_git_event(hook: str, args: list[str]) -> int:
     if own is None:
         return 0
     if hook == "pre-push":
-        return subprocess.run([str(own), *args], input=stdin, text=True).returncode
-    sys.stdout.flush()
-    os.execv(str(own), [str(own), *args])
-    return 0    # not reached
+        if paths.windows():     # bytes: a text pipe there would hand the hook git's lines as CRLF
+            return subprocess.run(hook_argv(own, args), input=stdin.encode()).returncode
+        return subprocess.run(hook_argv(own, args), input=stdin, text=True).returncode
+    return hand_over(hook_argv(own, args))
+
+
+def hook_argv(hook: Path, args: list[str]) -> list[str]:
+    """How to run a repository's hook. On Windows through Git's own sh, as git itself does (a
+    script cannot be started directly there), with the path in forward slashes for its $0."""
+    if paths.windows() and hook.suffix.lower() != ".exe":
+        return [git_sh(), hook.as_posix(), *args]
+    return [str(hook), *args]
+
+
+def git_sh() -> str:
+    """Git for Windows' sh: on PATH inside a hook, else beside git (<Git>\\cmd\\git.exe, <Git>\\bin\\sh.exe)."""
+    found = shutil.which("sh")
+    if found:
+        return found
+    git = shutil.which("git")
+    if git:
+        candidate = Path(git).resolve().parents[1] / "bin" / "sh.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return "sh"
 
 
 def hook_text(hook: str, argv: list[str] | None = None) -> str:
     argv = argv or cli_argv()
+    if paths.windows():
+        argv = [Path(argv[0]).as_posix(), *argv[1:]]    # Git's sh reads C:/x/strawberry.exe, not C:\x
     return f"""#!/bin/sh
 {GIT_MARKER} (WIRING.md §5), written by `strawberry git-hooks install`.
 # Tells her, then runs the repository's own {hook} hook, if any; without strawberry it does nothing.
@@ -820,7 +914,7 @@ def cmd_git_hooks(action: str) -> int:
         path = hooks_dir / name
         if path.is_symlink():
             path.unlink()                            # the old symlink into a checkout
-        path.write_text(hook_text(name))
+        path.write_text(hook_text(name), encoding="utf-8", newline="\n")     # sh on Windows too: no CRLF
         path.chmod(0o755)
         print(f"wrote {path}")
     helper = hooks_dir / GIT_OLD_HELPER

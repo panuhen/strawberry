@@ -267,7 +267,7 @@ def settings() -> dict:
     if not path.exists():
         return {}
     try:
-        return tomllib.loads(path.read_text())
+        return tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         log.warning("could not read %s (%s); using defaults", path, exc)
         return {}

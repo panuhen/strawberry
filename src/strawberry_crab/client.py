@@ -73,7 +73,29 @@ class DaemonClient:
 def stop_on_signals(stopping: asyncio.Event) -> None:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stopping.set)
+        try:
+            loop.add_signal_handler(sig, stopping.set)
+        except NotImplementedError:
+            plain_signal_handler(loop, sig, stopping.set)
+    if hasattr(signal, "SIGBREAK"):
+        plain_signal_handler(loop, signal.SIGBREAK, stopping.set)
+
+
+def plain_signal_handler(loop: asyncio.AbstractEventLoop, sig: int, callback: Any, *args: Any) -> None:
+    """Where the loop has no add_signal_handler (Windows): a plain handler that hands the signal
+    to the loop. On Windows only Ctrl+C (SIGINT) and Ctrl+Break (SIGBREAK) reach a process this
+    way; os.kill(pid, SIGTERM) there is TerminateProcess, which nothing can catch."""
+
+    def handle(signum: int, frame: Any) -> None:
+        try:
+            loop.call_soon_threadsafe(callback, *args)
+        except RuntimeError:
+            pass     # the loop has closed already
+
+    try:
+        signal.signal(sig, handle)
+    except (ValueError, OSError):
+        pass     # not the main thread
 
 
 def configure_logging(level: str) -> None:

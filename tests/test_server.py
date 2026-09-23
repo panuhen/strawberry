@@ -1,4 +1,5 @@
 import asyncio
+import sys
 
 import pytest
 
@@ -465,9 +466,18 @@ async def test_a_stop_while_the_models_load_ends_serve_and_closes(daemon, monkey
 # Run as the tray's daemon child, stopped the way `systemctl --user stop strawberry-tray` stops
 # it: systemd signals the whole cgroup and the tray terminates the daemon a moment later, so the
 # second SIGTERM lands while aiohttp is closing the listening socket, before any on_shutdown hook.
-# Every ClientSession is counted, so the verdict does not hang on the garbage collector.
+# Every ClientSession is counted, so the verdict does not hang on the garbage collector. On
+# Windows, where SIGTERM is TerminateProcess and cannot be caught, the stop is Ctrl+Break.
+_STOP_SIGNAL = "SIGBREAK" if sys.platform == "win32" else "SIGTERM"
 _DOUBLE_SIGTERM_CHILD = """
 import asyncio, os, runpy, signal, sys, time
+
+if hasattr(signal, "SIGBREAK"):
+    def terminate():
+        signal.raise_signal(signal.SIGBREAK)
+else:
+    def terminate():
+        os.kill(os.getpid(), signal.SIGTERM)
 import aiohttp
 from aiohttp import web_runner
 from strawberry_crab.daemon import Daemon
@@ -485,14 +495,14 @@ real_start = Daemon.start
 
 async def start(self):
     await real_start(self)
-    asyncio.get_running_loop().call_later(0.2, os.kill, os.getpid(), signal.SIGTERM)
+    asyncio.get_running_loop().call_later(0.2, terminate)
 
 Daemon.start = start
 
 real_stop = web_runner.BaseSite.stop
 
 async def stop(self):
-    os.kill(os.getpid(), signal.SIGTERM)      # the tray's terminate()
+    terminate()                               # the tray's terminate()
     time.sleep(0.02)                          # delivered before the loop looks again
     await asyncio.sleep(0)                    # the loop reads it from its wakeup pipe
     await asyncio.sleep(0)                    # and dispatches it
@@ -543,7 +553,7 @@ mpris = false
     output = result.stdout + result.stderr
     assert "sessions: 3 opened, 0 left open" in output, output
     assert "Unclosed" not in output, output
-    assert "SIGTERM during shutdown ignored" in output, output
+    assert f"{_STOP_SIGNAL} during shutdown ignored" in output, output
     assert "shut down; sessions closed" in output, output
     assert result.returncode == 0, output
 

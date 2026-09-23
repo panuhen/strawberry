@@ -104,6 +104,7 @@ def test_event_carries_category_and_icon_when_present():
     assert "icon" not in to_event(parse_notify(notify()), NotificationsConfig())
 
 
+@pytest.mark.linux_only     # POSIX icon paths and the XDG icon theme; Windows toasts carry their own
 def test_resolve_icon_prefers_a_path_then_walks_the_theme(tmp_path):
     resolve_icon = notify_watch.resolve_icon
     direct = tmp_path / "direct.png"

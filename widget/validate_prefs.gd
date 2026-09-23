@@ -1,6 +1,6 @@
 extends SceneTree
 ## Where the preferences live and the one-time move out of Godot's user dir (WIRING.md §13).
-## Only throwaway files: XDG_CONFIG_HOME is pointed at a scratch dir for this process, and the
+## Only throwaway files: XDG_CONFIG_HOME (APPDATA on Windows) is pointed at a scratch dir for this process, and the
 ## "old" file is a scratch copy, never the real user://widget.cfg.
 ##
 ## godot --headless --path widget --script res://validate_prefs.gd
@@ -21,14 +21,18 @@ func check(ok: bool, message: String) -> void:
 func run() -> void:
 	var scratch := OS.get_user_data_dir().path_join("prefs_test_%d" % OS.get_process_id())
 	DirAccess.make_dir_recursive_absolute(scratch)
-	var saved_config := OS.get_environment("XDG_CONFIG_HOME")
-	OS.set_environment("XDG_CONFIG_HOME", scratch.path_join("config"))
+	# XDG_CONFIG_HOME decides the config dir, or APPDATA on Windows (paths.gd); the CLI run below
+	# inherits it, so its config.toml lands in the scratch dir too.
+	var variable := "APPDATA" if Paths.windows() else "XDG_CONFIG_HOME"
+	var saved_config := OS.get_environment(variable)
+	OS.set_environment(variable, scratch.path_join("config"))
 
-	# The XDG path, and the rule that a relative XDG variable falls back to the default.
-	check(Paths.prefs_file() == scratch.path_join("config/strawberry/widget.cfg"), "prefs should follow XDG_CONFIG_HOME, got " + Paths.prefs_file())
-	OS.set_environment("XDG_CONFIG_HOME", "relative/dir")
-	check(Paths.prefs_file() == OS.get_environment("HOME").path_join(".config/strawberry/widget.cfg"), "a relative XDG_CONFIG_HOME should fall back to ~/.config")
-	OS.set_environment("XDG_CONFIG_HOME", scratch.path_join("config"))
+	# The path, and the rule that a relative variable falls back to the default.
+	check(Paths.prefs_file() == scratch.path_join("config/strawberry/widget.cfg"), "prefs should follow %s, got %s" % [variable, Paths.prefs_file()])
+	OS.set_environment(variable, "relative/dir")
+	var fallback := Paths.home().path_join("AppData/Roaming" if Paths.windows() else ".config").path_join("strawberry/widget.cfg")
+	check(Paths.prefs_file() == fallback, "a relative %s should fall back to %s, got %s" % [variable, fallback, Paths.prefs_file()])
+	OS.set_environment(variable, scratch.path_join("config"))
 
 	# The widget itself uses that path when it has a display; headless it keeps its own file.
 	var widget: Node3D = (load("res://widget.tscn") as PackedScene).instantiate()
@@ -62,6 +66,6 @@ func run() -> void:
 		DirAccess.remove_absolute(path)
 	for dir in [scratch.path_join("config/strawberry"), scratch.path_join("config"), scratch]:
 		DirAccess.remove_absolute(dir)
-	OS.set_environment("XDG_CONFIG_HOME", saved_config)
+	OS.set_environment(variable, saved_config)
 	print("prefs checks: ", "PASSED" if failures.is_empty() else "FAILED %s" % str(failures))
 	quit(0 if failures.is_empty() else 1)
