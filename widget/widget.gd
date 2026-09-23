@@ -164,6 +164,8 @@ func setup_window() -> void:
 func update_passthrough() -> void:
 	if is_headless() or model == null:
 		return
+	if menu and menu.visible:
+		return     # the open menu takes the whole window; popup_hide brings the polygon back
 	var points := PackedVector2Array()
 	for node in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh := node as MeshInstance3D
@@ -172,6 +174,15 @@ func update_passthrough() -> void:
 		var aabb: AABB = mesh.global_transform * mesh.get_aabb()
 		for i in 8:
 			points.append(camera.unproject_position(aabb.get_endpoint(i)))
+	if Paths.windows():
+		# Windows cuts the window to this polygon (SetWindowRgn): what lies outside is neither
+		# clicked nor drawn. So the bubble and the badge are inside it while they show.
+		for corner in bubble.outline():
+			points.append(camera.unproject_position(corner))
+		if badge.visible:
+			var box: AABB = badge.global_transform * badge.get_aabb()
+			for i in 8:
+				points.append(camera.unproject_position(box.get_endpoint(i)))
 	if type_box and type_box.visible:
 		# The glass box sits below her; while it is open it takes clicks as well.
 		var rect := type_box.get_global_rect()
@@ -284,7 +295,8 @@ func restart_widget() -> void:
 	if is_headless():
 		arguments.append("--headless")
 	else:
-		arguments.append_array(["--display-driver", DisplayServer.get_name()])
+		# get_name() is "X11" or "Windows"; --display-driver takes only "x11" or "windows".
+		arguments.append_array(["--display-driver", DisplayServer.get_name().to_lower()])
 	if OS.has_feature("editor"):
 		arguments.append_array(["--path", ProjectSettings.globalize_path("res://")])
 	arguments.append("--")
@@ -400,6 +412,11 @@ func setup_bubble() -> void:
 	# so the text can grow upward as far as it likes without running into it.
 	badge.position = Vector3(0.5, 0.86, 0)
 	add_child(badge)
+	if Paths.windows():
+		# The window's region is its visible shape there (update_passthrough): it grows with a
+		# line and shrinks back after it.
+		bubble.started.connect(update_passthrough, CONNECT_DEFERRED)
+		bubble.finished.connect(update_passthrough, CONNECT_DEFERRED)
 
 ## World-space y of the top edge of the orthographic view (KEEP_WIDTH: height follows the aspect).
 func view_top() -> float:

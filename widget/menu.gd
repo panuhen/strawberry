@@ -107,7 +107,7 @@ func _on_pressed(id: int) -> void:
 		VOICES_FOLDER:
 			var dir := Paths.voices_dir()
 			DirAccess.make_dir_recursive_absolute(dir)
-			OS.shell_open("file://" + dir)
+			open_path(dir)
 		RESET_POSITION:
 			widget.reset_position()
 		QUIT:
@@ -124,7 +124,18 @@ func open_settings_file() -> void:
 			push_warning("%s config --init failed (%d): %s" % [Paths.cli(), code, "".join(output)])
 			widget.bubble.speak("I couldn't find the strawberry command to write my settings file.", "alert")
 			return
-	OS.shell_open("file://" + path)
+	open_path(path)
+
+## The desktop's own program for a file or folder: xdg-open's file:// URL on Linux. On Windows
+## ShellExecute takes a plain path; a .toml has no program set for it on a fresh install, so
+## what the shell cannot open goes to Notepad.
+func open_path(path: String) -> void:
+	if not Paths.windows():
+		OS.shell_open("file://" + path)
+		return
+	var native := path.replace("/", "\\")
+	if OS.shell_open(native) != OK and not DirAccess.dir_exists_absolute(path):
+		OS.create_process("notepad.exe", [native])
 
 ## "Apply settings": `strawberry restart`, which restarts the tray's unit (and with it the daemon)
 ## when she runs under it, or the daemon on its own. Never a script inside a checkout.
