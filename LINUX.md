@@ -44,7 +44,7 @@ tests, not on a desktop.
 | Widget | `update_passthrough()` returns early while the right-click menu is open (`popup_hide` brings the polygon back); the menu's `about_to_popup` still empties the polygon there, and is connected only off Windows. Restart widget passes `--display-driver` in lower case: `DisplayServer.get_name()` is "X11", and Godot accepts only "x11", so this was probably broken on Linux too. Everything else new in `widget.gd` (the pose-following window region, the bubble and badge in it) runs on Windows only. | `widget/widget.gd`, `widget/bubble.gd` |
 | Idle helper | `desktop_idle.py` has a Windows branch; the widget takes its Python from `STRAWBERRY_PYTHON` when set. The Linux path is unchanged. | `widget/desktop_idle.py`, `widget/paths.gd` |
 | Scripts | `check_phase1.sh` also runs under Git Bash (it picks `.venv/bin` on Linux). `build_widget.sh` picks the preset by host; `TARGET=windows` builds the other one. | `scripts/` |
-| CI and release | `ci.yml` has a `test-windows` job. `release.yml` has a `build-widget-windows` job, and the release waits for it and attaches the `.exe`. The Linux jobs and the `pypi` environment are unchanged. Neither Windows job has run on GitHub yet. | `.github/workflows/` |
+| CI and release | `ci.yml` has a `test-windows` job. `release.yml` has a `build-widget-windows` job, and the release waits for it and attaches the `.exe`. The Linux jobs and the `pypi` environment are unchanged. `test-windows` passed on its first run (2026-09-23); `build-widget-windows` runs at the first tag. | `.github/workflows/` |
 
 ## Checks to run on the Linux desktop
 
@@ -71,8 +71,8 @@ When they pass, tell the user; the user restarts `strawberry-tray.service` to ru
 
 ## Then the release
 
-1. Push `main` (done from Windows) and let `ci.yml` run. The `windows-latest` job runs there for
-   the first time.
+1. `main` was pushed from Windows and `ci.yml` passed on both jobs; push again after any change
+   made on Linux and let it run.
 2. Bump the version (`pyproject.toml` and `src/strawberry_crab/__init__.py`), turn
    `## [Unreleased]` in `CHANGELOG.md` into the version's section, update the compare links,
    `uv lock`, commit, push. 0.2.0 fits a new platform.
