@@ -403,12 +403,12 @@ class NotifyIcon:
 
     def _run(self) -> None:
         a = api()
+        instance = a.kernel32.GetModuleHandleW(None)
         try:
             try:
                 a.user32.SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
             except AttributeError:
                 pass
-            instance = a.kernel32.GetModuleHandleW(None)
             self._proc = a.WNDPROC(self._window_proc)
             window_class = a.WNDCLASSEXW(cbSize=ctypes.sizeof(a.WNDCLASSEXW), lpfnWndProc=self._proc,
                                          hInstance=instance, lpszClassName=WINDOW_CLASS)
@@ -429,6 +429,7 @@ class NotifyIcon:
             if self.hicon:
                 a.user32.DestroyIcon(self.hicon)
                 self.hicon = None
+            a.user32.UnregisterClassW(WINDOW_CLASS, instance)
             self.ready.set()
             return
         self.ready.set()
@@ -439,6 +440,9 @@ class NotifyIcon:
         if self.hicon:
             a.user32.DestroyIcon(self.hicon)
             self.hicon = None
+        # The class holds this icon's window procedure: left registered, the next icon in this
+        # process would find it (1410) and its messages would go to this one's closed window.
+        a.user32.UnregisterClassW(WINDOW_CLASS, instance)
 
     def _data(self, flags: int) -> NOTIFYICONDATAW:
         data = NOTIFYICONDATAW(cbSize=ctypes.sizeof(NOTIFYICONDATAW), hWnd=self.hwnd, uID=ICON_ID, uFlags=flags,
