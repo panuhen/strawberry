@@ -5,6 +5,7 @@ wrong: a signature that does not match the data is a runtime error on somebody e
 """
 
 import asyncio
+import sys
 import zlib
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from strawberry_crab.tray import Child, Children, Tray, TrayState, layout, menu_
 
 ITEM = DBusAddress(tray.ITEM_PATH, bus_name="org.kde.StatusNotifierItem-1-1", interface=tray.SNI_IFACE)
 MENU = DBusAddress(tray.MENU_PATH, bus_name="org.kde.StatusNotifierItem-1-1", interface=tray.MENU_IFACE)
+SLEEPER = [sys.executable, "-c", "import time; time.sleep(30)"]     # a child that stays up
 PROPS = DBusAddress(tray.ITEM_PATH, bus_name="org.kde.StatusNotifierItem-1-1", interface=tray.PROPS_IFACE)
 
 
@@ -374,7 +376,8 @@ def test_the_widget_child_is_the_binary_when_installed(tmp_path):
     binary = tmp_path / "strawberry-widget"
     specs = tray.child_specs(8771, None, resolve_widget=lambda: widgetbin.Widget("binary", binary))
     assert specs[-1].name == "widget"
-    assert specs[-1].argv == [str(binary), "--display-driver", "x11", "--", "--ws=ws://127.0.0.1:8771/ws"]
+    assert specs[-1].argv == [str(binary), *widgetbin.display_args(), "--", "--ws=ws://127.0.0.1:8771/ws"]
+    assert widgetbin.display_args() == (() if sys.platform == "win32" else ("--display-driver", "x11"))
     assert Children([])._env(specs[-1])["STRAWBERRY_TRAY"] == "1"
 
 
@@ -392,10 +395,13 @@ async def test_a_child_that_exits_is_started_again_and_stop_ends_it(tmp_path, mo
     monkeypatch.setattr(Children, "FIRST_BACKOFF_S", 0.01)
     monkeypatch.setattr(Children, "MAX_BACKOFF_S", 0.01)
     state = tmp_path / "tray.json"
-    quick = Child("quick", ["/bin/sh", "-c", "exit 7"])
+    quick = Child("quick", [sys.executable, "-c", "raise SystemExit(7)"])
     children = Children([quick], state_path=state)
     children.start()
-    await asyncio.sleep(0.2)
+    for _ in range(100):                     # each run is a Python start-up
+        await asyncio.sleep(0.05)
+        if quick.restarts >= 2:
+            break
     assert quick.restarts >= 2
     assert state.is_file() and '"name": "quick"' in state.read_text()
     await children.stop()
@@ -403,7 +409,7 @@ async def test_a_child_that_exits_is_started_again_and_stop_ends_it(tmp_path, mo
 
 
 async def test_stop_terminates_a_child_that_is_still_running(tmp_path):
-    children = Children([Child("sleeper", ["/bin/sh", "-c", "sleep 30"])], state_path=tmp_path / "tray.json")
+    children = Children([Child("sleeper", SLEEPER)], state_path=tmp_path / "tray.json")
     children.start()
     await asyncio.sleep(0.1)
     assert children.children[0].pid is not None
@@ -591,8 +597,8 @@ async def test_without_children_the_daemon_is_still_told(tmp_path, caplog):
 
 async def test_restart_child_restarts_just_that_one_at_once(tmp_path, monkeypatch):
     monkeypatch.setattr(Children, "FIRST_BACKOFF_S", 30.0)          # a crash would wait this long
-    watcher = Child("notify_watch", ["/bin/sh", "-c", "sleep 30"])
-    other = Child("mpris_watch", ["/bin/sh", "-c", "sleep 30"])
+    watcher = Child("notify_watch", SLEEPER)
+    other = Child("mpris_watch", SLEEPER)
     children = Children([watcher, other], state_path=tmp_path / "tray.json")
     children.start()
     await asyncio.sleep(0.1)

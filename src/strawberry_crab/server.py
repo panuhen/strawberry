@@ -25,6 +25,7 @@ from aiohttp import WSMsgType, web
 from aiohttp.web_log import AccessLogger
 
 from . import __version__, firstrun, paths
+from .client import plain_signal_handler
 from .config import Config, ConfigError
 from .contract import ContractError, Performance, anim_for
 from .daemon import Daemon
@@ -475,8 +476,12 @@ async def serve(app: web.Application, host: str, port: int) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, on_signal, sig)
-        except (NotImplementedError, RuntimeError, ValueError):
-            pass     # not the main thread (tests), or no signals on this platform
+        except NotImplementedError:
+            plain_signal_handler(loop, sig, on_signal, sig)     # Windows: Ctrl+C
+        except (RuntimeError, ValueError):
+            pass     # not the main thread (tests)
+    if hasattr(signal, "SIGBREAK"):
+        plain_signal_handler(loop, signal.SIGBREAK, on_signal, signal.SIGBREAK)   # Windows: Ctrl+Break
     # Left in place until the loop closes: a signal during cleanup is one more no-op, not a kill.
 
     runner = web.AppRunner(app, handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT_S,
