@@ -380,10 +380,12 @@ def test_each_system_gets_its_own_doorways(tmp_path):
     names = [c.name for c in tray.child_specs(8771, None, widget=False, resolve_widget=dev)]
     assert names == ["daemon", *doorways.for_system()]
     assert doorways.for_system("linux") == LINUX
-    assert doorways.for_system("win32") == ("smtc_watch", "toast_watch")   # media, notifications (WINDOWS.md)
+    assert doorways.for_system("win32") == ("smtc_watch", "toast_watch", "beat_watch")   # WINDOWS.md
     assert doorways.for_system("darwin") == ()
     windows = tray.child_specs(8771, None, widget=False, resolve_widget=dev, doorways=doorways.for_system("win32"))
     assert windows[1].argv[1:] == ["-m", "strawberry_crab.doorways.smtc_watch", "--daemon", "http://127.0.0.1:8771"]
+    # The same beat doorway on both systems; it picks its capture (beat_watch.backend).
+    assert windows[3].argv[1:] == ["-m", "strawberry_crab.doorways.beat_watch", "--daemon", "http://127.0.0.1:8771"]
 
 
 def test_the_widget_child_is_the_binary_when_installed(tmp_path):

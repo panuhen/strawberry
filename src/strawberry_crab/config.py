@@ -83,7 +83,7 @@ class VoiceConfig:
 @dataclass
 class BeatConfig:
     enabled: bool = True          # listen to the player's audio stream for the beat (doorways/beat_watch.py)
-    target: str = ""              # PipeWire node or application name; empty = the running player, auto
+    target: str = ""              # PipeWire node or app name (Windows: spotify, chrome); empty = the running player
     interval_s: float = 2.0       # how often the estimate goes to the widget
 
 
@@ -461,7 +461,7 @@ def default_toml() -> str:
         "",
         "[beat]",
         "enabled = true                 # listen to the player's own audio stream and dance to its beat",
-        'target = ""                    # PipeWire node/app name; empty = whichever player is running',
+        'target = ""                    # PipeWire node/app name (Windows: spotify, chrome); empty = whichever plays',
         "interval_s = 2.0",
         "",
         "[voice]",

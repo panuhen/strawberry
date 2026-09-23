@@ -38,7 +38,7 @@ TRAY_UNIT = "strawberry-tray.service"
 LEGACY_UNIT = "strawberryd.service"
 DAEMON_MODULE = "strawberry_crab.strawberryd"
 DOORWAYS = ("mpris_watch", "notify_watch", "beat_watch")   # = strawberry_crab.doorways.DOORWAYS, without importing it
-WINDOWS_DOORWAYS = ("smtc_watch", "toast_watch")          # = strawberry_crab.doorways.WINDOWS_DOORWAYS
+WINDOWS_DOORWAYS = ("smtc_watch", "toast_watch", "beat_watch")   # = strawberry_crab.doorways.WINDOWS_DOORWAYS
 OLD_UNITS = (LEGACY_UNIT, *(f"strawberry-{name}.service" for name in DOORWAYS))
 SESSION_ENV = ("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "DBUS_SESSION_BUS_ADDRESS")
 AUDITION_LINE = "James, hold the phone, the time is up! Your commit landed, nice work."
@@ -97,7 +97,7 @@ def cli_argv() -> list[str]:
 
 def doorways() -> tuple[str, ...]:
     """The doorways this system has (= strawberry_crab.doorways.for_system): the three D-Bus and
-    PipeWire ones on Linux, the media and notification ones on Windows so far, none elsewhere."""
+    PipeWire ones on Linux, the media, notification and beat ones on Windows, none elsewhere."""
     if sys.platform.startswith("linux"):
         return DOORWAYS
     return WINDOWS_DOORWAYS if sys.platform == "win32" else ()
