@@ -300,10 +300,18 @@ func set_skin(id: String) -> void:
 func reset_position() -> void:
 	if is_headless():
 		return
-	var usable := DisplayServer.screen_get_usable_rect()
+	# The corner of the screen she is on now, not the primary one: a second display stays hers.
+	var usable := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
 	var size := DisplayServer.window_get_size()
 	DisplayServer.window_set_position(usable.position + usable.size - size - Vector2i(24, 24))
 	save_settings()
+
+# The screen whose area holds `point`, or -1 when none does (a display that was unplugged).
+func screen_at(point: Vector2i) -> int:
+	for i in DisplayServer.get_screen_count():
+		if Rect2i(DisplayServer.screen_get_position(i), DisplayServer.screen_get_size(i)).has_point(point):
+			return i
+	return -1
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
@@ -624,14 +632,18 @@ func restore_settings() -> void:
 		return
 	get_window().always_on_top = always_on_top
 	# Best effort: X11 honours this, a Wayland compositor may not (WIRING.md §13).
-	var usable := DisplayServer.screen_get_usable_rect()
 	var size := DisplayServer.window_get_size()
+	var saved := have and config.has_section_key("window", "x")
+	var target: Vector2i
+	if saved:
+		target = Vector2i(int(config.get_value("window", "x")), int(config.get_value("window", "y")))
+	# Kept inside the screen she was saved on (a second display included); the primary one only
+	# when that screen is gone.
+	var screen := screen_at(target + size / 2) if saved else -1
+	var usable := DisplayServer.screen_get_usable_rect(screen if screen >= 0 else DisplayServer.get_primary_screen())
 	if usable.size.x <= 0 or usable.size.y <= 0:
 		return
-	var target: Vector2i
-	if have and config.has_section_key("window", "x"):
-		target = Vector2i(int(config.get_value("window", "x")), int(config.get_value("window", "y")))
-	else:
+	if not saved:
 		target = usable.position + usable.size - size - Vector2i(24, 24)
 	target.x = clampi(target.x, usable.position.x, usable.position.x + usable.size.x - size.x)
 	target.y = clampi(target.y, usable.position.y, usable.position.y + usable.size.y - size.y)
