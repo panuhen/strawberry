@@ -200,11 +200,17 @@ def mmdevapi():
     return _mmdevapi
 
 
+_com = threading.local()
+
+
 def com_init() -> None:
-    """COM on this thread, multithreaded (where winrt got here first, as it may, its choice stands)."""
+    """COM on this thread, once, multithreaded (where winrt got here first, its choice stands)."""
+    if getattr(_com, "ready", False):
+        return
     hr = ole32().CoInitializeEx(None, COINIT_MULTITHREADED)
     if hr < 0 and hr != RPC_E_CHANGED_MODE:
         raise ctypes.WinError(hr)
+    _com.ready = True
 
 
 # --- the completion handler -----------------------------------------------------------
