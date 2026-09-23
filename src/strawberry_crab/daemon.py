@@ -24,7 +24,7 @@ from .systemone import Gate, Route
 from .thinker import Thinker
 from .tools import Toolbox
 from .voice import Listener
-from .wake import WakeWatcher
+from . import wake
 
 log = logging.getLogger("strawberryd")
 
@@ -77,9 +77,10 @@ class Daemon:
         # Her memory across turns (§8b): the last few exchanges, given to whoever answers.
         self.ledger = Ledger(self.config.actions.ledger_turns, self.config.actions.ledger_age_s)
         self.background_tasks: set[asyncio.Task] = set()
-        # Resume from suspend (logind on the system bus): the models are loaded again before the
-        # first notification needs them (wake.py). Absent bus: one log line, nothing else.
-        self.wake = WakeWatcher(self.on_wake) if self.config.daemon.warm_on_wake else None
+        # Resume from suspend (logind on the system bus; Windows' power notification): the models
+        # are loaded again before the first notification needs them (wake.py, winwake.py). No bus,
+        # no registration: one log line, nothing else.
+        self.wake = wake.watcher(self.on_wake) if self.config.daemon.warm_on_wake else None
         self.wake_task: asyncio.Task | None = None
 
     def _default_reactor(self) -> Reactor:

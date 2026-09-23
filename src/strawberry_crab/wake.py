@@ -1,4 +1,4 @@
-"""Resume from suspend: logind's `PrepareForSleep(false)` on the system bus (WIRING.md §2, §8a).
+"""Resume from suspend: logind's `PrepareForSleep(false)` on the system bus (WIRING.md §2, §4, §8a).
 
 Ollama may unload its models while the machine sleeps, and the first call after a resume then
 waits for a cold load: embeddinggemma took ~13 s once, far past the gate's 2 s budget, and a
@@ -9,12 +9,16 @@ them (Daemon.warm_models).
 The system bus is optional. A container, a CI runner or a machine without logind simply has no
 warm-up on wake: `WakeWatcher.run()` logs one line and returns. A bus that goes away later (a
 dbus restart) is reconnected after `RECONNECT_S`.
+
+`watcher()` picks the system's watcher at runtime: this one on Linux, `winwake.PowerWatcher`
+(Windows' suspend and resume notification) on Windows. Both answer the same calls.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from typing import Awaitable, Callable
 
 try:
@@ -122,3 +126,12 @@ class WakeWatcher:
 
     def stats(self) -> dict[str, object]:
         return {"watching": self.connected, "resumes": self.resumes, "reason": self.reason or None}
+
+
+def watcher(on_resume: Callable[[], Awaitable[None] | None]):
+    """The resume watcher for this system; winwake is imported only on Windows."""
+    if sys.platform == "win32":
+        from .winwake import PowerWatcher
+
+        return PowerWatcher(on_resume)
+    return WakeWatcher(on_resume)
