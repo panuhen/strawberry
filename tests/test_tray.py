@@ -367,7 +367,9 @@ def test_the_children_are_the_daemon_the_doorways_and_the_widget(tmp_path):
     assert specs[3].argv[1:] == ["-m", "strawberry_crab.doorways.beat_watch", "--daemon", "http://127.0.0.1:8771"]
     assert specs[4].argv[1:] == ["-m", "strawberry_crab", "widget"]  # developer mode: the CLI imports and runs godot
     assert specs[4].env["STRAWBERRYD_PORT"] == "8771"
-    quiet = tray.child_specs(8771, None, widget=False, resolve_widget=dev, doorways=LINUX)
+    # Windows has no system Python for the widget's idle helper: it gets this interpreter.
+    assert specs[4].env.get("STRAWBERRY_PYTHON") == widgetbin.idle_python()
+    quiet =tray.child_specs(8771, None, widget=False, resolve_widget=dev, doorways=LINUX)
     assert [c.name for c in quiet][-1] == "beat_watch"
     config = tmp_path / "c.toml"
     assert tray.child_specs(8771, config, resolve_widget=dev)[0].argv[-2:] == ["--config", str(config)]

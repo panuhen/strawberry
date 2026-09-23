@@ -119,5 +119,8 @@ def plain_signal_handler(loop: asyncio.AbstractEventLoop, sig: int, callback: An
 
 
 def configure_logging(level: str) -> None:
+    from .winproc import utf8_streams
+
+    utf8_streams()      # Windows: a doorway's log file is its redirected stderr
     logging.basicConfig(level=level.upper(), format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
                         datefmt="%H:%M:%S")

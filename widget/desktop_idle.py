@@ -1,7 +1,8 @@
 """Read aggregate desktop idle time; never reads or records keys or mouse contents.
 
 One JSON result per invocation. Godot runs this off its rendering thread.
-X11 uses XScreenSaver; GNOME Wayland uses Mutter's aggregate idle monitor.
+X11 uses XScreenSaver; GNOME Wayland uses Mutter's aggregate idle monitor; Windows uses
+GetLastInputInfo, the time of the session's last input event.
 An unavailable monitor reports null, so automatic sleep stays disabled safely.
 """
 import ctypes
@@ -49,7 +50,25 @@ def gnome_idle():
     return int(match.group(1)) / 1000.0
 
 
+def windows_idle():
+    class LastInput(ctypes.Structure):
+        _fields_ = [('size', ctypes.c_uint), ('time', ctypes.c_uint32)]
+    user32 = ctypes.WinDLL('user32')
+    kernel32 = ctypes.WinDLL('kernel32')
+    kernel32.GetTickCount.restype = ctypes.c_uint32
+    info = LastInput(ctypes.sizeof(LastInput), 0)
+    if not user32.GetLastInputInfo(ctypes.byref(info)):
+        raise RuntimeError('GetLastInputInfo failed')
+    # Both are 32-bit millisecond tick counts, which wrap after 49.7 days.
+    return ((kernel32.GetTickCount() - info.time) & 0xFFFFFFFF) / 1000.0
+
+
 def sample():
+    if os.name == 'nt':
+        try:
+            return {'seconds': windows_idle(), 'source': 'windows'}
+        except (OSError, RuntimeError):
+            return {'seconds': None, 'source': 'unavailable'}
     # XWayland's counter excludes native Wayland input. Never use it on Wayland.
     wayland = os.environ.get('XDG_SESSION_TYPE') == 'wayland' or bool(os.environ.get('WAYLAND_DISPLAY'))
     try:

@@ -35,13 +35,14 @@ async def main() -> int:
     args = parser.parse_args()
 
     config = load(args.config or default_path())
-    phrases = json.loads(args.phrases.read_text())["phrases"]
+    phrases = json.loads(args.phrases.read_text(encoding="utf-8"))["phrases"]
     # The questions the daemon asks, the configured servers' adapter phrases included (ADAPTERS.md).
     adapters = load_adapters(config.tools.servers) if config.tools.enabled else {}
     gate = Gate(replace(config.gate, enabled=True), config.brain.ollama_url, examples=gate_examples(adapters))
     await gate.start()
     if not gate.ready:
         print(f"gate not ready: {gate.disabled_reason}", file=sys.stderr)
+        await gate.close()
         return 2
     misses = 0
     latencies = []

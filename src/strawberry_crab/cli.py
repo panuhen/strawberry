@@ -410,6 +410,9 @@ def cmd_widget(here: Here, extra: list[str]) -> int:
     strawberry = widgetbin.strawberry_cli()
     if strawberry:
         os.environ["STRAWBERRY_CLI"] = strawberry     # her menu's "Settings file…" and "Apply settings"
+    python = widgetbin.idle_python()
+    if python and not os.environ.get("STRAWBERRY_PYTHON"):
+        os.environ["STRAWBERRY_PYTHON"] = python      # Windows: runs desktop_idle.py for her sleep
     return hand_over(argv)
 
 
@@ -417,11 +420,13 @@ def hand_over(argv: list[str]) -> int:
     """Become `argv` (exec), so what the caller waits on is the widget or the repo's own hook.
 
     Windows has no exec: os.execv there starts a new process and ends this one at once, so git
-    or the shell would see us finish first. There `argv` runs as a child and its code is ours.
+    or the shell would see us finish first. There `argv` runs as a child and its code is ours,
+    tied to us by a job object, so ending us (the tray's restart, `strawberry stop`) ends it too.
     """
     sys.stdout.flush()
     if paths.windows():
-        return subprocess.call(argv)
+        from . import winproc
+        return winproc.call_tied(argv)
     os.execv(argv[0], argv)
     return 0    # not reached
 
@@ -716,9 +721,6 @@ def cmd_install_windows(here: Here) -> int:
     print(f"{'rewrote' if existed else 'wrote'} {link}: {what.command_line()}")
     if not what.windowless:
         print("note: no pythonw.exe beside this Python, so a console window stays open while she runs")
-    if osguard.unsupported_message() is not None:
-        print(f"note: Windows is not in the supported list yet, so at login the tray needs "
-              f"{osguard.OVERRIDE_ENV}=1 in your user environment (WINDOWS.md)")
     startup.start(what)
     if wait_daemon(here):
         print("installed: at login the Startup shortcut runs the tray, the daemon, the doorways and the widget")
@@ -1127,7 +1129,7 @@ def parser() -> argparse.ArgumentParser:
         prog="strawberry",
         description="Strawberry, the desktop crab. With no command: start the daemon and doorways if "
                     "needed, then open the widget.",
-        epilog="Settings: ~/.config/strawberry/config.toml (WIRING.md §15). STRAWBERRYD_PORT overrides the port.")
+        epilog=f"Settings: {paths.config_file()} (WIRING.md §15). STRAWBERRYD_PORT overrides the port.")
     from . import __version__
 
     top.add_argument("--version", action="version", version=f"strawberry {__version__}")
@@ -1140,7 +1142,7 @@ def parser() -> argparse.ArgumentParser:
                       "--fetch downloads the released widget binary")
     p.add_argument("--fetch", action="store_true",
                    help="download strawberry-widget for this version from the GitHub release, check its "
-                        "SHA-256 and install it in ~/.local/share/strawberry/widget/")
+                        f"SHA-256 and install it in {paths.widget_binary().parent}")
     p.add_argument("--version", dest="widget_version", metavar="V", default=None,
                    help="with --fetch: the release to fetch (default: this package's version)")
     add("daemon", "start the daemon + watchers only (idempotent)")
@@ -1153,7 +1155,7 @@ def parser() -> argparse.ArgumentParser:
     add("install", "start on login: one systemd user unit for the tray, autostart as a fallback "
                    "(Windows: a shortcut in the Startup folder)")
     add("uninstall", "undo install and stop the tray (she only runs when you launch her)")
-    p = add("config", "create ~/.config/strawberry/config.toml if missing, then open it in $EDITOR")
+    p = add("config", f"create {paths.config_file()} if missing, then open it in $EDITOR")
     p.add_argument("--init", action="store_true", help="only create it if missing and print its path "
                                                        "(what the widget's \"Settings file…\" runs)")
     add("listen", "talk to her once (what the hotkey runs); press again to stop early")
@@ -1206,6 +1208,10 @@ PASSTHROUGH = ("widget", "tray")
 
 def main(argv: list[str] | None = None) -> int:
     osguard.require_supported()
+    if paths.windows():
+        from .winproc import utf8_streams
+
+        utf8_streams()          # `strawberry doctor > doctor.txt`, and the tray's log
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv == ["listen"]:
         try:

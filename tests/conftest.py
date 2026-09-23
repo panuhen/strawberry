@@ -22,10 +22,10 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
-def allow_unsupported_os(monkeypatch):
-    """The CLI and the daemon run on a system osguard does not list yet (the Windows port);
-    tests/test_osguard.py removes this to see the refusal itself."""
-    monkeypatch.setenv(osguard.OVERRIDE_ENV, "1")
+def no_developer_override(monkeypatch):
+    """Linux and Windows are supported (osguard), so nothing here needs the override; one set in
+    the shell that runs the tests must not hide a refusal."""
+    monkeypatch.delenv(osguard.OVERRIDE_ENV, raising=False)
 
 
 @pytest.fixture(autouse=True)

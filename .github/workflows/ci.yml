@@ -1,5 +1,6 @@
-# Tests and a package build on every push to main and every pull request. No GPU wheels, no
-# Ollama, no session bus: tests/conftest.py keeps the tests off the desktop.
+# Tests and a package build on every push to main and every pull request, and the tests on
+# Windows too. No GPU wheels, no Ollama, no session bus: tests/conftest.py keeps the tests off
+# the desktop.
 name: ci
 
 on:
@@ -21,3 +22,15 @@ jobs:
       - run: uv sync --locked
       - run: uv run --no-sync pytest -q
       - run: uv build
+
+  test-windows:
+    # The same suite on Windows: the winrt, sounddevice and pywin32 wheels from the lock, real
+    # hidden Win32 windows, no microphone, no notification access asked for (tests/conftest.py).
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0   # setup-uv publishes no moving major tag
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - run: uv run --no-sync pytest -q -rs

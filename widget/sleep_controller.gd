@@ -11,7 +11,7 @@ var quiet_elapsed := 0.0
 var poll_elapsed := 0.0
 var probe := Thread.new()
 var monitor_enabled := true
-var python_path := "/usr/bin/python3"
+var python_path: String = preload("res://paths.gd").python()
 var helper_path := ""
 var last_sample_at := -1.0
 var sleep_started_at := 0.0
@@ -29,6 +29,8 @@ func _exit_tree() -> void:
 
 func read_idle() -> Dictionary:
 	var output: Array = []
+	if python_path == "":
+		return {"seconds": null, "source": "unavailable"}
 	var result := OS.execute(python_path, [helper_path], output)
 	if result == 0 and not output.is_empty():
 		var parsed: Variant = JSON.parse_string(str(output[0]))

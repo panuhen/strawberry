@@ -93,6 +93,9 @@ def child_specs(port: int, config: Path | None, widget: bool = True,
     strawberry = widgetbin.strawberry_cli()
     if strawberry:
         env["STRAWBERRY_CLI"] = strawberry
+    idle_python = widgetbin.idle_python()
+    if idle_python:
+        env["STRAWBERRY_PYTHON"] = idle_python     # Windows: runs desktop_idle.py for her sleep
     if found.kind == "binary":
         children.append(Child("widget", found.argv(port), env))
     else:

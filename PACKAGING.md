@@ -19,6 +19,7 @@ strawberry install                # optional: start on login
 Scope: Linux desktops with X11 or XWayland, PipeWire and `systemd --user`. That is GNOME and KDE on
 Ubuntu, Fedora, Arch and friends since ~2022. Windows/macOS are separate projects (the widget would
 run; the notification, media and audio-capture doorways would each need a native replacement).
+Windows has since been ported with the same package and commands (`WINDOWS.md`); macOS has not.
 
 ## Decisions (2026-09-22)
 
@@ -221,12 +222,14 @@ Evidence: `.github/workflows/release.yml` and `ci.yml` pass actionlint 1.7.7; `u
 2. Commit, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. `release.yml` runs: the tag must equal the version (else it fails before building), the tests,
    `uv build`, Godot 4.7.2 and the templates, `scripts/build_widget.sh`, the headless widget
-   acceptance, then a GitHub release `vX.Y.Z` with the wheel, the sdist,
-   `strawberry-widget-X.Y.Z-linux-x86_64` and its `.sha256`, and CHANGELOG.md's section as notes.
+   acceptance, the same on `windows-latest` for the Windows widget (with the tests there too),
+   then a GitHub release `vX.Y.Z` with the wheel, the sdist,
+   `strawberry-widget-X.Y.Z-linux-x86_64`, `strawberry-widget-X.Y.Z-windows-x86_64.exe`, their
+   `.sha256` files, and CHANGELOG.md's section as notes.
 4. The `publish-pypi` job waits for approval of the `pypi` environment: Actions → the run →
    *Review deployments* → approve. It uploads the wheel and sdist by trusted publishing.
 5. Check: `uv tool install strawberry-crab==X.Y.Z` in a clean environment, then
-   `strawberry widget --fetch` and `strawberry doctor`.
+   `strawberry widget --fetch` and `strawberry doctor`, on Linux and on Windows.
 
 A failed run before the release job leaves nothing behind: fix, delete the tag
 (`git push --delete origin vX.Y.Z`), tag again. After the GitHub release exists, delete the
