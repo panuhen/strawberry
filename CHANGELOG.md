@@ -74,6 +74,12 @@ each part works there.
   which accepts only the lower-case names.
 - `scripts/gate_check.py` and `scripts/sensitive_check.py` read their phrase files in the
   locale's encoding; they are UTF-8.
+- With no music server configured she refused to talk about music: "any good techno from
+  <a country>?" got "Choosing music needs a music add-on" and "can you recommend some techno
+  artists" got "I don't know much about techno artists". Recommending music and talking about
+  artists, albums and genres are answered from her own knowledge again; only playing, queueing,
+  opening or saving particular music gets the line that it needs a music add-on. "What's a good
+  album to start with Radiohead" no longer reads as a request to play it.
 
 ## [0.1.1] - 2026-09-23
 
