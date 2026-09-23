@@ -1,7 +1,8 @@
 # Working on Strawberry
 
 Read `HANDOFF.md` first while it exists (temporary: the state of the work and what is next),
-then `WIRING.md` (how everything fits and why) and, for the Windows port, `WINDOWS.md`.
+then `WIRING.md` (how everything fits and why), `WINDOWS.md` (how it works on Windows) and,
+back on Linux after the Windows port, `LINUX.md` (what to check there).
 
 ## How the work is done
 

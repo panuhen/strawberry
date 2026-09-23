@@ -30,9 +30,17 @@ is done.
 - Known beat-tracker limits (WIRING §4c): half-time styles come out at the other octave, and
   two syncopated patterns land on the off-beat.
 
+- After step 8, trying it on the user's Windows machine found and fixed three more things: the
+  widget's claws were clipped mid-dance (the window region now follows her pose), she refused to
+  recommend music without a music server, and the first start did not answer for minutes while
+  whisper downloaded (it now loads in the background). All three are in `[Unreleased]`.
+- `main` was pushed from Windows; nothing is tagged or released.
+
 ## Next
 
-Before a release with Windows in it (the user decides when):
+Development moves back to Linux: `LINUX.md` has what changed in code Linux runs, the checks to run
+on the Linux desktop in order, and the release steps. In short, before a release with Windows in
+it (the user decides when):
 
 1. On the Linux machine, from a checkout of the merged `main`: `uv sync --inexact --group gpu`,
    `uv run pytest -q`, `scripts/check_phase1.sh`, `scripts/check_tray.sh`, and the widget by hand
