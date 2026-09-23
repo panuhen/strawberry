@@ -7,6 +7,8 @@ package and the widget binary.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-23
+
 ### Fixed
 
 - A notification that arrived just after a resume from suspend was dropped as "something
@@ -99,5 +101,6 @@ binary on GitHub.
 - The journal no longer gets a line every 2 s for the tray's `/health` poll and the beat
   watcher's tempo posts.
 
-[Unreleased]: https://github.com/panuhen/strawberry/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/panuhen/strawberry/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/panuhen/strawberry/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/panuhen/strawberry/releases/tag/v0.1.0
