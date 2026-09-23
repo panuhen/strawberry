@@ -21,12 +21,12 @@ Most of the system has nothing Linux-specific in it and carries over unchanged:
 | Notifications (`doorways/notify_watch.py`) | D-Bus `BecomeMonitor` on the session bus | `UserNotificationListener` (WinRT, via the `winrt-*` packages), polled: `doorways/toast_watch.py` (step 3). Access is the Settings switch "Let apps access your notifications". Reads other apps' toasts: app name and logo, title, body. |
 | Media (`mpris.py`, `doorways/mpris_watch.py`) | MPRIS over D-Bus | System Media Transport Controls: `GlobalSystemMediaTransportControlsSessionManager` (WinRT). Spotify, browsers and most players register with it. Play/pause/next/previous, now playing, change events. |
 | Beat capture (`doorways/beat_watch.py`) | `pw-record` of the player's own stream | WASAPI process loopback (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, Windows 10 2004+): capture one process's output, found through the SMTC session's app. `beat_track.py` is pure numpy and stays. |
-| Microphone (`voice.py`) | `pw-record` from the default source | WASAPI capture (e.g. `sounddevice`), 16 kHz mono. |
+| Microphone (`voice.py`) | `pw-record` from the default source | WASAPI capture through `sounddevice`, 16 kHz mono: `winmic.py` (step 6). |
 | Tray (`tray.py`, `bus.py`, `icons.py`) | StatusNotifierItem + dbusmenu over jeepney | A notification-area icon, Win32 `Shell_NotifyIconW` through ctypes, with the same menu: `wintray.py` (step 4). The menu and the supervisor are shared: `traymenu.py`, `supervisor.py`. |
 | Start on login (`cli.py install`) | systemd user unit + XDG autostart fallback | A shortcut in the Startup folder (`startup.py`, step 4); no scheduled task. |
 | Wake from sleep (`wake.py`) | logind `PrepareForSleep` on the system bus | `WM_POWERBROADCAST` / `PBT_APMRESUMEAUTOMATIC`, or `PowerRegisterSuspendResumeNotification`. |
 | Paths (`paths.py`, `widget/paths.gd`) | XDG dirs | `%APPDATA%\strawberry` (config), `%LOCALAPPDATA%\strawberry` (data, state, widget binary). |
-| Hotkey (`cli.py hotkey`) | a GNOME custom shortcut via `gsettings` | `RegisterHotKey` in the tray process. |
+| Hotkey (`cli.py hotkey`) | a GNOME custom shortcut via `gsettings` | `RegisterHotKey` in the tray process (`wintray.py`), the combination in `[voice] hotkey` (`hotkey.py`, step 6). |
 | App switcher entry (`cli.py install`) | `~/.local/share/applications/strawberry.desktop` | Not needed: the window icon (`config/icon`) and title are used directly. |
 | Widget window | `--display-driver x11`, transparent, always on top, click-through by polygon | Godot's Windows driver supports the same flags and `mouse_passthrough_polygon`; drop the `x11` argument. Needs testing on a second display. |
 | Widget binary (`widgetbin.py`, `scripts/build_widget.sh`) | `strawberry-widget-<ver>-linux-x86_64` | `strawberry-widget-<ver>-windows-x86_64.exe`; `PLATFORM` chosen by OS. |
@@ -337,6 +337,92 @@ Left:
   Linux Restart row does.
 - The Startup folder is taken from `%APPDATA%`, not the `FOLDERID_Startup` known folder, so a
   redirected Startup folder is not followed.
+
+## Step 6: where it stands
+
+Done:
+
+- Recording: `voice.capture()` is now the loop both systems share (0.1 s chunks, the noise
+  floor + 12 dB, `silence_s`, the poke, `max_seconds`, giving up after 3 s without data), fed by a
+  `read(timeout)` callable. Linux feeds it from pw-record exactly as before. Windows feeds it from
+  `winmic.py`: a shared-mode WASAPI stream through `sounddevice` at 16 kHz, mono, s16, with
+  `WasapiSettings(auto_convert=True)`, so Windows converts from the device's own format and whisper
+  gets the same samples as on Linux. PortAudio's callback hands the blocks over a queue. The
+  `Listener` picks the pair (recorder, microphone) by system (`voice.default_backend`).
+- The input: `[voice] source` as a case-insensitive fragment of the device's name, else the WASAPI
+  default recording device, else the first input. The default is used as it is: on Windows it is
+  a real input, not the speaker monitor it is on a PipeWire desktop. `bluetooth` does nothing:
+  Windows switches a headset to its hands-free profile itself when its microphone is opened. A
+  device that is gone between the pick and the recording falls back to the default; none at all
+  is "I can't find a microphone.".
+- Dependency: `sounddevice>=0.5; sys_platform == 'win32'` (0.5.6, MIT; its Windows wheels carry
+  PortAudio, MIT; it pulls in cffi, MIT-0). Linux stays on pw-record: its `--target` source names,
+  the monitor-source rule and the Bluetooth profile switch are PipeWire's, and PortAudio on Linux
+  would reach PipeWire through its ALSA plugin without them. sounddevice is imported only when a
+  microphone is picked or opened; `tests/test_imports.py` imports everything without it and checks
+  that building a `Listener` does not load it.
+- Whisper on CUDA: with the toolkit on PATH (this machine has CUDA 12.8 there) it worked with no
+  preload at all, from the toolkit's cuBLAS. With only the gpu wheels it failed at the first
+  transcription with `RuntimeError: Library cublas64_12.dll is not found or cannot be loaded`:
+  the wheels keep their DLLs in `nvidia\<name>\bin`, where the loader does not look.
+  `preload_cuda_libraries` now loads `cublasLt64_12.dll` then `cublas64_12.dll` from there by path
+  (a DLL already loaded is what a later load by name gets), and adds the `bin` directories to
+  PATH and to the DLL search path (`os.add_dll_directory`). cuDNN is not preloaded: ctranslate2
+  4.8.2's Windows wheel carries its own `cudnn64_9.dll` (9.10), and transcription loaded no other
+  cuDNN DLL. A missing `nvidia` package is now "none found" rather than a `ModuleNotFoundError`.
+- Measured 2026-09-23, RTX 3090, driver 610.88, the toolkit taken off PATH, `small` from the
+  Hugging Face cache, `int8_float16`, `language = "en"`, the VAD on, a 4.5 s sentence spoken by
+  Windows' own speech synthesiser to a 16 kHz WAV ("Play something by Daft Punk, and turn the
+  volume down a little."): loaded in 1.2 s, the first transcription 0.4-0.5 s, then 0.22-0.30 s,
+  word for word each time. The CPU (`int8`) took 1.4 s.
+- The hotkey: the tray's hidden window registers `[voice] hotkey` with `RegisterHotKey`
+  (`MOD_NOREPEAT`) and turns WM_HOTKEY into a bare `POST /listen` (`cli.listen_fast`, what
+  `strawberry listen` sends). The syntax is GNOME's (`hotkey.py`: `<Control><Alt>space`;
+  `Ctrl+Alt+Space` is read too; letters, digits, F1-F24 and named keys, at least one modifier).
+  "" is the default and "off" none; a value that does not parse is a config error. The tray reads
+  it again when config.toml changes and re-registers. A combination someone holds is one warning
+  in `tray.log` and the tray runs on.
+- The default is `<Control><Alt>space`. Linux's `<Super><Shift>space` cannot be had: RegisterHotKey
+  on this machine refused Win+Shift+Space, Win+Space, Win+Shift+S, Win+L and Win+E with 1409
+  (`ERROR_HOTKEY_ALREADY_REGISTERED`); Windows keeps Win-key combinations for itself, and
+  Win+Shift+Space switches back through the input languages. Ctrl+Alt+Space, Ctrl+Shift+Space and
+  Win+Alt+Space registered. Ctrl+Shift+Space is taken inside many apps, and PowerToys' Command
+  Palette uses Win+Alt+Space by default. On layouts with AltGr, AltGr+Space is Ctrl+Alt+Space too.
+- `strawberry hotkey [COMBO] [--remove]` on Windows checks the combination and writes
+  `[voice] hotkey` through configedit (comments kept, validated, backed up); it cannot register
+  from its own process, since a hotkey belongs to the window that registers it. With no COMBO it
+  sets the default, as on Linux.
+- Tests: `tests/test_winmic.py` (a fake sounddevice: the pick, the stream asked for, a recording
+  through the callback, a poke, a silent device, a device that will not open);
+  `tests/test_hotkey.py` (the syntax, the setting, the CLI); `tests/test_wintray.py` (the tray
+  following config changes with a fake icon, and on Windows a real hidden window registering
+  Ctrl+Alt+Shift+F24, hearing a posted WM_HOTKEY, and logging a combination already held);
+  `tests/test_voice.py` (`capture()` alone, the Windows preload). `tests/conftest.py` makes the
+  real microphone unreachable and refuses any real hotkey but F24, which no keyboard has.
+- Seen live 2026-09-23: a throwaway daemon (port 8786, throwaway APPDATA and LOCALAPPDATA, voice
+  off, `[actions] mpris = false`, `[notifications] only_apps` and `[media] only` naming nothing
+  real) and a throwaway `--tray --no-children` with `hotkey = "<Control><Alt><Shift>F24"`: the tray
+  logged `hotkey <Control><Alt><Shift>F24 registered: it runs listen`; a WM_HOTKEY posted to its
+  window (no keys pressed or sent) reached the daemon as `POST /listen` (503, voice off) within
+  0.11 s; writing `hotkey = "off"` unregistered it within the poll; both stopped through their stop
+  events, and no window or process was left.
+- The microphone on this machine: PortAudio's WASAPI host lists no input and no default input,
+  and Windows has no active recording endpoint, so the live check could open no microphone;
+  `winmic` picks none and she would say she cannot find one. A 16 kHz mono stream with
+  `auto_convert` did open on the 48 kHz output device (a plain one is refused, `Invalid sample
+  rate`), which is the same conversion in the other direction.
+
+Left:
+
+- A real recording on Windows is untried (no microphone here): the level thresholds and the
+  WASAPI conversion of a real input, a USB or Bluetooth headset, a device taken in exclusive mode
+  by another app (it should give up after 3 s without data).
+- The microphone privacy switch (Settings > Privacy & security > Microphone, "Let desktop apps
+  access your microphone"): untried with it off, where opening the stream fails or Windows
+  delivers silence (then she says she did not catch that). Doctor should check it (step 7).
+- The hotkey is registered by the tray only; `strawberry daemon` by hand has none (`strawberry
+  listen` still works from anything that can run a command).
+- `[voice] hotkey` is ignored on Linux, where the GNOME shortcut holds the binding.
 
 ## Before starting on the Windows machine
 

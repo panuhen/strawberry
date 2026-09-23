@@ -26,6 +26,7 @@ Direct dependencies from `pyproject.toml`, with the licence each declares:
 | [mcp](https://github.com/modelcontextprotocol/python-sdk) | MIT | the MCP client for tool servers |
 | [numpy](https://numpy.org) | BSD-3-Clause (bundled parts 0BSD, MIT, Zlib, CC0-1.0) | the beat tracker |
 | [piper-tts](https://github.com/OHF-Voice/piper1-gpl) | **GPL-3.0-or-later** | text to speech (pulls in onnxruntime, MIT) |
+| [sounddevice](https://github.com/spatialaudio/python-sounddevice) | MIT | Windows only: the microphone through WASAPI; its Windows wheels carry [PortAudio](https://www.portaudio.com) (MIT) (pulls in cffi, MIT-0, and pycparser, BSD-3-Clause) |
 | [winrt-runtime, winrt-Windows.Foundation, winrt-Windows.Foundation.Collections, winrt-Windows.Media.Control](https://github.com/pywinrt/pywinrt) | MIT | Windows only: the System Media Transport Controls, for media (pulls in typing-extensions, PSF-2.0) |
 | [winrt-Windows.UI.Notifications, winrt-Windows.UI.Notifications.Management, winrt-Windows.ApplicationModel, winrt-Windows.Storage.Streams](https://github.com/pywinrt/pywinrt) | MIT | Windows only: other apps' toasts through UserNotificationListener, with the app's name and logo, for notifications |
 
@@ -35,7 +36,8 @@ separate package, and Strawberry's MIT code talks to it through its public Pytho
 redistribute an environment or image with both installed, the GPL applies to that distribution.
 
 Optional extra `strawberry-crab[gpu]`: `nvidia-cublas-cu12` and `nvidia-cudnn-cu12`, under the
-NVIDIA proprietary licence shipped in those wheels. They are only needed for whisper on CUDA.
+NVIDIA proprietary licence shipped in those wheels. They are only needed for whisper on CUDA. On
+Windows only cuBLAS is used; CTranslate2's Windows wheel carries its own cuDNN entry DLL.
 
 Development only (the `dev` group, not installed for users): pytest (MIT), pytest-aiohttp
 (Apache-2.0), pillow (MIT-CMU, for `scripts/render_icons.py`), jeepney (MIT, so the D-Bus tests
