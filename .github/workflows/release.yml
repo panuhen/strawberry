@@ -1,7 +1,8 @@
 # A release: push a tag vX.Y.Z whose X.Y.Z is the version in pyproject.toml (PACKAGING.md,
-# "Releasing"). This builds the wheel and sdist, runs the tests, exports the widget binary and
-# runs its headless acceptance, creates the GitHub release with all of it attached, then
-# publishes to PyPI once someone approves the `pypi` environment deployment.
+# "Releasing"). This builds the wheel and sdist, runs the tests (on Linux and on Windows), exports
+# the widget for Linux and for Windows and runs each one's headless acceptance, creates the GitHub
+# release with all of it attached, then publishes to PyPI once someone approves the `pypi`
+# environment deployment.
 #
 # PyPI uses trusted publishing (OIDC): no token or secret is stored anywhere. The PyPI project
 # trusts owner panuhen, repository strawberry, workflow release.yml, environment pypi.
@@ -19,6 +20,7 @@ env:
   # From the godotengine release's SHA512-SUMS.txt, so a changed download fails the build.
   GODOT_EDITOR_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
   GODOT_TEMPLATES_SHA512: ca4d71c4d7b81dfc15d1a98baa07534aa95b03fdda78a0075b06672e1648d2e5f40980c9adc28d23e1b92e732ee7bf3461997aa804af74ec2fcd7a93ccb84079
+  GODOT_WINDOWS_EDITOR_SHA512: 83decd58fdf67b9d657958a1ae6bf1929c20785315a81effe245874cdc57acb709bf868e00778a96984338c1b29dafdb453c6847747694621c6ecf5da2259993
 
 jobs:
   build-wheel:
@@ -96,8 +98,73 @@ jobs:
             dist/strawberry-widget-*-linux-x86_64.sha256
           if-no-files-found: error
 
+  build-widget-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash       # Git Bash: the same scripts as on Linux
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.12"
+      # The editor and the one template the Windows export needs, taken from the checked
+      # downloads; the cache is keyed on their SHA-512s, so a new pin downloads again.
+      - uses: actions/cache@v6
+        id: godot-cache
+        with:
+          path: ${{ runner.temp }}/godot
+          key: godot-windows-${{ env.GODOT_VERSION }}-${{ env.GODOT_WINDOWS_EDITOR_SHA512 }}-${{ env.GODOT_TEMPLATES_SHA512 }}
+      - name: Download Godot and its export templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          editor="Godot_v${GODOT_VERSION}-stable_win64.exe"
+          templates="Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          cd "$(cygpath -u "$RUNNER_TEMP")"
+          curl -fsSLo "$editor.zip" "$base/$editor.zip"
+          curl -fsSLo "$templates" "$base/$templates"
+          echo "$GODOT_WINDOWS_EDITOR_SHA512  $editor.zip" | sha512sum -c -
+          echo "$GODOT_TEMPLATES_SHA512  $templates" | sha512sum -c -
+          mkdir -p godot
+          python - "$editor.zip" "$templates" <<'EOF'
+          import sys, zipfile
+          editor, templates = sys.argv[1:]
+          with zipfile.ZipFile(editor) as z:
+              for name in z.namelist():
+                  if name.endswith(".exe"):
+                      open(f"godot/{name.rsplit('/', 1)[-1]}", "wb").write(z.read(name))
+          with zipfile.ZipFile(templates) as z:
+              for name in ("templates/windows_release_x86_64.exe", "templates/version.txt"):
+                  open(f"godot/{name.rsplit('/', 1)[-1]}", "wb").write(z.read(name))
+          EOF
+          rm "$editor.zip" "$templates"
+          ls -l godot
+      - name: Install Godot and the template
+        run: |
+          godot="$(cygpath -u "$RUNNER_TEMP")/godot"
+          dest="$(cygpath -u "$APPDATA")/Godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$dest"
+          cp "$godot/windows_release_x86_64.exe" "$godot/version.txt" "$dest/"
+          echo "GODOT=$godot/Godot_v${GODOT_VERSION}-stable_win64_console.exe" >> "$GITHUB_ENV"
+      - name: Export the widget
+        run: scripts/build_widget.sh
+      - name: Tests on Windows, and the headless acceptance of the exported .exe
+        run: |
+          uv sync --locked
+          uv run --no-sync pytest -q
+          name="$(basename "$(ls dist/strawberry-widget-*-windows-x86_64.exe)")"
+          SKIP_UNIT_TESTS=1 WIDGET="dist/$name" scripts/check_phase1.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: widget-windows
+          path: |
+            dist/strawberry-widget-*-windows-x86_64.exe
+            dist/strawberry-widget-*-windows-x86_64.exe.sha256
+          if-no-files-found: error
+
   release:
-    needs: [build-wheel, build-widget]
+    needs: [build-wheel, build-widget, build-widget-windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -107,7 +174,7 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Check the widget's checksum and name
+      - name: Check the widgets' checksums and names
         env:
           VERSION: ${{ needs.build-wheel.outputs.version }}
         run: |
@@ -116,6 +183,8 @@ jobs:
           test -f "strawberry-widget-$VERSION-linux-x86_64" || { echo "::error::no widget binary for $VERSION"; exit 1; }
           sha256sum -c "strawberry-widget-$VERSION-linux-x86_64.sha256"
           chmod +x "strawberry-widget-$VERSION-linux-x86_64"
+          test -f "strawberry-widget-$VERSION-windows-x86_64.exe" || { echo "::error::no Windows widget for $VERSION"; exit 1; }
+          sha256sum -c "strawberry-widget-$VERSION-windows-x86_64.exe.sha256"
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -135,7 +204,9 @@ jobs:
             --notes-file "$RUNNER_TEMP/notes.md" \
             dist/*.whl dist/*.tar.gz \
             "dist/strawberry-widget-$VERSION-linux-x86_64" \
-            "dist/strawberry-widget-$VERSION-linux-x86_64.sha256"
+            "dist/strawberry-widget-$VERSION-linux-x86_64.sha256" \
+            "dist/strawberry-widget-$VERSION-windows-x86_64.exe" \
+            "dist/strawberry-widget-$VERSION-windows-x86_64.exe.sha256"
 
   publish-pypi:
     # After the release, so `strawberry widget --fetch` finds the binary by the time anyone can
