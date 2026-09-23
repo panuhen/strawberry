@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import signal
+import sys
 import urllib.error
 import urllib.request
 from typing import Any
@@ -79,6 +80,25 @@ def stop_on_signals(stopping: asyncio.Event) -> None:
             plain_signal_handler(loop, sig, stopping.set)
     if hasattr(signal, "SIGBREAK"):
         plain_signal_handler(loop, signal.SIGBREAK, stopping.set)
+    if sys.platform == "win32":
+        listen_for_stop_request(loop, stopping.set)
+
+
+def listen_for_stop_request(loop: asyncio.AbstractEventLoop, callback: Any, *args: Any) -> None:
+    """Windows: `strawberry stop` and the tray stop us through a named event (winproc.py), which is
+    what SIGTERM is on Linux. The callback runs on the loop."""
+    from . import winproc
+
+    def handle() -> None:
+        try:
+            loop.call_soon_threadsafe(callback, *args)
+        except RuntimeError:
+            pass     # the loop has closed already
+
+    try:
+        winproc.listen_for_stop(handle)
+    except OSError as exc:
+        log.warning("no stop event (%s); only TerminateProcess can stop this process", exc)
 
 
 def plain_signal_handler(loop: asyncio.AbstractEventLoop, sig: int, callback: Any, *args: Any) -> None:

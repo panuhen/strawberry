@@ -233,12 +233,18 @@ def tray_owns_children(here: Here) -> bool:
     return tray_managed() or tray_pid(here) is not None or os.environ.get("STRAWBERRY_TRAY") == "1"
 
 
+STOP_TIMEOUT_S = 10.0       # Windows: how long a clean stop may take before TerminateProcess
+TRAY_STOP_TIMEOUT_S = 20.0  # ... for the tray, which stops its children first (5 s grace each)
+
+
 def stop_pidfile(pidfile: Path, name: str, quiet: bool = False) -> None:
     pid = read_pid(pidfile)
     stopped = False
-    if pid:
+    if pid and paths.windows():
+        stopped = windows_stop(pid, pidfile_stop_key(pidfile), STOP_TIMEOUT_S, name, quiet)
+    elif pid:
         try:
-            os.kill(pid, signal.SIGTERM)     # on Windows: TerminateProcess, no clean shutdown yet
+            os.kill(pid, signal.SIGTERM)
             stopped = True
         except OSError:
             pass
@@ -247,14 +253,36 @@ def stop_pidfile(pidfile: Path, name: str, quiet: bool = False) -> None:
     pidfile.unlink(missing_ok=True)
 
 
+def pidfile_stop_key(pidfile: Path) -> str:
+    """The stop event (winproc.py) of what spawn() started with this pidfile: its name and the
+    file's full path, so a throwaway state dir never answers for the user's own."""
+    import zlib
+
+    return f"{pidfile.stem}-{zlib.crc32(str(pidfile.absolute()).lower().encode()):08x}"
+
+
+def windows_stop(pid: int, key: str | None, timeout_s: float, name: str, quiet: bool = False) -> bool:
+    """Its stop event, then TerminateProcess if it has not gone in `timeout_s`. True if it was running."""
+    from . import winproc
+
+    outcome = winproc.stop(pid, key, timeout_s)
+    if outcome == "killed" and not quiet:
+        print(f"{name} did not stop within {timeout_s:.0f} s (or has no stop event); ended it", file=sys.stderr)
+    return outcome != "gone"
+
+
 def spawn(argv: list[str], logfile: Path, pidfile: Path) -> None:
     """nohup ... >>log 2>&1 &, with the pid written down.
 
     On Windows the child gets a hidden console of its own and its own process group, so closing
-    this terminal or pressing Ctrl+C in it does not end the daemon."""
+    this terminal or pressing Ctrl+C in it does not end the daemon, and the key of its stop event
+    (pidfile_stop_key), so `strawberry stop` can end it cleanly."""
     logfile.parent.mkdir(parents=True, exist_ok=True)
     if paths.windows():
-        detach = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
+        from .winproc import STOP_ENV
+
+        detach = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+                  "env": {**os.environ, STOP_ENV: pidfile_stop_key(pidfile)}}
     else:
         detach = {"start_new_session": True}
     with logfile.open("ab") as log:
@@ -315,15 +343,28 @@ def stop_daemon(here: Here) -> None:
         if systemctl("stop", LEGACY_UNIT, capture=False).returncode == 0:
             print("strawberryd stopped (systemd)")
         return
+    if stop_tray(here):
+        return
+    stop_pidfile(here.pidfile, "strawberryd")
+
+
+def stop_tray(here: Here, quiet: bool = False) -> bool:
+    """Stop a tray started by hand (or, on Windows, by the Startup shortcut); it stops its
+    children. True if one was running."""
     pid = tray_pid(here)
-    if pid:
+    if not pid:
+        return False
+    if paths.windows():
+        # Its stop event, keyed by the pid tray.json gives (the interpreter's own).
+        windows_stop(pid, None, TRAY_STOP_TIMEOUT_S, "the tray", quiet)
+    else:
         try:
             os.kill(pid, signal.SIGTERM)
-            print(f"tray stopped (pid {pid}, with its children)")
-            return
         except OSError:
-            pass
-    stop_pidfile(here.pidfile, "strawberryd")
+            return False
+    if not quiet:
+        print(f"tray stopped (pid {pid}, with its children)")
+    return True
 
 
 # --- commands: running her ------------------------------------------------------
