@@ -81,6 +81,7 @@ STATE_LABELS = {
 }
 NO_DAEMON = "strawberryd is not running"
 NOTIFY_CHILD = "notify_watch"     # the doorway that reads [notifications] body at its start
+NOTIFY_CHILDREN = (NOTIFY_CHILD, "toast_watch")   # ... on Linux, and on Windows
 
 
 # --- the menu, as data ------------------------------------------------------------
@@ -453,7 +454,7 @@ def child_specs(port: int, config: Path | None, widget: bool = True,
     children = [Child("daemon", daemon)]
     for module in (doorway_modules.for_system() if doorways is None else doorways):
         argv = [python, "-m", f"strawberry_crab.doorways.{module}", "--daemon", url]
-        if config and module == NOTIFY_CHILD:
+        if config and module in NOTIFY_CHILDREN:
             argv += ["--config", str(config)]      # the file "Message bodies" writes, not the XDG one
         children.append(Child(module, argv))
     if not widget:
@@ -822,8 +823,10 @@ class Tray:
             log.warning("message bodies: the daemon is not answering; it reads %s when it starts", mode)
         if self.children is None:
             log.warning("message bodies: --no-children, so restart notify_watch yourself to apply %s", mode)
-        elif self.children.restart_child(NOTIFY_CHILD):
-            log.info("message bodies: restarting %s", NOTIFY_CHILD)
+            return
+        for name in NOTIFY_CHILDREN:
+            if self.children.restart_child(name):
+                log.info("message bodies: restarting %s", name)
 
     def read_config(self) -> None:
         """The body mode from config.toml, re-read only when the file has changed."""

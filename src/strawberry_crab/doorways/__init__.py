@@ -4,10 +4,11 @@
     strawberry-doorway notify_watch     desktop notifications (D-Bus monitor)             Linux
     strawberry-doorway beat_watch       the player's audio stream -> tempo (PipeWire)     Linux
     strawberry-doorway smtc_watch       media players (System Media Transport Controls)   Windows
+    strawberry-doorway toast_watch      other apps' toasts (UserNotificationListener)     Windows
 
 `python -m strawberry_crab.doorways.<name>` is the same thing; the tray uses that form so every
 child runs on its own interpreter. The D-Bus watchers speak jeepney (pure Python), the Windows
-one winrt, and all of them reach the daemon over plain HTTP: a doorway that trips must never
+ones winrt, and all of them reach the daemon over plain HTTP: a doorway that trips must never
 take the websocket down with it. `for_system()` says which ones this system runs.
 """
 
@@ -20,8 +21,8 @@ from .. import osguard
 
 # In the order the tray starts them.
 DOORWAYS = ("mpris_watch", "notify_watch", "beat_watch")
-# The Windows port so far (WINDOWS.md): media only; notifications and the beat come later.
-WINDOWS_DOORWAYS = ("smtc_watch",)
+# The Windows port so far (WINDOWS.md): media and notifications; the beat comes later.
+WINDOWS_DOORWAYS = ("smtc_watch", "toast_watch")
 
 
 def for_system(platform: str | None = None) -> tuple[str, ...]:
