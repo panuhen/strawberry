@@ -380,7 +380,7 @@ def test_each_system_gets_its_own_doorways(tmp_path):
     names = [c.name for c in tray.child_specs(8771, None, widget=False, resolve_widget=dev)]
     assert names == ["daemon", *doorways.for_system()]
     assert doorways.for_system("linux") == LINUX
-    assert doorways.for_system("win32") == ("smtc_watch",)       # media only, so far (WINDOWS.md)
+    assert doorways.for_system("win32") == ("smtc_watch", "toast_watch")   # media, notifications (WINDOWS.md)
     assert doorways.for_system("darwin") == ()
     windows = tray.child_specs(8771, None, widget=False, resolve_widget=dev, doorways=doorways.for_system("win32"))
     assert windows[1].argv[1:] == ["-m", "strawberry_crab.doorways.smtc_watch", "--daemon", "http://127.0.0.1:8771"]
@@ -556,7 +556,7 @@ async def test_choosing_a_mode_writes_the_file_and_applies_it_live(tmp_path, cap
     assert len(backups) == 1 and backups[0].read_text() == USER_CONFIG
     # Live: the daemon re-reads [notifications], then the watcher restarts with the new mode.
     assert item.daemon.posts[-1] == ("/command", {"command": "reload_notifications"})
-    assert item.children.restarted == ["notify_watch"]
+    assert item.children.restarted == ["notify_watch", "toast_watch"]   # whichever this system runs
     assert item.state.body_mode == "glance"
     assert [c.label for c in body_rows(item.items)[1] if c.checked] == ["Glance"]
     assert "message bodies: glance" in caplog.text
@@ -575,7 +575,7 @@ async def test_a_missing_file_starts_as_the_template(tmp_path):
     assert tomllib.loads(text)["notifications"]["body"] == "react"
     assert "# Message bodies. off:" in text                           # the commented template, not a bare line
     assert list(path.parent.glob("*.bak-*")) == []                     # nothing to back up
-    assert item.children.restarted == ["notify_watch"]
+    assert item.children.restarted == ["notify_watch", "toast_watch"]   # whichever this system runs
 
 
 async def test_a_file_that_would_not_load_is_left_alone_and_nothing_is_applied(tmp_path):
@@ -642,3 +642,7 @@ def test_the_notification_watcher_reads_the_trays_config_file(tmp_path):
     assert "--config" not in specs["mpris_watch"].argv
     default = {c.name: c for c in tray.child_specs(8771, None, resolve_widget=dev, doorways=LINUX)}
     assert "--config" not in default["notify_watch"].argv
+    windows = {c.name: c for c in tray.child_specs(8771, config, resolve_widget=dev,
+                                                   doorways=doorways.for_system("win32"))}
+    assert windows["toast_watch"].argv[-2:] == ["--config", str(config)]
+    assert "--config" not in windows["smtc_watch"].argv

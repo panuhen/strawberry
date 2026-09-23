@@ -27,6 +27,7 @@ Direct dependencies from `pyproject.toml`, with the licence each declares:
 | [numpy](https://numpy.org) | BSD-3-Clause (bundled parts 0BSD, MIT, Zlib, CC0-1.0) | the beat tracker |
 | [piper-tts](https://github.com/OHF-Voice/piper1-gpl) | **GPL-3.0-or-later** | text to speech (pulls in onnxruntime, MIT) |
 | [winrt-runtime, winrt-Windows.Foundation, winrt-Windows.Foundation.Collections, winrt-Windows.Media.Control](https://github.com/pywinrt/pywinrt) | MIT | Windows only: the System Media Transport Controls, for media (pulls in typing-extensions, PSF-2.0) |
+| [winrt-Windows.UI.Notifications, winrt-Windows.UI.Notifications.Management, winrt-Windows.ApplicationModel, winrt-Windows.Storage.Streams](https://github.com/pywinrt/pywinrt) | MIT | Windows only: other apps' toasts through UserNotificationListener, with the app's name and logo, for notifications |
 
 **Piper is GPL.** The `piper-tts` package from 1.3 on is licensed GPL-3.0-or-later (it bundles
 espeak-ng). Strawberry does not copy or bundle it: the installer fetches it from PyPI as a

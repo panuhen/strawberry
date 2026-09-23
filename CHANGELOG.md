@@ -16,15 +16,21 @@ package and the widget binary.
 - Media on Windows, the second step of the port: play, pause, skip, previous and "what's
   playing" work with any player that shows in Windows' media controls (the System Media
   Transport Controls), and a new doorway, `smtc_watch`, makes her dance while music plays and
-  names each new track, as on Linux. `strawberry daemon` starts it on Windows; the notification
-  and beat doorways are still Linux-only. There is no volume control through it.
+  names each new track, as on Linux. `strawberry daemon` starts it on Windows; the beat doorway
+  is still Linux-only. There is no volume control through it.
+- Notifications on Windows, the third step of the port: a new doorway, `toast_watch`, reads
+  other apps' toasts from Windows' notification centre (the app's name and logo, the title and
+  the body) and hands them to the daemon exactly as the Linux doorway does, with the same
+  `[notifications]` settings, body modes and privacy checks. It needs "Let apps access your
+  notifications" on in Windows' privacy settings, and it checks for new toasts once a second.
+  `strawberry daemon` starts it on Windows beside the media doorway.
 
 ### Changed
 
 - The config file and the widget's preferences are read and written as UTF-8 whatever the
   system's locale.
-- `jeepney` is installed on Linux only, and the `winrt-*` packages for Windows' media controls on
-  Windows only.
+- `jeepney` is installed on Linux only, and the `winrt-*` packages for Windows' media controls
+  and notifications on Windows only.
 
 ## [0.1.1] - 2026-09-23
 

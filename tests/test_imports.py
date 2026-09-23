@@ -21,15 +21,18 @@ def imports_without(blocked: str, modules: list[str]) -> subprocess.CompletedPro
     return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
 
 
-@pytest.mark.parametrize("modules", [SHARED, ["strawberry_crab.smtc", "strawberry_crab.doorways.smtc_watch"]])
+WINDOWS = ["strawberry_crab.smtc", "strawberry_crab.doorways.smtc_watch", "strawberry_crab.doorways.toast_watch"]
+
+
+@pytest.mark.parametrize("modules", [SHARED, WINDOWS])
 def test_windows_code_imports_without_jeepney(modules):
     result = imports_without("jeepney", modules)
     assert result.returncode == 0, result.stderr
 
 
 def test_linux_code_imports_without_winrt():
-    result = imports_without("winrt", [*SHARED, "strawberry_crab.mpris", "strawberry_crab.smtc",
-                                       "strawberry_crab.doorways.smtc_watch"])
+    result = imports_without("winrt", [*SHARED, *WINDOWS, "strawberry_crab.mpris",
+                                       "strawberry_crab.doorways.notify_watch"])
     assert result.returncode == 0, result.stderr
 
 

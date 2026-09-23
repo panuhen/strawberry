@@ -56,6 +56,18 @@ def no_real_media_sessions(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_notification_listener(monkeypatch):
+    """Nor Windows' notification centre: the toast doorway would read the user's own toasts.
+    tests/test_toast_watch.py hands it a fake listener instead."""
+    from strawberry_crab.doorways import toast_watch
+
+    async def refuse():
+        raise toast_watch.ToastError("the notification centre is out of bounds in tests")
+
+    monkeypatch.setattr(toast_watch, "request_listener", refuse)
+
+
+@pytest.fixture(autouse=True)
 def throwaway_xdg_dirs(monkeypatch, tmp_path_factory):
     """No unit test may write the user's config, data or state: each gets its own XDG dirs.
 
