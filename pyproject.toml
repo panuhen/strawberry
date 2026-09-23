@@ -6,11 +6,14 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-keywords = ["desktop", "mascot", "assistant", "ollama", "linux"]
+keywords = ["desktop", "mascot", "assistant", "ollama", "linux", "windows"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: X11 Applications",
+    "Environment :: Win32 (MS Windows)",
     "Intended Audience :: End Users/Desktop",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",

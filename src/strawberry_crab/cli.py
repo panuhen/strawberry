@@ -719,9 +719,6 @@ def cmd_install_windows(here: Here) -> int:
     print(f"{'rewrote' if existed else 'wrote'} {link}: {what.command_line()}")
     if not what.windowless:
         print("note: no pythonw.exe beside this Python, so a console window stays open while she runs")
-    if osguard.unsupported_message() is not None:
-        print(f"note: Windows is not in the supported list yet, so at login the tray needs "
-              f"{osguard.OVERRIDE_ENV}=1 in your user environment (WINDOWS.md)")
     startup.start(what)
     if wait_daemon(here):
         print("installed: at login the Startup shortcut runs the tray, the daemon, the doorways and the widget")
