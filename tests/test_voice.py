@@ -13,7 +13,7 @@ import pytest
 from strawberry_crab.config import Config, VoiceConfig
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
-from strawberry_crab.voice import DIDNT_CATCH, Listener, Recording, dbfs
+from strawberry_crab.voice import DIDNT_CATCH, EARS_LOADING, Listener, Recording, dbfs
 
 
 class Sink:
@@ -58,7 +58,7 @@ def make_daemon(transcript: str = "hello there", recording: Recording | None = N
 async def test_session_listens_thinks_and_answers():
     daemon, sink = make_daemon("what time is it")
     await daemon.start()
-    assert daemon.listener.ready
+    assert await daemon.listener.loaded()
     assert daemon.listen() == {"listening": True}
     result = await daemon.listen_task
     states = [m["state"] for m in sink.got]
@@ -74,6 +74,7 @@ async def test_session_listens_thinks_and_answers():
 async def test_empty_transcript_gets_the_fixed_line():
     daemon, sink = make_daemon("", recording=fake_recording(speech=0.0, stopped_by="max"))
     await daemon.start()
+    await daemon.listener.loaded()
     daemon.listen()
     await daemon.listen_task
     assert sink.got[-1]["text"] == DIDNT_CATCH
@@ -92,6 +93,7 @@ async def test_second_poke_stops_the_recording_early():
 
     daemon, sink = make_daemon("stop that", recorder=slow_recorder)
     await daemon.start()
+    await daemon.listener.loaded()
     assert daemon.listen()["listening"] is True
     await stop_seen.wait()
     daemon.last_poke -= 1.0  # a deliberate second press, not key auto-repeat
@@ -104,11 +106,13 @@ async def test_second_poke_stops_the_recording_early():
 async def test_disabled_or_missing_microphone():
     daemon, _ = make_daemon(enabled=False)
     await daemon.start()
+    await daemon.listener.loaded()
     assert daemon.listen()["error"] == "disabled in config"
     await daemon.close()
 
     daemon, sink = make_daemon(source=None)
     await daemon.start()
+    await daemon.listener.loaded()
     daemon.listen()
     await daemon.listen_task
     assert sink.got[-1]["state"] == "talking" and "microphone" in sink.got[-1]["text"]
@@ -120,6 +124,7 @@ async def test_listen_route(aiohttp_client):
 
     daemon, sink = make_daemon("route test")
     client = await aiohttp_client(create_app(daemon))
+    await daemon.listener.loaded()
     response = await client.post("/listen")
     assert response.status == 200 and (await response.json()) == {"listening": True}
     await daemon.listen_task
@@ -143,9 +148,116 @@ async def test_whisper_load_failure_disables_voice_not_daemon():
     listener = Listener(VoiceConfig(enabled=True), transcriber_factory=boom)
     daemon = Daemon(reactor=CannedReactor(), config=config, listener=listener)
     await daemon.start()
-    assert not daemon.listener.ready
+    assert not await daemon.listener.loaded()
+    assert daemon.listener.stats()["phase"] == "idle" and "no model" in daemon.listener.stats()["reason"]
     assert "no model" in daemon.listen()["error"]
     await daemon.close()
+
+
+def slow_listener(release: threading.Event, cached: bool | None = True, model: str = "medium",
+                  fail: Exception | None = None):
+    """A Listener whose model takes until `release` is set to load (a first-start download)."""
+    started = threading.Event()
+
+    def factory(cfg):
+        started.set()
+        release.wait(10.0)
+        if fail is not None:
+            raise fail
+        return lambda audio, hotwords="": "hello after the load"
+
+    listener = Listener(VoiceConfig(enabled=True, model=model), transcriber_factory=factory,
+                        recorder=lambda *a, **k: fake_recording(), source_picker=lambda preferred: "alsa_input.test",
+                        model_cached=lambda name: cached)
+    return listener, started
+
+
+def quiet_config() -> Config:
+    config = Config()
+    config.brain.enabled = config.speech.enabled = config.gate.enabled = False
+    config.tools.enabled = config.thinker.enabled = False
+    config.actions.mpris = False
+    return config
+
+
+async def test_a_slow_whisper_load_does_not_hold_the_daemon_up(aiohttp_client):
+    # The first start with a model that is not cached downloads it (1.5 GB for medium): minutes
+    # in which the daemon used not to answer at all. Now the port answers at once, /health says
+    # whisper is loading, and the hotkey gets a line instead of nothing.
+    import time
+
+    from strawberry_crab.server import create_app
+
+    release = threading.Event()
+    listener, started = slow_listener(release, cached=False)
+    daemon = Daemon(reactor=CannedReactor(), config=quiet_config(), listener=listener)
+    sink = Sink()
+    daemon.hub.add(sink)  # type: ignore[arg-type]
+    try:
+        client = await asyncio.wait_for(aiohttp_client(create_app(daemon)), 2.0)   # startup is not held up
+        await asyncio.to_thread(started.wait, 5.0)
+        t0 = time.perf_counter()
+        health = await (await client.get("/health")).json()
+        assert time.perf_counter() - t0 < 0.2
+        voice = health["voice"]
+        assert voice["ready"] is False and voice["phase"] == "loading" and voice["load_s"] is not None
+        assert voice["reason"] == "loading whisper medium (first use: downloading ~1.5 GB from Hugging Face)"
+
+        response = await client.post("/listen")
+        assert response.status == 200
+        assert await response.json() == {"listening": False, "loading": voice["reason"]}
+        while not sink.got:
+            await asyncio.sleep(0.01)
+        assert sink.got[-1] == {"state": "talking", "text": EARS_LOADING, "emotion": "neutral"}
+        assert (await client.post("/listen")).status == 200          # a second press at once: said once
+        await asyncio.sleep(0.05)
+        assert [m.get("text") for m in sink.got].count(EARS_LOADING) == 1
+    finally:
+        release.set()
+    assert await daemon.listener.loaded()
+    assert daemon.listener.stats()["phase"] == "idle" and daemon.listener.stats()["reason"] is None
+    daemon.last_poke -= 1.0
+    response = await client.post("/listen")
+    assert await response.json() == {"listening": True}
+    await daemon.listen_task
+    assert sink.got[-1]["text"] == "You said: hello after the load"
+
+
+async def test_a_load_that_fails_after_the_wait_says_why(caplog):
+    release = threading.Event()
+    listener, _ = slow_listener(release, fail=RuntimeError("could not reach huggingface.co"))
+    daemon = Daemon(reactor=CannedReactor(), config=quiet_config(), listener=listener)
+    await daemon.start()
+    assert daemon.listener.loading and daemon.listener.stats()["reason"] == "loading whisper medium"
+    release.set()
+    assert not await daemon.listener.loaded()
+    assert "could not reach huggingface.co" in daemon.listener.stats()["reason"]
+    assert "could not reach" in daemon.listen()["error"]
+    await daemon.close()
+
+
+async def test_stopping_during_the_load_does_not_wait_for_it():
+    import time
+
+    release = threading.Event()
+    listener, started = slow_listener(release)
+    daemon = Daemon(reactor=CannedReactor(), config=quiet_config(), listener=listener)
+    await daemon.start()
+    await asyncio.to_thread(started.wait, 5.0)
+    t0 = time.perf_counter()
+    await daemon.close()
+    assert time.perf_counter() - t0 < 0.5
+    release.set()                                  # the thread ends later; what it returns is dropped
+    await asyncio.sleep(0.05)
+    assert daemon.listener.transcriber is None
+
+
+def test_whisper_cached_needs_no_network(tmp_path):
+    from strawberry_crab.voice import WHISPER_SIZES, whisper_cached
+
+    assert whisper_cached(str(tmp_path)) is True             # a model directory is on disk
+    assert whisper_cached("no-such-size") in (False, None)   # None: faster-whisper not installed
+    assert WHISPER_SIZES["medium"] == "1.5 GB" and WHISPER_SIZES["tiny"] == "75 MB"
 
 
 PACTL_CARDS = """Card #45
@@ -201,6 +313,7 @@ async def test_bluetooth_profile_is_switched_and_restored_around_recording():
                         recorder=recorder, microphone=microphone)
     daemon = Daemon(reactor=CannedReactor(), config=config, listener=listener)
     await daemon.start()
+    await daemon.listener.loaded()
     daemon.listen()
     await daemon.listen_task
     assert events == ["acquire bt=True", "record bluez_input.test.0", "restore"]
@@ -210,6 +323,7 @@ async def test_bluetooth_profile_is_switched_and_restored_around_recording():
 async def test_pokes_are_debounced():
     daemon, _ = make_daemon("x", recorder=lambda source, stop, *a: (stop.wait(2.0), fake_recording())[1])
     await daemon.start()
+    await daemon.listener.loaded()
     assert daemon.listen() == {"listening": True}
     for _ in range(30):                               # a held key: GNOME repeats the command ~30/s
         assert daemon.listen()["debounced"] is True
@@ -240,6 +354,7 @@ async def test_the_recogniser_gets_the_daemons_hotwords():
                         source_picker=lambda preferred: "alsa_input.test")
     daemon = Daemon(reactor=CannedReactor(), config=config, listener=listener)
     await daemon.start()
+    await daemon.listener.loaded()
     assert daemon.hotwords() == "Daft Punk, Lighthouse"
     daemon.listen()
     await daemon.listen_task

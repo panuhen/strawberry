@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import signal
 import sys
@@ -429,7 +430,7 @@ async def _check_version(daemon: Daemon, ws: web.WebSocketResponse, version: Any
 def run(config: Config) -> None:
     daemon = Daemon(config=config)
     app = create_app(daemon)
-    log.info("strawberryd listening on http://%s:%d (ws at /ws); config %s",
+    log.info("strawberryd starting on http://%s:%d; config %s",
              config.daemon.host, config.daemon.port, config.path or "defaults")
     if firstrun.pending():
         log.info("%s", firstrun.log_text(config))
@@ -446,6 +447,13 @@ def run(config: Config) -> None:
         finally:
             asyncio.set_event_loop(None)
             loop.close()
+    if daemon.listener.load_running:
+        # Stopped while whisper downloads: huggingface_hub's own download threads would hold the
+        # interpreter's exit until the model is complete, minutes for `medium`. The partial file
+        # is resumed on the next start.
+        log.info("whisper is still loading; exiting without waiting for it")
+        logging.shutdown()
+        os._exit(0)
 
 
 # Short shutdown: widgets are closed explicitly in on_shutdown, nothing else is long-lived.
@@ -494,6 +502,7 @@ async def serve(app: web.Application, host: str, port: int) -> None:
         listen_for_stop_request(loop, on_stop_request)       # Windows: `strawberry stop`, the tray (winproc.py)
     # Left in place until the loop closes: a signal during cleanup is one more no-op, not a kill.
 
+    started = time.monotonic()
     runner = web.AppRunner(app, handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT_S,
                            access_log_class=QuietAccessLogger)
     setup = asyncio.ensure_future(runner.setup())      # on_startup: the models load here
@@ -511,6 +520,9 @@ async def serve(app: web.Application, host: str, port: int) -> None:
         try:
             site = web.TCPSite(runner, host, port)
             await site.start()
+            # Only now does the port answer: the parts load first (whisper's in the background).
+            log.info("strawberryd listening on http://%s:%d (ws at /ws), %.1fs after the start",
+                     host, port, time.monotonic() - started)
             await stopped
         finally:
             await runner.cleanup()

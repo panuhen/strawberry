@@ -252,6 +252,12 @@ def test_daemon_check():
     assert by_label(checks, "connected widget").status == WARN
     assert by_label(checks, "daemon gate").detail == "not ready: could not embed"
     assert "daemon speech" not in [c.label for c in checks]            # off on purpose is not a problem
+    machine.urls["http://127.0.0.1:8770/health"]["voice"] = {
+        "enabled": True, "model": "medium", "ready": False, "phase": "loading", "load_s": 42.3,
+        "reason": "loading whisper medium (first use: downloading ~1.5 GB from Hugging Face)"}
+    checks, _ = doctor.check_daemon(config, machine)
+    loading = by_label(checks, "daemon voice")
+    assert loading.status == OK and "downloading ~1.5 GB" in loading.detail and "42 s so far" in loading.detail
 
 
 def test_a_failure_exits_one():

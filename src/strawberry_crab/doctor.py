@@ -716,6 +716,11 @@ def check_daemon(config, probes: Probes) -> tuple[list[Check], dict | None]:
         stats = health.get(key) or {}
         reason = stats.get("disabled_reason") or stats.get("reason")
         switched_on = stats.get("enabled") if "enabled" in stats else stats.get("model") is not None
+        if slot == "voice" and stats.get("phase") == "loading":
+            # Not a fault: whisper loads in the background (a first start downloads it first).
+            so_far = f", {stats['load_s']:.0f} s so far" if isinstance(stats.get("load_s"), (int, float)) else ""
+            checks.append(Check(OK, "daemon voice", f"{reason or 'loading whisper'}{so_far}; she listens when it is done"))
+            continue
         if switched_on and stats.get("ready") is False and reason:
             checks.append(Check(WARN, f"daemon {slot}", f"not ready: {reason}", "see the journal, then strawberry restart"))
     return checks, health

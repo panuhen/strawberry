@@ -9,6 +9,9 @@ bare `POST /listen`. One session:
     talking     the transcript enters the normal event path as source=voice, so the brain
                 answers in her voice; an empty transcript gets a fixed "didn't catch that"
 
+The model loads in a thread of its own at start, so the daemon answers meanwhile (a first start
+downloads it, 1.5 GB for `medium`); until then /listen gets EARS_LOADING.
+
 Recording and transcription run in worker threads. Everything about audio devices and models
 is behind small callables so the flow is unit-tested without a microphone or a model.
 """
@@ -319,6 +322,51 @@ def _preload_windows_dlls(bin_dir: Path) -> list[str]:
     return loaded
 
 
+# What faster-whisper downloads for each size (model.bin and the tokenizer, Hugging Face's own
+# numbers rounded), for the first-start line and `strawberry setup`. A path or an unknown name: "".
+WHISPER_SIZES = {
+    "tiny": "75 MB", "tiny.en": "75 MB", "base": "145 MB", "base.en": "145 MB",
+    "small": "480 MB", "small.en": "480 MB", "distil-small.en": "335 MB",
+    "medium": "1.5 GB", "medium.en": "1.5 GB", "distil-medium.en": "790 MB",
+    "large-v1": "3.1 GB", "large-v2": "3.1 GB", "large-v3": "3.1 GB", "large": "3.1 GB",
+    "distil-large-v2": "1.5 GB", "distil-large-v3": "1.5 GB", "distil-large-v3.5": "1.5 GB",
+    "large-v3-turbo": "1.6 GB", "turbo": "1.6 GB",
+}
+EARS_LOADING = "I'm still getting my ears on."   # /listen while whisper loads
+
+
+def whisper_cached(model: str) -> bool | None:
+    """True when faster-whisper has `model` on disk (a path, or a size in the Hugging Face
+    cache), False when loading it would download it first, None when faster-whisper is not
+    installed. Local files only: nothing goes to huggingface.co."""
+    if os.path.isdir(model):
+        return True
+    try:
+        from faster_whisper.utils import download_model
+    except ImportError:
+        return None
+    try:
+        snapshot = download_model(model, local_files_only=True)
+    except Exception:  # not in the cache (huggingface_hub's LocalEntryNotFoundError), or no such size
+        return False
+    # An interrupted download leaves the snapshot without its model.bin.
+    return (Path(snapshot) / "model.bin").is_file()
+
+
+def fetch_whisper(model: str) -> str:
+    """Download `model` into the Hugging Face cache with its progress bars on this terminal
+    (`strawberry setup`; faster-whisper's own download is silent). Returns the snapshot path."""
+    from faster_whisper import utils
+
+    repo = getattr(utils, "_MODELS", {}).get(model)
+    if repo is None:                      # a repo id, or a faster-whisper without the table
+        return utils.download_model(model)
+    import huggingface_hub
+
+    return huggingface_hub.snapshot_download(
+        repo, allow_patterns=["config.json", "preprocessor_config.json", "model.bin", "tokenizer.json", "vocabulary.*"])
+
+
 def whisper_transcriber(voice: VoiceConfig) -> Transcriber:
     """Load faster-whisper once; import is local so tests never need the package or a model."""
     if voice.device in ("cuda", "auto"):
@@ -343,6 +391,35 @@ def whisper_transcriber(voice: VoiceConfig) -> Transcriber:
     return transcribe
 
 
+def in_thread(fn: Callable[[], Any], name: str) -> asyncio.Future:
+    """`fn()` in a daemon thread of its own, as a future of this loop. Not asyncio.to_thread: the
+    loop's executor is joined at interpreter exit, so a stop during a download would wait for it."""
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future = loop.create_future()
+
+    def settle(result: Any, exc: BaseException | None) -> None:
+        if future.done():             # cancelled meanwhile (the daemon is stopping)
+            return
+        if exc is not None:
+            future.set_exception(exc)
+        else:
+            future.set_result(result)
+
+    def work() -> None:
+        result, error = None, None
+        try:
+            result = fn()
+        except Exception as exc:  # noqa: BLE001 - handed to the loop
+            error = exc
+        try:
+            loop.call_soon_threadsafe(settle, result, error)
+        except RuntimeError:          # the loop is closed: the daemon stopped before the load ended
+            pass
+
+    threading.Thread(target=work, name=name, daemon=True).start()
+    return future
+
+
 class Listener:
     def __init__(
         self,
@@ -351,9 +428,12 @@ class Listener:
         recorder: Callable[..., Recording] | None = None,
         source_picker: Callable[[str], str | None] | None = None,
         microphone: Callable[[str, bool], tuple[str | None, Callable[[], None]]] | None = None,
+        model_cached: Callable[[str], bool | None] | None = None,
     ) -> None:
         self.config = config
         self.transcriber_factory = transcriber_factory or whisper_transcriber
+        # Whether the load will download first; unknown (None) for an injected factory.
+        self.model_cached = model_cached or (whisper_cached if transcriber_factory is None else (lambda model: None))
         system_recorder, system_microphone = default_backend()
         self.recorder = recorder or system_recorder
         # Tests inject a plain picker; production acquires the mic (Bluetooth profile switch included).
@@ -366,12 +446,16 @@ class Listener:
         self.transcriber: Transcriber | None = None
         self.stop = threading.Event()
         self.busy = False
-        self.phase = "idle"          # idle | listening | thinking
+        self.phase = "idle"          # loading | idle | listening | thinking
         self.sessions = 0
         self.empty = 0
         self.last_transcript: str | None = None
         self.last_ms = 0.0
         self.load_s: float | None = None
+        self.load_task: asyncio.Task | None = None
+        self.load_done = threading.Event()   # set by the load's thread when it returns, even after close()
+        self.load_started = 0.0
+        self.loading_reason = ""     # what /health says while whisper loads
         self.bluetooth_ok = True     # cleared after a Bluetooth mic delivers nothing (SCO failure); analog then
         self.disabled_reason: str | None = None if config.enabled else "disabled in config"
 
@@ -379,24 +463,90 @@ class Listener:
     def ready(self) -> bool:
         return self.transcriber is not None and self.disabled_reason is None
 
+    @property
+    def loading(self) -> bool:
+        return self.load_task is not None and not self.load_task.done()
+
+    @property
+    def load_running(self) -> bool:
+        """The load's thread is still at work (also after close() gave up on it)."""
+        return self.load_task is not None and not self.load_done.is_set()
+
+    @property
+    def reason(self) -> str | None:
+        """Why she cannot listen now: off, failed, or still loading; None when ready."""
+        if self.disabled_reason:
+            return self.disabled_reason
+        return self.loading_reason if self.loading else None
+
     async def start(self) -> None:
+        """Start loading whisper and return: the load runs in a thread of its own and the daemon
+        answers meanwhile. A model not in the Hugging Face cache is downloaded first (1.5 GB for
+        `medium`), which took minutes on a first start while the daemon did not answer at all."""
         if not self.config.enabled:
             log.info("voice disabled in config")
             return
-        started = time.perf_counter()
+        self.phase = "loading"
+        self.loading_reason = f"loading whisper {self.config.model}"
+        self.load_started = time.perf_counter()
+        self.load_task = asyncio.get_running_loop().create_task(self._load())
+
+    async def _load(self) -> None:
+        downloaded: list[bool | None] = [None]
+
+        def load() -> Transcriber:
+            try:
+                return work()
+            finally:
+                self.load_done.set()
+
+        def work() -> Transcriber:
+            cached = self.model_cached(self.config.model)
+            downloaded[0] = None if cached is None else not cached
+            where = f"{self.config.model} ({self.config.device}/{self.config.compute_type})"
+            if cached is False:
+                size = WHISPER_SIZES.get(self.config.model)
+                self.loading_reason = (f"loading whisper {self.config.model} (first use: downloading "
+                                       f"{'~' + size if size else 'it'} from Hugging Face)")
+                log.info("voice: whisper %s is not in the cache; downloading %s first, in the background",
+                         where, f"~{size}" if size else "it")
+            else:
+                log.info("voice: loading whisper %s in the background", where)
+            return self.transcriber_factory(self.config)
+
         try:
-            self.transcriber = await asyncio.to_thread(self.transcriber_factory, self.config)
+            self.transcriber = await in_thread(load, "whisper-load")
         except Exception as exc:  # missing package, model download failure, bad device
             self.disabled_reason = f"whisper failed to load: {exc}"
-            log.error("%s", self.disabled_reason)
+            log.error("%s (after %.1fs)", self.disabled_reason, time.perf_counter() - self.load_started)
             return
-        self.load_s = time.perf_counter() - started
-        log.info("voice: whisper %s (%s/%s) ready in %.1fs", self.config.model, self.config.device,
-                 self.config.compute_type, self.load_s)
+        finally:
+            if self.phase == "loading":
+                self.phase = "idle"
+        self.load_s = time.perf_counter() - self.load_started
+        how = {True: "downloaded and loaded", False: "loaded from the cache"}.get(downloaded[0], "loaded")
+        log.info("voice: whisper %s (%s/%s) ready in %.1fs (%s)", self.config.model, self.config.device,
+                 self.config.compute_type, self.load_s, how)
+
+    async def loaded(self) -> bool:
+        """Wait for the load that start() began (the tests); True when she can listen."""
+        if self.load_task is not None:
+            await asyncio.shield(self.load_task)
+        return self.ready
 
     async def close(self) -> None:
         self.stop.set()
+        if self.load_task is not None and not self.load_task.done():
+            # The thread itself cannot be stopped; it is a daemon thread, so the exit does not
+            # wait for a download to finish, and what it returns is dropped.
+            self.load_task.cancel()
         self.transcriber = None
+
+    def load_seconds(self) -> float | None:
+        """How long whisper took to load, or has been loading so far; None before and after a failure."""
+        if self.loading:
+            return round(time.perf_counter() - self.load_started, 1)
+        return round(self.load_s, 1) if self.load_s is not None else None
 
     def stats(self) -> dict[str, Any]:
         return {
@@ -404,8 +554,9 @@ class Listener:
             "model": self.config.model if self.config.enabled else None,
             "device": f"{self.config.device}/{self.config.compute_type}" if self.config.enabled else None,
             "ready": self.ready,
-            "reason": self.disabled_reason,
+            "reason": self.reason,
             "phase": self.phase,
+            "load_s": self.load_seconds(),
             "bluetooth_ok": self.bluetooth_ok,
             "sessions": self.sessions,
             "empty": self.empty,
@@ -461,3 +612,23 @@ class Listener:
         finally:
             self.phase = "idle"
             self.busy = False
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`python -m strawberry_crab.voice --fetch MODEL`: what `strawberry setup` runs to put a
+    whisper model into the Hugging Face cache before the first start needs it."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m strawberry_crab.voice")
+    parser.add_argument("--fetch", metavar="MODEL", required=True, help="a faster-whisper size, e.g. medium")
+    args = parser.parse_args(argv)
+    try:
+        print(fetch_whisper(args.fetch))
+    except Exception as exc:  # noqa: BLE001 - no network, a bad name: said, not a traceback
+        print(f"could not download whisper {args.fetch}: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -193,7 +193,11 @@ notifications'` and exits 3. Not done, and not needed: a sparse package or MSIX 
   and its privacy switches (read with `KEY_READ`), the build (19041 or later), the Startup
   shortcut and what it runs, the tray and its stop event, the git hooks, the daemon and the beat
   watcher. It only reads. `strawberry setup` names Ollama's Windows installer (winget offered
-  interactively) and offers the Startup shortcut.
+  interactively) and offers the Startup shortcut. It also fetches the whisper model into the
+  Hugging Face cache (`%USERPROFILE%\.cache\huggingface\hub`), as on Linux; after
+  `setup --no-download` the first start downloads it in the background (WIRING.md §7), and until
+  then the tray's status row reads "Idle (loading whisper)" and the hotkey gets "I'm still getting
+  my ears on." Before 2026-09-23 that first start did not answer at all while it downloaded.
 
 ## The widget
 

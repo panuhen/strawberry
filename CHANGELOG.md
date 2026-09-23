@@ -63,6 +63,10 @@ each part works there.
 - The config file and the widget's preferences are read and written as UTF-8 whatever the
   system's locale.
 - `scripts/build_widget.sh` and `scripts/check_phase1.sh` also run under Git Bash on Windows.
+- `strawberry setup` has a step for whisper (step 4, "Her ears"): it names the model with its size
+  and licence and, when voice is on and the model is not in the Hugging Face cache, downloads it
+  with a progress bar, so the first start is not the download. `--no-download` names it and
+  leaves it to the first start. The widget, settings and install steps are now 5 to 7.
 
 ### Fixed
 
@@ -80,6 +84,15 @@ each part works there.
   artists, albums and genres are answered from her own knowledge again; only playing, queueing,
   opening or saving particular music gets the line that it needs a music add-on. "What's a good
   album to start with Radiohead" no longer reads as a request to play it.
+- The first start with a whisper model that was not downloaded yet (after `strawberry setup
+  --no-download` wrote `[voice] model = "medium"`, say) did not answer for minutes: the daemon
+  loaded whisper before it opened its port, and faster-whisper downloaded the model (~1.5 GB)
+  first. The widget said "not connected to strawberryd" and every watcher "strawberryd
+  unreachable". Whisper now loads in the background: the daemon answers at once, `/health`'s
+  `voice` says `phase: "loading"` and why (`first use: downloading ~1.5 GB`), the hotkey gets
+  "I'm still getting my ears on." until it is done, and the tray's status row and `strawberry
+  doctor` say it is loading. A stop during the download no longer waits for it to finish. The log
+  line "listening on" now comes once the port really is open.
 
 ## [0.1.1] - 2026-09-23
 
