@@ -22,10 +22,11 @@ Direct dependencies from `pyproject.toml`, with the licence each declares:
 |---|---|---|
 | [aiohttp](https://github.com/aio-libs/aiohttp) | Apache-2.0 (parts MIT) | the daemon's HTTP and websocket server |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT | speech to text (pulls in CTranslate2, MIT; PyAV, BSD-3-Clause; tokenizers and huggingface-hub, Apache-2.0) |
-| [jeepney](https://gitlab.com/takluyver/jeepney) | MIT | D-Bus: notifications, MPRIS, the tray |
+| [jeepney](https://gitlab.com/takluyver/jeepney) | MIT | D-Bus: notifications, MPRIS, the tray (Linux only) |
 | [mcp](https://github.com/modelcontextprotocol/python-sdk) | MIT | the MCP client for tool servers |
 | [numpy](https://numpy.org) | BSD-3-Clause (bundled parts 0BSD, MIT, Zlib, CC0-1.0) | the beat tracker |
 | [piper-tts](https://github.com/OHF-Voice/piper1-gpl) | **GPL-3.0-or-later** | text to speech (pulls in onnxruntime, MIT) |
+| [winrt-runtime, winrt-Windows.Foundation, winrt-Windows.Foundation.Collections, winrt-Windows.Media.Control](https://github.com/pywinrt/pywinrt) | MIT | Windows only: the System Media Transport Controls, for media (pulls in typing-extensions, PSF-2.0) |
 
 **Piper is GPL.** The `piper-tts` package from 1.3 on is licensed GPL-3.0-or-later (it bundles
 espeak-ng). Strawberry does not copy or bundle it: the installer fetches it from PyPI as a
@@ -36,7 +37,8 @@ Optional extra `strawberry-crab[gpu]`: `nvidia-cublas-cu12` and `nvidia-cudnn-cu
 NVIDIA proprietary licence shipped in those wheels. They are only needed for whisper on CUDA.
 
 Development only (the `dev` group, not installed for users): pytest (MIT), pytest-aiohttp
-(Apache-2.0), pillow (MIT-CMU, for `scripts/render_icons.py`).
+(Apache-2.0), pillow (MIT-CMU, for `scripts/render_icons.py`), jeepney (MIT, so the D-Bus tests
+run on every system).
 
 ## Downloaded by you, not shipped
 

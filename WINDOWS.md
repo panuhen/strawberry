@@ -73,9 +73,10 @@ Done:
   `%LOCALAPPDATA%\strawberry\state`, the widget's copied-out files in
   `%LOCALAPPDATA%\strawberry\cache`. Git hooks go to `%APPDATA%\strawberry\git-hooks`.
 - `strawberry daemon | status | say | talk | stop | git-event | git-hooks` work by hand. The
-  daemon starts without the Ollama models and says so; `strawberry daemon` starts no doorways
-  off Linux. Ctrl+C and Ctrl+Break stop the daemon cleanly (Windows loops have no
-  `add_signal_handler`, so a plain handler hands the signal to the loop).
+  daemon starts without the Ollama models and says so; `strawberry daemon` started no doorways
+  off Linux (step 2 adds the media one on Windows). Ctrl+C and Ctrl+Break stop the daemon
+  cleanly (Windows loops have no `add_signal_handler`, so a plain handler hands the signal to
+  the loop).
 - `strawberry widget`: no `--display-driver`, the `.exe` name, run as a child (no exec on
   Windows). The release asset name is `strawberry-widget-<ver>-windows-x86_64.exe`.
 - Hooks are written with LF and forward-slash paths; a repository's own hook runs through Git's
@@ -94,6 +95,54 @@ Left:
   (Ctrl+Break to its process group, or an HTTP call) belongs with the tray in step 4.
 - The wake watcher finds no system bus and logs one line (step 7).
 - `scripts/check_phase1.sh` and the other shell checks are Linux-only as written.
+
+## Step 2: where it stands
+
+Done:
+
+- Layout: one module per system's media API, next to each other, and one shared place that
+  picks. `mpris.py` (Linux) and `smtc.py` (Windows) are the reflexes; `media.controls()` picks
+  one for the daemon. `doorways/mpris_watch.py` and `doorways/smtc_watch.py` are the watchers;
+  `doorways.for_system()` says which doorways a system runs (Linux: the three as before;
+  Windows: `smtc_watch` only) and `cli.doorways()`, `strawberry daemon` and the tray's
+  `child_specs` use it. Nothing was moved, so every Linux import and test stays as it was.
+- The interface is the one `actions.Actor` already used: `reflexes()`, `situation()`,
+  `close()`. `smtc.Smtc` subclasses `mpris.Mpris` and replaces only what talks to the bus
+  (`players`, `name_of`, `reread`, and two new hooks `_command` and `_set_volume` that `Mpris`
+  now routes its button presses through), so the choice of player and every sentence are
+  shared. SMTC has no volume; "turn it up" says the player won't say where the volume is.
+- The watcher posts exactly what `mpris_watch` posts (WIRING §4b): dancing/idle on
+  `/perform`, `{"source": "media", "app": ..., "title": "Artist — Title"}` on `/event`, once
+  per track. WinRT events drive it, with a 5 s poll behind them.
+- App identity: `SourceAppUserModelId` -> `smtc.app_key` (the short name for `[media] only`
+  and `ignore`: `spotify`, `chrome`, `msedge`, `firefox`, and `chromium` for every
+  Chromium-based browser) and `smtc.app_name` (what she says: "Spotify", "Google Chrome").
+  Store ids (`<family>!<app>`), `.exe` names and full paths all reduce to the app's own name;
+  Firefox's id is a hash of its install folder, and only the default folder's is known.
+- Dependencies: `jeepney; sys_platform == 'linux'`, and on `win32` `winrt-runtime`,
+  `winrt-Windows.Foundation`, `winrt-Windows.Foundation.Collections` and
+  `winrt-Windows.Media.Control` (3.2.1, MIT). Nothing else is needed for sessions, media
+  properties and controls. The dev group keeps jeepney everywhere for the D-Bus tests.
+- Nothing that runs on Windows imports jeepney at import time: `wake.py` finds no system bus
+  without it, and doctor's tray-host check says "not checked". `tests/test_imports.py` imports
+  each side in a fresh interpreter with the other's package blocked.
+- The Spotify adapter does not use MPRIS (it is an MCP server over Spotify's Web API); nothing
+  there changed. Doctor and setup have no SMTC checks yet (step 7); the MPRIS check says "not
+  checked" on Windows and nothing crashes.
+- Tests: `tests/test_smtc.py` and `tests/test_smtc_watch.py` run a fake session manager
+  shaped like the WinRT one, on any system; `tests/conftest.py` makes the real manager
+  unreachable in every test, so no test can press the user's players' buttons.
+- Seen live on a throwaway daemon (port 8782) with a silent session of its own: the watcher
+  followed it from events alone, and the reflexes read it and paused and resumed it.
+
+Left:
+
+- The first track of a player that appears already playing is not announced, as on MPRIS; a
+  browser tab often registers its session with the track already set.
+- Two sessions of one app are told apart by their order (`Chrome`, `Chrome#2`), which can
+  change when one closes.
+- A `pause` or `skip` from the user has not yet been tried on a real player; the fake covers
+  the calls, and the calls on a test session of our own worked.
 
 ## Before starting on the Windows machine
 

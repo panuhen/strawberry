@@ -11,13 +11,20 @@ package and the widget binary.
 
 - The first step of the Windows port (`WINDOWS.md`): the daemon and the CLI run on Windows by
   hand with `STRAWBERRY_ALLOW_UNSUPPORTED=1`, keeping the config in `%APPDATA%\strawberry` and
-  data and state in `%LOCALAPPDATA%\strawberry`. There are no doorways, tray or start-on-login
-  there yet, and Windows is not a supported system until the port is done.
+  data and state in `%LOCALAPPDATA%\strawberry`. There is no tray or start-on-login there yet,
+  and Windows is not a supported system until the port is done.
+- Media on Windows, the second step of the port: play, pause, skip, previous and "what's
+  playing" work with any player that shows in Windows' media controls (the System Media
+  Transport Controls), and a new doorway, `smtc_watch`, makes her dance while music plays and
+  names each new track, as on Linux. `strawberry daemon` starts it on Windows; the notification
+  and beat doorways are still Linux-only. There is no volume control through it.
 
 ### Changed
 
 - The config file and the widget's preferences are read and written as UTF-8 whatever the
   system's locale.
+- `jeepney` is installed on Linux only, and the `winrt-*` packages for Windows' media controls on
+  Windows only.
 
 ## [0.1.1] - 2026-09-23
 

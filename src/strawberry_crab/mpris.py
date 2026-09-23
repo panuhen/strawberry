@@ -15,6 +15,10 @@ that refuses the call — each becomes a plain sentence saying so rather than a 
 
 jeepney does the bus (pure Python, asyncio); the `Bus` seam below is what the unit tests
 replace, so nothing in the tests touches a real session bus.
+
+On Windows `smtc.Smtc` runs these same reflexes over the System Media Transport Controls: it
+overrides the few methods that talk to the bus (`players`, `name_of`, `reread`, `_command`,
+`_set_volume`). `media.controls()` picks one for the daemon.
 """
 
 from __future__ import annotations
@@ -327,6 +331,13 @@ class Mpris:
         except MprisError:
             return player
 
+    async def _command(self, player: Player, member: str) -> None:
+        """One Player method: Next, Previous, Play or Pause (smtc.Smtc maps the same four)."""
+        await self.bus.call(player.bus_name, PLAYER_IFACE, member)
+
+    async def _set_volume(self, player: Player, volume: float) -> None:
+        await self.bus.set(player.bus_name, PLAYER_IFACE, "Volume", "d", volume)
+
     # --- the reflexes ------------------------------------------------------------
 
     async def skip(self) -> Outcome:
@@ -347,7 +358,7 @@ class Mpris:
             return Outcome("checked the player",
                            "It's already paused." if player.status == "Paused" else "Nothing is playing right now.", True)
         try:
-            await self.bus.call(player.bus_name, PLAYER_IFACE, "Pause")
+            await self._command(player, "Pause")
         except MprisError as exc:
             return await self._refused("pause", player, exc)
         return Outcome("paused the music", "Paused.", True)
@@ -362,7 +373,7 @@ class Mpris:
         if not player.can("CanPlay"):
             return await self._cannot("resume", player, "won't start from here")
         try:
-            await self.bus.call(player.bus_name, PLAYER_IFACE, "Play")
+            await self._command(player, "Play")
         except MprisError as exc:
             return await self._refused("resume", player, exc)
         await asyncio.sleep(self.settle_s)
@@ -381,7 +392,7 @@ class Mpris:
             return Outcome(f"tried to {verb}", f"I tried to {verb}, but {name} won't say where the volume is.", False)
         target = max(0.0, min(1.0, current + delta))
         try:
-            await self.bus.set(player.bus_name, PLAYER_IFACE, "Volume", "d", target)
+            await self._set_volume(player, target)
         except MprisError as exc:
             return await self._refused(verb, player, exc)
         return Outcome(f"turned the volume {word}", f"Volume {word} to {round(target * 100)}.", True)
@@ -419,7 +430,7 @@ class Mpris:
         if not player.can(capability):
             return await self._cannot(verb, player, refusal)
         try:
-            await self.bus.call(player.bus_name, PLAYER_IFACE, member)
+            await self._command(player, member)
         except MprisError as exc:
             return await self._refused(verb, player, exc)
         await asyncio.sleep(self.settle_s)  # the player reports the old track for a moment

@@ -17,10 +17,13 @@ import asyncio
 import logging
 from typing import Awaitable, Callable
 
-from jeepney import MatchRule, MessageType
-from jeepney.io.asyncio import open_dbus_connection
+try:
+    from jeepney import MatchRule, MessageType
+    from jeepney.io.asyncio import open_dbus_connection
 
-from .bus import BusClient, field
+    from .bus import BusClient, field
+except ImportError:  # jeepney is a Linux-only dependency: elsewhere there is no system bus to watch
+    MatchRule = None
 
 log = logging.getLogger("strawberryd.wake")
 
@@ -28,11 +31,13 @@ LOGIN1 = "org.freedesktop.login1"
 LOGIN1_PATH = "/org/freedesktop/login1"
 MANAGER_IFACE = "org.freedesktop.login1.Manager"
 SLEEP_RULE = MatchRule(type="signal", sender=LOGIN1, interface=MANAGER_IFACE, member="PrepareForSleep",
-                       path=LOGIN1_PATH)
+                       path=LOGIN1_PATH) if MatchRule else None
 
 
 async def open_system_bus(queue_size: int = 16) -> BusClient:
     """Connect to the system bus (jeepney does the handshake). Raises OSError and friends without one."""
+    if MatchRule is None:
+        raise ConnectionError("jeepney is not installed")
     return BusClient(await open_dbus_connection("SYSTEM"), queue_size=queue_size)
 
 

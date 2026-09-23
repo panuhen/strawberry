@@ -296,7 +296,10 @@ def check_tools(probes: Probes) -> list[Check]:
 
 
 def check_tray_host(probes: Probes) -> list[Check]:
-    from .tray import WATCHER_NAME
+    try:
+        from .tray import WATCHER_NAME
+    except ImportError:   # the tray speaks D-Bus through jeepney, a Linux-only dependency
+        return [Check(WARN, "tray host", "not checked: the tray is Linux-only for now")]
 
     owned = probes.bus_has_owner(WATCHER_NAME)
     if owned is None:

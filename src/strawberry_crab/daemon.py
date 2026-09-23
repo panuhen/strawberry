@@ -17,8 +17,7 @@ from .contract import Performance
 from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
 from .ledger import Ledger
-from .mpris import Mpris
-from . import privacy
+from . import media, privacy
 from .reactions import decorate, is_burst
 from .speech import Speaker
 from .systemone import Gate, Route
@@ -44,10 +43,11 @@ class Daemon:
         self.toolbox = toolbox or Toolbox(self.config.tools)
         # A configured server with an adapter brings its own phrases for the gate ("save this song"
         # only means something with a library behind it) and its own reflexes; the bare music
-        # commands no server covers go to MPRIS, which every desktop player speaks (§8b).
+        # commands no server covers go to the desktop's media controls, which every player
+        # answers: MPRIS on Linux, SMTC on Windows (§8b, media.py).
         self.gate = gate or Gate(self.config.gate, self.config.brain.ollama_url,
                                  examples=gate_examples(self.toolbox.adapters))
-        self.mpris = Mpris() if actor is None and self.config.actions.mpris else None
+        self.mpris = media.controls() if actor is None and self.config.actions.mpris else None
         self.actor = actor or Actor(self.config.actions, self.toolbox, mpris=self.mpris)
         self.thinker = thinker or Thinker(self.config.thinker, self.toolbox, self.config.brain.action_model,
                                           self.config.brain.ollama_url)

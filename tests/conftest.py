@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from strawberry_crab import mpris, osguard
+from strawberry_crab import mpris, osguard, smtc
 from tests.portable import point_dirs
 
 
@@ -41,6 +41,18 @@ def no_real_session_bus(monkeypatch):
         raise mpris.MprisError("the session bus is out of bounds in tests")
 
     monkeypatch.setattr(mpris.SessionBus, "_router_ready", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_real_media_sessions(monkeypatch):
+    """Nor Windows' media sessions, for the same reason: the SMTC reflexes and the Windows media
+    doorway would press the buttons of the user's own players. tests/test_smtc.py and
+    tests/test_smtc_watch.py hand them a fake session manager instead."""
+
+    async def refuse(timeout_s: float = 4.0):
+        raise mpris.MprisError("the media sessions are out of bounds in tests")
+
+    monkeypatch.setattr(smtc, "request_manager", refuse)
 
 
 @pytest.fixture(autouse=True)

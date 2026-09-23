@@ -53,7 +53,7 @@ class BrainConfig:
 
 @dataclass
 class MediaConfig:
-    only: list[str] = field(default_factory=list)    # follow just these MPRIS players, e.g. ["spotify"]
+    only: list[str] = field(default_factory=list)    # follow just these players (MPRIS names; smtc.app_key on Windows)
     ignore: list[str] = field(default_factory=list)  # skip these, e.g. ["firefox"]
 
 
@@ -169,7 +169,8 @@ class ActionsConfig:
 
     enabled: bool = True
     mpris: bool = True             # skip/pause/resume/volume/what's playing over MPRIS for any desktop
-                                   # player, when no configured server has a reflex for it (mpris.py)
+                                   # player, when no configured server has a reflex for it (mpris.py;
+                                   # on Windows the System Media Transport Controls, smtc.py)
     reflex: float = 0.6            # tool confidence at which a plain command fires the tool directly
     argument: float = 0.5          # p(has_argument) above this needs the thinker (Qwen) to fill it in
     timeout_s: float = 25.0        # the whole action, tools included; then she says it failed
@@ -430,7 +431,7 @@ def default_toml() -> str:
         "# persona = \"\"\"...\"\"\"",
         "",
         "[media]",
-        "only = []      # e.g. [\"spotify\"] to follow one player; empty = every MPRIS player",
+        "only = []      # e.g. [\"spotify\"] to follow one player; empty = every player (MPRIS; SMTC on Windows)",
         "ignore = []    # e.g. [\"firefox\"]",
         "",
         "[notifications]",
@@ -504,7 +505,7 @@ def default_toml() -> str:
         "",
         "[actions]",
         "enabled = true                 # the reflexes: skip, pause, what's playing… (needs [gate])",
-        "mpris = true                   # do the bare music commands over MPRIS when no server covers them",
+        "mpris = true                   # do the bare music commands over MPRIS (SMTC on Windows) when no server covers them",
         "reflex = 0.6                   # how sure the gate must be to fire a plain command straight away",
         "ledger_turns = 6               # her memory: this many recent exchanges, given to whoever answers",
         "",

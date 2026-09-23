@@ -111,9 +111,18 @@ def test_status_without_anything_running_says_so(monkeypatch, capsys):
     assert cli.main(["status"]) == 1
     out = capsys.readouterr().out.splitlines()
     assert out[:2] == ["tray: down", "strawberryd: down"]
-    assert out[2:] == [f"{name}: down" for name in cli.doorways()]   # none yet off Linux
+    assert out[2:] == [f"{name}: down" for name in cli.doorways()]
     if sys.platform.startswith("linux"):
         assert cli.doorways() == ("mpris_watch", "notify_watch", "beat_watch")
+    elif sys.platform == "win32":
+        assert cli.doorways() == ("smtc_watch",)                  # media only, so far
+
+
+def test_the_cli_and_the_doorways_package_agree():
+    from strawberry_crab import doorways
+
+    assert cli.DOORWAYS == doorways.DOORWAYS and cli.WINDOWS_DOORWAYS == doorways.WINDOWS_DOORWAYS
+    assert cli.doorways() == doorways.for_system()
 
 
 def test_status_reads_the_trays_children(monkeypatch, capsys):

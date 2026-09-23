@@ -233,15 +233,15 @@ def think(config, text: str) -> int:
     import asyncio
     from dataclasses import replace
 
+    from . import media
     from .actions import Actor
-    from .mpris import Mpris
     from .thinker import Thinker
     from .tools import Toolbox
 
     logging.basicConfig(level="INFO", format="%(levelname)-7s %(name)s: %(message)s")
     toolbox = Toolbox(replace(config.tools, enabled=True, preconnect=False))
     thinker = Thinker(replace(config.thinker, enabled=True), toolbox, config.brain.action_model, config.brain.ollama_url)
-    mpris = Mpris() if config.actions.mpris else None
+    mpris = media.controls() if config.actions.mpris else None
     actor = Actor(config.actions, toolbox, mpris=mpris)
 
     async def run_once() -> int:
