@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import signal
 import sys
@@ -446,6 +447,13 @@ def run(config: Config) -> None:
         finally:
             asyncio.set_event_loop(None)
             loop.close()
+    if daemon.listener.load_running:
+        # Stopped while whisper downloads: huggingface_hub's own download threads would hold the
+        # interpreter's exit until the model is complete, minutes for `medium`. The partial file
+        # is resumed on the next start.
+        log.info("whisper is still loading; exiting without waiting for it")
+        logging.shutdown()
+        os._exit(0)
 
 
 # Short shutdown: widgets are closed explicitly in on_shutdown, nothing else is long-lived.

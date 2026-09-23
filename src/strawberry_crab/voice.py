@@ -450,6 +450,7 @@ class Listener:
         self.last_ms = 0.0
         self.load_s: float | None = None
         self.load_task: asyncio.Task | None = None
+        self.load_done = threading.Event()   # set by the load's thread when it returns, even after close()
         self.load_started = 0.0
         self.loading_reason = ""     # what /health says while whisper loads
         self.bluetooth_ok = True     # cleared after a Bluetooth mic delivers nothing (SCO failure); analog then
@@ -462,6 +463,11 @@ class Listener:
     @property
     def loading(self) -> bool:
         return self.load_task is not None and not self.load_task.done()
+
+    @property
+    def load_running(self) -> bool:
+        """The load's thread is still at work (also after close() gave up on it)."""
+        return self.load_task is not None and not self.load_done.is_set()
 
     @property
     def reason(self) -> str | None:
@@ -486,6 +492,12 @@ class Listener:
         downloaded: list[bool | None] = [None]
 
         def load() -> Transcriber:
+            try:
+                return work()
+            finally:
+                self.load_done.set()
+
+        def work() -> Transcriber:
             cached = self.model_cached(self.config.model)
             downloaded[0] = None if cached is None else not cached
             where = f"{self.config.model} ({self.config.device}/{self.config.compute_type})"
