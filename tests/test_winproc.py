@@ -87,6 +87,24 @@ def test_the_job_ends_its_processes_when_it_closes():
     process.wait(10)                  # a minute's sleep, over at once (its exit code is the job's: 0)
 
 
+def test_a_tied_child_goes_when_its_parent_is_terminated():
+    # `strawberry widget` in developer mode: python runs godot through call_tied, and the tray's
+    # restart or `strawberry stop` ends that python with TerminateProcess.
+    parent_code = ("import sys, time\nfrom strawberry_crab import winproc\n"
+                   f"sys.exit(winproc.call_tied([{sys.executable!r}, '-c', "
+                   "'import os, time; print(os.getpid(), flush=True); time.sleep(60)']))\n")
+    parent = subprocess.Popen([sys.executable, "-c", parent_code], stdout=subprocess.PIPE, text=True)
+    child = int(parent.stdout.readline())
+    assert not winproc.wait_exit(child, 0)
+    winproc.terminate(parent.pid)
+    parent.wait(10)
+    assert winproc.wait_exit(child, 10)                 # the child's minute is cut short
+
+
+def test_a_tied_child_passes_its_exit_code_on():
+    assert winproc.call_tied([sys.executable, "-c", "raise SystemExit(7)"]) == 7
+
+
 async def test_the_supervisor_stops_a_child_through_its_event(tmp_path):
     child = Child("listener", [sys.executable, "-c", LISTENER])
     children = Children([child], state_path=tmp_path / "tray.json", log_dir=tmp_path)

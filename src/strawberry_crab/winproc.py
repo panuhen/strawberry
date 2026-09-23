@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import subprocess
 import threading
 import time
 from ctypes import wintypes
@@ -270,3 +271,25 @@ class KillOnCloseJob:
         if self.handle:
             kernel32().CloseHandle(self.handle)
             self.handle = None
+
+
+def call_tied(argv: list[str]) -> int:
+    """subprocess.call, with the child in a kill-on-close job: when this process ends in any way
+    (TerminateProcess from the tray's restart or `strawberry stop` included), so does the child.
+    Without it `strawberry widget` in developer mode, ended so, left Godot running on its own."""
+    process = subprocess.Popen(argv)
+    job = None
+    try:
+        try:
+            job = KillOnCloseJob()
+            job.add(process.pid)
+        except OSError:
+            job = None          # the child runs untied, as subprocess.call would have it
+        return process.wait()
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
+    finally:
+        if job is not None:
+            job.close()

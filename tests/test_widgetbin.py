@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from strawberry_crab import __version__, cli, paths, widgetbin
+from strawberry_crab import __version__, cli, paths, widgetbin, winproc
 from tests.portable import point_dirs, program
 
 # The X11 backend on Linux (WIRING.md §13); Windows has one display driver and no argument.
@@ -96,7 +96,7 @@ def test_the_cli_execs_the_binary_with_the_x11_driver_and_the_port(monkeypatch):
         return 5
 
     monkeypatch.setattr(os, "execv", fake_execv)
-    monkeypatch.setattr(subprocess, "call", fake_call)
+    monkeypatch.setattr(winproc, "call_tied", fake_call)
     try:
         code = cli.main(["widget", "--capture=/tmp/c.png"])
     except SystemExit as stop:

@@ -420,11 +420,13 @@ def hand_over(argv: list[str]) -> int:
     """Become `argv` (exec), so what the caller waits on is the widget or the repo's own hook.
 
     Windows has no exec: os.execv there starts a new process and ends this one at once, so git
-    or the shell would see us finish first. There `argv` runs as a child and its code is ours.
+    or the shell would see us finish first. There `argv` runs as a child and its code is ours,
+    tied to us by a job object, so ending us (the tray's restart, `strawberry stop`) ends it too.
     """
     sys.stdout.flush()
     if paths.windows():
-        return subprocess.call(argv)
+        from . import winproc
+        return winproc.call_tied(argv)
     os.execv(argv[0], argv)
     return 0    # not reached
 
