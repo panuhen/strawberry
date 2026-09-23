@@ -1105,11 +1105,11 @@ def cmd_git_hooks(action: str) -> int:
     return 0
 
 
-def cmd_setup(yes: bool, install: bool, tier: str | None) -> int:
+def cmd_setup(yes: bool, install: bool, tier: str | None, download: bool = True) -> int:
     from . import setupcmd
 
     try:
-        return setupcmd.main(yes=yes, install=install, tier=tier)
+        return setupcmd.main(yes=yes, install=install, tier=tier, download=download)
     except ValueError as exc:      # an unknown --tier
         raise CliError(str(exc), 2) from None
 
@@ -1193,6 +1193,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--install", action="store_true", help="with --yes: also run `strawberry install` at the end")
     p.add_argument("--tier", default=None, metavar="NAME",
                    help="the model tier instead of the one VRAM suggests: 24gb | 16gb | 10gb | 6gb | cpu")
+    p.add_argument("--no-download", action="store_true",
+                   help="write the config, but pull no model and fetch no voice or widget (it names what it would)")
     p = add("doctor", "check everything she needs and say how to fix what is missing (exit 1 if something is)")
     p.add_argument("--talk", action="store_true",
                    help="also time a short scripted conversation through the running daemon, per slot")
@@ -1232,7 +1234,7 @@ def dispatch(command: str, args: argparse.Namespace, extra: list[str]) -> int:
     if command == "git-hooks":
         return cmd_git_hooks(args.action)
     if command == "setup":
-        return cmd_setup(args.yes, args.install, args.tier)
+        return cmd_setup(args.yes, args.install, args.tier, download=not args.no_download)
     if command == "doctor":
         return cmd_doctor(args.talk)
     if command == "config":

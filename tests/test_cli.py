@@ -177,7 +177,7 @@ def test_setup_and_doctor_take_their_flags(monkeypatch):
     monkeypatch.setattr(doctor, "main", lambda **kw: seen.append(("doctor", kw)) or 1)
     assert cli.main(["setup", "--yes", "--tier", "cpu"]) == 0
     assert cli.main(["doctor", "--talk"]) == 1
-    assert seen == [("setup", {"yes": True, "install": False, "tier": "cpu"}), ("doctor", {"talk_too": True})]
+    assert seen == [("setup", {"yes": True, "install": False, "tier": "cpu", "download": True}), ("doctor", {"talk_too": True})]
 
 
 def test_setup_refuses_an_unknown_tier(capsys):

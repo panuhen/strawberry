@@ -7,7 +7,7 @@
     3. the Piper voice, into the voices dir
     4. the widget binary, unless the installed one is this package's version
     5. settings the file does not have yet, appended with their defaults
-    6. `strawberry install`, if asked
+    6. `strawberry install`, if asked (Linux: the systemd unit; Windows: the Startup shortcut)
 
 Idempotent: a model that is there is not pulled again, a voice that is there is not downloaded,
 and a key already in the user's file is kept unless the user types a new value for it. Nothing
@@ -15,6 +15,12 @@ here hosts or redistributes a model: each is downloaded by the user from its pub
 its own terms, and setup names them before it downloads anything.
 
 `--yes` takes every default without asking and does not run `install` unless `--install` is given.
+`--no-download` does everything but the downloads: it names each model, voice and widget it would
+fetch and fetches none (the config is still written).
+
+On Windows the steps are the same; what differs is Ollama's installer (its Windows download, or
+winget), the start-on-login entry (`strawberry install` writes the Startup shortcut) and the
+widget's asset (the `.exe`). nvidia-smi comes with the NVIDIA driver on both systems.
 """
 
 from __future__ import annotations
@@ -34,6 +40,8 @@ from . import paths
 from .configedit import backup, check_config_text, set_key, toml_value, write_config  # noqa: F401
 
 OLLAMA_INSTALL = "curl -fsSL https://ollama.com/install.sh | sh"
+OLLAMA_WINDOWS = "https://ollama.com/download"
+OLLAMA_WINGET = ("install", "--exact", "--id", "Ollama.Ollama")      # winget's arguments
 GEMMA_TERMS = "Gemma Terms of Use, https://ai.google.dev/gemma/terms"
 APACHE = "Apache-2.0, https://www.apache.org/licenses/LICENSE-2.0"
 
@@ -320,9 +328,13 @@ class Setup:
     def __init__(self, yes: bool = False, install: bool = False, tier: str | None = None,
                  ask: Callable[[str, str], str] | None = None,
                  run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
-                 say: Callable[[str], None] = lambda line: print(line, flush=True)) -> None:
+                 say: Callable[[str], None] = lambda line: print(line, flush=True),
+                 download: bool = True, system: str = sys.platform) -> None:
+        self.windows = system == "win32"      # Ollama's installer and the start-on-login entry differ
         self.yes = yes
         self.install = install
+        self.download = download
+        self.skipped: list[str] = []      # what --no-download left to fetch
         self.tier_name = tier
         self.ask = (lambda question, default: default) if yes else (ask or _ask_tty)
         self.run = run
@@ -347,6 +359,10 @@ class Setup:
             self.say(f"\nsetup finished with {len(self.failures)} problem(s): {', '.join(self.failures)}")
             self.say("run it again when they are fixed (it skips what is done); `strawberry doctor` checks everything")
             return 1
+        if self.skipped:
+            self.say(f"\nsetup done, without downloading {', '.join(self.skipped)} (--no-download); "
+                     "run it again without the flag to fetch them")
+            return 0
         self.say("\nsetup done. Start her with: strawberry   (check with: strawberry doctor)")
         return 0
 
@@ -361,6 +377,8 @@ class Setup:
             self.say(f"  GPU: {gpu.name}, {gpu.total_mb} MiB ({gpu.free_mb} MiB free now)")
             if vendor == "amd":
                 self.say("  AMD: Ollama runs the models on ROCm; whisper runs on the CPU (its GPU engine is CUDA only)")
+        elif self.windows:
+            self.say("  no NVIDIA card found (nvidia-smi); Ollama and whisper would run on the CPU")
         else:
             self.say("  no usable GPU found (NVIDIA: nvidia-smi; AMD: rocm-smi or sysfs); "
                      "Ollama and whisper would run on the CPU")
@@ -460,10 +478,11 @@ class Setup:
         available = ollama_models(url)
         if available is None:
             if shutil.which("ollama") is None:
-                self.say(f"  Ollama is not installed. Its official installer: {OLLAMA_INSTALL}")
-                if not self.yes and self.confirm("  run it now (it asks for sudo)?", default=False):
-                    self.run(["sh", "-c", OLLAMA_INSTALL])
+                self._install_ollama()
                 available = ollama_models(url)
+            elif self.windows:
+                self.say(f"  ollama is installed but its API at {url} does not answer; "
+                         f"start it (open Ollama from the Start menu, or: ollama serve)")
             else:
                 self.say(f"  ollama is installed but its API at {url} does not answer; "
                          f"start it (systemctl start ollama, or: ollama serve)")
@@ -479,6 +498,10 @@ class Setup:
         for model in models:
             if model not in todo:
                 self.say(f"  ✓ {model} is there")
+        if todo and not self.download:
+            self.say("  not pulled (--no-download); later: " + "; ".join(f"ollama pull {m}" for m in todo))
+            self.skipped += todo
+            return
         if todo and not self.confirm(f"  pull {', '.join(todo)} now?"):
             self.say("  skipped; pull them later with: " + "; ".join(f"ollama pull {m}" for m in todo))
             self.failures.append("models")
@@ -490,6 +513,20 @@ class Setup:
             else:
                 self.say(f"  ✗ ollama pull {model} failed")
                 self.failures.append(model)
+
+    def _install_ollama(self) -> None:
+        """Name Ollama's own installer; run it only when the user says so (never under --yes)."""
+        if self.windows:
+            winget = shutil.which("winget")
+            also = f" (or: winget {' '.join(OLLAMA_WINGET)})" if winget else ""
+            self.say(f"  Ollama is not installed. Its Windows installer: {OLLAMA_WINDOWS}{also}")
+            if winget and self.download and not self.yes and self.confirm("  install it with winget now?",
+                                                                          default=False):
+                self.run([winget, *OLLAMA_WINGET])
+            return
+        self.say(f"  Ollama is not installed. Its official installer: {OLLAMA_INSTALL}")
+        if self.download and not self.yes and self.confirm("  run it now (it asks for sudo)?", default=False):
+            self.run(["sh", "-c", OLLAMA_INSTALL])
 
     # 3 ---------------------------------------------------------------------------
     def step_voice(self, values: dict[str, Any]) -> None:
@@ -506,6 +543,10 @@ class Setup:
         self.say(f"  {voice} — {voice_licence(voice)}")
         if resolve_voice(voice, directory).is_file():
             self.say(f"  ✓ {voice} is in {directory}")
+            return
+        if not self.download:
+            self.say(f"  not downloaded (--no-download); later: strawberry voices {voice}")
+            self.skipped.append(voice)
             return
         if not self.confirm(f"  download {voice} into {directory}?"):
             self.say(f"  skipped; later: strawberry voices {voice}")
@@ -528,6 +569,11 @@ class Setup:
             self.say(f"  ✓ strawberry-widget {installed} is installed")
             return
         self.say(f"  installed: {installed or 'none'}; this package: {__version__}")
+        if not self.download:
+            self.say(f"  not fetched (--no-download): {widgetbin.asset_name(__version__)}; "
+                     "later: strawberry widget --fetch")
+            self.skipped.append("the widget")
+            return
         try:
             widgetbin.fetch(__version__, say=lambda line: self.say("  " + line))
         except widgetbin.FetchError as exc:
@@ -571,13 +617,18 @@ class Setup:
         self.say("\n6. Start on login")
         from . import cli
 
-        if cli.tray_managed():
+        if self.windows:
+            if cli.startup_installed():
+                self.say(f"  ✓ the Startup shortcut is installed ({paths.startup_shortcut()})")
+                return
+        elif cli.tray_managed():
             self.say(f"  ✓ {cli.TRAY_UNIT} is installed")
             return
         if self.yes and not self.install:
             self.say("  not installed (strawberry install, or setup --yes --install)")
             return
-        if self.install or self.confirm("  install the tray unit now (strawberry install)?", default=False):
+        what = "the Startup shortcut" if self.windows else "the tray unit"
+        if self.install or self.confirm(f"  install {what} now (strawberry install)?", default=False):
             cli.cmd_install(cli.Here())
         else:
             self.say("  later: strawberry install")
@@ -594,7 +645,7 @@ def _ask_tty(question: str, default: str) -> str:
         return default
 
 
-def main(yes: bool = False, install: bool = False, tier: str | None = None) -> int:
+def main(yes: bool = False, install: bool = False, tier: str | None = None, download: bool = True) -> int:
     if tier:
         tier_named(tier)          # an unknown name fails before anything is asked or written
-    return Setup(yes=yes, install=install, tier=tier).main()
+    return Setup(yes=yes, install=install, tier=tier, download=download).main()

@@ -314,10 +314,93 @@ def test_an_amd_card_keeps_the_brain_and_runs_whisper_on_the_cpu(world):
 def test_no_ollama_is_a_failure_with_the_installer_named(world, monkeypatch):
     monkeypatch.setattr(setupcmd, "ollama_models", lambda url, timeout=3.0: None)
     monkeypatch.setattr(setupcmd.shutil, "which", lambda name: None)
-    code, out, _ = run_setup(world, yes=True)
+    code, out, _ = run_setup(world, yes=True, system="linux")
     assert code == 1
     assert "https://ollama.com/install.sh" in out and world.pulls() == []
     assert not any(c[:2] == ["sh", "-c"] for c in world.commands)     # --yes never runs a remote script
+
+
+# --- Windows, and --no-download ------------------------------------------------------
+
+def test_no_download_writes_the_config_and_fetches_nothing(world):
+    """What `strawberry setup --no-download` does on any system: the tier and the config as with
+    downloads, then each model, the voice and the widget named and none fetched."""
+    world.models = []
+    code, out, _ = run_setup(world, yes=True, download=False)
+    assert code == 0, out
+    assert load(paths.config_file()).brain.action_model == "qwen3.8:27b"
+    assert world.pulls() == [] and world.fetched == []
+    assert not any("piper.download_voices" in c for c in world.commands)
+    assert not (paths.voices_dir() / "en_GB-alba-medium.onnx").exists()
+    assert "not pulled (--no-download); later: ollama pull embeddinggemma; ollama pull gemma3:1b" in out
+    assert "not downloaded (--no-download); later: strawberry voices en_GB-alba-medium" in out
+    assert f"not fetched (--no-download): {widgetbin.asset_name(__import__('strawberry_crab').__version__)}" in out
+    assert "without downloading embeddinggemma, gemma3:1b, qwen3.8:27b, en_GB-alba-medium, the widget" in out
+
+
+def test_the_cli_passes_no_download(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(setupcmd, "main", lambda **kw: seen.update(kw) or 0)
+    assert cli.main(["setup", "--yes", "--no-download"]) == 0
+    assert seen == {"yes": True, "install": False, "tier": None, "download": False}
+
+
+def test_windows_names_its_ollama_installer_and_never_runs_it_under_yes(world, monkeypatch):
+    monkeypatch.setattr(setupcmd, "ollama_models", lambda url, timeout=3.0: None)
+    monkeypatch.setattr(setupcmd.shutil, "which", lambda name: r"C:\winget.exe" if name == "winget" else None)
+    code, out, _ = run_setup(world, yes=True, system="win32")
+    assert code == 1
+    assert "Its Windows installer: https://ollama.com/download (or: winget install --exact --id Ollama.Ollama)" in out
+    assert "install.sh" not in out and "sudo" not in out
+    assert not any("winget" in c[0] for c in world.commands)          # --yes never installs anything
+
+
+def test_windows_runs_winget_only_when_the_user_says_yes(world, monkeypatch):
+    monkeypatch.setattr(setupcmd, "ollama_models", lambda url, timeout=3.0: None)
+    monkeypatch.setattr(setupcmd.shutil, "which", lambda name: r"C:\winget.exe" if name == "winget" else None)
+    ran = []
+    real_run = world.run
+
+    def run(argv, **kwargs):
+        if argv[0] == r"C:\winget.exe":
+            ran.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return real_run(argv, **kwargs)
+
+    world.run = run
+    run_setup(world, answers={"install it with winget now?": "y"}, system="win32")
+    assert ran == [[r"C:\winget.exe", "install", "--exact", "--id", "Ollama.Ollama"]]
+    ran.clear()
+    run_setup(world, system="win32")                                  # the default answer is no
+    assert ran == []
+
+
+def test_windows_ollama_installed_but_not_answering(world, monkeypatch):
+    monkeypatch.setattr(setupcmd, "ollama_models", lambda url, timeout=3.0: None)
+    monkeypatch.setattr(setupcmd.shutil, "which", lambda name: r"C:\ollama.exe" if name == "ollama" else None)
+    code, out, _ = run_setup(world, yes=True, system="win32")
+    assert code == 1 and "open Ollama from the Start menu, or: ollama serve" in out and "systemctl" not in out
+
+
+def test_windows_start_on_login_is_the_startup_shortcut(world, monkeypatch):
+    ran = []
+    monkeypatch.setattr(cli, "cmd_install", lambda here: ran.append(here) or 0)
+    monkeypatch.setattr(cli, "tray_managed", lambda: (_ for _ in ()).throw(AssertionError("systemctl on Windows")))
+    monkeypatch.setattr(cli, "startup_installed", lambda: False)
+    code, out, asked = run_setup(world, system="win32")
+    assert any("install the Startup shortcut now (strawberry install)?" in q for q in asked) and ran == []
+    run_setup(world, yes=True, install=True, system="win32")
+    assert len(ran) == 1
+    monkeypatch.setattr(cli, "startup_installed", lambda: True)
+    code, out, _ = run_setup(world, yes=True, system="win32")
+    assert f"✓ the Startup shortcut is installed ({paths.startup_shortcut()})" in out
+
+
+def test_windows_with_no_nvidia_card_says_so_plainly(world):
+    world.gpu = ""
+    code, out, _ = run_setup(world, yes=True, system="win32")
+    assert "no NVIDIA card found (nvidia-smi); Ollama and whisper would run on the CPU" in out
+    assert "sysfs" not in out
 
 
 @pytest.mark.parametrize("installed, fetch", [(None, True), ("0.0.9", True), ("VERSION", False)])
