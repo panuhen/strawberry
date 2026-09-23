@@ -81,6 +81,10 @@ each part works there.
   shape at rest. It now follows her pose and holds each pose for a moment, so the dance styles,
   the reactions and the top hat are drawn whole, and a raised claw takes clicks. Linux is
   unchanged.
+- On Windows right-clicking her made the whole window's rectangle flash for a moment before the
+  menu appeared: opening the menu removed the window's region, and Windows repainted all of it.
+  The region now takes in the open menu and its submenus instead, so only she and the menu are
+  drawn, the menu takes clicks and the desktop around it still does. Linux is unchanged.
 - `scripts/gate_check.py` and `scripts/sensitive_check.py` read their phrase files in the
   locale's encoding; they are UTF-8.
 - With no music server configured she refused to talk about music: "any good techno from

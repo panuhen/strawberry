@@ -240,8 +240,29 @@ Linux. Each frame's hull is kept for 1.5 s and the region is their hull, 8 px wi
 when she reaches outside it, or at most once in 1.5 s when that frees 3 % of it: 62 updates (49
 growing, 10 shrinking, 3 forced: the start and showing her again) in 75 s of dancing, reacting and
 talking, hardly any while she idles; after a dance it shrinks back to her rest shape. The cost is
-about 0.26 ms a frame (at most about 1 ms; 9 ms once for the bone boxes). The open menu still
-takes the whole window, and hidden she still has a 1-pixel region off the window.
+about 0.26 ms a frame (at most about 1 ms; 9 ms once for the bone boxes). Hidden she still has a
+1-pixel region off the window.
+
+**The flash when the menu opened.** Right-clicking her showed the whole window's rectangle as a
+pale veil for a moment before the menu appeared. Opening the menu set an empty polygon, as on
+Linux, so that the whole window would take clicks; Godot turns that into `SetWindowRgn(NULL,
+TRUE)`, and Windows repaints the whole rectangle at once, before Godot's next frame is presented
+(a region that is set, not removed, is set without a repaint). On Windows the polygon is now never
+emptied: `follow_pose` adds the open menu and each open submenu (`open_menus`, their rects 3 px
+wider) to her region, merged into one polygon (`with_menus`; the hull of them all if they do not
+overlap). It checks them every frame before it is drawn, so a menu or submenu is in the region
+from its first frame, and the region shrinks back when they close.
+
+Checked live on 2026-09-23 against a throwaway daemon, grabbing her screen area every ~16 ms while
+the menu opened, two submenus opened and closed and the menu closed, then while she was hidden and
+shown, the type box opened and closed, and the menu opened a second time; counted were the pixels
+outside her region and the open menus that differed from the frame before. Before: the two grabs
+after the first opening (about 33 ms) and one after the second had 72,000 and 75,000 such pixels
+(the rest of the window, brightened by about 34 levels), with `GetWindowRgn` reporting no region.
+After: none in any grab, and the region was never removed. While the menu was open,
+`WindowFromPoint` found her window on every point of the menu and the open submenu and the window
+below on every point outside them and her (before: her window everywhere). Hiding and showing her
+and the type box did not flash before either: they only ever set a region.
 
 The whole-window passthrough flag (`Window.mouse_passthrough`) was tried first: toggled on the
 cursor's position, it would have left the drawing whole. In Godot 4.7.2 it only makes
