@@ -28,6 +28,12 @@ dependencies = [
     "winrt-Windows.Foundation>=3.2; sys_platform == 'win32'",
     "winrt-Windows.Foundation.Collections>=3.2; sys_platform == 'win32'",
     "winrt-Windows.Media.Control>=3.2; sys_platform == 'win32'",
+    # Notifications on Windows: other apps' toasts (doorways/toast_watch.py). ApplicationModel
+    # carries the app's name and logo, Storage.Streams reads the logo's bytes.
+    "winrt-Windows.ApplicationModel>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Storage.Streams>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.UI.Notifications>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.UI.Notifications.Management>=3.2; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
