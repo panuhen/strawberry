@@ -4,4 +4,4 @@ The daemon (`strawberryd`) is the always-running part: event scripts POST to it 
 Godot widget and turns every event into one performance message (WIRING.md §0).
 """
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"

@@ -7,6 +7,8 @@ package and the widget binary.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-23
+
 Strawberry runs on Windows 10 (2004 or later) and 11, with the same package and the same
 commands as on Linux: `uv tool install strawberry-crab`, `strawberry setup`, `strawberry`,
 `strawberry install`. README.md has the Windows install and its known limits; WINDOWS.md says how
@@ -197,6 +199,7 @@ binary on GitHub.
 - The journal no longer gets a line every 2 s for the tray's `/health` poll and the beat
   watcher's tempo posts.
 
-[Unreleased]: https://github.com/panuhen/strawberry/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/panuhen/strawberry/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/panuhen/strawberry/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/panuhen/strawberry/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/panuhen/strawberry/releases/tag/v0.1.0
