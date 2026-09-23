@@ -183,6 +183,7 @@ func run() -> void:
 	var skeleton := widget.model.find_child("Skeleton3D", true, false) as Skeleton3D
 	var claw_i := skeleton.find_bone("claw_arm_L")
 	var claw_before: Quaternion = skeleton.get_bone_global_pose(claw_i).basis.get_rotation_quaternion()
+	var top_before := top_of(widget.body_points())
 	var icon: String = preload("res://paths.gd").on_disk("res://capture_phase1.png")
 	var wave := await post("/perform", {"state": "talking", "reaction": "wave", "hop": true, "icon": icon, "text": "James says hi", "emotion": "happy"})
 	check(wave[1] == 200, "/perform with reaction/icon/hop should be accepted")
@@ -193,6 +194,12 @@ func run() -> void:
 	var lift := rad_to_deg((claw_before.inverse() * claw_now).get_angle())
 	report["wave_claw_lift_deg"] = snappedf(lift, 0.1)
 	check(lift > 20.0, "wave should lift claw_arm_L by more than 20 degrees, got %.1f" % lift)
+	# Her posed silhouette (on Windows the window's region, which cuts what is drawn) rises with it.
+	# In window pixels: a headless viewport is not the window's size.
+	var to_window := float(ProjectSettings.get_setting("display/window/size/viewport_width")) / widget.get_viewport().get_visible_rect().size.x
+	var rise := (top_before - top_of(widget.body_points())) * to_window
+	report["wave_silhouette_rise_px"] = snappedf(rise, 0.1)
+	check(rise > 10.0, "the posed silhouette should rise with the lifted claw, rose %.1f px" % rise)
 	check(widget.badge.visible and widget.badge.texture != null, "badge should show the app icon")
 	var wide := 0.0
 	for eye in widget.blink_controller.eyes:
@@ -373,6 +380,13 @@ func run() -> void:
 	await wait_speech_end()
 
 	finish()
+
+## The highest point of a set of screen points (smallest y).
+static func top_of(points: PackedVector2Array) -> float:
+	var top := INF
+	for p in points:
+		top = minf(top, p.y)
+	return top
 
 ## A 1 kHz tone with a syllable-like 5 Hz amplitude wobble, saved where the daemon can see it.
 func make_test_wav(seconds: float) -> String:
