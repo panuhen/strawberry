@@ -7,7 +7,8 @@ Two checks before any body reaches Gemma, and both must say no:
 * **IS_SENSITIVE**, a yes/no on the gate's embedder (systemone.py): sign-ins, account security,
   bank and card alerts, the things no regex lists.
 
-Fail closed: a gate that is off, not ready, or erroring counts as a yes. A sensitive body is
+Fail closed: a gate that is off, not ready, or erroring counts as a yes. A gate that is only slow
+(a timeout: the model is loading) is waited for once, up to `[gate] retry_timeout_s` (Gate.sensitive). A sensitive body is
 dropped and she says a neutral line with the app alone ("Slack sent something private.").
 
 And after the model: `leaks()` catches a line that quotes the body anyway (a link, a number from

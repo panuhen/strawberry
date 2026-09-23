@@ -152,6 +152,7 @@ async def health(request: web.Request) -> web.Response:
             "speech": daemon.speaker.stats(),
             "voice": daemon.listener.stats() | {"hotwords": len(daemon.vocabulary)},
             "gate": daemon.gate.stats(),
+            "wake": daemon.wake.stats() if daemon.wake else {"watching": False, "resumes": 0, "reason": "off in config"},
             "tools": daemon.toolbox.stats(),
             "actions": daemon.actor.stats(),
             "thinker": daemon.thinker.stats(),

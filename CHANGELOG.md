@@ -5,6 +5,25 @@ All notable changes to Strawberry are listed here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). One version covers the Python
 package and the widget binary.
 
+## [Unreleased]
+
+### Fixed
+
+- A notification that arrived just after a resume from suspend was dropped as "something
+  private": Ollama had unloaded `embeddinggemma` over the suspend, and the privacy check's 2 s
+  timeout treated a model that was loading as a gate that was down. A timed-out check now waits
+  for one shared reload of the model, up to `[gate] retry_timeout_s` (15 s), and asks once more;
+  it still fails closed if that retry fails, and a hard error (Ollama not running, an HTTP error)
+  fails closed at once. Several notifications at once share the one wait. Spoken sentences never
+  wait: a timeout there still reads the sentence as chat. The notification watcher now waits up to
+  30 s for the daemon's reply instead of logging a slow one as "strawberryd unreachable".
+- The daemon now reloads the gate's model and the reaction model (`gemma3:1b`) in the background
+  when the machine wakes, from logind's `PrepareForSleep` signal on the system bus. Without a
+  system bus or logind it logs one line and carries on. `[daemon] warm_on_wake = false` turns it
+  off; `/health` shows it under `wake`, and the gate's `retries` and `warmups`.
+- A gate whose examples could not be embedded at start (Ollama was down) now comes up at the next
+  resume from suspend instead of staying off until a restart.
+
 ## [0.1.0] - 2026-09-22
 
 The first release on PyPI (`strawberry-crab`; 0.0.1 was a name placeholder) with the widget

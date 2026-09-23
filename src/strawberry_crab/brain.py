@@ -161,7 +161,7 @@ class OllamaReactor:
             await self.session.close()
             self.session = None
 
-    async def warm_up(self) -> None:
+    async def warm_up(self, reason: str = "at start") -> None:
         """Load the model now, so the first event isn't the one that waits for a cold load."""
         assert self.session
         started = time.perf_counter()
@@ -174,21 +174,22 @@ class OllamaReactor:
                 if response.status != 200:
                     raise BrainError(f"HTTP {response.status}: {(await response.text())[:200]}")
             self.loaded = True
-            log.info("brain: %s loaded in %.1fs (keep_alive %s)", self.brain.reaction_model,
+            log.info("brain: %s loaded %s in %.1fs (keep_alive %s)", self.brain.reaction_model, reason,
                      time.perf_counter() - started, self.brain.keep_alive)
         except (aiohttp.ClientError, asyncio.TimeoutError, BrainError) as exc:
             self.loaded = False
             log.warning("brain: could not load %s (%s); reacting with canned lines until it answers",
                         self.brain.reaction_model, exc)
 
-    def schedule_rewarm(self) -> None:
+    def schedule_rewarm(self, reason: str = "after a timeout") -> asyncio.Task:
         """A timeout usually means the model was evicted from VRAM (a big model loaded) and is
         reloading. Ollama aborts a load when the client hangs up, so the short reaction calls
         would keep killing it forever; load it again with the long allowance, in the background."""
         if self.rewarm and not self.rewarm.done():
-            return
+            return self.rewarm
         self.loaded = False
-        self.rewarm = asyncio.get_running_loop().create_task(self.warm_up())
+        self.rewarm = asyncio.get_running_loop().create_task(self.warm_up(reason))
+        return self.rewarm
 
     def _messages(self, event_text: str, avoid: list[str] | None = None) -> list[dict[str, str]]:
         out = [{"role": "system", "content": self.brain.persona}]

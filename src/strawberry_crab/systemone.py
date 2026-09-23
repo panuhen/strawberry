@@ -33,6 +33,8 @@ import asyncio
 import logging
 import math
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -47,6 +49,26 @@ Embedder = Callable[[list[str]], Awaitable[list[list[float]]]]
 
 class GateError(RuntimeError):
     pass
+
+
+class GateTimeout(GateError):
+    """The model did not answer in time: most likely it is loading (after a suspend, or evicted).
+    A hard failure (Ollama not running, an HTTP error) is a plain GateError (WIRING.md §8a)."""
+
+
+# The time allowed for the embedding calls made inside `with call_timeout(s):`, per task. A
+# context variable rather than an attribute: a long warm-up and a short voice call can be in
+# flight at once, and each must keep its own budget.
+_call_timeout: ContextVar[float | None] = ContextVar("gate_call_timeout", default=None)
+
+
+@contextmanager
+def call_timeout(seconds: float):
+    token = _call_timeout.set(seconds)
+    try:
+        yield
+    finally:
+        _call_timeout.reset(token)
 
 
 # ----------------------------------------------------------------------------- questions
@@ -171,12 +193,14 @@ class OllamaEmbedder:
             async with self.session.post(
                 "/api/embed",
                 json={"model": self.model, "input": texts, "keep_alive": -1},
-                timeout=aiohttp.ClientTimeout(total=self.timeout_s),
+                timeout=aiohttp.ClientTimeout(total=_call_timeout.get() or self.timeout_s),
             ) as response:
                 if response.status != 200:
                     raise GateError(f"HTTP {response.status}: {(await response.text())[:200]}")
                 data = await response.json()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except asyncio.TimeoutError as exc:     # before ClientError: aiohttp's timeouts are both
+            raise GateTimeout(str(exc) or type(exc).__name__) from exc
+        except aiohttp.ClientError as exc:
             raise GateError(str(exc) or type(exc).__name__) from exc
         vectors = data.get("embeddings")
         if not isinstance(vectors, list) or len(vectors) != len(texts):
@@ -535,7 +559,9 @@ class Gate:
         self.last_route: Route | None = None
         self.last_ms: float | None = None
         self.disabled_reason = "" if config.enabled else "disabled in config"
-        self.rewarm: asyncio.Task | None = None
+        self.retries = 0                 # notifications asked again after a timeout
+        self.warmups = 0                 # background reloads that finished
+        self.warming: asyncio.Task | None = None
 
     async def start(self) -> None:
         if not self.config.enabled or not self.systemone:
@@ -546,26 +572,27 @@ class Gate:
         try:
             # The first call loads the model and embeds every example at once: the per-sentence
             # timeout would cut it off. Same allowance the brain's warm-up gets.
-            if self.owned:
-                self.owned.timeout_s = self.WARM_UP_S
-            await self.systemone.prepare(*self.questions, IS_SENSITIVE)
+            with call_timeout(self.WARM_UP_S):
+                await self.systemone.prepare(*self.questions, IS_SENSITIVE)
         except GateError as exc:
             self.disabled_reason = f"could not embed the examples: {exc}"
             log.warning("gate: %s; routing every sentence to chat", self.disabled_reason)
             return
-        finally:
-            if self.owned:
-                self.owned.timeout_s = self.config.timeout_s
         self.ready = True
         log.info("gate: %s ready in %.1fs (%d examples)", self.config.model, time.perf_counter() - started,
                  self.systemone.examples)
 
     async def close(self) -> None:
+        if self.warming is not None and not self.warming.done():
+            self.warming.cancel()
         if self.owned:
             await self.owned.close()
 
     async def route(self, text: str) -> Route | None:
-        """None when the gate is off or failing; the caller then treats the sentence as chat."""
+        """None when the gate is off or failing; the caller then treats the sentence as chat.
+
+        No retry here: a spoken sentence wants an answer now, and chat is a safe reading of it. A
+        timeout only starts the background reload, so the next sentence finds the model warm."""
         if not self.ready or not self.systemone:
             return None
         self.calls += 1
@@ -575,8 +602,8 @@ class Gate:
         except GateError as exc:
             self.failures += 1
             log.warning("gate: %s; treating %r as chat", exc, text)
-            if "Timeout" in str(exc):
-                self.schedule_rewarm()
+            if isinstance(exc, GateTimeout):
+                self.warm("after a timeout")
             return None
         ms = (time.perf_counter() - started) * 1000
         kind = answers["kind"]
@@ -609,43 +636,114 @@ class Gate:
 
     async def sensitive(self, text: str) -> tuple[float, float] | None:
         """p(yes) of IS_SENSITIVE for a notification's text, and the milliseconds it took; None when
-        the gate is off or failing (the caller then treats the text as sensitive). Never logs the text."""
+        the gate is off or failing (the caller then treats the text as sensitive). Never logs the text.
+
+        Slow is not down (WIRING.md §4): on a timeout the model is most likely loading, so this
+        waits for the one shared reload (up to `retry_timeout_s`) and asks once more. A hard error
+        (Ollama not running, an HTTP error) fails closed at once, and so does a retry that fails.
+        A notification that arrives while a reload is already running skips the doomed short call
+        and waits for that reload too, so a burst at wake shares one wait instead of queueing."""
         if not self.ready or not self.systemone:
             return None
         self.sensitive_calls += 1
         started = time.perf_counter()
-        try:
-            answers = await self.systemone.ask(text, IS_SENSITIVE)
-        except GateError as exc:
-            self.failures += 1
-            log.warning("gate: %s; the notification body counts as sensitive", exc)
-            if "Timeout" in str(exc):
-                self.schedule_rewarm()
+        if self.warming is not None and not self.warming.done():
+            log.info("gate: %s is loading; the notification waits for it (up to %.0fs) instead of a short call",
+                     self.config.model, self.config.retry_timeout_s)
+            answers = await self._sensitive_after_warm(text, started)
+        else:
+            try:
+                answers = await self.systemone.ask(text, IS_SENSITIVE)
+            except GateTimeout as exc:
+                log.info("gate: is_sensitive timed out after %.1fs (%s); waiting up to %.0fs for %s to load, "
+                         "then asking once more", time.perf_counter() - started, exc, self.config.retry_timeout_s,
+                         self.config.model)
+                answers = await self._sensitive_after_warm(text, started)
+            except GateError as exc:
+                self.failures += 1
+                log.warning("gate: %s; the notification body counts as sensitive", exc)
+                return None
+        if answers is None:
             return None
         ms = (time.perf_counter() - started) * 1000
         p = answers[IS_SENSITIVE.name].score or 0.0
         log.debug("gate: is_sensitive %.2f (%.0f ms, %d chars)", p, ms, len(text))
         return p, ms
 
-    def schedule_rewarm(self) -> None:
-        """After a timeout the embedding model is most likely reloading after being evicted; a
-        short call hanging up aborts that load (Ollama), so reload it once with the long allowance."""
-        if self.rewarm and not self.rewarm.done():
-            return
-
-        async def warm() -> None:
-            if not self.owned or not self.systemone:
-                return
-            self.owned.timeout_s = self.WARM_UP_S
+    async def _sensitive_after_warm(self, text: str, started: float) -> dict[str, Answer] | None:
+        """The retry: wait for the shared reload, then one more call with what is left of the budget."""
+        assert self.systemone
+        budget = self.config.retry_timeout_s
+        if budget <= 0:                  # retry_timeout_s = 0: no second chance (the old behaviour)
+            self.failures += 1
+            self.warm("after a timeout")
+            log.warning("gate: no retry configured; the notification body counts as sensitive")
+            return None
+        self.retries += 1
+        waited_from = time.perf_counter()
+        warming = self.warm("after a timeout")
+        if warming is not None:
             try:
-                await self.embed_one("warm up")
-                log.info("gate: %s reloaded", self.config.model)
-            except GateError as exc:
-                log.warning("gate: reload failed (%s)", exc)
-            finally:
-                self.owned.timeout_s = self.config.timeout_s
+                # Shielded: this notification giving up must not cancel the reload the next one needs.
+                loaded = await asyncio.wait_for(asyncio.shield(warming), budget)
+            except asyncio.TimeoutError:
+                self.failures += 1
+                log.warning("gate: %s still loading after %.1fs; the notification body counts as sensitive",
+                            self.config.model, time.perf_counter() - waited_from)
+                return None
+            if not loaded:
+                self.failures += 1
+                log.warning("gate: reload failed; the notification body counts as sensitive")
+                return None
+        left = max(budget - (time.perf_counter() - waited_from), self.config.timeout_s)
+        try:
+            with call_timeout(left):
+                answers = await self.systemone.ask(text, IS_SENSITIVE)
+        except GateError as exc:
+            self.failures += 1
+            log.warning("gate: retry failed (%s) after %.1fs in all; the notification body counts as sensitive",
+                        exc, time.perf_counter() - started)
+            return None
+        log.info("gate: is_sensitive answered on the retry, %.1fs after the notification arrived",
+                 time.perf_counter() - started)
+        return answers
 
-        self.rewarm = asyncio.get_running_loop().create_task(warm())
+    def warm(self, reason: str) -> asyncio.Task | None:
+        """Load the embedding model in the background with the long allowance, or join the load
+        already running: at most one at a time, shared by every caller. The task's result is True
+        when the model answered. None when the gate is off.
+
+        Why a load of its own after a timeout: a short call hanging up aborts Ollama's load of
+        the model, so the short calls alone would keep killing it. It also brings up a gate
+        whose examples could not be embedded at start (Ollama was down then)."""
+        if not self.config.enabled or not self.systemone:
+            return None
+        if self.warming is not None and not self.warming.done():
+            return self.warming
+        self.warming = asyncio.get_running_loop().create_task(self._warm(reason))
+        return self.warming
+
+    async def _warm(self, reason: str) -> bool:
+        assert self.systemone
+        started = time.perf_counter()
+        try:
+            with call_timeout(self.WARM_UP_S):
+                if self.ready:
+                    await self.embed_one("warm up")
+                else:
+                    await self.systemone.prepare(*self.questions, IS_SENSITIVE)
+        except GateError as exc:
+            log.warning("gate: reload %s failed after %.1fs (%s)", reason, time.perf_counter() - started, exc)
+            return False
+        self.warmups += 1
+        if not self.ready:
+            self.ready = True
+            self.disabled_reason = ""
+            log.info("gate: %s ready %s in %.1fs (%d examples)", self.config.model, reason,
+                     time.perf_counter() - started, self.systemone.examples)
+        else:
+            log.info("gate: %s reloaded %s in %.1fs", self.config.model, reason, time.perf_counter() - started)
+        return True
 
     async def embed_one(self, text: str) -> None:
         assert self.embedder
@@ -658,6 +756,9 @@ class Gate:
             "calls": self.calls,
             "sensitive_calls": self.sensitive_calls,
             "failures": self.failures,
+            "retries": self.retries,
+            "warmups": self.warmups,
+            "warming": self.warming is not None and not self.warming.done(),
             "last_ms": round(self.last_ms, 1) if self.last_ms is not None else None,
             "last_route": {k: v for k, v in self.last_route.to_dict().items() if k != "answers"} if self.last_route else None,
             "disabled_reason": self.disabled_reason or None,

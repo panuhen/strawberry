@@ -221,7 +221,7 @@ async def test_timeout_schedules_a_background_rewarm(monkeypatch):
     async def slow_ask(*args, **kwargs):
         raise asyncio.TimeoutError()
 
-    async def warm_up():
+    async def warm_up(reason="after a timeout"):
         warmed.set()
         reactor.loaded = True
 

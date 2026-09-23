@@ -36,3 +36,15 @@ def throwaway_xdg_dirs(monkeypatch, tmp_path_factory):
         monkeypatch.setenv(f"XDG_{name}_HOME", str(base / name.lower()))
     paths.privacy_notice_marker().parent.mkdir(parents=True)
     paths.privacy_notice_marker().write_text("shown\n")
+
+
+@pytest.fixture(autouse=True)
+def no_real_system_bus(monkeypatch):
+    """Nor the system bus: the daemon's wake watcher (wake.py) finds none and says so once.
+    tests/test_wake.py passes a fake bus to see a resume."""
+    from strawberry_crab import wake
+
+    async def refuse(queue_size: int = 16):
+        raise ConnectionError("the system bus is out of bounds in tests")
+
+    monkeypatch.setattr(wake, "open_system_bus", refuse)
