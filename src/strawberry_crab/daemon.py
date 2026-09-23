@@ -25,6 +25,7 @@ from .systemone import Gate, Route
 from .thinker import Thinker
 from .tools import Toolbox
 from .voice import Listener
+from .wake import WakeWatcher
 
 log = logging.getLogger("strawberryd")
 
@@ -76,6 +77,10 @@ class Daemon:
         # Her memory across turns (§8b): the last few exchanges, given to whoever answers.
         self.ledger = Ledger(self.config.actions.ledger_turns, self.config.actions.ledger_age_s)
         self.background_tasks: set[asyncio.Task] = set()
+        # Resume from suspend (logind on the system bus): the models are loaded again before the
+        # first notification needs them (wake.py). Absent bus: one log line, nothing else.
+        self.wake = WakeWatcher(self.on_wake) if self.config.daemon.warm_on_wake else None
+        self.wake_task: asyncio.Task | None = None
 
     def _default_reactor(self) -> Reactor:
         canned = CannedReactor()
@@ -101,6 +106,27 @@ class Daemon:
         await self.thinker.start()
         if self.config.voice.enabled and self.config.voice.hotwords and self.toolbox.servers:
             self.vocabulary_task = asyncio.get_running_loop().create_task(self._vocabulary_loop())
+        if self.wake is not None:
+            self.wake_task = asyncio.get_running_loop().create_task(self.wake.run())
+
+    def on_wake(self) -> None:
+        self.warm_models("on resume")
+
+    def warm_models(self, reason: str) -> list[asyncio.Task]:
+        """Load the gate's model and the reaction model in the background (a one-word embedding, an
+        empty generate with keep_alive). Each part keeps one load in flight and joins it when asked
+        again, so a second resume signal or a timeout meanwhile starts nothing new. Both parts log
+        their own time; the thinker's big model is left alone (it loads on demand, with cover)."""
+        tasks: list[asyncio.Task] = []
+        for name, part, method in (("gate", self.gate, "warm"), ("brain", self.reactor, "schedule_rewarm")):
+            warm = getattr(part, method, None)
+            if warm is None:
+                continue
+            task = warm(reason)
+            if task is not None:
+                tasks.append(task)
+        log.info("warming %d model(s) %s", len(tasks), reason)
+        return tasks
 
     def background(self, work, label: str) -> asyncio.Task:
         """Run `work` on the side (a typed sentence from the widget): kept referenced, failures logged."""
@@ -116,6 +142,13 @@ class Daemon:
         return task
 
     async def close(self) -> None:
+        if self.wake_task and not self.wake_task.done():
+            # Awaited, so its system-bus socket is closed before the loop goes.
+            self.wake_task.cancel()
+            try:
+                await self.wake_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutting down
+                pass
         for task in list(self.background_tasks):
             task.cancel()
         # Each part is closed even if another one fails: an HTTP session left open is an

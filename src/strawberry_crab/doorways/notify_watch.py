@@ -257,9 +257,16 @@ def summarise(batch: list[dict[str, Any]], cfg: NotificationsConfig) -> dict[str
 
 # --- the bus side ---------------------------------------------------------------
 
+# How long a POST /event may take before the watcher stops waiting for the reply. Longer than the
+# client's usual 2 s: a body whose privacy check timed out is checked again once the gate's model
+# has loaded ([gate] retry_timeout_s, 15 s by default), and the reply only comes after that. The
+# post runs in a thread, so the bus reader keeps reading meanwhile (WIRING.md §4).
+POST_TIMEOUT_S = 30.0
+
+
 class Watcher:
     def __init__(self, daemon: str, cfg: NotificationsConfig) -> None:
-        self.daemon = DaemonClient(daemon)
+        self.daemon = DaemonClient(daemon, timeout=POST_TIMEOUT_S)
         self.cfg = cfg
         self.batch: list[dict[str, Any]] = []
         self.deduper = Deduper()

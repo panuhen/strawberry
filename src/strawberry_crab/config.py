@@ -34,6 +34,7 @@ class DaemonConfig:
     host: str = "127.0.0.1"
     port: int = 8770
     log_level: str = "INFO"
+    warm_on_wake: bool = True      # on resume from suspend (logind), load the gate and reaction models again
 
 
 @dataclass
@@ -139,6 +140,8 @@ class GateConfig:
     offer: float = 0.3             # below act: a label in the journal; the sentence goes to the thinker anyway
     topic_min: float = 0.2         # below this the topic is "other" and no tools are loaded
     timeout_s: float = 2.0         # one embedding call is ~165 ms on a GPU
+    retry_timeout_s: float = 15.0  # a notification body's check that timed out waits this long for the
+                                   # model to load and asks once more (a cold load is ~10 s); voice never waits
     # Extra phrases per option, keyed "kind.request", "topic.music", ...; a misread sentence
     # goes here and is fixed.
     examples: dict[str, list[str]] = field(default_factory=dict)
@@ -304,6 +307,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("voice.vocabulary must be a list of strings")
     if config.gate.temperature <= 0:
         raise ConfigError("gate.temperature must be positive")
+    if config.gate.timeout_s <= 0 or config.gate.retry_timeout_s < 0:
+        raise ConfigError("gate.timeout_s must be positive and gate.retry_timeout_s not negative")
     if config.gate.neighbours < 1:
         raise ConfigError("gate.neighbours must be >= 1")
     if not (0.0 <= config.gate.offer <= config.gate.act <= 1.0):
@@ -409,6 +414,7 @@ def default_toml() -> str:
         f'host = "{d.host}"',
         f"port = {d.port}",
         f'log_level = "{d.log_level}"',
+        f"warm_on_wake = {str(d.warm_on_wake).lower()}            # reload the gate and reaction models after a suspend",
         "",
         "[brain]",
         f"enabled = {str(b.enabled).lower()}          # false: canned one-liners, no model",
@@ -473,6 +479,7 @@ def default_toml() -> str:
         'model = "embeddinggemma"       # Ollama embedding model (ollama pull embeddinggemma)',
         "act = 0.6                      # confidence at which a plain command may fire a reflex",
         "offer = 0.3                    # below act: a label in the journal; the sentence goes to the thinker",
+        "retry_timeout_s = 15.0         # a notification check that timed out waits this long for the model, once",
         "# [gate.examples]              # a sentence she misreads goes under the option it belongs to",
         '# \"kind.request\" = ["put the kettle on"]',
         '# \"topic.music\" = ["what year is this from"]',
