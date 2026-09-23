@@ -167,7 +167,7 @@ def check_config(probes: Probes) -> tuple[list[Check], Any]:
     except ConfigError as exc:
         return [Check(FAIL, "config", str(exc), f"edit {path} (strawberry config)")], Config()
     checks = [Check(OK, "config", str(path))]
-    missing = missing_keys(path.read_text())
+    missing = missing_keys(path.read_text(encoding="utf-8"))
     if missing:
         names = ", ".join(k for k, _ in missing[:8]) + (f" and {len(missing) - 8} more" if len(missing) > 8 else "")
         checks.append(Check(WARN, "config keys at their defaults", f"{len(missing)} not in your file: {names}",

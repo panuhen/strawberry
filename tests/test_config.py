@@ -117,7 +117,7 @@ def test_env_overrides_file(tmp_path):
 
 def test_default_template_round_trips(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text(default_toml())
+    path.write_text(default_toml(), encoding="utf-8")
     config = load(path, env={})
     assert config.brain.reaction_model == "gemma3:1b"
     assert config.brain.keep_alive == -1

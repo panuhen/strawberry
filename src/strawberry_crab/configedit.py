@@ -114,7 +114,7 @@ def check_config_text(text: str) -> None:
         tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"the edited config would not parse: {exc}") from exc
-    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as handle:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".toml", delete=False) as handle:
         handle.write(text)
     try:
         load(Path(handle.name), env={})
@@ -127,12 +127,12 @@ def write_config(path: Path, text: str, say: Callable[[str], None]) -> Path | No
     check_config_text(text)
     saved = None
     if path.exists():
-        if path.read_text() == text:
+        if path.read_text(encoding="utf-8") == text:
             return None
         saved = backup(path)
         say(f"  backed up {path} -> {saved.name}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return saved
 
 
@@ -145,7 +145,7 @@ def set_value(path: Path, dotted: str, value: Any, say: Callable[[str], None] = 
     value, or the section written as an inline table) or the result would not load."""
     from .config import ConfigError, default_toml
 
-    text = path.read_text() if path.exists() else ""
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
     if not text.strip():
         text = default_toml()
     text, _ = set_key(text, dotted, value, overwrite=True)

@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> None:
             print(f"{path} already exists; not overwriting", file=sys.stderr)
             sys.exit(1)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(default_toml())
+        path.write_text(default_toml(), encoding="utf-8")
         print(path)
         return
 
