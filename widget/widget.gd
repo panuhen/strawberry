@@ -42,6 +42,7 @@ const PASSTHROUGH_PADDING := 18.0
 const REGION_HOLD_S := 1.5
 const REGION_SLACK := 8.0
 const REGION_SHRINK := 0.97
+const MENU_PADDING := 3.0
 
 var ws_url := "ws://127.0.0.1:8770/ws"
 var capture_path := ""
@@ -88,6 +89,7 @@ var bone_boxes := {}            # mesh -> [[bone, bind pose, box of what that bo
 var recent_hulls: Array = []    # [seconds, padded hull] of the last REGION_HOLD_S (Windows)
 var region := PackedVector2Array()
 var region_set_at := 0.0
+var shown_menus: Array[Rect2] = []   # the open menus the region takes in (open_menus)
 
 func _ready() -> void:
 	if hand_over_to_acceptance():
@@ -174,11 +176,11 @@ func setup_window() -> void:
 func update_passthrough() -> void:
 	if is_headless() or model == null:
 		return
-	if menu and menu.visible:
-		return     # the open menu takes the whole window; popup_hide brings the polygon back
 	if Paths.windows():
 		follow_pose(true)
 		return
+	if menu and menu.visible:
+		return     # the open menu takes the whole window; popup_hide brings the polygon back
 	var points := PackedVector2Array()
 	for node in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh := node as MeshInstance3D
@@ -209,13 +211,12 @@ func update_passthrough() -> void:
 ## drawn, it takes the padded hull of her posed parts (body_points), the bubble, the badge and the
 ## type box, keeps each frame's for REGION_HOLD_S, and sets the hull of them all when she reaches
 ## outside the region or when it could shrink. A dance or a wave then stays inside one region.
+## The open menu and its submenus are added to it (open_menus), so they are drawn and clicked.
 ## (The whole-window passthrough flag would keep the drawing whole, but on Windows it only answers
 ## HTTRANSPARENT to hit tests, which other programs' windows never see: clicks still land on her.)
 func follow_pose(force := false) -> void:
 	if is_headless() or model == null or not visible:
 		return     # hidden: run_command's tiny polygon stays
-	if menu and menu.visible:
-		return
 	var points := body_points()
 	for corner in bubble.outline():
 		points.append(camera.unproject_position(corner))
@@ -244,10 +245,41 @@ func follow_pose(force := false) -> void:
 		all.append_array(entry[1])
 	var wanted := padded_hull(all, REGION_SLACK)
 	var shrinks := now - region_set_at >= REGION_HOLD_S and area(wanted) < REGION_SHRINK * area(region)
+	var menus := open_menus()
 	if force or reached_out or shrinks:
 		region = wanted
 		region_set_at = now
-		get_window().mouse_passthrough_polygon = wanted
+	elif menus == shown_menus:
+		return
+	shown_menus = menus
+	get_window().mouse_passthrough_polygon = with_menus(region, menus)
+
+## The right-click menu and its open submenus, in window pixels: they are embedded, drawn inside
+## this window. Checked each frame before it is drawn, so a menu is in the region from its first
+## frame on. On Windows an empty polygon (Linux's way of giving the menu the window) would remove
+## the region, and Windows repaints the whole rectangle before the next frame: a pale flash.
+func open_menus() -> Array[Rect2]:
+	var rects: Array[Rect2] = []
+	if menu == null or not menu.visible:
+		return rects
+	for popup: PopupMenu in [menu, menu.volume_menu, menu.skin_menu, menu.sleep_menu]:
+		if popup.visible:
+			rects.append(Rect2(Rect2i(popup.position, popup.size)).grow(MENU_PADDING))
+	return rects
+
+## Her region and the menus as one polygon (the region is a single polygon). Menus that do not
+## overlap it, or would leave a hole, take the hull of them all instead.
+func with_menus(polygon: PackedVector2Array, rects: Array[Rect2]) -> PackedVector2Array:
+	var merged := polygon
+	for rect in rects:
+		var box := PackedVector2Array([rect.position, Vector2(rect.end.x, rect.position.y), rect.end, Vector2(rect.position.x, rect.end.y)])
+		var union := Geometry2D.merge_polygons(merged, box)
+		if union.size() == 1:
+			merged = union[0]
+		else:
+			box.append_array(merged)
+			merged = Geometry2D.convex_hull(box)
+	return merged
 
 ## Her meshes' corners on screen, as posed now. Each skinned mesh is bound to bones rigidly (one
 ## per vertex, WIRING.md §13), so the box of what a bone moves goes where the bone takes it; a
@@ -355,8 +387,10 @@ func setup_menu() -> void:
 	add_child(menu)
 	menu.setup(self)
 	# The menu is drawn inside our transparent window, mostly outside the crab's silhouette,
-	# so the whole window must take clicks while it is open.
-	menu.about_to_popup.connect(func(): if not is_headless(): get_window().mouse_passthrough_polygon = PackedVector2Array())
+	# so the whole window must take clicks while it is open. On Windows the region takes in
+	# the open menus instead (follow_pose, open_menus).
+	if not Paths.windows():
+		menu.about_to_popup.connect(func(): if not is_headless(): get_window().mouse_passthrough_polygon = PackedVector2Array())
 	menu.popup_hide.connect(update_passthrough)
 
 # --- typing to her ---------------------------------------------------------------
