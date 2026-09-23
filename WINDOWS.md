@@ -62,6 +62,39 @@ Most of the system has nothing Linux-specific in it and carries over unchanged:
 
 Each step ends with the checks passing on both systems; the Linux tests must not regress.
 
+## Step 1: where it stands
+
+Done:
+
+- `STRAWBERRY_ALLOW_UNSUPPORTED=1` lets the entry points past `osguard` on a system it does not
+  list. It is for working on the port; `tests/conftest.py` sets it for the suite.
+- Paths: config in `%APPDATA%\strawberry`, data (voices, `widget\strawberry-widget.exe`) in
+  `%LOCALAPPDATA%\strawberry`, state (pidfiles, logs, `tray.json`) in
+  `%LOCALAPPDATA%\strawberry\state`, the widget's copied-out files in
+  `%LOCALAPPDATA%\strawberry\cache`. Git hooks go to `%APPDATA%\strawberry\git-hooks`.
+- `strawberry daemon | status | say | talk | stop | git-event | git-hooks` work by hand. The
+  daemon starts without the Ollama models and says so; `strawberry daemon` starts no doorways
+  off Linux. Ctrl+C and Ctrl+Break stop the daemon cleanly (Windows loops have no
+  `add_signal_handler`, so a plain handler hands the signal to the loop).
+- `strawberry widget`: no `--display-driver`, the `.exe` name, run as a child (no exec on
+  Windows). The release asset name is `strawberry-widget-<ver>-windows-x86_64.exe`.
+- Hooks are written with LF and forward-slash paths; a repository's own hook runs through Git's
+  `sh`. Without `fork`, the git event is posted from a detached Python.
+- The config and the widget's preferences are UTF-8 on every system.
+- Tests: `@pytest.mark.linux_only` skips a test off Linux. Skipped on Windows: the systemd unit
+  tests (`test_the_unit_starts_the_installed_tray_not_the_repo`,
+  `test_install_rewrites_an_old_unit_and_restarts_it`) and the XDG icon-theme lookup of the
+  notification watcher (`test_resolve_icon_prefers_a_path_then_walks_the_theme`). The old-symlink
+  hook test skips itself where symlinks cannot be made (Windows without developer mode).
+
+Left:
+
+- Run the widget by hand once Godot is installed (`paths.gd` has the Windows paths, untested).
+- `strawberry stop` ends the daemon with TerminateProcess; a clean stop from another process
+  (Ctrl+Break to its process group, or an HTTP call) belongs with the tray in step 4.
+- The wake watcher finds no system bus and logs one line (step 7).
+- `scripts/check_phase1.sh` and the other shell checks are Linux-only as written.
+
 ## Before starting on the Windows machine
 
 Install Git, uv, Ollama (then `ollama pull embeddinggemma gemma3:1b` and the brain model),

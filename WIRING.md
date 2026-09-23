@@ -506,7 +506,7 @@ Acceptance: `scripts/check_tray.sh` registers the item on the real session bus a
 
 ## 15. Settings
 
-One file, `~/.config/strawberry/config.toml` (`$XDG_CONFIG_HOME` respected). **Every path comes from `strawberry/paths.py`**: config `$XDG_CONFIG_HOME/strawberry/`, data `$XDG_DATA_HOME/strawberry/` (`voices/`, later the widget binary), state `$XDG_STATE_HOME/strawberry/` (`tray.json`, the pidfiles and logs of by-hand runs); an unset, empty or relative variable means the default under `~`. Defaults live in code (`strawberry/config.py`), so the file only needs the lines you change. Read by the daemon at start and by the media watcher; `GET /config` shows the effective result. Unknown keys warn; wrong types refuse to start with the key named.
+One file, `~/.config/strawberry/config.toml` (`$XDG_CONFIG_HOME` respected). **Every path comes from `strawberry/paths.py`**: config `$XDG_CONFIG_HOME/strawberry/`, data `$XDG_DATA_HOME/strawberry/` (`voices/`, later the widget binary), state `$XDG_STATE_HOME/strawberry/` (`tray.json`, the pidfiles and logs of by-hand runs); an unset, empty or relative variable means the default under `~`. On Windows (the port, `WINDOWS.md`) they are `%APPDATA%\strawberry\` for the config and `%LOCALAPPDATA%\strawberry\` for data, with state in its `state\` subdir. The config and the widget's preferences are read and written as UTF-8 on every system. Defaults live in code (`strawberry/config.py`), so the file only needs the lines you change. Read by the daemon at start and by the media watcher; `GET /config` shows the effective result. Unknown keys warn; wrong types refuse to start with the key named.
 
 ```toml
 [daemon]
