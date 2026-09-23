@@ -6,6 +6,8 @@ from __future__ import annotations
 import hashlib
 import http.server
 import os
+import subprocess
+import sys
 import threading
 from functools import partial
 from pathlib import Path
@@ -13,46 +15,52 @@ from pathlib import Path
 import pytest
 
 from strawberry_crab import __version__, cli, paths, widgetbin
+from tests.portable import point_dirs, program
+
+# The X11 backend on Linux (WIRING.md §13); Windows has one display driver and no argument.
+DISPLAY = [] if sys.platform == "win32" else ["--display-driver", "x11"]
 
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
-    for name in ("CONFIG", "DATA", "STATE", "CACHE"):
-        monkeypatch.setenv(f"XDG_{name}_HOME", str(tmp_path / name.lower()))
+    point_dirs(monkeypatch, tmp_path)
     monkeypatch.delenv(widgetbin.RELEASE_ENV, raising=False)
     monkeypatch.delenv("STRAWBERRY_CLI", raising=False)
-
-
-def executable(path: Path, body: bytes = b"#!/bin/sh\nexit 0\n") -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(body)
-    path.chmod(0o755)
-    return path
 
 
 # --- resolution -------------------------------------------------------------------
 
 def test_the_installed_binary_comes_first(tmp_path):
-    binary = executable(paths.widget_binary())
-    assert binary == tmp_path / "data" / "strawberry" / "widget" / "strawberry-widget"
+    binary = program(paths.widget_binary())
+    if sys.platform == "win32":
+        assert binary == tmp_path / "localappdata" / "strawberry" / "widget" / "strawberry-widget.exe"
+    else:
+        assert binary == tmp_path / "data" / "strawberry" / "widget" / "strawberry-widget"
     widget = widgetbin.resolve(project=tmp_path / "checkout" / "widget", godot="/usr/bin/godot")
     assert widget == widgetbin.Widget("binary", binary)
     assert widget.argv(8776, ["--capture=/tmp/x.png"]) == [
-        str(binary), "--display-driver", "x11", "--", "--ws=ws://127.0.0.1:8776/ws", "--capture=/tmp/x.png"]
+        str(binary), *DISPLAY, "--", "--ws=ws://127.0.0.1:8776/ws", "--capture=/tmp/x.png"]
 
 
 def test_a_binary_that_is_not_executable_does_not_count(tmp_path):
+    # On Linux: no execute bit. On Windows, where every file is "executable": no PE image.
     paths.widget_binary().parent.mkdir(parents=True)
     paths.widget_binary().write_bytes(b"half a download")
     widget = widgetbin.resolve(project=tmp_path / "widget", godot="/opt/godot")
     assert widget.kind == "checkout"
 
 
+@pytest.mark.parametrize("platform, args", [("linux", ["--display-driver", "x11"]), ("win32", [])])
+def test_the_display_driver_is_chosen_by_os(monkeypatch, platform, args):
+    monkeypatch.setattr(sys, "platform", platform)
+    assert widgetbin.Widget("binary", Path("w")).argv(1) == ["w", *args, "--", "--ws=ws://127.0.0.1:1/ws"]
+
+
 def test_without_a_binary_a_checkout_and_godot_is_developer_mode(tmp_path):
     project = tmp_path / "widget"
     widget = widgetbin.resolve(project=project, godot="/opt/godot")
     assert widget == widgetbin.Widget("checkout", Path("/opt/godot"), project)
-    assert widget.argv(8770) == ["/opt/godot", "--display-driver", "x11", "--path", str(project), "--",
+    assert widget.argv(8770) == [str(Path("/opt/godot")), *DISPLAY, "--path", str(project), "--",
                                  "--ws=ws://127.0.0.1:8770/ws"]
 
 
@@ -70,7 +78,7 @@ def test_the_cli_says_so_too(monkeypatch, capsys):
 
 
 def test_the_cli_execs_the_binary_with_the_x11_driver_and_the_port(monkeypatch):
-    binary = executable(paths.widget_binary())
+    binary = program(paths.widget_binary())
     monkeypatch.setenv("STRAWBERRY_TRAY", "1")          # the tray owns the daemon: start nothing
     monkeypatch.setenv("STRAWBERRYD_PORT", "8779")
     monkeypatch.setenv("STRAWBERRY_CLI", "")            # restored afterwards: cmd_widget sets it
@@ -81,15 +89,23 @@ def test_the_cli_execs_the_binary_with_the_x11_driver_and_the_port(monkeypatch):
         exec_calls.append((program, argv))
         raise SystemExit(0)
 
+    def fake_call(argv):                                 # Windows: run as a child, pass its code on
+        exec_calls.append((argv[0], argv))
+        return 5
+
     monkeypatch.setattr(os, "execv", fake_execv)
-    with pytest.raises(SystemExit):
-        cli.main(["widget", "--capture=/tmp/c.png"])
-    assert exec_calls == [(str(binary), [str(binary), "--display-driver", "x11", "--",
+    monkeypatch.setattr(subprocess, "call", fake_call)
+    try:
+        code = cli.main(["widget", "--capture=/tmp/c.png"])
+    except SystemExit as stop:
+        code = stop.code
+    assert code == (5 if sys.platform == "win32" else 0)
+    assert exec_calls == [(str(binary), [str(binary), *DISPLAY, "--",
                                          "--ws=ws://127.0.0.1:8779/ws", "--capture=/tmp/c.png"])]
 
 
 def test_strawberry_cli_prefers_what_the_tray_passed(monkeypatch, tmp_path):
-    fake = executable(tmp_path / "bin" / "strawberry")
+    fake = program(tmp_path / "bin" / widgetbin.cli_name())
     monkeypatch.setenv("STRAWBERRY_CLI", str(fake))
     assert widgetbin.strawberry_cli() == str(fake)
     monkeypatch.setenv("STRAWBERRY_CLI", str(tmp_path / "gone"))
@@ -124,7 +140,7 @@ def release(tmp_path):
 
 
 def test_fetch_installs_a_binary_whose_checksum_matches(release):
-    body = b"\x7fELF pretend widget" * 1000
+    body = (b"MZ" if sys.platform == "win32" else b"") + b"\x7fELF pretend widget" * 1000
     release("0.1.0", body)
     installed = widgetbin.fetch("0.1.0", base=release.base, say=lambda _: None)
     assert installed == paths.widget_binary()
@@ -136,12 +152,13 @@ def test_fetch_installs_a_binary_whose_checksum_matches(release):
 
 
 def test_a_bad_checksum_installs_nothing_and_keeps_the_old_binary(release):
-    old = executable(paths.widget_binary(), b"the old widget")
+    old = program(paths.widget_binary(), b"the old widget")
+    before = old.read_bytes()
     release("0.2.0", b"tampered", digest="0" * 64)
     with pytest.raises(widgetbin.FetchError, match="SHA-256 mismatch"):
         widgetbin.fetch("0.2.0", base=release.base, say=lambda _: None)
-    assert old.read_bytes() == b"the old widget"
-    assert sorted(p.name for p in old.parent.iterdir()) == ["strawberry-widget"]
+    assert old.read_bytes() == before
+    assert sorted(p.name for p in old.parent.iterdir()) == [paths.widget_binary().name]
 
 
 def test_a_missing_release_is_a_clear_error(release):
@@ -165,10 +182,13 @@ def test_the_cli_fetches_from_the_overridden_base(release, monkeypatch, capsys):
     assert "widget fetch failed" in capsys.readouterr().err
 
 
-def test_the_default_url_is_the_github_release():
+@pytest.mark.parametrize("platform, asset", [("linux", "strawberry-widget-0.1.0-linux-x86_64"),
+                                             ("win32", "strawberry-widget-0.1.0-windows-x86_64.exe")])
+def test_the_default_url_is_the_github_release(monkeypatch, platform, asset):
+    monkeypatch.setattr(sys, "platform", platform)
     assert widgetbin.asset_url("0.1.0") == (
-        "https://github.com/panuhen/strawberry/releases/download/v0.1.0/strawberry-widget-0.1.0-linux-x86_64")
-    assert widgetbin.asset_url("0.1.0", ".sha256", "http://x/").endswith("/v0.1.0/strawberry-widget-0.1.0-linux-x86_64.sha256")
+        f"https://github.com/panuhen/strawberry/releases/download/v0.1.0/{asset}")
+    assert widgetbin.asset_url("0.1.0", ".sha256", "http://x/").endswith(f"/v0.1.0/{asset}.sha256")
 
 
 def test_sha256_files_parse_like_sha256sum():

@@ -14,12 +14,12 @@ import pytest
 from strawberry_crab import __version__, cli, doctor, paths
 from strawberry_crab.config import Config
 from strawberry_crab.doctor import FAIL, OK, WARN
+from tests.portable import point_dirs, program
 
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
-    for name in ("CONFIG", "DATA", "STATE", "CACHE"):
-        monkeypatch.setenv(f"XDG_{name}_HOME", str(tmp_path / name.lower()))
+    point_dirs(monkeypatch, tmp_path)
     monkeypatch.delenv("STRAWBERRYD_PORT", raising=False)
     monkeypatch.setattr(paths, "widget_project", lambda: None)
 
@@ -110,9 +110,7 @@ def install_voice(name="en_GB-alba-medium"):
 
 
 def install_widget(version=__version__):
-    paths.widget_dir().mkdir(parents=True, exist_ok=True)
-    paths.widget_binary().write_text("#!/bin/sh\n")
-    paths.widget_binary().chmod(0o755)
+    program(paths.widget_binary(), b"#!/bin/sh\n")
     paths.widget_version_file().write_text(version + "\n")
 
 
