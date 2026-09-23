@@ -154,7 +154,7 @@ def test_a_backend_verdict_ends_the_capture():
 
 
 def test_no_data_at_all_is_nolink(monkeypatch):
-    monkeypatch.setattr(beat_watch, "NO_DATA_S", 0.0)
+    monkeypatch.setattr(beat_watch, "NO_DATA_S", -1.0)   # below 0: Windows' clock can read the same time twice
     stream = FakeStream([None])
     w, _ = watcher(FakeBackend([stream]))
     assert w.capture("player") == "nolink" and stream.closed
