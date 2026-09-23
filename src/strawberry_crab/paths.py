@@ -121,6 +121,20 @@ def autostart_file() -> Path:
     return xdg_config_home() / "autostart" / "strawberry.desktop"
 
 
+def startup_dir() -> Path:
+    """Windows: the user's Startup folder, whose shortcuts run at login (`strawberry install`)."""
+    return appdata() / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def startup_shortcut() -> Path:
+    return startup_dir() / "Strawberry.lnk"
+
+
+def app_ico_file() -> Path:
+    """Windows: the berry as an .ico, for the Startup shortcut (a shortcut's icon cannot be a PNG)."""
+    return data_dir() / "strawberry.ico"
+
+
 def app_entry_file() -> Path:
     """The launcher entry GNOME matches her window to (StartupWMClass), for its icon and name."""
     return xdg_data_home() / "applications" / "strawberry.desktop"

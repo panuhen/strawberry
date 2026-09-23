@@ -92,12 +92,20 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def tray(config, children: bool = True, widget: bool = True, config_path: Path | None = None) -> int:
-    """`strawberryd --tray`: the 🍓 in the top bar, and (unless --no-children) everything under it."""
+    """`strawberryd --tray`: the 🍓 in the top bar, and (unless --no-children) everything under it.
+    The StatusNotifierItem on Linux (tray.py), the notification-area icon on Windows (wintray.py),
+    which also logs to <state>\\tray.log, having no journal."""
     import asyncio
 
-    from .tray import run_tray
+    handlers = None
+    if sys.platform == "win32":
+        from .wintray import log_handlers, run_tray
 
-    logging.basicConfig(level=config.daemon.log_level.upper(),
+        handlers = log_handlers()
+    else:
+        from .tray import run_tray
+
+    logging.basicConfig(level=config.daemon.log_level.upper(), handlers=handlers,
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
     try:
         return asyncio.run(run_tray(config.daemon.port, children=children, widget=widget, config=config_path))

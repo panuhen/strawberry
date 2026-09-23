@@ -11,8 +11,8 @@ package and the widget binary.
 
 - The first step of the Windows port (`WINDOWS.md`): the daemon and the CLI run on Windows by
   hand with `STRAWBERRY_ALLOW_UNSUPPORTED=1`, keeping the config in `%APPDATA%\strawberry` and
-  data and state in `%LOCALAPPDATA%\strawberry`. There is no tray or start-on-login there yet,
-  and Windows is not a supported system until the port is done.
+  data and state in `%LOCALAPPDATA%\strawberry`. Windows is not a supported system until the
+  port is done.
 - Media on Windows, the second step of the port: play, pause, skip, previous and "what's
   playing" work with any player that shows in Windows' media controls (the System Media
   Transport Controls), and a new doorway, `smtc_watch`, makes her dance while music plays and
@@ -24,6 +24,14 @@ package and the widget binary.
   `[notifications]` settings, body modes and privacy checks. It needs "Let apps access your
   notifications" on in Windows' privacy settings, and it checks for new toasts once a second.
   `strawberry daemon` starts it on Windows beside the media doorway.
+- The tray and start on login on Windows, the fourth step of the port: the berry sits in the
+  notification area with the same menu as on Linux (check marks, the radio lists, the
+  submenus; a left click shows or hides her) and runs the daemon, the doorways and the widget
+  as its children, restarting one that stops. `strawberry install` puts a shortcut to it in the
+  user's Startup folder and starts it, `strawberry uninstall` removes the shortcut and stops
+  it, and `strawberry status` says where the shortcut is. It runs without a console window and
+  writes its log, and one per child, to `%LOCALAPPDATA%\strawberry\state`. A new command,
+  `strawberry-tray`, is `strawberry tray` without a console window.
 
 ### Changed
 
@@ -31,6 +39,10 @@ package and the widget binary.
   system's locale.
 - `jeepney` is installed on Linux only, and the `winrt-*` packages for Windows' media controls
   and notifications on Windows only.
+- `strawberry stop` on Windows stops the daemon, the doorways and the tray cleanly (each shuts
+  down as on SIGTERM on Linux) instead of ending them at once; one that does not stop within
+  10 s (20 s for the tray) is still ended. `strawberry restart` there restarts the tray's
+  children, as the tray's own Restart does.
 
 ## [0.1.1] - 2026-09-23
 

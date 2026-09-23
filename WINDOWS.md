@@ -22,8 +22,8 @@ Most of the system has nothing Linux-specific in it and carries over unchanged:
 | Media (`mpris.py`, `doorways/mpris_watch.py`) | MPRIS over D-Bus | System Media Transport Controls: `GlobalSystemMediaTransportControlsSessionManager` (WinRT). Spotify, browsers and most players register with it. Play/pause/next/previous, now playing, change events. |
 | Beat capture (`doorways/beat_watch.py`) | `pw-record` of the player's own stream | WASAPI process loopback (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, Windows 10 2004+): capture one process's output, found through the SMTC session's app. `beat_track.py` is pure numpy and stays. |
 | Microphone (`voice.py`) | `pw-record` from the default source | WASAPI capture (e.g. `sounddevice`), 16 kHz mono. |
-| Tray (`tray.py`, `bus.py`, `icons.py`) | StatusNotifierItem + dbusmenu over jeepney | A notification-area icon (`pystray`, or Win32 `Shell_NotifyIcon`) with the same menu. The supervisor part of `tray.py` (children, backoff, `tray.json`) is OS-neutral and should be split out and shared. |
-| Start on login (`cli.py install`) | systemd user unit + XDG autostart fallback | A shortcut in the Startup folder, or a per-user scheduled task at logon. |
+| Tray (`tray.py`, `bus.py`, `icons.py`) | StatusNotifierItem + dbusmenu over jeepney | A notification-area icon, Win32 `Shell_NotifyIconW` through ctypes, with the same menu: `wintray.py` (step 4). The menu and the supervisor are shared: `traymenu.py`, `supervisor.py`. |
+| Start on login (`cli.py install`) | systemd user unit + XDG autostart fallback | A shortcut in the Startup folder (`startup.py`, step 4); no scheduled task. |
 | Wake from sleep (`wake.py`) | logind `PrepareForSleep` on the system bus | `WM_POWERBROADCAST` / `PBT_APMRESUMEAUTOMATIC`, or `PowerRegisterSuspendResumeNotification`. |
 | Paths (`paths.py`, `widget/paths.gd`) | XDG dirs | `%APPDATA%\strawberry` (config), `%LOCALAPPDATA%\strawberry` (data, state, widget binary). |
 | Hotkey (`cli.py hotkey`) | a GNOME custom shortcut via `gsettings` | `RegisterHotKey` in the tray process. |
@@ -91,8 +91,8 @@ Done:
 Left:
 
 - Run the widget by hand once Godot is installed (`paths.gd` has the Windows paths, untested).
-- `strawberry stop` ends the daemon with TerminateProcess; a clean stop from another process
-  (Ctrl+Break to its process group, or an HTTP call) belongs with the tray in step 4.
+- `strawberry stop` ended the daemon with TerminateProcess; step 4 gave it a clean stop (a named
+  stop event, below).
 - The wake watcher finds no system bus and logs one line (step 7).
 - `scripts/check_phase1.sh` and the other shell checks are Linux-only as written.
 
@@ -227,6 +227,116 @@ Left:
 - Desktop (unpackaged) apps usually have no logo through `GetLogo`, so no badge.
 - Doctor and setup have no notification-access check yet (step 7); doctor's D-Bus monitor check
   says "not checked" on Windows.
+
+## Step 4: where it stands
+
+Done:
+
+- The split. `supervisor.py` is the tray's children on every system: `child_specs`, the backoff,
+  `restart_child` (Message bodies restarts `notify_watch` or `toast_watch`), the widget child,
+  `tray.json`. `traymenu.py` is the menu as data and what its rows do: `menu_items`, the
+  preferences read back from `widget.cfg`, the body setting from `config.toml`, and `TrayCore`
+  (clicks, Message bodies, the health poll, `announce` for the front end). `tray.py` keeps the
+  StatusNotifierItem on top of `TrayCore` and re-exports the moved names, so Linux logs and
+  behaves as before and `tests/test_tray.py` did not change. `strawberryd --tray` picks
+  `wintray.py` on Windows and `tray.py` elsewhere.
+- The icon: `wintray.py`, the Win32 API through ctypes, no new dependency. A hidden top-level
+  window on its own thread owns a `Shell_NotifyIconW` icon (NOTIFYICON_VERSION_4); asyncio stays
+  on the main thread with `TrayCore` and the supervisor. Right click builds a popup menu from
+  `menu_items()` with `InsertMenuItemW` and shows it with `TrackPopupMenuEx`: check marks
+  (`MFS_CHECKED`), the radio lists (`MFT_RADIOCHECK`), the four submenus, the disabled status
+  row, separators; "Per-app overrides in config" is left out while it is hidden on Linux. The
+  menu refreshes from `/health` first (up to 0.5 s), as AboutToShow does. "Hide her"/"Show her"
+  is the default row (bold) and a left click runs it, as Activate does on Linux. The tooltip is
+  "Strawberry: <status>". The icon is a 32-bit HICON with alpha made from the packaged PNGs at
+  the notification area's size (`SM_CXSMICON`, per-monitor DPI aware), so no .ico is needed for
+  it. `TaskbarCreated` (Explorer restarted) adds it again, a failed add at login is retried every
+  2 s, and `WM_ENDSESSION` stops the children before logoff.
+- Why not pystray: it would add pystray (LGPL-3.0) and Pillow (its icons are PIL images) to
+  every Windows install, for a wrapper around the same Win32 calls used here (about 300 lines),
+  with its own message loop and menu model between us and them. Written directly, every menu
+  flag is ours to set and the tests read the real menu back. The Linux tray is likewise written
+  on jeepney rather than a tray library. pywin32 is installed (mcp depends on it on Windows) but
+  is not a dependency of ours, and nothing here needed it.
+- Clean stop: a named event per process, `Local\strawberry-stop-<key>` (`winproc.py`). The daemon
+  (`server.serve`) and everything that uses `client.stop_on_signals` (the doorways, the tray)
+  create it and shut down as on SIGTERM when it is set. `<key>` is the process's own pid and the
+  key its parent passes in `STRAWBERRY_STOP_EVENT`, because a venv's `python.exe` and uv's
+  launchers start the real interpreter as a child of their own, so the pid a parent holds is
+  not the interpreter's. The supervisor keys each run `<tray pid>-<name>-<n>`; `strawberry daemon`
+  keys a by-hand process by its pidfile's name and path (`cli.pidfile_stop_key`), so a
+  throwaway state dir never answers for the user's own; the tray answers to the pid in
+  `tray.json`. Who may set it: `Local\` is the logon session's namespace and the event has the
+  creating token's default DACL (the user, SYSTEM, the logon session). No port is opened, and
+  the HTTP API is unchanged. `strawberry stop` sets it, waits, and falls back to TerminateProcess
+  after 10 s (20 s for the tray, which stops its children first); the supervisor does the same
+  with its 5 s grace. What has no event (the widget binary) gets TerminateProcess. Ctrl+Break
+  was not used: it only reaches a process that shares the sender's console.
+- The tray's children on Windows: no console window (`CREATE_NO_WINDOW`), their own process
+  group, output to `<state>\<name>.log` (`strawberryd.log` for the daemon, the same files a
+  by-hand run uses; moved to `.1` past 5 MB), and a kill-on-close job object, so a tray that is
+  killed takes its children with it, as systemd's cgroup does. The tray itself logs to
+  `<state>\tray.log` with dates. When the tray runs windowless (pythonw), its children run on
+  `python.exe` beside it.
+- Restart: the tray also answers `Local\strawberry-restart-<pid>`. `strawberry restart` sets it
+  when a tray runs, and the tray restarts its children as its Restart row does. Her menu's
+  "Apply settings" runs `strawberry restart` from inside the tray's job, where stopping the tray
+  would end the caller too.
+- Start on login: `strawberry install` writes `Strawberry.lnk` in the user's Startup folder
+  (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`, `paths.startup_shortcut()`), with
+  the berry as its icon (`%LOCALAPPDATA%\strawberry\strawberry.ico`, PNG entries), stops what ran
+  before (by-hand daemon and doorways, an older tray) and starts the tray the way the shortcut
+  will. The shortcut runs `strawberry-tray.exe --port <port>`, a new `[project.gui-scripts]`
+  entry point: uv and pip make it a GUI-subsystem launcher that runs `pythonw.exe`, so no console
+  window opens (checked: subsystem 2, and the launcher names `Scripts\pythonw.exe`). Without it,
+  `pythonw.exe -m strawberry_crab tray`; without pythonw, `python.exe`, and install says a console
+  stays open. The .lnk is written by `WScript.Shell` through Windows PowerShell 5.1, with the
+  values in environment variables so nothing is quoted. No scheduled task and no registry: a
+  Startup shortcut runs at login as the user with no extra rights, shows in Task Manager's
+  Startup apps, and is undone by deleting a file. `strawberry uninstall` deletes the shortcut and
+  the .ico and stops the tray. Once installed, `strawberry daemon` starts the tray rather than a
+  daemon of its own, `status` prints `starts at login: <path>` and the tray's log, and `tray`
+  refuses to start a second tray.
+- Tests: `tests/test_wintray.py` builds real Win32 menus and icons and reads them back (nothing is
+  shown: `tests/conftest.py` blocks `Shell_NotifyIconW`), and runs the tray's loop with a fake
+  icon; `tests/test_winproc.py` stops its own processes through their events, through a venv
+  launcher, and the real daemon child through the supervisor (`stop requested: shutting down`,
+  `shut down; sessions closed`, exit 0); `tests/test_startup.py` writes a real .lnk under the
+  throwaway APPDATA and covers install, uninstall, status, restart and the second-tray refusal,
+  with the tray's start recorded (conftest refuses a real one). The systemd uninstall test and
+  the app-switcher test are `linux_only` now. `tests/test_imports.py` imports the new modules
+  without jeepney and without winrt.
+- Seen live 2026-09-23 against a throwaway daemon (port 8784, throwaway APPDATA and
+  LOCALAPPDATA, brain, gate, thinker, voice and speech off, `[actions] mpris = false`, `[media]
+  only` and `[notifications] only_apps` naming no real app): `strawberry install` wrote the
+  shortcut under the throwaway APPDATA and started `strawberry-tray.exe`; the tray's window was
+  found and `Shell_NotifyIconGetRect` found its icon in the notification area; the menu built
+  from the live daemon's state and read back through `GetMenuItemInfoW` had all 20 rows, the
+  submenus, the checked radio rows, the greyed status row and the default row; `status` listed
+  the shortcut, the tray and its three children; `restart` brought the children back with new
+  pids; `stop` took 0.3 s, the daemon logged `stop requested: shutting down` and `shut down;
+  sessions closed`, and afterwards no tray, child, window, icon or listener was left; install
+  again and `uninstall` removed the shortcut and the .ico and stopped the tray. The widget child
+  was reported missing (no Godot, no binary) and the rest ran. Nothing was clicked.
+
+Left:
+
+- At login the tray runs without `STRAWBERRY_ALLOW_UNSUPPORTED`, so until `win32` is in
+  `osguard.SUPPORTED` (step 8) it refuses to start unless the user sets that variable in their
+  user environment. `install` says so.
+- The widget binary is ended with TerminateProcess on stop and restart (Godot has no stop event);
+  whether it loses anything that way is untried until Godot is installed. In developer mode the
+  widget child is `python -m strawberry_crab widget`, whose Godot is a grandchild; the tray's job
+  takes it along on stop, but not on a per-child restart.
+- The menu was read back from a menu built in the probe from the same state, not from the
+  tray's own popup: opening that would have meant clicking on the user's desktop. Clicking the
+  rows, the left click and Quit from the menu are covered by the fake-icon tests only.
+- New icons land in the notification area's overflow on Windows 11 until the user drags them
+  out; no GUID is registered for the icon (it would tie the icon to one executable path).
+- Restart counts the children's stops as restarts in `tray.json` and logs them as exits, as the
+  Linux Restart row does.
+- The Startup folder is taken from `%APPDATA%`, not the `FOLDERID_Startup` known folder, so a
+  redirected Startup folder is not followed.
 
 ## Before starting on the Windows machine
 

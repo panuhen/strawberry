@@ -54,6 +54,11 @@ strawberry = "strawberry_crab.cli:main"
 strawberryd = "strawberry_crab.strawberryd:main"
 strawberry-doorway = "strawberry_crab.doorways:main"
 
+[project.gui-scripts]
+# `strawberry tray` without a console window: what the Windows Startup shortcut runs (startup.py).
+# Elsewhere it is the same as `strawberry tray`.
+strawberry-tray = "strawberry_crab.cli:tray_main"
+
 [dependency-groups]
 dev = [
     # The D-Bus doorway and tray tests build their messages with jeepney on every system.

@@ -21,17 +21,20 @@ def imports_without(blocked: str, modules: list[str]) -> subprocess.CompletedPro
     return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
 
 
-WINDOWS = ["strawberry_crab.smtc", "strawberry_crab.doorways.smtc_watch", "strawberry_crab.doorways.toast_watch"]
+WINDOWS = ["strawberry_crab.smtc", "strawberry_crab.doorways.smtc_watch", "strawberry_crab.doorways.toast_watch",
+           "strawberry_crab.wintray", "strawberry_crab.winproc", "strawberry_crab.startup"]
+# The tray's shared half: the supervisor and the menu run on both systems, the SNI only on Linux.
+TRAY = ["strawberry_crab.supervisor", "strawberry_crab.traymenu"]
 
 
-@pytest.mark.parametrize("modules", [SHARED, WINDOWS])
+@pytest.mark.parametrize("modules", [SHARED, WINDOWS, TRAY])
 def test_windows_code_imports_without_jeepney(modules):
     result = imports_without("jeepney", modules)
     assert result.returncode == 0, result.stderr
 
 
 def test_linux_code_imports_without_winrt():
-    result = imports_without("winrt", [*SHARED, *WINDOWS, "strawberry_crab.mpris",
+    result = imports_without("winrt", [*SHARED, *WINDOWS, *TRAY, "strawberry_crab.mpris", "strawberry_crab.tray",
                                        "strawberry_crab.doorways.notify_watch"])
     assert result.returncode == 0, result.stderr
 

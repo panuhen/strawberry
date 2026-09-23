@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import signal
+import sys
 import time
 from typing import Any
 
@@ -25,7 +26,7 @@ from aiohttp import WSMsgType, web
 from aiohttp.web_log import AccessLogger
 
 from . import __version__, firstrun, paths
-from .client import plain_signal_handler
+from .client import listen_for_stop_request, plain_signal_handler
 from .config import Config, ConfigError
 from .contract import ContractError, Performance, anim_for
 from .daemon import Daemon
@@ -473,6 +474,13 @@ async def serve(app: web.Application, host: str, port: int) -> None:
             log.info("%s: shutting down", name)
         stop.set()
 
+    def on_stop_request() -> None:
+        if stop.is_set():
+            log.info("stop request during shutdown ignored; already stopping")
+        else:
+            log.info("stop requested: shutting down")
+        stop.set()
+
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, on_signal, sig)
@@ -482,6 +490,8 @@ async def serve(app: web.Application, host: str, port: int) -> None:
             pass     # not the main thread (tests)
     if hasattr(signal, "SIGBREAK"):
         plain_signal_handler(loop, signal.SIGBREAK, on_signal, signal.SIGBREAK)   # Windows: Ctrl+Break
+    if sys.platform == "win32":
+        listen_for_stop_request(loop, on_stop_request)       # Windows: `strawberry stop`, the tray (winproc.py)
     # Left in place until the loop closes: a signal during cleanup is one more no-op, not a kill.
 
     runner = web.AppRunner(app, handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT_S,

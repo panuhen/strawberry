@@ -68,6 +68,31 @@ def no_real_notification_listener(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_notification_area(monkeypatch):
+    """Nor the taskbar: no test may put an icon in the user's notification area. The Windows
+    tray's tests build and read back its menu and icon, which shows nothing, and drive the rest
+    with a fake icon (tests/test_wintray.py)."""
+    from strawberry_crab import wintray
+
+    def refuse(message, data):
+        raise wintray.NotifyIconError("the notification area is out of bounds in tests")
+
+    monkeypatch.setattr(wintray, "shell_notify_icon", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_real_tray_start(monkeypatch):
+    """Nor may a test start a real tray the way `strawberry install` does on Windows; the tests of
+    install record the start instead (tests/test_startup.py)."""
+    from strawberry_crab import startup
+
+    def refuse(what):
+        raise AssertionError(f"a test tried to start a real tray: {what.command_line()}")
+
+    monkeypatch.setattr(startup, "start", refuse)
+
+
+@pytest.fixture(autouse=True)
 def throwaway_xdg_dirs(monkeypatch, tmp_path_factory):
     """No unit test may write the user's config, data or state: each gets its own XDG dirs.
 

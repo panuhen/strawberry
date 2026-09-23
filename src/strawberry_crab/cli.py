@@ -3,7 +3,8 @@
     strawberry                 start the daemon and doorways if needed, open the widget
     strawberry daemon          the daemon and doorways only (idempotent)
     strawberry tray            the 🍓, and under it the daemon, the doorways and the widget
-    strawberry install         start on login (one systemd user unit for the tray)
+    strawberry install         start on login (a systemd user unit for the tray; on Windows a
+                               shortcut in the Startup folder)
     strawberry setup | doctor  models, voice and widget; then check it all (setupcmd.py, doctor.py)
     strawberry status | stop | restart | config | say | listen | route | talk | ...
 
@@ -11,8 +12,9 @@ The daemon itself is `strawberryd` (strawberryd.py); the by-hand tools that shar
 (route, tools, tool, think, talk, tray) call its main() in this process. Everything else is the
 standard library, so `strawberry listen` (the hotkey) starts in a few tens of milliseconds.
 
-After `install`, daemon/stop/restart/status drive the tray unit instead of pidfiles. Settings
-live in ~/.config/strawberry/config.toml (WIRING.md §15); STRAWBERRYD_PORT still overrides.
+After `install`, daemon/stop/restart/status drive the tray unit instead of pidfiles (on Windows
+the tray the shortcut starts, through its stop and restart events: winproc.py). Settings live in
+~/.config/strawberry/config.toml (WIRING.md §15); STRAWBERRYD_PORT still overrides.
 """
 
 from __future__ import annotations
@@ -117,6 +119,7 @@ class Here:
         self.tray_state = paths.tray_state_file()
         self.unit_dir = paths.systemd_user_dir()
         self.autostart = paths.autostart_file()
+        self.tray_log = self.state / "tray.log"          # Windows: the tray writes its own log
 
 
 # --- the daemon over HTTP -------------------------------------------------------
@@ -149,8 +152,11 @@ def wait_daemon(here: Here, timeout_s: float = WAIT_DAEMON_S) -> bool:
         if daemon_up(here):
             return True
         time.sleep(0.25)
-    print(f"strawberryd did not come up; see {here.log} (or: journalctl --user -u {TRAY_UNIT[:-8]})",
-          file=sys.stderr)
+    if paths.windows():
+        print(f"strawberryd did not come up; see {here.log} (and {here.tray_log} under the tray)", file=sys.stderr)
+    else:
+        print(f"strawberryd did not come up; see {here.log} (or: journalctl --user -u {TRAY_UNIT[:-8]})",
+              file=sys.stderr)
     return False
 
 
@@ -176,7 +182,16 @@ def legacy_managed() -> bool:
 
 
 def managed() -> bool:
-    return tray_managed() or legacy_managed()
+    return tray_managed() or legacy_managed() or startup_installed()
+
+
+def startup_installed() -> bool:
+    """Windows: `strawberry install` wrote the Startup shortcut, so the tray owns her."""
+    if not paths.windows():
+        return False
+    from . import startup
+
+    return startup.installed()
 
 
 def pid_alive(pid: int | None) -> bool:
@@ -233,12 +248,18 @@ def tray_owns_children(here: Here) -> bool:
     return tray_managed() or tray_pid(here) is not None or os.environ.get("STRAWBERRY_TRAY") == "1"
 
 
+STOP_TIMEOUT_S = 10.0       # Windows: how long a clean stop may take before TerminateProcess
+TRAY_STOP_TIMEOUT_S = 20.0  # ... for the tray, which stops its children first (5 s grace each)
+
+
 def stop_pidfile(pidfile: Path, name: str, quiet: bool = False) -> None:
     pid = read_pid(pidfile)
     stopped = False
-    if pid:
+    if pid and paths.windows():
+        stopped = windows_stop(pid, pidfile_stop_key(pidfile), STOP_TIMEOUT_S, name, quiet)
+    elif pid:
         try:
-            os.kill(pid, signal.SIGTERM)     # on Windows: TerminateProcess, no clean shutdown yet
+            os.kill(pid, signal.SIGTERM)
             stopped = True
         except OSError:
             pass
@@ -247,14 +268,36 @@ def stop_pidfile(pidfile: Path, name: str, quiet: bool = False) -> None:
     pidfile.unlink(missing_ok=True)
 
 
+def pidfile_stop_key(pidfile: Path) -> str:
+    """The stop event (winproc.py) of what spawn() started with this pidfile: its name and the
+    file's full path, so a throwaway state dir never answers for the user's own."""
+    import zlib
+
+    return f"{pidfile.stem}-{zlib.crc32(str(pidfile.absolute()).lower().encode()):08x}"
+
+
+def windows_stop(pid: int, key: str | None, timeout_s: float, name: str, quiet: bool = False) -> bool:
+    """Its stop event, then TerminateProcess if it has not gone in `timeout_s`. True if it was running."""
+    from . import winproc
+
+    outcome = winproc.stop(pid, key, timeout_s)
+    if outcome == "killed" and not quiet:
+        print(f"{name} did not stop within {timeout_s:.0f} s (or has no stop event); ended it", file=sys.stderr)
+    return outcome != "gone"
+
+
 def spawn(argv: list[str], logfile: Path, pidfile: Path) -> None:
     """nohup ... >>log 2>&1 &, with the pid written down.
 
     On Windows the child gets a hidden console of its own and its own process group, so closing
-    this terminal or pressing Ctrl+C in it does not end the daemon."""
+    this terminal or pressing Ctrl+C in it does not end the daemon, and the key of its stop event
+    (pidfile_stop_key), so `strawberry stop` can end it cleanly."""
     logfile.parent.mkdir(parents=True, exist_ok=True)
     if paths.windows():
-        detach = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
+        from .winproc import STOP_ENV
+
+        detach = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+                  "env": {**os.environ, STOP_ENV: pidfile_stop_key(pidfile)}}
     else:
         detach = {"start_new_session": True}
     with logfile.open("ab") as log:
@@ -300,6 +343,11 @@ def start_daemon(here: Here) -> None:
             if not wait_daemon(here):
                 raise CliError("", 1)
             return
+    if startup_installed() and tray_pid(here) is None:
+        start_tray_now(here)
+        if not wait_daemon(here):
+            raise CliError("", 1)
+        return
     print(f"starting strawberryd on :{here.port} (log: {here.log})")
     spawn(module_argv(DAEMON_MODULE, "--port", str(here.port)), here.log, here.pidfile)
     if not wait_daemon(here):
@@ -315,15 +363,28 @@ def stop_daemon(here: Here) -> None:
         if systemctl("stop", LEGACY_UNIT, capture=False).returncode == 0:
             print("strawberryd stopped (systemd)")
         return
+    if stop_tray(here):
+        return
+    stop_pidfile(here.pidfile, "strawberryd")
+
+
+def stop_tray(here: Here, quiet: bool = False) -> bool:
+    """Stop a tray started by hand (or, on Windows, by the Startup shortcut); it stops its
+    children. True if one was running."""
     pid = tray_pid(here)
-    if pid:
+    if not pid:
+        return False
+    if paths.windows():
+        # Its stop event, keyed by the pid tray.json gives (the interpreter's own).
+        windows_stop(pid, None, TRAY_STOP_TIMEOUT_S, "the tray", quiet)
+    else:
         try:
             os.kill(pid, signal.SIGTERM)
-            print(f"tray stopped (pid {pid}, with its children)")
-            return
         except OSError:
-            pass
-    stop_pidfile(here.pidfile, "strawberryd")
+            return False
+    if not quiet:
+        print(f"tray stopped (pid {pid}, with its children)")
+    return True
 
 
 # --- commands: running her ------------------------------------------------------
@@ -394,7 +455,19 @@ def run_daemon_main(argv: list[str]) -> int:
 
 
 def cmd_tray(here: Here, extra: list[str]) -> int:
+    if paths.windows():
+        # No unit keeps it single: the Startup shortcut, `install` and a hand can all start one.
+        pid = tray_pid(here)
+        if pid and "--no-children" not in extra:
+            print(f"a tray is already running (pid {pid}); `strawberry stop` ends it")
+            return 0
     return run_daemon_main(["--tray", "--port", str(here.port), *extra])
+
+
+def tray_main() -> None:
+    """`strawberry-tray` ([project.gui-scripts]): `strawberry tray` without a console window,
+    which is what the Windows Startup shortcut runs. Its arguments go to the tray."""
+    sys.exit(main(["tray", *sys.argv[1:]]))
 
 
 def cmd_tray_autostart(here: Here) -> int:
@@ -406,14 +479,19 @@ def cmd_tray_autostart(here: Here) -> int:
 
 
 def cmd_status(here: Here) -> int:
+    installed = startup_installed()
     if tray_managed():
         print(f"managed by systemd --user ({TRAY_UNIT}; strawberry uninstall to stop that)")
     elif legacy_managed():
         print("managed by the old systemd units (strawberry install moves her to the tray)")
+    elif installed:
+        print(f"starts at login: {paths.startup_shortcut()} (strawberry uninstall to stop that)")
     pid = tray_pid(here)
     if tray_managed():
         active = systemctl("is-active", TRAY_UNIT).stdout.strip() or "unknown"
         print(f"tray: {active} ({TRAY_UNIT}{f', pid {pid}' if pid else ''})")
+    elif installed:
+        print(f"tray: {f'up (pid {pid})' if pid else 'down (strawberry daemon starts it)'}; log: {here.tray_log}")
     elif pid:
         print(f"tray: up (pid {pid}, started by hand)")
     else:
@@ -459,9 +537,27 @@ def cmd_restart(here: Here) -> int:
                 return 1
             print(done)
             return 0
+    if paths.windows() and restart_tray(here):
+        return 0
     cmd_stop(here)
     time.sleep(0.5)
     return cmd_daemon(here)
+
+
+def restart_tray(here: Here) -> bool:
+    """Windows: a running tray restarts its children when asked (its restart event), as its
+    Restart row does. Asked from inside the tray (her menu's "Apply settings"), stopping the tray
+    instead would end this very process with it. False when there is no tray to ask."""
+    from . import winproc
+
+    pid = tray_pid(here)
+    if not pid or not winproc.request_restart(pid):
+        return False
+    time.sleep(1.0)                  # the daemon goes down before it comes back
+    if not wait_daemon(here):
+        raise CliError("", 1)
+    print(f"restarted (the tray's children, pid {pid})")
+    return True
 
 
 # --- commands: start on login ---------------------------------------------------
@@ -549,6 +645,8 @@ def remove_old_units(here: Here) -> None:
 
 
 def cmd_install(here: Here) -> int:
+    if paths.windows():
+        return cmd_install_windows(here)
     # Hand over from pidfile-managed processes, if any, so the port is free for the unit.
     stop_watchers_pidfile(here, quiet=True)
     stop_pidfile(here.pidfile, "strawberryd", quiet=True)
@@ -578,12 +676,62 @@ def cmd_install(here: Here) -> int:
 
 
 def cmd_uninstall(here: Here) -> int:
+    if paths.windows():
+        return cmd_uninstall_windows(here)
     systemctl("disable", "--now", TRAY_UNIT)
     (here.unit_dir / TRAY_UNIT).unlink(missing_ok=True)
     remove_old_units(here)
     systemctl("daemon-reload")
     here.autostart.unlink(missing_ok=True)
     remove_app_entry()
+    print("uninstalled: she now runs only when you start her with `strawberry`")
+    return 0
+
+
+def start_tray_now(here: Here) -> None:
+    """Windows: start the tray the way the Startup shortcut does, detached from this console."""
+    from . import startup
+
+    print(f"starting the tray (log: {here.tray_log})")
+    startup.start(startup.launch(here.port, cli_argv()))
+
+
+def cmd_install_windows(here: Here) -> int:
+    """Start on login on Windows: the Startup folder's shortcut to the windowless tray (startup.py),
+    then the tray itself, as the unit is enabled and restarted on Linux."""
+    from . import startup
+
+    # Hand over from what runs now, so the port is free and the new tray is the only one.
+    stop_watchers_pidfile(here, quiet=True)
+    stop_pidfile(here.pidfile, "strawberryd", quiet=True)
+    if stop_tray(here, quiet=True):
+        print("stopped the tray that was running; the new one takes over")
+    what = startup.launch(here.port, cli_argv())
+    link = paths.startup_shortcut()
+    existed = link.is_file()
+    try:
+        startup.write_shortcut(link, what, icon=startup.write_icon())
+    except startup.StartupError as exc:
+        raise CliError(str(exc), 1) from None
+    print(f"{'rewrote' if existed else 'wrote'} {link}: {what.command_line()}")
+    if not what.windowless:
+        print("note: no pythonw.exe beside this Python, so a console window stays open while she runs")
+    if osguard.unsupported_message() is not None:
+        print(f"note: Windows is not in the supported list yet, so at login the tray needs "
+              f"{osguard.OVERRIDE_ENV}=1 in your user environment (WINDOWS.md)")
+    startup.start(what)
+    if wait_daemon(here):
+        print("installed: at login the Startup shortcut runs the tray, the daemon, the doorways and the widget")
+    print(f"logs: {here.tray_log}, and one per child beside it")
+    return 0
+
+
+def cmd_uninstall_windows(here: Here) -> int:
+    from . import startup
+
+    if startup.remove():
+        print(f"removed {paths.startup_shortcut()}")
+    stop_tray(here)
     print("uninstalled: she now runs only when you start her with `strawberry`")
     return 0
 
@@ -976,8 +1124,9 @@ def parser() -> argparse.ArgumentParser:
     add("status", "daemon health, tray and watcher states")
     add("stop", "stop the daemon and watchers")
     add("restart", "stop + daemon (after editing the config)")
-    add("install", "start on login: one systemd user unit for the tray, autostart as a fallback")
-    add("uninstall", "undo install (she only runs when you launch her)")
+    add("install", "start on login: one systemd user unit for the tray, autostart as a fallback "
+                   "(Windows: a shortcut in the Startup folder)")
+    add("uninstall", "undo install and stop the tray (she only runs when you launch her)")
     p = add("config", "create ~/.config/strawberry/config.toml if missing, then open it in $EDITOR")
     p.add_argument("--init", action="store_true", help="only create it if missing and print its path "
                                                        "(what the widget's \"Settings file…\" runs)")
