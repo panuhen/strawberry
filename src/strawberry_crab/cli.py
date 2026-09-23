@@ -449,6 +449,42 @@ StartupNotify=false
 """
 
 
+APP_ICON_SIZES = (48, 64, 128)
+
+
+def app_entry_text(argv: list[str] | None = None) -> str:
+    # Not a launcher (NoDisplay): it is here so the app switcher and the dock show her name and
+    # the berry instead of a generic icon. GNOME matches it to the widget's window by
+    # StartupWMClass, which Godot sets to the project name.
+    return f"""[Desktop Entry]
+Type=Application
+Name=Strawberry
+Comment=Desktop crab
+Icon=strawberry-crab
+Exec={shlex.join([*(argv or cli_argv()), "tray"])}
+StartupWMClass=Strawberry
+NoDisplay=true
+StartupNotify=false
+"""
+
+
+def install_app_entry() -> Path:
+    for size in APP_ICON_SIZES:
+        target = paths.app_icon_file(size)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((paths.icons_dir() / f"strawberry-{size}.png").read_bytes())
+    entry = paths.app_entry_file()
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text(app_entry_text())
+    return entry
+
+
+def remove_app_entry() -> None:
+    paths.app_entry_file().unlink(missing_ok=True)
+    for size in APP_ICON_SIZES:
+        paths.app_icon_file(size).unlink(missing_ok=True)
+
+
 def remove_old_units(here: Here) -> None:
     found = [unit for unit in OLD_UNITS if (here.unit_dir / unit).is_file()]
     if not found:
@@ -470,6 +506,7 @@ def cmd_install(here: Here) -> int:
     previous = unit.read_text() if unit.is_file() else ""
     unit.write_text(unit_text(here.port))
     here.autostart.write_text(autostart_text())
+    install_app_entry()
     if previous and previous != unit.read_text():
         print(f"rewrote {unit} (ExecStart now: {shlex.join([*cli_argv(), 'tray', '--port', str(here.port)])})")
     systemctl("daemon-reload")
@@ -493,6 +530,7 @@ def cmd_uninstall(here: Here) -> int:
     remove_old_units(here)
     systemctl("daemon-reload")
     here.autostart.unlink(missing_ok=True)
+    remove_app_entry()
     print("uninstalled: she now runs only when you start her with `strawberry`")
     return 0
 

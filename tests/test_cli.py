@@ -271,3 +271,17 @@ def test_an_installed_hook_runs_git_event_and_never_fails_git(tmp_path, repo):
     assert (tmp_path / "called").read_text() == "git-event post-commit\n"
     fake.unlink()                                                     # uninstalled: the hook stays quiet
     assert subprocess.run([str(hooks / "post-commit")], cwd=repo).returncode == 0
+
+
+def test_install_gives_the_app_switcher_her_name_and_the_berry(isolated, monkeypatch):
+    monkeypatch.setattr(cli, "wait_daemon", lambda here: True)
+    here = cli.Here()
+    assert cli.cmd_install(here) == 0
+    entry = paths.app_entry_file().read_text()
+    assert "StartupWMClass=Strawberry\n" in entry      # Godot's window class: the project name
+    assert "Icon=strawberry-crab\n" in entry and "NoDisplay=true\n" in entry
+    for size in cli.APP_ICON_SIZES:
+        assert paths.app_icon_file(size).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert cli.cmd_uninstall(here) == 0
+    assert not paths.app_entry_file().exists()
+    assert not any(paths.app_icon_file(size).exists() for size in cli.APP_ICON_SIZES)

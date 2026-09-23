@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the 🍓 emoji to the tray icon PNGs (run once; the output is checked in).
+"""Render the 🍓 emoji to the tray icon PNGs and the widget's window icon (run once; the output is checked in).
 
 Noto Color Emoji (Apache-2.0, /usr/share/fonts/truetype/noto/NotoColorEmoji.ttf on Debian and
 Ubuntu) is a CBDT bitmap font: it has one strike, 109 ppem, and Pillow will only load it at
@@ -21,8 +21,10 @@ from pathlib import Path
 STRAWBERRY = "\U0001F353"
 FONT = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
 STRIKE_PPEM = 109          # the font's only bitmap strike; any other size raises "invalid pixel size"
-SIZES = (16, 22, 24, 32, 48, 64)
-OUT = Path(__file__).resolve().parents[1] / "src" / "strawberry" / "assets" / "icons"
+SIZES = (16, 22, 24, 32, 48, 64, 128)   # 128 is for the app switcher (the .desktop icon), not the tray
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / "src" / "strawberry_crab" / "assets" / "icons"
+WIDGET_ICON = ROOT / "widget" / "icon.png"   # the window icon (project.godot config/icon), 128 px
 MARGIN = 0.04              # a hair of space so she is not clipped by a panel's own padding
 
 
@@ -59,6 +61,9 @@ def main() -> int:
         return 1
     for path in render(args.font, out_dir=args.out):
         print(path)
+    # The window icon (project.godot config/icon): the same 128 px berry.
+    WIDGET_ICON.write_bytes((args.out / "strawberry-128.png").read_bytes())
+    print(WIDGET_ICON)
     return 0
 
 

@@ -52,5 +52,5 @@ def test_unset_empty_or_relative_fall_back_to_the_defaults(monkeypatch):
 def test_the_icons_are_package_data():
     directory = paths.icons_dir()
     assert directory == Path(paths.__file__).parent / "assets" / "icons"
-    assert sorted(p.name for p in directory.glob("*.png")) == [
-        f"strawberry-{n}.png" for n in (16, 22, 24, 32, 48, 64)]
+    assert sorted((p.name for p in directory.glob("*.png")), key=lambda n: int(n[11:-4])) == [
+        f"strawberry-{n}.png" for n in (16, 22, 24, 32, 48, 64, 128)]

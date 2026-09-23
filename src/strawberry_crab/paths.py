@@ -80,6 +80,16 @@ def autostart_file() -> Path:
     return xdg_config_home() / "autostart" / "strawberry.desktop"
 
 
+def app_entry_file() -> Path:
+    """The launcher entry GNOME matches her window to (StartupWMClass), for its icon and name."""
+    return xdg_data_home() / "applications" / "strawberry.desktop"
+
+
+def app_icon_file(size: int) -> Path:
+    """The berry in the user's hicolor theme, as `strawberry-crab` (not the tray's own name, §14)."""
+    return xdg_data_home() / "icons" / "hicolor" / f"{size}x{size}" / "apps" / "strawberry-crab.png"
+
+
 def git_hooks_dir() -> Path:
     """The global hooks directory `strawberry git-hooks install` points core.hooksPath at."""
     return xdg_config_home() / "git" / "hooks"

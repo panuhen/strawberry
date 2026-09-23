@@ -11,6 +11,7 @@ config_version=5
 [application]
 
 config/name="Strawberry"
+config/icon="res://icon.png"
 run/main_scene="res://widget.tscn"
 run/max_fps=60
 config/features=PackedStringArray("4.7")

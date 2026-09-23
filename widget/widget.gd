@@ -151,6 +151,9 @@ func setup_window() -> void:
 	# properties that make this a widget in one readable place.
 	var window := get_window()
 	window.title = "Strawberry"
+	# A debug build (developer mode: the project run by the editor binary) makes Window add
+	# " (DEBUG)" to the title the app switcher shows; the display server's own call does not.
+	DisplayServer.window_set_title.call_deferred("Strawberry")
 	window.borderless = true
 	window.always_on_top = true
 	window.transparent = true

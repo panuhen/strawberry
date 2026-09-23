@@ -26,6 +26,10 @@ package and the widget binary.
 - The widget comes back on the display it was left on. Its saved position was kept inside the
   primary screen, so a widget on a second display reappeared at the bottom of the main one.
   *Reset position* now uses the corner of the screen she is on.
+- The app switcher showed a generic gear and, in developer mode, "Strawberry (DEBUG)". The window
+  now carries the berry icon and a plain title, and `strawberry install` adds a hidden
+  `strawberry.desktop` entry and icon that GNOME matches her window to (run `install` again to
+  get it).
 
 ## [0.1.0] - 2026-09-22
 
