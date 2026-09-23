@@ -106,6 +106,7 @@ def test_the_status_row_says_what_she_is_doing():
     assert menu_items(TrayState(daemon_ok=True, state="thinking"))[0].label == "Thinking…"
     assert menu_items(TrayState(daemon_ok=True, state="dancing"))[0].label == "Dancing"
     assert menu_items(TrayState(daemon_ok=True, state="nonsense"))[0].label == "Idle"
+    assert menu_items(TrayState(daemon_ok=True, ears_loading=True))[0].label == "Idle (loading whisper)"
 
 
 def test_show_and_hide_swap_by_widget_state():

@@ -57,6 +57,7 @@ STATE_LABELS = {
     "dancing": "Dancing",
 }
 NO_DAEMON = "strawberryd is not running"
+EARS_LOADING_LABEL = "loading whisper"
 SHOW_HIDE_ID = 2          # the row a plain click on the icon runs
 
 
@@ -112,6 +113,7 @@ class TrayState:
     sleep_minutes: float = 5.0
     body_mode: str = "off"            # [notifications] body, read from config.toml (read_body_setting)
     body_overrides: bool = False      # the file has a body_apps table
+    ears_loading: bool = False        # /health.voice.phase: whisper still loading (a first start downloads it)
 
     @property
     def quiet(self) -> bool:
@@ -120,7 +122,8 @@ class TrayState:
     def status_label(self) -> str:
         if not self.daemon_ok:
             return NO_DAEMON
-        return STATE_LABELS.get(self.state, STATE_LABELS["idle"])
+        label = STATE_LABELS.get(self.state, STATE_LABELS["idle"])
+        return f"{label} ({EARS_LOADING_LABEL})" if self.ears_loading else label
 
     def quiet_label(self) -> str:
         left = self.quiet_until - time.time()
@@ -432,6 +435,8 @@ class TrayCore:
         self.state.daemon_ok = bool(health)
         if health:
             self.state.state = str(health.get("state") or health.get("rest_state") or "idle")
+            voice = health.get("voice")
+            self.state.ears_loading = isinstance(voice, dict) and voice.get("phase") == "loading"
         self.read_prefs()
         self.read_config()
         return await self.publish()
