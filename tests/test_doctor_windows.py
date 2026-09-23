@@ -11,7 +11,7 @@ import pytest
 
 from strawberry_crab import __version__, doctor, paths
 from strawberry_crab.doctor import FAIL, OK, WARN
-from tests.test_doctor import TESTED, Machine, by_label, install_voice, install_widget, write_config
+from tests.test_doctor import TESTED, Machine, by_label, install_voice, install_widget, isolated, write_config  # noqa: F401
 
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="the Windows probes")
 
