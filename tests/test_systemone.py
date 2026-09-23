@@ -185,6 +185,28 @@ async def test_gate_failure_means_chat_not_a_crash():
     assert gate.stats()["ready"] is False
 
 
+async def test_an_error_ollama_answers_at_start_is_tried_once_more(monkeypatch):
+    # Ollama 0.34 on Windows once sent an embed to a runner that had just gone (HTTP 400); the
+    # next call worked. A gate that gave up there stayed off until a restart or a resume.
+    monkeypatch.setattr(Gate, "START_RETRY_S", 0.0)
+
+    class Flaky(FakeEmbedder):
+        async def __call__(self, texts):
+            if self.calls == 0:
+                self.calls += 1
+                raise GateError('HTTP 400: {"error":"Post \\"http://127.0.0.1:1/tokenize\\": refused"}')
+            return await super().__call__(texts)
+
+    gate = Gate(GateConfig(), embedder=Flaky())
+    await gate.start()
+    assert gate.ready and not gate.disabled_reason
+    # Ollama not there at all, or a timeout: no second try, as before.
+    down = FakeEmbedder(fail=True)
+    gate = Gate(GateConfig(), embedder=down)
+    await gate.start()
+    assert not gate.ready and down.calls == 1
+
+
 async def test_gate_disabled_in_config_routes_nothing():
     gate = Gate(GateConfig(enabled=False), ollama_url="http://127.0.0.1:1")
     await gate.start()

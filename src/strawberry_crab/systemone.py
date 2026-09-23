@@ -532,6 +532,7 @@ class Gate:
     """Routes a spoken sentence: what it is, what it is about, how sure we are."""
 
     WARM_UP_S = 120.0
+    START_RETRY_S = 1.0     # the pause before start's one more try (start)
 
     def __init__(self, config: GateConfig, ollama_url: str = "", embedder: Embedder | None = None,
                  examples: dict[str, list[str]] | None = None) -> None:
@@ -569,15 +570,24 @@ class Gate:
         if self.owned:
             await self.owned.start()
         started = time.perf_counter()
-        try:
-            # The first call loads the model and embeds every example at once: the per-sentence
-            # timeout would cut it off. Same allowance the brain's warm-up gets.
-            with call_timeout(self.WARM_UP_S):
-                await self.systemone.prepare(*self.questions, IS_SENSITIVE)
-        except GateError as exc:
-            self.disabled_reason = f"could not embed the examples: {exc}"
-            log.warning("gate: %s; routing every sentence to chat", self.disabled_reason)
-            return
+        for attempt in (1, 2):
+            try:
+                # The first call loads the model and embeds every example at once: the per-sentence
+                # timeout would cut it off. Same allowance the brain's warm-up gets.
+                with call_timeout(self.WARM_UP_S):
+                    await self.systemone.prepare(*self.questions, IS_SENSITIVE)
+                break
+            except GateError as exc:
+                # One more try for an error Ollama answered with: seen on Windows (Ollama 0.34),
+                # an embed that went to a model runner that had just gone, and worked the next time.
+                # Not after a timeout, which has waited long enough, nor when Ollama is not there.
+                if attempt == 1 and not isinstance(exc, GateTimeout) and str(exc).startswith("HTTP "):
+                    log.info("gate: could not embed the examples (%s); once more", exc)
+                    await asyncio.sleep(self.START_RETRY_S)
+                    continue
+                self.disabled_reason = f"could not embed the examples: {exc}"
+                log.warning("gate: %s; routing every sentence to chat", self.disabled_reason)
+                return
         self.ready = True
         log.info("gate: %s ready in %.1fs (%d examples)", self.config.model, time.perf_counter() - started,
                  self.systemone.examples)
