@@ -101,6 +101,17 @@ def test_a_tied_child_goes_when_its_parent_is_terminated():
     assert winproc.wait_exit(child, 10)                 # the child's minute is cut short
 
 
+def test_redirected_output_is_utf8():
+    # A redirected stream gets the ANSI code page; doctor's first ✓ was a UnicodeEncodeError.
+    import os
+
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    code = "from strawberry_crab import winproc\nwinproc.utf8_streams()\nprint('\\u2713 ok \\U0001f353')\n"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, env=env, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.decode("utf-8").strip() == "\u2713 ok \U0001f353"
+
+
 def test_a_tied_child_passes_its_exit_code_on():
     assert winproc.call_tied([sys.executable, "-c", "raise SystemExit(7)"]) == 7
 

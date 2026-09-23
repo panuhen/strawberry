@@ -37,6 +37,7 @@ import urllib.request
 from typing import Any
 
 from ..paths import config_file
+from ..winproc import utf8_streams
 from .beat_track import BeatTracker
 
 log = logging.getLogger("beat_watch")
@@ -207,6 +208,7 @@ def main() -> None:
     parser.add_argument("--interval", type=float, default=float(beat.get("interval_s", 2.0)))
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
+    utf8_streams()      # Windows: the log file is the redirected stderr
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
     if beat.get("enabled", True) is False:
         log.info("[beat] enabled = false; exiting")

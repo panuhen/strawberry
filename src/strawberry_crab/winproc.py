@@ -32,6 +32,7 @@ from __future__ import annotations
 import ctypes
 import os
 import subprocess
+import sys
 import threading
 import time
 from ctypes import wintypes
@@ -271,6 +272,22 @@ class KillOnCloseJob:
         if self.handle:
             kernel32().CloseHandle(self.handle)
             self.handle = None
+
+
+def utf8_streams() -> None:
+    """Redirected stdout and stderr in UTF-8. Windows gives a redirected stream the ANSI code page
+    (cp1252 and the like), so `strawberry doctor > doctor.txt` died on its first ✓, and a log
+    line with a character outside it (an app's title with an emoji) became a "Logging error". A
+    console already takes UTF-8 and is left alone, and so is every stream off Windows."""
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if stream is not None and encoding != "utf8" and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+            except (OSError, ValueError):
+                pass
 
 
 def call_tied(argv: list[str]) -> int:

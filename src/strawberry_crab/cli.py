@@ -1129,7 +1129,7 @@ def parser() -> argparse.ArgumentParser:
         prog="strawberry",
         description="Strawberry, the desktop crab. With no command: start the daemon and doorways if "
                     "needed, then open the widget.",
-        epilog="Settings: ~/.config/strawberry/config.toml (WIRING.md §15). STRAWBERRYD_PORT overrides the port.")
+        epilog=f"Settings: {paths.config_file()} (WIRING.md §15). STRAWBERRYD_PORT overrides the port.")
     from . import __version__
 
     top.add_argument("--version", action="version", version=f"strawberry {__version__}")
@@ -1142,7 +1142,7 @@ def parser() -> argparse.ArgumentParser:
                       "--fetch downloads the released widget binary")
     p.add_argument("--fetch", action="store_true",
                    help="download strawberry-widget for this version from the GitHub release, check its "
-                        "SHA-256 and install it in ~/.local/share/strawberry/widget/")
+                        f"SHA-256 and install it in {paths.widget_binary().parent}")
     p.add_argument("--version", dest="widget_version", metavar="V", default=None,
                    help="with --fetch: the release to fetch (default: this package's version)")
     add("daemon", "start the daemon + watchers only (idempotent)")
@@ -1155,7 +1155,7 @@ def parser() -> argparse.ArgumentParser:
     add("install", "start on login: one systemd user unit for the tray, autostart as a fallback "
                    "(Windows: a shortcut in the Startup folder)")
     add("uninstall", "undo install and stop the tray (she only runs when you launch her)")
-    p = add("config", "create ~/.config/strawberry/config.toml if missing, then open it in $EDITOR")
+    p = add("config", f"create {paths.config_file()} if missing, then open it in $EDITOR")
     p.add_argument("--init", action="store_true", help="only create it if missing and print its path "
                                                        "(what the widget's \"Settings file…\" runs)")
     add("listen", "talk to her once (what the hotkey runs); press again to stop early")
@@ -1208,6 +1208,10 @@ PASSTHROUGH = ("widget", "tray")
 
 def main(argv: list[str] | None = None) -> int:
     osguard.require_supported()
+    if paths.windows():
+        from .winproc import utf8_streams
+
+        utf8_streams()          # `strawberry doctor > doctor.txt`, and the tray's log
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv == ["listen"]:
         try:
