@@ -39,7 +39,7 @@ from jeepney import DBusAddress, MessageFlag, MessageType, new_error, new_method
 
 from .bus import BusClient, BusError, field as header_field, open_session_bus
 from .client import DaemonClient, configure_logging, stop_on_signals
-from .doorways import DOORWAYS
+from . import doorways as doorway_modules
 from .icons import pixmaps
 from . import configedit, paths
 from . import widgetbin
@@ -432,8 +432,10 @@ class Child:
 
 
 def child_specs(port: int, config: Path | None, widget: bool = True,
-                resolve_widget: Callable[[], widgetbin.Widget] | None = None) -> list[Child]:
-    """The daemon, the three doorways and the widget, in the order they should come up.
+                resolve_widget: Callable[[], widgetbin.Widget] | None = None,
+                doorways: tuple[str, ...] | None = None) -> list[Child]:
+    """The daemon, this system's doorways (`doorways.for_system()`: the three on Linux) and the
+    widget, in the order they should come up.
 
     Everything Python runs on this same interpreter as a module of the package (`python -m
     strawberry_crab.strawberryd`, `python -m strawberry_crab.doorways.<name>`), so an installed tray never
@@ -449,7 +451,7 @@ def child_specs(port: int, config: Path | None, widget: bool = True,
     if config:
         daemon += ["--config", str(config)]
     children = [Child("daemon", daemon)]
-    for module in DOORWAYS:
+    for module in (doorway_modules.for_system() if doorways is None else doorways):
         argv = [python, "-m", f"strawberry_crab.doorways.{module}", "--daemon", url]
         if config and module == NOTIFY_CHILD:
             argv += ["--config", str(config)]      # the file "Message bodies" writes, not the XDG one
