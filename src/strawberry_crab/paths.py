@@ -1,4 +1,4 @@
-"""Where Strawberry keeps things on disk: the XDG base directories, in one place (WIRING.md §15).
+r"""Where Strawberry keeps things on disk: the XDG base directories, in one place (WIRING.md §15).
 
     config   $XDG_CONFIG_HOME/strawberry/   (~/.config/strawberry/)        config.toml, widget.cfg
     data     $XDG_DATA_HOME/strawberry/     (~/.local/share/strawberry/)   voices/, widget/strawberry-widget
@@ -9,6 +9,16 @@ An unset, empty or relative XDG variable falls back to the default, as the spec 
 here creates a directory; the caller that writes does that. The widget (widget/paths.gd)
 follows the same rules for the files it shares with us: its preferences and the config.
 
+On Windows (WINDOWS.md) the same three are in the known folders, and the XDG variables are not
+read there:
+
+    config   %APPDATA%\strawberry\               config.toml, widget.cfg, git-hooks\
+    data     %LOCALAPPDATA%\strawberry\          voices\, widget\strawberry-widget.exe
+    state    %LOCALAPPDATA%\strawberry\state\    tray.json, pidfiles, logs, ...
+
+An unset, empty or relative APPDATA or LOCALAPPDATA falls back to ~\AppData\Roaming or
+~\AppData\Local.
+
 The one thing that is not XDG is the source checkout: without the exported widget binary in
 the data dir, `strawberry widget` runs the Godot project in `widget/` next to this package's
 source with `godot` from PATH (developer mode, WIRING.md §13).
@@ -17,9 +27,14 @@ source with `godot` from PATH (developer mode, WIRING.md §13).
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 APP = "strawberry"
+
+
+def windows() -> bool:
+    return sys.platform == "win32"
 
 
 def _xdg(variable: str, default: str) -> Path:
@@ -27,6 +42,16 @@ def _xdg(variable: str, default: str) -> Path:
     if value and os.path.isabs(value):
         return Path(value)
     return Path.home() / default
+
+
+def appdata() -> Path:
+    """%APPDATA% (Windows): the roaming profile, for the config."""
+    return _xdg("APPDATA", "AppData/Roaming")
+
+
+def local_appdata() -> Path:
+    """%LOCALAPPDATA% (Windows): this machine only, for data and state."""
+    return _xdg("LOCALAPPDATA", "AppData/Local")
 
 
 def xdg_config_home() -> Path:
@@ -42,7 +67,7 @@ def xdg_state_home() -> Path:
 
 
 def config_dir() -> Path:
-    return xdg_config_home() / APP
+    return appdata() / APP if windows() else xdg_config_home() / APP
 
 
 def config_file() -> Path:
@@ -50,7 +75,7 @@ def config_file() -> Path:
 
 
 def data_dir() -> Path:
-    return xdg_data_home() / APP
+    return local_appdata() / APP if windows() else xdg_data_home() / APP
 
 
 def voices_dir() -> Path:
@@ -59,7 +84,7 @@ def voices_dir() -> Path:
 
 
 def state_dir() -> Path:
-    return xdg_state_home() / APP
+    return local_appdata() / APP / "state" if windows() else xdg_state_home() / APP
 
 
 def tray_state_file() -> Path:
@@ -92,12 +117,16 @@ def app_icon_file(size: int) -> Path:
 
 def git_hooks_dir() -> Path:
     """The global hooks directory `strawberry git-hooks install` points core.hooksPath at."""
+    if windows():
+        return config_dir() / "git-hooks"
     return xdg_config_home() / "git" / "hooks"
 
 
 def godot_user_dir() -> Path:
     """Godot's `user://` for the widget (its own choice under XDG data). Only headless runs
     write there now (widget_headless.cfg); the preferences used to live there."""
+    if windows():
+        return appdata() / "Godot" / "app_userdata" / "Strawberry"
     return xdg_data_home() / "godot" / "app_userdata" / "Strawberry"
 
 
@@ -119,7 +148,7 @@ def widget_dir() -> Path:
 
 def widget_binary() -> Path:
     """The exported widget, installed by `strawberry widget --fetch` (and `setup`)."""
-    return widget_dir() / "strawberry-widget"
+    return widget_dir() / ("strawberry-widget.exe" if windows() else "strawberry-widget")
 
 
 def widget_version_file() -> Path:

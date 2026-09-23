@@ -1,10 +1,31 @@
-"""Safety nets for the whole test run."""
+"""Safety nets for the whole test run, and the `linux_only` marker."""
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
-from strawberry_crab import mpris
+from strawberry_crab import mpris, osguard
+from tests.portable import point_dirs
+
+
+def pytest_collection_modifyitems(config, items):
+    """`@pytest.mark.linux_only` (registered in pyproject.toml): skipped on any other system,
+    for tests of D-Bus, systemd or POSIX process semantics that have no counterpart there yet."""
+    if sys.platform.startswith("linux"):
+        return
+    skip = pytest.mark.skip(reason=f"Linux only (this is {sys.platform})")
+    for item in items:
+        if item.get_closest_marker("linux_only"):
+            item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def allow_unsupported_os(monkeypatch):
+    """The CLI and the daemon run on a system osguard does not list yet (the Windows port);
+    tests/test_osguard.py removes this to see the refusal itself."""
+    monkeypatch.setenv(osguard.OVERRIDE_ENV, "1")
 
 
 @pytest.fixture(autouse=True)
@@ -31,9 +52,7 @@ def throwaway_xdg_dirs(monkeypatch, tmp_path_factory):
     """
     from strawberry_crab import paths
 
-    base = tmp_path_factory.mktemp("xdg")
-    for name in ("CONFIG", "DATA", "STATE", "CACHE"):
-        monkeypatch.setenv(f"XDG_{name}_HOME", str(base / name.lower()))
+    point_dirs(monkeypatch, tmp_path_factory.mktemp("xdg"))
     paths.privacy_notice_marker().parent.mkdir(parents=True)
     paths.privacy_notice_marker().write_text("shown\n")
 

@@ -71,3 +71,6 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 # `from tests.fake_spotify import ...` works under a bare `pytest` too, not only `python -m pytest`.
 pythonpath = ["."]
+markers = [
+    "linux_only: needs Linux (D-Bus, systemd, POSIX signals or processes); skipped elsewhere (tests/conftest.py)",
+]

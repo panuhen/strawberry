@@ -11,12 +11,12 @@ import pytest
 
 from strawberry_crab import cli, paths, setupcmd, widgetbin
 from strawberry_crab.config import ConfigError, default_toml, load
+from tests.portable import point_dirs
 
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
-    for name in ("CONFIG", "DATA", "STATE", "CACHE"):
-        monkeypatch.setenv(f"XDG_{name}_HOME", str(tmp_path / name.lower()))
+    point_dirs(monkeypatch, tmp_path)
     monkeypatch.delenv("STRAWBERRYD_PORT", raising=False)
     monkeypatch.setattr(cli, "systemctl", lambda *a, capture=True: subprocess.CompletedProcess(a, 1, "", ""))
     monkeypatch.setattr(setupcmd, "DRM_ROOT", tmp_path / "drm")       # never this machine's sysfs
