@@ -23,7 +23,7 @@ from .speech import Speaker
 from .systemone import Gate, Route
 from .thinker import Thinker
 from .tools import Toolbox
-from .voice import Listener
+from .voice import EARS_LOADING, Listener
 from . import wake
 
 log = logging.getLogger("strawberryd")
@@ -54,6 +54,7 @@ class Daemon:
         self.rng = random.Random()
         self.listen_task: asyncio.Task | None = None
         self.last_poke = -1e9
+        self.ears_said_at = -1e9
         self.started = time.monotonic()
         self.performed = 0
         # Her resting state (idle|dancing) outlives any one widget: a widget that (re)connects
@@ -170,9 +171,20 @@ class Daemon:
             self.listen_task.cancel()
 
     POKE_GAP_S = 0.5
+    EARS_GAP_S = 5.0     # "still getting my ears on" at most this often
 
     def listen(self) -> dict[str, Any]:
         """The hotkey: start a voice session, or end the recording early if one is running."""
+        if self.listener.loading:
+            # Whisper is still loading (or downloading, on a first start): she says so at once
+            # instead of the key doing nothing. Held-key repeats and quick presses say it once.
+            now = time.monotonic()
+            gap, self.last_poke = now - self.last_poke, now
+            if gap >= self.POKE_GAP_S and now - self.ears_said_at >= self.EARS_GAP_S:
+                self.ears_said_at = now
+                self.background(self.perform(Performance(state="talking", text=EARS_LOADING, emotion="neutral")),
+                                "ears loading line")
+            return {"listening": False, "loading": self.listener.reason}
         if not self.listener.ready:
             return {"listening": False, "error": self.listener.disabled_reason or "voice not ready"}
         now = time.monotonic()
@@ -467,7 +479,7 @@ class Daemon:
         if not self.speaker.ready:
             skipped["tts"] = self.speaker.stats().get("reason") or "speech off"
         if not self.listener.ready:
-            skipped["whisper"] = self.listener.disabled_reason or "voice off"
+            skipped["whisper"] = self.listener.reason or "voice off"
         lines: list[dict[str, Any]] = []
         for text in self.PROBE_LINES:
             row: dict[str, Any] = {"text": text}
