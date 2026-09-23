@@ -98,7 +98,11 @@ def test_powershell_writes_a_real_shortcut_under_the_throwaway_appdata(tmp_path)
     assert "--port 8784".encode("utf-16-le") in data                 # the arguments, stored as UTF-16
     assert str(icon).encode("utf-16-le") in data
     assert icon.read_bytes()[:4] == b"\x00\x00\x01\x00"              # an .ico
+    before = link.read_bytes()
+    assert startup.read_shortcut(link) == (target, "--port 8784")   # what doctor reads back
+    assert link.read_bytes() == before                               # read, not saved
     assert startup.remove() and not link.exists() and not icon.exists()
+    assert startup.read_shortcut(link) is None
     assert startup.remove() is False
 
 

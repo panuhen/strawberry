@@ -336,3 +336,30 @@ def test_a_hotkey_someone_else_holds_is_a_warning_not_a_crash(monkeypatch, caplo
     finally:
         icon.close()
         user32.UnregisterHotKey(None, 7)
+
+
+@windows_only
+def test_a_missing_notification_area_is_one_warning_and_its_return_one_line(monkeypatch, caplog):
+    """At login the taskbar may not be there yet: the add is retried every 2 s on a timer, and the
+    warning is logged once, not on every retry. Nothing is added for real: the add fails, then
+    "succeeds" through the fake."""
+    added = []
+    with caplog.at_level("INFO", logger="strawberryd.tray"):
+        icon = hidden_window(monkeypatch)
+        try:
+            user32 = wintray.api().user32
+            for _ in range(3):                                   # what the retry timer posts
+                user32.PostMessageW(icon.hwnd, wintray.WM_TIMER, 1, 0)
+            time.sleep(0.3)                                      # the window thread handles them
+            assert icon.waiting and not icon.shown
+            monkeypatch.setattr(wintray, "shell_notify_icon", lambda message, data: added.append(message) or True)
+            user32.PostMessageW(icon.hwnd, wintray.WM_TIMER, 1, 0)
+            deadline = time.monotonic() + 5
+            while not icon.shown and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert icon.shown and not icon.waiting
+        finally:
+            icon.close()
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum("not there yet" in m for m in messages) == 1, messages
+    assert "icon in the notification area (it is there now)" in messages

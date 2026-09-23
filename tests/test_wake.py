@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 
 from jeepney import DBusAddress, new_signal
 from jeepney.low_level import Parser
@@ -146,7 +147,9 @@ async def test_no_system_bus_is_one_log_line_and_no_crash(caplog):
         await daemon.start()
         await asyncio.wait_for(daemon.wake_task, 1.0)   # returned, did not raise
     assert daemon.wake.stats()["watching"] is False
-    assert "no system bus" in daemon.wake.stats()["reason"]
+    # The daemon's watcher is the system's: logind on Linux, the power notification on Windows.
+    missing = "no power notifications" if sys.platform == "win32" else "no system bus"
+    assert missing in daemon.wake.stats()["reason"]
     assert any("no model warm-up on resume" in r.getMessage() for r in caplog.records)
     await daemon.close()
 

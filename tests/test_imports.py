@@ -23,7 +23,8 @@ def imports_without(blocked: str, modules: list[str]) -> subprocess.CompletedPro
 
 WINDOWS = ["strawberry_crab.smtc", "strawberry_crab.doorways.smtc_watch", "strawberry_crab.doorways.toast_watch",
            "strawberry_crab.wintray", "strawberry_crab.winproc", "strawberry_crab.startup", "strawberry_crab.winmic",
-           "strawberry_crab.hotkey", "strawberry_crab.wasapi", "strawberry_crab.doorways.beat_loopback"]
+           "strawberry_crab.hotkey", "strawberry_crab.wasapi", "strawberry_crab.doorways.beat_loopback",
+           "strawberry_crab.winwake"]
 # The tray's shared half: the supervisor and the menu run on both systems, the SNI only on Linux.
 TRAY = ["strawberry_crab.supervisor", "strawberry_crab.traymenu"]
 # The beat doorway is shared; its capture is picked at runtime (PipeWire or process loopback).
@@ -49,6 +50,18 @@ def test_the_daemon_starts_its_parts_without_jeepney():
             "watcher = wake.WakeWatcher(lambda: None)\n"
             "asyncio.run(watcher.run())\n"
             "assert watcher.reason == 'no system bus (ConnectionError)', watcher.reason\n")
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_wake_watcher_is_picked_at_runtime():
+    """wake.py imports winwake only on Windows, and the daemon's watcher is the system's."""
+    code = ("import sys\n"
+            "from strawberry_crab import daemon, wake\n"
+            "assert 'strawberry_crab.winwake' not in sys.modules, 'imported at start'\n"
+            "picked = wake.watcher(lambda: None)\n"
+            "assert type(picked).__name__ == ('PowerWatcher' if sys.platform == 'win32' else 'WakeWatcher')\n"
+            "assert ('strawberry_crab.winwake' in sys.modules) == (sys.platform == 'win32')\n")
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr
 

@@ -24,14 +24,14 @@ Most of the system has nothing Linux-specific in it and carries over unchanged:
 | Microphone (`voice.py`) | `pw-record` from the default source | WASAPI capture through `sounddevice`, 16 kHz mono: `winmic.py` (step 6). |
 | Tray (`tray.py`, `bus.py`, `icons.py`) | StatusNotifierItem + dbusmenu over jeepney | A notification-area icon, Win32 `Shell_NotifyIconW` through ctypes, with the same menu: `wintray.py` (step 4). The menu and the supervisor are shared: `traymenu.py`, `supervisor.py`. |
 | Start on login (`cli.py install`) | systemd user unit + XDG autostart fallback | A shortcut in the Startup folder (`startup.py`, step 4); no scheduled task. |
-| Wake from sleep (`wake.py`) | logind `PrepareForSleep` on the system bus | `WM_POWERBROADCAST` / `PBT_APMRESUMEAUTOMATIC`, or `PowerRegisterSuspendResumeNotification`. |
+| Wake from sleep (`wake.py`) | logind `PrepareForSleep` on the system bus | `PowerRegisterSuspendResumeNotification` with a callback, `PBT_APMRESUMEAUTOMATIC`: `winwake.py` (step 7). |
 | Paths (`paths.py`, `widget/paths.gd`) | XDG dirs | `%APPDATA%\strawberry` (config), `%LOCALAPPDATA%\strawberry` (data, state, widget binary). |
 | Hotkey (`cli.py hotkey`) | a GNOME custom shortcut via `gsettings` | `RegisterHotKey` in the tray process (`wintray.py`), the combination in `[voice] hotkey` (`hotkey.py`, step 6). |
 | App switcher entry (`cli.py install`) | `~/.local/share/applications/strawberry.desktop` | Not needed: the window icon (`config/icon`) and title are used directly. |
 | Widget window | `--display-driver x11`, transparent, always on top, click-through by polygon | Godot's Windows driver supports the same flags and `mouse_passthrough_polygon`; drop the `x11` argument. Needs testing on a second display. |
 | Widget binary (`widgetbin.py`, `scripts/build_widget.sh`) | `strawberry-widget-<ver>-linux-x86_64` | `strawberry-widget-<ver>-windows-x86_64.exe`; `PLATFORM` chosen by OS. |
 | Git hooks | POSIX sh hooks calling `strawberry git-event` | Git for Windows runs sh hooks too; check the path quoting. |
-| Doctor/setup checks (`doctor.py`, `setupcmd.py`) | PipeWire, D-Bus, systemd, AppIndicator | the notification-listener permission, SMTC sessions, the Startup entry. `nvidia-smi` works on Windows as is. |
+| Doctor/setup checks (`doctor.py`, `setupcmd.py`) | PipeWire, D-Bus, systemd, AppIndicator | the notification access status, a count of SMTC sessions, the microphone and its privacy switches, the build for process loopback, the Startup shortcut, the tray (step 7). `nvidia-smi` works on Windows as is. |
 
 ## How the code should be shaped
 
@@ -93,7 +93,7 @@ Left:
 - Run the widget by hand once Godot is installed (`paths.gd` has the Windows paths, untested).
 - `strawberry stop` ended the daemon with TerminateProcess; step 4 gave it a clean stop (a named
   stop event, below).
-- The wake watcher finds no system bus and logs one line (step 7).
+- The wake watcher finds no system bus and logs one line (step 7 added the Windows watcher).
 - `scripts/check_phase1.sh` and the other shell checks are Linux-only as written.
 
 ## Step 2: where it stands
@@ -127,7 +127,7 @@ Done:
   without it, and doctor's tray-host check says "not checked". `tests/test_imports.py` imports
   each side in a fresh interpreter with the other's package blocked.
 - The Spotify adapter does not use MPRIS (it is an MCP server over Spotify's Web API); nothing
-  there changed. Doctor and setup have no SMTC checks yet (step 7); the MPRIS check says "not
+  there changed. Doctor and setup have no SMTC checks yet (step 7 added them); the MPRIS check says "not
   checked" on Windows and nothing crashes.
 - Tests: `tests/test_smtc.py` and `tests/test_smtc_watch.py` run a fake session manager
   shaped like the WinRT one, on any system; `tests/conftest.py` makes the real manager
@@ -225,7 +225,7 @@ Left:
 - Toast scenarios (`urgent`, `alarm`, `incomingCall`) are not visible through the listener's
   API, so every toast is `normal` urgency and `min_urgency = "critical"` drops all of them.
 - Desktop (unpackaged) apps usually have no logo through `GetLogo`, so no badge.
-- Doctor and setup have no notification-access check yet (step 7); doctor's D-Bus monitor check
+- Doctor and setup have no notification-access check yet (step 7 added it); doctor's D-Bus monitor check
   says "not checked" on Windows.
 
 ## Step 4: where it stands
@@ -451,7 +451,7 @@ Left:
   capture is reconnected every 12 s or so until it plays again (one log line each time).
 - Two processes of one app with sound: the first active one wins, and only its tree is heard.
 - Doctor's beat check still reads the PipeWire graph: on Windows it says "the player link not
-  checked (pw-dump gave nothing)", and the PipeWire tools check fails (step 7).
+  checked (pw-dump gave nothing)", and the PipeWire tools check fails (step 7 replaced both on Windows).
 
 ## Step 6: where it stands
 
@@ -534,10 +534,124 @@ Left:
   by another app (it should give up after 3 s without data).
 - The microphone privacy switch (Settings > Privacy & security > Microphone, "Let desktop apps
   access your microphone"): untried with it off, where opening the stream fails or Windows
-  delivers silence (then she says she did not catch that). Doctor should check it (step 7).
+  delivers silence (then she says she did not catch that). Doctor reads it since step 7.
 - The hotkey is registered by the tray only; `strawberry daemon` by hand has none (`strawberry
   listen` still works from anything that can run a command).
 - `[voice] hotkey` is ignored on Linux, where the GNOME shortcut holds the binding.
+
+## Step 7: where it stands
+
+Done:
+
+- Wake: `winwake.PowerWatcher`, picked by `wake.watcher()` at runtime (the daemon imports
+  `winwake` only on Windows). It registers a callback with
+  `PowerRegisterSuspendResumeNotification(DEVICE_NOTIFY_CALLBACK)` from powrprof.dll through
+  ctypes, so no window is needed; the daemon has none, and a hidden window for
+  `WM_POWERBROADCAST` would have meant a message loop on a thread of its own for the same event
+  codes. The callback runs on a Windows thread, hands the code to the daemon's loop and returns
+  at once. `PBT_APMRESUMEAUTOMATIC` (every resume, from sleep or hibernation) is the resume and
+  calls `Daemon.warm_models("on resume")`, as logind's `PrepareForSleep(false)` does on Linux;
+  `PBT_APMRESUMESUSPEND`, which follows it when a user is there, is ignored as the same resume;
+  `PBT_APMSUSPEND` is one log line. The rest is shared: the gate's one reload, and a
+  notification right after a resume waits for it and is read, not dropped as private (WIRING §4).
+  A refused registration is one line and no warm-up. `/health.wake` is as on Linux. No new
+  dependency.
+- Doctor on Windows: after the shared checks (config, Ollama and each model, GPU, whisper, the
+  Piper voice, the widget), Windows' own replace PipeWire, D-Bus, the tray host, MPRIS and
+  systemd. Each only reads:
+  - notification access: `UserNotificationListener.GetAccessStatus()` (never
+    `RequestAccessAsync`); not allowed says where to turn it on;
+  - media sessions: how many SMTC sessions there are, a count with no app or title;
+  - microphone: the input winmic would pick (PortAudio's device list; no stream is opened) and
+    the privacy switches from the registry with `KEY_READ`: `ConsentStore\microphone` under
+    HKLM (the device) and HKCU ("Let apps access your microphone"), and HKCU's `NonPackaged`
+    subkey ("Let desktop apps access your microphone"). A switch that is off with voice on is ✗;
+    no input with voice on is !;
+  - process loopback: the Windows build, 19041 (Windows 10 2004) or later;
+  - the Startup shortcut: there or not, and what it runs, read through `WScript.Shell`'s
+    `CreateShortcut` without `Save()` (`startup.read_shortcut`): a target that is gone is ✗,
+    another install or another port is !;
+  - the tray: the pid in `tray.json` and whether it listens on its stop event, opened with
+    `SYNCHRONIZE` only (`winproc.stop_event_exists`), which cannot set it;
+  - git, the git hooks, the daemon, and the beat watcher from `/health`'s `tempo_age_s` (no
+    pw-dump).
+
+  Ollama's hints name the Windows installer (`https://ollama.com/download`, or `winget install
+  Ollama.Ollama`) and "open Ollama from the Start menu". The Linux checks and their output are
+  unchanged; which set runs is `Probes.system`, so the tests run both on either system.
+- Setup on Windows: the tiers come from nvidia-smi as on Linux, the config merge and the Piper
+  download are the same, and the widget fetch asks for the `.exe` asset. What differs: Ollama's
+  installer is named (and `winget install --exact --id Ollama.Ollama` offered interactively when
+  winget is there, never under `--yes`), an Ollama that does not answer is "open Ollama from the
+  Start menu", and step 6 offers the Startup shortcut (`strawberry install`) and never asks
+  systemctl. No card is "no NVIDIA card found (nvidia-smi)". There was nothing for the gsettings
+  hotkey or the `.desktop` entry in setup; those are `install` and `hotkey`, done in steps 4 and 6.
+- `strawberry setup --no-download` (both systems): the tier and the config as usual, then each
+  model, the voice and the widget asset named and none fetched; it ends with what it did not
+  download and exits 0.
+- The tray's "the notification area is not there yet" is logged once while the add is retried
+  every 2 s, and "icon in the notification area (it is there now)" when it comes.
+- Tests: `tests/test_winwake.py` (above); `tests/test_doctor_windows.py`, a fake Windows machine on
+  any system (a healthy one, each check broken one at a time, the Linux labels in their order with
+  every Windows probe raising) and, on Windows, the real probes, which in tests find the listener,
+  the sessions and the microphone out of bounds and read the registry and the build;
+  `tests/test_startup.py` reads a real .lnk back and checks it was not rewritten;
+  `tests/test_setup.py` runs setup as Windows and with `--no-download` on any system, with every
+  command faked (no pull, no voice download, no fetch); `tests/test_wintray.py` posts the retry
+  timer to a real hidden window three times and counts one warning. `tests/test_imports.py`
+  imports `winwake` without jeepney and checks `wake` does not import it on Linux.
+- Seen live 2026-09-23, with throwaway APPDATA and LOCALAPPDATA and
+  `STRAWBERRY_ALLOW_UNSUPPORTED=1`. A throwaway daemon (port 8787; brain, gate, thinker, tools,
+  speech and voice off, `[actions] mpris = false`, `[notifications] only_apps` and `[media] only`
+  naming nothing real) logged `wake: watching Windows' suspend and resume notifications`,
+  `/health.wake` was `{"watching": true, "resumes": 0}`, and its stop event stopped it
+  (`stop requested: shutting down`, `shut down; sessions closed`). The machine was not suspended.
+  `strawberry doctor` against it:
+
+  ```
+  ✓ config — ...\appdata\strawberry\config.toml
+  ! config keys at their defaults — 79 not in your file: daemon.host, ... and 71 more
+  ✓ ollama — http://127.0.0.1:11434, version 0.6.0
+  ✗ model embeddinggemma — gate: not pulled
+  ✗ model gemma3:1b — voice: not pulled
+  ✗ model qwen3.8:27b — brain: not pulled
+  ✓ GPU — NVIDIA GeForce RTX 3090, 24576 MiB, 23283 MiB free
+  ✓ whisper — voice off in the config
+  ✓ Piper voice — speech off in the config (bubble only)
+  ✗ widget — no binary at ...\localappdata\strawberry\widget\strawberry-widget.exe
+  ✓ git — C:\Program Files\Git\cmd\git.EXE
+  ✓ notification access — allowed
+  ✓ media sessions — none right now (start a player and she follows it)
+  ✓ microphone — voice off in the config (no input found)
+  ✓ process loopback — Windows build 26200
+  ✓ Startup shortcut — not installed (optional: strawberry install)
+  ✓ tray — not running (she runs by hand; strawberry install starts it at login)
+  ✓ git hooks — not installed (optional: strawberry git-hooks install)
+  ✓ daemon — http://127.0.0.1:8787, version 0.1.1, 0 widget(s)
+  ✓ beat watcher — no recent estimate (it posts only while a player plays)
+  ```
+
+  With `[voice] enabled = true` and CUDA: `✓ whisper — faster-whisper, small on cuda/int8_float16,
+  1 CUDA device(s)` and `! microphone — no input: she cannot hear you` (this machine has no
+  recording device; the registry has all three microphone switches on). The throwaway dirs were
+  the same before and after each doctor run, except that the NVIDIA driver made
+  `%APPDATA%\NVIDIA\ComputeCache` the first time the whisper check initialised CUDA (the
+  driver's own cache; on Linux it is `~/.nv/ComputeCache`). `strawberry setup --yes
+  --no-download` on an empty config dir found the RTX 3090, proposed the 24gb tier, wrote
+  `config.toml`, named the three models, the voice and
+  `strawberry-widget-0.1.1-windows-x86_64.exe` without fetching any, and Ollama's model list was
+  the same afterwards.
+
+Left:
+
+- A real resume on Windows: after the next sleep, the daemon's log should show `wake: going to
+  sleep`, `wake: resumed from sleep; warming the models` and the gate's reload. Modern Standby
+  machines deliver the resume when desktop apps are let run again; untried.
+- Doctor does not check the `STRAWBERRY_ALLOW_UNSUPPORTED` the tray needs at login until step 8
+  adds `win32` to `osguard`.
+- AMD cards on Windows: setup and doctor find NVIDIA only (no rocm-smi or sysfs there), so an
+  AMD card gets the CPU tier.
+- The Startup shortcut check reads the .lnk through Windows PowerShell 5.1 (about half a second).
 
 ## Before starting on the Windows machine
 

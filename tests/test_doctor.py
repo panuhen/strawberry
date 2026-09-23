@@ -47,6 +47,7 @@ class Machine(doctor.Probes):
         self.cuda = 1
         self.posted: list[tuple[str, dict]] = []
         self.commands: list[list[str]] = []
+        self.system = "linux"                        # the Linux checks, whatever runs the tests
 
     def which(self, name):
         return f"/usr/bin/{name}" if name in self.tools else None
@@ -89,6 +90,12 @@ class Machine(doctor.Probes):
 
     def cuda_devices(self):
         return self.cuda
+
+
+    def _not_on_linux(self, *args):
+        raise AssertionError("a Windows check ran on Linux")
+
+    notification_access = media_sessions = microphone = consent = windows_build = shortcut = tray = _not_on_linux
 
 
 def by_label(checks, label):

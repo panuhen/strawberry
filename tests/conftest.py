@@ -132,6 +132,19 @@ def no_real_system_bus(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_power_notifications(monkeypatch):
+    """Nor Windows' suspend and resume notification: the daemon's wake watcher there (winwake.py)
+    registers none and says so once. tests/test_winwake.py registers the real one where it
+    fires its own callback, and passes a fake one everywhere else."""
+    from strawberry_crab import winwake
+
+    def refuse(handler):
+        raise winwake.PowerError("the power notifications are out of bounds in tests")
+
+    monkeypatch.setattr(winwake, "register", refuse)
+
+
+@pytest.fixture(autouse=True)
 def no_real_microphone(monkeypatch):
     """Nor the microphone: no test may open the user's recording device. The Windows recorder's
     tests hand winmic a fake sounddevice (tests/test_winmic.py); tests/test_voice.py fakes the
