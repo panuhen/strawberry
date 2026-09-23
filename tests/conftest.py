@@ -68,6 +68,19 @@ def no_real_notification_listener(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_loopback_capture(monkeypatch):
+    """Nor another process's sound: the beat doorway's Windows capture would listen to the user's
+    own player. tests/test_beat_loopback.py hands it a fake system, and captures only its own
+    (silent) process through wasapi directly."""
+    from strawberry_crab.doorways import beat_loopback
+
+    def refuse(pid, rate):
+        raise AssertionError("another process's audio is out of bounds in tests")
+
+    monkeypatch.setattr(beat_loopback.System, "capture", staticmethod(refuse))
+
+
+@pytest.fixture(autouse=True)
 def no_real_notification_area(monkeypatch):
     """Nor the taskbar: no test may put an icon in the user's notification area. The Windows
     tray's tests build and read back its menu and icon, which shows nothing, and drive the rest

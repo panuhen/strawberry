@@ -1,33 +1,40 @@
-"""Doorway: listen to the music player's own audio stream and tell strawberryd the beat.
+"""Doorway: listen to the music player's own audio and tell strawberryd the beat.
 
-    what is playing (PipeWire node of the player)  ->  beat_track.BeatTracker  ->  POST /tempo
+    the player's audio (one capture backend per system)  ->  beat_track.BeatTracker  ->  POST /tempo
 
-Captures ONE PipeWire output stream with `pw-record --target <node>`: the player's, never the
-microphone and never the whole mixer, so her own voice, video calls and system sounds stay
-out of the analysis. The node is picked automatically (a running audio stream from a known
-player, else any running stream that is not ours) or fixed with --target / [beat].target.
-Every couple of seconds the current estimate goes to the daemon, which forwards it to the
-widget as {"tempo": {...}}; the widget picks a dance style from it (WIRING.md §4c).
+The capture is the player's alone, never the microphone and never the whole mixer, so her own
+voice, video calls and system sounds stay out of the analysis:
+
+    Linux    beat_pipewire.py   the player's PipeWire output stream, through `pw-record`
+    Windows  beat_loopback.py   WASAPI process loopback of the player's processes, found through
+                                its media session
+
+`backend()` picks one at runtime; this module never imports either directly. What they share is
+here: the tracker driving, the posts to the daemon, and when to let a capture go and look for
+the player again (the stream ended, no data came, a player that plays gave only silence for too
+long, or another player took over). Every couple of seconds the current estimate goes to the
+daemon, which forwards it to the widget as {"tempo": {...}}; the widget picks a dance style from
+it (WIRING.md §4c).
 
 Runs on the package's interpreter (numpy is a normal dependency): `strawberry-doorway
 beat_watch`, or `python -m strawberry_crab.doorways.beat_watch` as the tray starts it. Silence, a
 paused player or a beatless piece give a low-confidence estimate, and a tempo that has not held
 for a few estimates yet goes out with "steady": false; the widget treats both as "just sway".
+On Windows the tray and `strawberry stop` stop it through its stop event (winproc.py).
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import logging
-import os
-import select
-import subprocess
+import sys
+import threading
 import time
 import urllib.error
 import urllib.request
-
-import numpy as np
+from typing import Any
 
 from ..paths import config_file
 from .beat_track import BeatTracker
@@ -39,191 +46,94 @@ CHUNK_SAMPLES = 2048
 LATENCY_S = 0.05
 SILENT_DB = -60.0
 STALE_AFTER_S = 12.0   # a running player that stays this silent has a dead capture link (seen after suspend)
-NO_DATA_S = 3.0        # pw-record produced nothing: PipeWire never linked us to the target
-STRATEGIES = ("serial", "name", "sink-monitor")
-NODE_NAME = "strawberry-beat"   # our capture node, so the link check can find it in the graph
-PLAYERS = ("spotify", "vlc", "mpv", "rhythmbox", "audacious", "clementine", "elisa", "lollypop", "amberol",
-           "tidal", "deezer", "youtube music", "firefox", "chromium", "chrome", "brave")
-OURS = ("strawberry", "strawberryd", "godot")
+SWITCH_AFTER_S = 4.0   # silent this long: ask whether another player has taken over
+NO_DATA_S = 3.0        # the capture produced nothing: it never got linked to the target
 
 
-def pw_dump() -> list[dict]:
-    try:
-        return json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5).stdout or "[]")
-    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
-        log.warning("pw-dump failed: %s", exc)
-        return []
-
-
-def pipewire_streams(dump: list[dict] | None = None) -> list[dict]:
-    """Audio output streams as {id, serial, name, app, state}."""
-    out = []
-    for obj in pw_dump() if dump is None else dump:
-        info = obj.get("info") or {}
-        props = info.get("props") or {}
-        if props.get("media.class") != "Stream/Output/Audio":
-            continue
-        out.append({
-            "id": obj.get("id"),
-            # pw-record --target takes the object *serial* or the name, not the id. Ids and serials
-            # happen to match on a fresh graph and drift apart after suspend/resume; targeting the
-            # id then yields a dead object that streams zeros.
-            "serial": str(props.get("object.serial", obj.get("id"))),
-            "name": str(props.get("node.name", "")),
-            "app": str(props.get("application.name", "")),
-            "state": str(info.get("state", "")),
-        })
-    return out
-
-
-def pick_target(streams: list[dict], preferred: str = "") -> dict | None:
-    """A RUNNING stream only. Spotify keeps a second, idle stream node; asking PipeWire to capture an
-    idle node gets us silently linked to the default sink's monitor instead, and from then on the
-    beat follows the output device (dead across a headset profile switch) rather than the player."""
-    running = [s for s in streams if s["state"] == "running"]
-    if preferred:
-        for s in running:
-            if preferred.lower() in (s["name"].lower(), s["app"].lower()):
-                return s
-        return None
-    candidates = [s for s in running if s["app"].lower() not in OURS and s["name"].lower() not in OURS]
-    for s in candidates:
-        label = (s["name"] + " " + s["app"]).lower()
-        if any(p in label for p in PLAYERS):
-            return s
-    return candidates[0] if candidates else None
-
-
-def capture_sources(dump: list[dict], node_name: str = NODE_NAME) -> list[dict]:
-    """Where our capture node's inputs come from: [{id, name, class}] per linked output node."""
-    nodes = {o.get("id"): ((o.get("info") or {}).get("props") or {}) for o in dump if str(o.get("type", "")).endswith("Node")}
-    ours = {i for i, props in nodes.items() if props.get("node.name") == node_name}
-    if not ours:
-        return []
-    sources: dict[int, dict] = {}
-    for o in dump:
-        if not str(o.get("type", "")).endswith("Link"):
-            continue
-        info = o.get("info") or {}
-        if info.get("input-node-id") in ours:
-            out_id = info.get("output-node-id")
-            props = nodes.get(out_id, {})
-            sources[out_id] = {"id": out_id, "name": str(props.get("node.name", "")), "class": str(props.get("media.class", ""))}
-    return list(sources.values())
-
-
-def linked_to_player(sources: list[dict], stream: dict) -> bool | None:
-    """True: fed by the player's stream. False: fed by something else (a sink monitor). None: no links yet."""
-    if not sources:
-        return None
-    return any(src["id"] == stream["id"] for src in sources) and not any(src["class"].startswith("Audio/Sink") for src in sources)
+def backend(platform: str | None = None) -> Any:
+    """This system's capture: beat_pipewire on Linux, beat_loopback on Windows."""
+    platform = platform or sys.platform
+    name = "beat_loopback" if platform == "win32" else "beat_pipewire"
+    return importlib.import_module(f"{__package__}.{name}")
 
 
 class Watcher:
-    def __init__(self, daemon: str, target: str, interval_s: float) -> None:
+    def __init__(self, daemon: str, target: str, interval_s: float, capture: Any = None) -> None:
         self.daemon = daemon.rstrip("/")
         self.target = target
         self.interval = interval_s
+        self.capture_backend = capture if capture is not None else backend().Backend()
         self.tracker = BeatTracker(sample_rate=RATE)
         self.posts = 0
         self.failures = 0
-        self.strategy = 0
         self.silent_since: float | None = None
+        self.stopping = threading.Event()   # set by the stop event on Windows; Linux stops by SIGTERM
 
     def run(self) -> None:
-        while True:
-            stream = pick_target(pipewire_streams(), self.target)
-            if stream is None:
-                time.sleep(3.0)
-                continue
-            how = STRATEGIES[self.strategy % len(STRATEGIES)]
-            log.info("listening to %s (%s, node %s, serial %s) by %s", stream["app"] or stream["name"], stream["name"],
-                     stream["id"], stream["serial"], how)
-            outcome = self.capture(stream, how)
-            self.tracker.reset()
-            self.post({"silent": True})
-            if outcome in ("nolink", "wrong-source"):
-                # This way of asking PipeWire did not get us linked to the player; try the next.
-                self.strategy += 1
-                time.sleep(0.5)
-            else:
-                self.strategy = 0
-                time.sleep(1.0)
-
-    def capture(self, stream: dict, how: str) -> str:
-        """Run pw-record until the stream ends. Returns 'ended', 'nolink' (no bytes arrived),
-        or 'stale' (zeros for STALE_AFTER_S while the player runs)."""
-        if how == "serial":
-            cmd = ["pw-record", "--target", stream["serial"]]
-        elif how == "name":
-            cmd = ["pw-record", "--target", stream["name"]]
-        else:
-            # Default sink monitor: device-agnostic (follows the default sink) but hears every
-            # app, her own voice included. Last resort, and the watcher says so in the log.
-            cmd = ["pw-record", "-P", "stream.capture.sink=true"]
-        cmd += ["-P", f"node.name={NODE_NAME}", "--rate", str(RATE), "--channels", "1", "--format", "s16",
-                "--latency", f"{int(LATENCY_S * 1000)}ms", "-"]
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            while not self.stopping.is_set():
+                player = self.capture_backend.find(self.target)
+                if player is None:
+                    self.stopping.wait(3.0)
+                    continue
+                outcome = self.capture(player)
+                if self.stopping.is_set():
+                    break
+                self.tracker.reset()
+                self.post({"silent": True})
+                self.stopping.wait(self.capture_backend.after(outcome))
+        finally:
+            self.capture_backend.close()
+
+    def capture(self, player: Any) -> str:
+        """Feed the tracker from one capture until it ends. Returns 'ended', 'nolink' (no data
+        arrived), 'stale' (silence for STALE_AFTER_S while the player plays), a backend's own
+        verdict ('wrong-source'), or 'stopped'."""
+        try:
+            stream = self.capture_backend.open(player, RATE, CHUNK_SAMPLES)
         except OSError as exc:
-            log.error("pw-record not runnable: %s", exc)
-            time.sleep(10.0)
+            log.error("%s", exc)
+            self.stopping.wait(10.0)
             return "ended"
-        assert proc.stdout is not None
-        fd = proc.stdout.fileno()
         started = time.time()
         last_data = started
         next_post = started + self.interval
         self.silent_since = None
         got_any = False
-        checked = False
-        pending = b""  # an odd byte left over from a read, so samples never go out of alignment
         try:
-            while True:
-                ready, _, _ = select.select([fd], [], [], 1.0)
+            while not self.stopping.is_set():
+                try:
+                    samples = stream.read(1.0)
+                except EOFError:
+                    log.info("stream %s ended", stream.name)
+                    return "ended"
                 now = time.time() - LATENCY_S
-                if ready:
-                    raw = os.read(fd, CHUNK_SAMPLES * 2)
-                    if not raw:
-                        log.info("stream %s ended", stream["name"])
-                        return "ended"
-                    if not checked and how != "sink-monitor" and time.time() - started > 1.0:
-                        # Data flows: make sure it is the player's, not the sink monitor PipeWire
-                        # substitutes when it cannot link to the target.
-                        checked = True
-                        verdict = linked_to_player(capture_sources(pw_dump()), stream)
-                        if verdict is False:
-                            log.warning("capture by %s got linked to the output device, not to %s; retrying", how, stream["name"])
-                            return "wrong-source"
+                if samples is not None:
+                    verdict = stream.verify(time.time() - started)
+                    if verdict:
+                        return verdict
                     got_any = True
                     last_data = time.time()
-                    raw = pending + raw
-                    cut = len(raw) - len(raw) % 2
-                    pending = raw[cut:]
-                    samples = np.frombuffer(raw[:cut], dtype=np.int16).astype(np.float32) / 32768.0
                     self.tracker.feed(samples, now)
                 elif time.time() - last_data > NO_DATA_S:
                     log.warning("no audio from %s for %.0fs (capture by %s never linked); reconnecting",
-                                stream["name"], time.time() - last_data, how)
+                                stream.name, time.time() - last_data, stream.how)
                     return "nolink" if not got_any else "ended"
                 if now >= next_post:
                     next_post = now + self.interval
                     self.report(now)
-                    if self.silent_since is not None and now - self.silent_since > STALE_AFTER_S and self.player_running(stream):
+                    silent_for = now - self.silent_since if self.silent_since is not None else 0.0
+                    if silent_for > STALE_AFTER_S and self.capture_backend.running(player):
                         # After suspend/resume a capture can keep delivering zeros while the
-                        # player's node says "running". Reconnect rather than dance to nothing.
-                        log.warning("silent for %.0fs while %s is running; reconnecting the capture", now - self.silent_since, stream["name"])
+                        # player says it is running. Reconnect rather than dance to nothing.
+                        log.warning("silent for %.0fs while %s is running; reconnecting the capture", silent_for, stream.name)
                         return "stale"
+                    if silent_for > SWITCH_AFTER_S and self.capture_backend.superseded(player, self.target):
+                        log.info("another player is playing now; leaving %s", stream.name)
+                        return "ended"
+            return "stopped"
         finally:
-            proc.kill()
-            proc.wait(timeout=2)
-
-    @staticmethod
-    def player_running(stream: dict) -> bool:
-        for s in pipewire_streams():
-            if s["id"] == stream["id"]:
-                return s["state"] == "running"
-        return False
+            stream.close()
 
     def report(self, now: float) -> None:
         tempo = self.tracker.estimate(now)
@@ -273,13 +183,27 @@ def settings() -> dict:
         return {}
 
 
+def listen_for_stop(watcher: Watcher) -> None:
+    """Windows: the tray and `strawberry stop` set our named stop event (winproc.py), which is
+    what SIGTERM is on Linux; the watcher then lets its capture go and returns."""
+    if sys.platform != "win32":
+        return
+    from .. import winproc
+
+    try:
+        winproc.listen_for_stop(watcher.stopping.set)
+    except OSError as exc:
+        log.warning("no stop event (%s); only TerminateProcess can stop this process", exc)
+
+
 def main() -> None:
     cfg = settings()
     beat = cfg.get("beat", {}) if isinstance(cfg.get("beat"), dict) else {}
     port = (cfg.get("daemon") or {}).get("port", 8770)
-    parser = argparse.ArgumentParser(description="Strawberry beat doorway (PipeWire -> /tempo)")
+    capture = backend()
+    parser = argparse.ArgumentParser(description=f"Strawberry beat doorway ({capture.NAME} -> /tempo)")
     parser.add_argument("--daemon", default=f"http://127.0.0.1:{port}")
-    parser.add_argument("--target", default=str(beat.get("target", "")), help="PipeWire node or application name (default: auto)")
+    parser.add_argument("--target", default=str(beat.get("target", "")), help=capture.TARGET_HELP)
     parser.add_argument("--interval", type=float, default=float(beat.get("interval_s", 2.0)))
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
@@ -287,7 +211,13 @@ def main() -> None:
     if beat.get("enabled", True) is False:
         log.info("[beat] enabled = false; exiting")
         return
-    Watcher(args.daemon, args.target, args.interval).run()
+    watcher = Watcher(args.daemon, args.target, args.interval, capture.Backend())
+    listen_for_stop(watcher)
+    try:
+        watcher.run()
+    except KeyboardInterrupt:
+        pass
+    log.info("stopped")
 
 
 if __name__ == "__main__":
