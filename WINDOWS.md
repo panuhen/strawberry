@@ -33,7 +33,7 @@ Most of the system has nothing Linux-specific in it and is shared as it is:
 | Paths | XDG dirs (`paths.py`, `widget/paths.gd`) | `%APPDATA%\strawberry` (config), `%LOCALAPPDATA%\strawberry` (data, cache; state in `state\`). |
 | Hotkey | a GNOME custom shortcut via `gsettings` | `RegisterHotKey` in the tray (`wintray.py`), `[voice] hotkey` (`hotkey.py`), Ctrl+Alt+Space. |
 | App switcher entry | `strawberry.desktop` and a hicolor icon | Not needed: the window's own icon and title. |
-| Widget window | `--display-driver x11`; click-through by an input shape | Godot's Windows driver; `mouse_passthrough_polygon` is the window's region, which clips drawing too. |
+| Widget window | `--display-driver x11`; click-through by an input shape | Godot's Windows driver; `mouse_passthrough_polygon` is the window's region, which clips drawing too, so it follows her pose. |
 | Widget binary | `strawberry-widget-<ver>-linux-x86_64` | `strawberry-widget-<ver>-windows-x86_64.exe` |
 | Idle time (sleep) | `desktop_idle.py` on `/usr/bin/python3`: XScreenSaver or Mutter | `desktop_idle.py` on `STRAWBERRY_PYTHON`: `GetLastInputInfo` |
 | Git hooks | POSIX sh hooks calling `strawberry git-event` | The same hooks, with LF and forward slashes; a repository's own hook runs through Git's `sh`. |
@@ -207,7 +207,7 @@ window only:
 | Transparency | the desktop showed through everywhere but her; `--capture` PNGs have a transparent background |
 | Borderless | `WS_POPUP`, no caption |
 | Always on top | `WS_EX_TOPMOST`; the `on_top` command cleared and set it |
-| Click-through | `WindowFromPoint` found her window on her body and the window below in the empty corners; the window region is the padded hull |
+| Click-through | `WindowFromPoint` found her window on her body and the window below in the empty corners; the window region is the padded hull of her pose (below) |
 | Title and icon | "Strawberry" (no " (DEBUG)" in developer mode); `WM_GETICON` big and small are the berry; the .exe's own icon is the berry |
 | Taskbar | an unowned visible window with `WS_EX_APPWINDOW`, so it has a taskbar button |
 | Paths | preferences `%APPDATA%\strawberry\widget.cfg`, config `%APPDATA%\strawberry\config.toml`, voices `%LOCALAPPDATA%\strawberry\voices`, the export's copied-out files in `%LOCALAPPDATA%\strawberry\cache\widget`; a relative or empty variable falls back under `%USERPROFILE%` |
@@ -222,6 +222,41 @@ idle helper ran on `/usr/bin/python3`, which Windows does not have; the widget n
 takes `windows`); the restart was then seen to work with a display. "Settings file…" and "Voices
 folder…" hand ShellExecute a plain path, with Notepad for a `.toml` nothing opens. Killing a
 developer-mode `strawberry widget` left Godot running; it is now tied to it.
+
+**Click-through on Windows, and why her claws were cut.** The region cut her as well: it was the
+hull of her meshes' AABBs, and a skinned mesh's AABB is its rest shape, so a claw raised by a
+dance style or a reaction, or the eyes of a peek, were drawn cut off at its edge. On Windows
+`update_passthrough` now hands over to `follow_pose`, which `RenderingServer.frame_pre_draw` runs
+before every frame is drawn, after the clip, the reactions, the dance style and the hat have
+moved her. It takes her posed silhouette: every mesh here follows one bone rigidly, so each
+bone's box of vertices (with the full extent of each blend shape: an open claw, the squash, the
+lids, a tucked leg) is carried by that bone's pose (`body_points`; at rest it matches the mesh
+AABBs exactly), plus the bubble's whole line, the badge and the type box, padded by 18 px as on
+Linux. Each frame's hull is kept for 1.5 s and the region is their hull, 8 px wider, set again only
+when she reaches outside it, or at most once in 1.5 s when that frees 3 % of it: 62 updates (49
+growing, 10 shrinking, 3 forced: the start and showing her again) in 75 s of dancing, reacting and
+talking, hardly any while she idles; after a dance it shrinks back to her rest shape. The cost is
+about 0.26 ms a frame (at most about 1 ms; 9 ms once for the bone boxes). The open menu still
+takes the whole window, and hidden she still has a 1-pixel region off the window.
+
+The whole-window passthrough flag (`Window.mouse_passthrough`) was tried first: toggled on the
+cursor's position, it would have left the drawing whole. In Godot 4.7.2 it only makes
+`WM_NCHITTEST` answer `HTTRANSPARENT`, which passes a click on only to windows of the same thread;
+`WindowFromPoint` still found her window everywhere with it set, so clicks would not reach the
+desktop. Godot sets no `WS_EX_TRANSPARENT` or `WS_EX_LAYERED` for it.
+
+Checked live on 2026-09-23 against a throwaway daemon, grabbing her screen area each frame and
+comparing with the window region (`GetWindowRgn`): with the old region every frame of the plain
+dance, rave, headbang, groove, wave, hop, shiver, peek, nod, alert and a talking wave had her
+pixels on the region's edge (a flat cut across a raised claw or the top of the eyes); with the new
+one none did, and in the rave her claws were drawn up to 36 px above the old region's top. (The
+exceptions were grabs taken while the window moved, in a hop or a drag, where the desktop behind
+her no longer matched, and one frame at the start of a dance in two of five runs, not seen again
+when looked for.) During a
+dance `WindowFromPoint` finds her on a raised claw and the desktop in the corners and above her;
+hidden, nothing takes clicks. Borderless, `WS_EX_TOPMOST` and per-pixel transparency are
+unchanged. `validate_widget.gd` step 8 checks that her posed silhouette rises with the waving
+claw (about 15 px).
 
 The export: the `Windows` preset in `widget/export_presets.cfg`; `scripts/build_widget.sh` under
 Git Bash writes `dist/strawberry-widget-<ver>-windows-x86_64.exe` (110.4 MB; the template is

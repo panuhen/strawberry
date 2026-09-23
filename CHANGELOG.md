@@ -72,6 +72,11 @@ each part works there.
   had just gone; an HTTP error at start is now tried once more.
 - The widget's *Restart widget* passed `--display-driver X11` (or `Windows`) to the new process,
   which accepts only the lower-case names.
+- On Windows her claws were cut off while she danced, and the tops of her eyes during a peek, a
+  hop or a wave: the window's region (what Windows draws as well as what takes clicks) was her
+  shape at rest. It now follows her pose and holds each pose for a moment, so the dance styles,
+  the reactions and the top hat are drawn whole, and a raised claw takes clicks. Linux is
+  unchanged.
 - `scripts/gate_check.py` and `scripts/sensitive_check.py` read their phrase files in the
   locale's encoding; they are UTF-8.
 
