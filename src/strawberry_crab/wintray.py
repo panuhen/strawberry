@@ -361,6 +361,7 @@ class NotifyIcon:
         self.hwnd = None
         self.hicon = None
         self.shown = False
+        self.waiting = False                           # an add failed and is retried on a timer
         self.thread: threading.Thread | None = None
         self.ready = threading.Event()
         self.error: BaseException | None = None
@@ -452,8 +453,9 @@ class NotifyIcon:
 
     def _add(self) -> bool:
         if not shell_notify_icon(NIM_ADD, self._data(NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP)):
-            if not self.shown:
+            if not self.waiting:          # once, not on every retry
                 log.warning("the notification area is not there yet; trying again every %d s", RETRY_ADD_MS // 1000)
+                self.waiting = True
             api().user32.SetTimer(self.hwnd, 1, RETRY_ADD_MS, None)
             self.shown = False
             return False
@@ -462,7 +464,8 @@ class NotifyIcon:
         shell_notify_icon(NIM_SETVERSION, version)
         api().user32.KillTimer(self.hwnd, 1)
         self.shown = True
-        log.info("icon in the notification area")
+        log.info("icon in the notification area" + (" (it is there now)" if self.waiting else ""))
+        self.waiting = False
         return True
 
     def _remove(self) -> None:
