@@ -4,6 +4,11 @@ One line per check: ✓ fine, ! worth knowing (nothing breaks), ✗ broken, with
 The exit code is 1 when any check is ✗, so every bug report can start with this output.
 The checks only look: nothing here starts, stops or restarts a service, writes a file, or reads
 a notification or a track title (the monitor probe matches no real message and closes at once).
+On Windows the D-Bus, PipeWire and systemd checks give way to Windows' own: the notification
+access status (read, never requested), a count of media sessions, the microphone from the device
+list and the privacy switches in the registry (nothing is opened or written), the build for
+process loopback, the Startup shortcut (read without saving) and the tray's stop event (opened
+for SYNCHRONIZE only, never set).
 `--talk` then runs the daemon's scripted lines through each slot (POST /probe) and prints the
 latency of the gate, the desktop voice, the brain, Piper and whisper.
 
@@ -33,6 +38,9 @@ PIPEWIRE_HINT = ("install PipeWire's tools: sudo apt install pipewire-bin (Debia
                  "sudo dnf install pipewire-utils (Fedora), sudo pacman -S pipewire (Arch)")
 APPINDICATOR_HINT = ("on GNOME enable the AppIndicator extension (sudo apt install gnome-shell-extension-appindicator, "
                      "then log out and in); without it her right-click menu has everything the 🍓 has")
+OLLAMA_WINDOWS = "https://ollama.com/download (or: winget install Ollama.Ollama)"
+LOOPBACK_BUILD = 19041    # Windows 10 2004: the first with process loopback capture (the beat)
+MICROPHONE_SETTING = "Settings > Privacy & security > Microphone"
 
 
 @dataclass
@@ -135,6 +143,86 @@ class Probes:
             return False
 
     drm_root: Path | None = None     # None: /sys/class/drm (setupcmd.DRM_ROOT)
+    system: str = sys.platform       # which checks run: Windows' or Linux's
+
+    # --- Windows: each only reads, nothing is asked for, opened or set ------------------
+
+    def notification_access(self) -> tuple[str | None, str]:
+        """UserNotificationListener.GetAccessStatus: ('allowed' | 'denied' | 'unspecified', ""), or
+        (None, why). GetAccessStatus only reads the status; RequestAccessAsync is never called."""
+        import asyncio
+
+        from .doorways import toast_watch
+
+        try:
+            listener, _ = asyncio.run(toast_watch.request_listener())
+            return toast_watch.ACCESS.get(int(listener.get_access_status()), "unspecified"), ""
+        except Exception as exc:   # noqa: BLE001 - not Windows, winrt missing, a COM error
+            return None, type(exc).__name__
+
+    def media_sessions(self) -> int | None:
+        """How many SMTC sessions Windows has now (a count: no app, no title), or None."""
+        import asyncio
+
+        from . import smtc
+
+        async def count() -> int:
+            manager = await smtc.request_manager()
+            return len(list(manager.get_sessions()))
+
+        try:
+            return asyncio.run(count())
+        except Exception:   # noqa: BLE001 - MprisError, a COM error
+            return None
+
+    def microphone(self, preferred: str = "") -> str | None:
+        """The name of the input she would record from (winmic's pick: the device list only, no
+        stream is opened), or None."""
+        try:
+            from . import winmic
+
+            picked = winmic.pick_device(preferred)
+        except Exception:   # noqa: BLE001 - PortAudio missing or failing
+            return None
+        return picked[1] if picked else None
+
+    def consent(self, capability: str) -> dict[str, str | None]:
+        """The privacy switches for a capability, read from the registry (KEY_READ, nothing is
+        written): 'device' (HKLM, the whole machine), 'user' (HKCU, "Let apps access ...") and
+        'desktop' (HKCU NonPackaged, "Let desktop apps access ..."). Each 'Allow', 'Deny' or None."""
+        try:
+            import winreg
+        except ImportError:
+            return {"device": None, "user": None, "desktop": None}
+        key = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore" + "\\" + capability
+
+        def value(root, sub: str) -> str | None:
+            try:
+                with winreg.OpenKey(root, key + sub, 0, winreg.KEY_READ) as handle:
+                    return str(winreg.QueryValueEx(handle, "Value")[0])
+            except OSError:
+                return None
+
+        return {"device": value(winreg.HKEY_LOCAL_MACHINE, ""), "user": value(winreg.HKEY_CURRENT_USER, ""),
+                "desktop": value(winreg.HKEY_CURRENT_USER, r"\NonPackaged")}
+
+    def windows_build(self) -> int | None:
+        version = getattr(sys, "getwindowsversion", None)
+        return int(version().build) if version else None
+
+    def shortcut(self, link: Path) -> tuple[Path, str] | None:
+        """What the Startup shortcut runs: (target, arguments), read without saving it."""
+        from . import startup
+
+        return startup.read_shortcut(link)
+
+    def tray(self) -> tuple[int | None, bool]:
+        """(the pid of a running tray from tray.json, whether it listens on its stop event). The
+        event is opened for SYNCHRONIZE only, which cannot set it."""
+        from . import cli, winproc
+
+        pid = cli.tray_pid(cli.Here())
+        return pid, bool(pid) and winproc.stop_event_exists(str(pid))
 
     def cuda_devices(self) -> int | None:
         """CUDA devices ctranslate2 (whisper's engine) sees after the pip CUDA libraries are
@@ -194,8 +282,12 @@ def check_ollama(config, probes: Probes) -> list[Check]:
     tags = probes.http(url + "/api/tags")
     models = configured_models(config)
     if tags is None:
-        fix = ("install it: curl -fsSL https://ollama.com/install.sh | sh" if probes.which("ollama") is None
-               else "start it: systemctl start ollama (or: ollama serve)")
+        if probes.system == "win32":
+            fix = (f"install it: {OLLAMA_WINDOWS}" if probes.which("ollama") is None
+                   else "start it: open Ollama from the Start menu (or: ollama serve)")
+        else:
+            fix = ("install it: curl -fsSL https://ollama.com/install.sh | sh" if probes.which("ollama") is None
+                   else "start it: systemctl start ollama (or: ollama serve)")
         return [Check(FAIL if models else WARN, "ollama", f"no answer at {url}", fix)]
     version = probes.http(url + "/api/version") or {}
     available = [m.get("name", "") for m in tags.get("models", []) if isinstance(m, dict)]
@@ -471,6 +563,135 @@ def check_git_hooks(probes: Probes) -> list[Check]:
     return [Check(OK, "git hooks", f"core.hooksPath = {hooks_dir} ({', '.join(GIT_HOOKS)})")]
 
 
+# --- Windows ------------------------------------------------------------------------
+
+def check_git(probes: Probes) -> list[Check]:
+    """Windows' half of check_tools: no PipeWire there (the WASAPI calls are Windows' own)."""
+    if probes.which("git") is None:
+        return [Check(WARN, "git", "not found; the git doorway has nothing to watch",
+                      "https://git-scm.com/download/win (or: winget install Git.Git)")]
+    return [Check(OK, "git", probes.which("git") or "")]
+
+
+def check_notification_access(probes: Probes) -> list[Check]:
+    """What the toast doorway will be told when it reads the notification centre."""
+    from .doorways.toast_watch import WHERE_TO_ALLOW
+
+    status, why = probes.notification_access()
+    if status is None:
+        return [Check(WARN, "notification access", f"not checked: no notification listener ({why})")]
+    if status != "allowed":
+        return [Check(WARN, "notification access", f"Windows says {status}: the notification doorway cannot "
+                      "read notifications", f"turn it on in {WHERE_TO_ALLOW}")]
+    return [Check(OK, "notification access", "allowed")]
+
+
+def check_media_sessions(probes: Probes) -> list[Check]:
+    """How many players Windows' media controls list; a count, never an app or a title."""
+    count = probes.media_sessions()
+    if count is None:
+        return [Check(WARN, "media sessions", "not checked: Windows' media controls did not answer")]
+    if not count:
+        return [Check(OK, "media sessions", "none right now (start a player and she follows it)")]
+    return [Check(OK, "media sessions", f"{count} session(s)")]
+
+
+def check_microphone(config, probes: Probes) -> list[Check]:
+    """The input she would record from (the device list only, nothing is opened) and the privacy
+    switches Windows keeps in the registry (read only)."""
+    switches = probes.consent("microphone")
+    denied = [where for key, where in (("device", "Microphone access (for the whole device)"),
+                                       ("user", "Let apps access your microphone"),
+                                       ("desktop", "Let desktop apps access your microphone"))
+              if (switches.get(key) or "").lower() == "deny"]
+    name = probes.microphone(config.voice.source)
+    if not config.voice.enabled:
+        heard = f"input: {name}" if name else "no input found"
+        return [Check(OK, "microphone", f"voice off in the config ({heard}"
+                      + (f"; off in Settings: {', '.join(denied)}" if denied else "") + ")")]
+    if denied:
+        return [Check(FAIL, "microphone", f"Windows keeps it from desktop apps: {', '.join(denied)} is off",
+                      f"turn it on in {MICROPHONE_SETTING}")]
+    if name is None:
+        wanted = f" matching [voice] source = \"{config.voice.source}\"" if config.voice.source else ""
+        return [Check(WARN, "microphone", f"no input{wanted}: she cannot hear you",
+                      "plug one in, or set it as the default recording device in Settings > System > Sound")]
+    unknown = "" if switches.get("desktop") else " (the desktop-apps switch is not in the registry)"
+    return [Check(OK, "microphone", name + unknown)]
+
+
+def check_loopback(config, probes: Probes) -> list[Check]:
+    """The beat doorway's capture: process loopback came with Windows 10 2004 (build 19041)."""
+    build = probes.windows_build()
+    if build is None:
+        return [Check(WARN, "process loopback", "not checked: no Windows build number")]
+    if build < LOOPBACK_BUILD:
+        return [Check(WARN if config.beat.enabled else OK, "process loopback",
+                      f"Windows build {build}; the beat doorway needs {LOOPBACK_BUILD} (Windows 10 2004) or later",
+                      "update Windows, or set [beat] enabled = false")]
+    return [Check(OK, "process loopback", f"Windows build {build}")]
+
+
+def check_startup(probes: Probes) -> list[Check]:
+    """The Startup shortcut `strawberry install` writes: there or not, and whether what it runs
+    still exists and is this install (a moved checkout or a reinstall leaves a stale path).
+    Read through WScript.Shell without saving; nothing is changed."""
+    from .cli import config_port
+
+    link = paths.startup_shortcut()
+    if not link.is_file():
+        return [Check(OK, "Startup shortcut", "not installed (optional: strawberry install)")]
+    read = probes.shortcut(link)
+    reinstall = "strawberry install, from the install you use now (it rewrites the shortcut and restarts the tray)"
+    if read is None:
+        return [Check(WARN, "Startup shortcut", f"{link} is there but could not be read", reinstall)]
+    target, arguments = read
+    if not target.is_file():
+        return [Check(FAIL, "Startup shortcut", f"{link} runs {target}, which does not exist (moved or reinstalled?)",
+                      reinstall)]
+    checks = []
+    if not _same_install(target):
+        checks.append(Check(WARN, "Startup shortcut", f"{target} is another install than this one ({sys.prefix})",
+                            "if this is the install she should run: " + reinstall))
+    else:
+        checks.append(Check(OK, "Startup shortcut", f"{link} runs {target.name}"))
+    args = arguments.split()
+    if "--port" in args[:-1] and args[args.index("--port") + 1] != str(config_port()):
+        checks.append(Check(WARN, "Startup port", f"the shortcut runs --port {args[args.index('--port') + 1]}, "
+                            f"the config says {config_port()}", "strawberry install (rewrites the port; it restarts the tray)"))
+    return checks
+
+
+def check_tray_windows(probes: Probes) -> list[Check]:
+    """Whether a tray runs (tray.json's pid) and listens on its stop event, which `strawberry stop`
+    sets. Only asked; the event is never set."""
+    from .cli import Here
+
+    pid, listening = probes.tray()
+    if pid is None:
+        if paths.startup_shortcut().is_file():
+            return [Check(WARN, "tray", "not running, though the Startup shortcut is installed",
+                          "start her with: strawberry (or log out and in)")]
+        return [Check(OK, "tray", "not running (she runs by hand; strawberry install starts it at login)")]
+    if not listening:
+        return [Check(WARN, "tray", f"pid {pid} runs, but has no stop event: strawberry stop will have to end it",
+                      f"see {Here().tray_log}, then strawberry restart")]
+    return [Check(OK, "tray", f"pid {pid}, answers its stop event")]
+
+
+def check_beat_windows(config, probes: Probes, health: dict | None) -> list[Check]:
+    """Whether beat_watch is posting to the running daemon. It posts only while it captures a
+    player, so no post with nothing playing is fine. Nothing here names the player or its track."""
+    if not config.beat.enabled:
+        return [Check(OK, "beat watcher", "off in the config")]
+    if health is None:
+        return []
+    age = health.get("tempo_age_s")
+    if age is not None and age <= TEMPO_STALE_S:
+        return [Check(OK, "beat watcher", "posting" + (", silent" if (health.get("tempo") or {}).get("silent") else ""))]
+    return [Check(OK, "beat watcher", "no recent estimate (it posts only while a player plays)")]
+
+
 def daemon_url(config) -> str:
     from .cli import config_port
 
@@ -563,6 +784,8 @@ def run_checks(probes: Probes | None = None) -> tuple[list[Check], Any]:
     checks += check_whisper(config, probes)
     checks += check_voice(config, probes)
     checks += check_widget(probes)
+    if probes.system == "win32":
+        return _windows_checks(checks, config, probes), config
     checks += check_tools(probes)
     checks += check_tray_host(probes)
     checks += check_notification_monitor(probes)
@@ -573,6 +796,22 @@ def run_checks(probes: Probes | None = None) -> tuple[list[Check], Any]:
     checks += daemon
     checks += check_beat(config, probes, health)
     return checks, config
+
+
+def _windows_checks(checks: list[Check], config, probes: Probes) -> list[Check]:
+    """After the shared ones: Windows' in place of PipeWire, D-Bus, the tray host and systemd."""
+    checks += check_git(probes)
+    checks += check_notification_access(probes)
+    checks += check_media_sessions(probes)
+    checks += check_microphone(config, probes)
+    checks += check_loopback(config, probes)
+    checks += check_startup(probes)
+    checks += check_tray_windows(probes)
+    checks += check_git_hooks(probes)
+    daemon, health = check_daemon(config, probes)
+    checks += daemon
+    checks += check_beat_windows(config, probes, health)
+    return checks
 
 
 # --- --talk -------------------------------------------------------------------------

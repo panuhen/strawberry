@@ -44,6 +44,14 @@ if ($env:STRAWBERRY_LNK_ICON) { $link.IconLocation = $env:STRAWBERRY_LNK_ICON + 
 $link.Save()
 """
 
+# Loads the .lnk and prints what it runs; without Save() nothing is written.
+READ_SHORTCUT = r"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$link = (New-Object -ComObject WScript.Shell).CreateShortcut($env:STRAWBERRY_LNK)
+[Console]::Out.Write($link.TargetPath + "`n" + $link.Arguments)
+"""
+
 
 class StartupError(Exception):
     """The shortcut could not be written; the message says why."""
@@ -120,6 +128,24 @@ def write_shortcut(link: Path, what: Launch, icon: Path | None = None, working_d
     if result.returncode != 0 or not link.is_file():
         reason = (result.stderr or result.stdout).strip().splitlines()
         raise StartupError(f"PowerShell could not write {link}: {reason[0] if reason else f'exit {result.returncode}'}")
+
+
+def read_shortcut(link: Path) -> tuple[Path, str] | None:
+    """(target, arguments) of an existing .lnk, read through WScript.Shell without saving it;
+    None when it cannot be read. For `strawberry doctor`."""
+    if not link.is_file():
+        return None
+    encoded = base64.b64encode(READ_SHORTCUT.encode("utf-16-le")).decode("ascii")
+    argv = [powershell(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded]
+    try:
+        result = subprocess.run(argv, env={**os.environ, "STRAWBERRY_LNK": str(link)}, capture_output=True,
+                                timeout=POWERSHELL_TIMEOUT_S, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    target, _, arguments = result.stdout.decode("utf-8", errors="replace").partition("\n")
+    return (Path(target.strip()), arguments.strip()) if target.strip() else None
 
 
 def remove() -> bool:

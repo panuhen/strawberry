@@ -160,6 +160,17 @@ def request_stop(key: str) -> bool:
         k.CloseHandle(handle)
 
 
+def stop_event_exists(key: str) -> bool:
+    """Whether a process listens on `key`'s stop event. Opened for SYNCHRONIZE only, which cannot
+    set it, and closed at once: `strawberry doctor` asks this of the tray."""
+    k = kernel32()
+    handle = k.OpenEventW(SYNCHRONIZE, False, event_name(key))
+    if not handle:
+        return False
+    k.CloseHandle(handle)
+    return True
+
+
 def wait_exit(pid: int, timeout_s: float) -> bool:
     """True once `pid` has ended (or was never there), False if it is still running at the timeout."""
     k = kernel32()
