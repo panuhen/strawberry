@@ -9,6 +9,9 @@ bare `POST /listen`. One session:
     talking     the transcript enters the normal event path as source=voice, so the brain
                 answers in her voice; an empty transcript gets a fixed "didn't catch that"
 
+The model loads in a thread of its own at start, so the daemon answers meanwhile (a first start
+downloads it, 1.5 GB for `medium`); until then /listen gets EARS_LOADING.
+
 Recording and transcription run in worker threads. Everything about audio devices and models
 is behind small callables so the flow is unit-tested without a microphone or a model.
 """
