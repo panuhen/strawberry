@@ -117,14 +117,19 @@ def log_file(directory: Path, name: str) -> Path:
     return directory / f"{'strawberryd' if name == 'daemon' else name}.log"
 
 
-def open_log(path: Path):
-    """The log opened for appending, the old one moved to `.1` once it is past LOG_ROTATE_BYTES."""
+def rotate_log(path: Path) -> None:
+    """Move a log past LOG_ROTATE_BYTES to `<name>.1` (one old copy is kept)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         if path.stat().st_size > LOG_ROTATE_BYTES:
             path.replace(path.with_name(path.name + ".1"))
     except OSError:
         pass
+
+
+def open_log(path: Path):
+    """The log opened for appending, rotated first."""
+    rotate_log(path)
     return path.open("ab")
 
 

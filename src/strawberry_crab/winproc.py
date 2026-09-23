@@ -17,6 +17,9 @@ security descriptor takes the default DACL of the creating process's token, whic
 user, SYSTEM and the logon session, and nobody else. No port is opened for it. `stop()` sets the
 event, waits for the process to end, and falls back to TerminateProcess after a timeout.
 
+A tray also answers `Local\strawberry-restart-<pid>` (listen_for_restart): `strawberry restart`
+sets it, and the tray restarts its children rather than being stopped from inside its own job.
+
 `KillOnCloseJob` is the other half: a job object that ends every process in it when the last
 handle to it closes, so the tray's children (and a Godot started by `strawberry widget`) go with
 the process that started them, even when that one is killed.
@@ -35,6 +38,7 @@ from typing import Callable
 
 STOP_ENV = "STRAWBERRY_STOP_EVENT"
 PREFIX = "Local\\strawberry-stop-"
+RESTART_PREFIX = "Local\\strawberry-restart-"
 
 SYNCHRONIZE = 0x00100000
 EVENT_MODIFY_STATE = 0x0002
@@ -112,7 +116,37 @@ def listen_for_stop(callback: Callable[[], None]) -> list[str]:
     return names
 
 
+def listen_for_restart(callback: Callable[[], None]) -> str | None:
+    """The tray's second event, `Local\\strawberry-restart-<pid>`: `strawberry restart` (her menu's
+    "Apply settings") sets it and the tray restarts its children, as its own Restart row does.
+    Auto-reset, so it can be set again. Returns its name, or None."""
+    k = kernel32()
+    name = RESTART_PREFIX + str(os.getpid())
+    handle = k.CreateEventW(None, False, False, name)
+    if not handle:
+        return None
+
+    def wait() -> None:
+        while k.WaitForSingleObject(handle, INFINITE) == WAIT_OBJECT_0:
+            callback()
+
+    threading.Thread(target=wait, name="restart-event", daemon=True).start()
+    return name
+
+
 # --- the process that stops it --------------------------------------------------------
+
+def request_restart(pid: int) -> bool:
+    """Set a tray's restart event. False when it has none (not a tray, or not running)."""
+    k = kernel32()
+    handle = k.OpenEventW(EVENT_MODIFY_STATE, False, RESTART_PREFIX + str(pid))
+    if not handle:
+        return False
+    try:
+        return bool(k.SetEvent(handle))
+    finally:
+        k.CloseHandle(handle)
+
 
 def request_stop(key: str) -> bool:
     """Set `key`'s stop event. False when there is none (the process is gone, or never listened)."""

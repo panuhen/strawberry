@@ -101,6 +101,32 @@ def rgba_to_argb(rgba: bytes) -> bytes:
     return bytes(out)
 
 
+def rgba_to_bgra(rgba: bytes) -> bytes:
+    """RGBA bytes -> BGRA, the byte order of a 32-bit Windows DIB (the Windows tray's HICON)."""
+    out = bytearray(rgba)
+    out[0::4] = rgba[2::4]
+    out[2::4] = rgba[0::4]
+    return bytes(out)
+
+
+def ico_bytes(directory: Path | None = None, sizes=ICON_SIZES) -> bytes:
+    """An .ico holding the packaged PNGs as they are (PNG entries, Windows Vista and later): the
+    icon of the Windows Startup shortcut."""
+    directory = Path(directory) if directory is not None else icons_dir()
+    images = []
+    for size in sizes:
+        path = directory / f"strawberry-{size}.png"
+        if path.is_file():
+            images.append((size, path.read_bytes()))
+    header = struct.pack("<HHH", 0, 1, len(images))
+    offset = 6 + 16 * len(images)
+    entries, blobs = b"", b""
+    for size, data in images:
+        entries += struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0, 1, 32, len(data), offset + len(blobs))
+        blobs += data
+    return header + entries + blobs
+
+
 def pixmap(path: Path) -> tuple[int, int, bytes]:
     """One (width, height, ARGB32) entry for the IconPixmap property."""
     width, height, rgba = read_png(Path(path).read_bytes())
