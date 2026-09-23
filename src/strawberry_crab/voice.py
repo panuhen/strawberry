@@ -597,3 +597,23 @@ class Listener:
         finally:
             self.phase = "idle"
             self.busy = False
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`python -m strawberry_crab.voice --fetch MODEL`: what `strawberry setup` runs to put a
+    whisper model into the Hugging Face cache before the first start needs it."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m strawberry_crab.voice")
+    parser.add_argument("--fetch", metavar="MODEL", required=True, help="a faster-whisper size, e.g. medium")
+    args = parser.parse_args(argv)
+    try:
+        print(fetch_whisper(args.fetch))
+    except Exception as exc:  # noqa: BLE001 - no network, a bad name: said, not a traceback
+        print(f"could not download whisper {args.fetch}: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

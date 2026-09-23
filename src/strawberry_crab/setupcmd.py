@@ -5,14 +5,15 @@
        24 GB card); every slot can be overridden; the choices go into config.toml, backed up first
     2. Ollama and the models: one licence line per model, then `ollama pull`
     3. the Piper voice, into the voices dir
-    4. the widget binary, unless the installed one is this package's version
-    5. settings the file does not have yet, appended with their defaults
-    6. `strawberry install`, if asked (Linux: the systemd unit; Windows: the Startup shortcut)
+    4. the whisper model, into the Hugging Face cache (when voice is on)
+    5. the widget binary, unless the installed one is this package's version
+    6. settings the file does not have yet, appended with their defaults
+    7. `strawberry install`, if asked (Linux: the systemd unit; Windows: the Startup shortcut)
 
-Idempotent: a model that is there is not pulled again, a voice that is there is not downloaded,
-and a key already in the user's file is kept unless the user types a new value for it. Nothing
-here hosts or redistributes a model: each is downloaded by the user from its publisher, under
-its own terms, and setup names them before it downloads anything.
+Idempotent: a model that is there is not pulled again, a voice or a whisper model that is there
+is not downloaded, and a key already in the user's file is kept unless the user types a new value
+for it. Nothing here hosts or redistributes a model: each is downloaded by the user from its
+publisher, under its own terms, and setup names them before it downloads anything.
 
 `--yes` takes every default without asking and does not run `install` unless `--install` is given.
 `--no-download` does everything but the downloads: it names each model, voice and widget it would
@@ -284,7 +285,7 @@ def voice_licence(voice: str) -> str:
     return "see its MODEL_CARD, https://huggingface.co/rhasspy/piper-voices"
 
 
-WHISPER_LICENCE = "MIT (OpenAI Whisper weights, converted by Systran), fetched by faster-whisper on first use"
+WHISPER_LICENCE = "MIT (OpenAI Whisper weights, converted by Systran), https://huggingface.co/Systran"
 
 
 # --- Ollama -----------------------------------------------------------------------
@@ -352,6 +353,7 @@ class Setup:
         values = self.step_models()
         self.step_ollama(values)
         self.step_voice(values)
+        self.step_ears(values)
         self.step_widget()
         self.step_missing()
         self.step_install()
@@ -493,7 +495,6 @@ class Setup:
         models = [values["gate"], values["voice"]] + ([values["brain"]] if values["thinker"] else [])
         for model in models:
             self.say(f"  {model} — {model_licence(model)}")
-        self.say(f"  whisper {values['whisper']} — {WHISPER_LICENCE}")
         todo = [m for m in models if not has_model(available, m)]
         for model in models:
             if model not in todo:
@@ -560,8 +561,49 @@ class Setup:
             self.failures.append("voice")
 
     # 4 ---------------------------------------------------------------------------
+    def step_ears(self, values: dict[str, Any]) -> None:
+        """The whisper model, into the Hugging Face cache now, so that her first start is not the
+        download (it happens in the background then, and she cannot listen until it is done)."""
+        self.say("\n4. Her ears (whisper)")
+        from .config import ConfigError, load
+        from . import voice
+
+        try:
+            enabled = load(self.path).voice.enabled
+        except ConfigError:
+            enabled = True
+        if not enabled:
+            self.say("  voice is off in the config ([voice] enabled = false); nothing to fetch")
+            return
+        model = values["whisper"]
+        size = voice.WHISPER_SIZES.get(model, "")
+        self.say(f"  whisper {model} — {'~' + size + ', ' if size else ''}{WHISPER_LICENCE}")
+        cached = voice.whisper_cached(model)
+        if cached is None:
+            self.say("  ✗ faster-whisper is not installed with this package")
+            self.failures.append("whisper")
+            return
+        if cached:
+            self.say(f"  ✓ whisper {model} is in the Hugging Face cache")
+            return
+        later = "otherwise her first start downloads it, in the background, and she listens once it is done"
+        if not self.download:
+            self.say(f"  not downloaded (--no-download); {later}")
+            self.skipped.append(f"whisper {model}")
+            return
+        if not self.confirm(f"  download whisper {model}{' (' + size + ')' if size else ''} now?"):
+            self.say(f"  skipped; {later}")
+            return
+        code = self.run([sys.executable, "-m", "strawberry_crab.voice", "--fetch", model]).returncode
+        if code == 0 and voice.whisper_cached(model):
+            self.say(f"  ✓ whisper {model}")
+        else:
+            self.say(f"  ✗ could not download whisper {model}; {later}")
+            self.failures.append("whisper")
+
+    # 5 ---------------------------------------------------------------------------
     def step_widget(self) -> None:
-        self.say("\n4. The widget")
+        self.say("\n5. The widget")
         from . import __version__, widgetbin
 
         installed = widgetbin.installed_version()
@@ -583,9 +625,9 @@ class Setup:
                 self.say(f"  ✗ widget fetch failed: {exc}")
                 self.failures.append("widget")
 
-    # 5 ---------------------------------------------------------------------------
+    # 6 ---------------------------------------------------------------------------
     def step_missing(self) -> None:
-        self.say("\n5. Settings your file does not have")
+        self.say("\n6. Settings your file does not have")
         if not self.path.exists():
             return
         text = self.path.read_text(encoding="utf-8")
@@ -612,9 +654,9 @@ class Setup:
             return
         self.say(f"  ✓ appended {len(missing)} key(s)")
 
-    # 6 ---------------------------------------------------------------------------
+    # 7 ---------------------------------------------------------------------------
     def step_install(self) -> None:
-        self.say("\n6. Start on login")
+        self.say("\n7. Start on login")
         from . import cli
 
         if self.windows:
