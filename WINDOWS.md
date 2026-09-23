@@ -20,7 +20,7 @@ Most of the system has nothing Linux-specific in it and carries over unchanged:
 |---|---|---|
 | Notifications (`doorways/notify_watch.py`) | D-Bus `BecomeMonitor` on the session bus | `UserNotificationListener` (WinRT, via the `winrt-*` packages), polled: `doorways/toast_watch.py` (step 3). Access is the Settings switch "Let apps access your notifications". Reads other apps' toasts: app name and logo, title, body. |
 | Media (`mpris.py`, `doorways/mpris_watch.py`) | MPRIS over D-Bus | System Media Transport Controls: `GlobalSystemMediaTransportControlsSessionManager` (WinRT). Spotify, browsers and most players register with it. Play/pause/next/previous, now playing, change events. |
-| Beat capture (`doorways/beat_watch.py`) | `pw-record` of the player's own stream | WASAPI process loopback (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, Windows 10 2004+): capture one process's output, found through the SMTC session's app. `beat_track.py` is pure numpy and stays. |
+| Beat capture (`doorways/beat_watch.py`) | `pw-record` of the player's own stream (`doorways/beat_pipewire.py`) | WASAPI process loopback (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, Windows 10 2004+) of the player's process tree, found through the SMTC session's app: `doorways/beat_loopback.py` and `wasapi.py` (step 5). `beat_track.py` is pure numpy and stays. |
 | Microphone (`voice.py`) | `pw-record` from the default source | WASAPI capture through `sounddevice`, 16 kHz mono: `winmic.py` (step 6). |
 | Tray (`tray.py`, `bus.py`, `icons.py`) | StatusNotifierItem + dbusmenu over jeepney | A notification-area icon, Win32 `Shell_NotifyIconW` through ctypes, with the same menu: `wintray.py` (step 4). The menu and the supervisor are shared: `traymenu.py`, `supervisor.py`. |
 | Start on login (`cli.py install`) | systemd user unit + XDG autostart fallback | A shortcut in the Startup folder (`startup.py`, step 4); no scheduled task. |
@@ -337,6 +337,121 @@ Left:
   Linux Restart row does.
 - The Startup folder is taken from `%APPDATA%`, not the `FOLDERID_Startup` known folder, so a
   redirected Startup folder is not followed.
+
+## Step 5: where it stands
+
+Done:
+
+- The split. `doorways/beat_watch.py` is the one beat doorway on both systems: the tracker
+  driving, the `/tempo` posts, and when to let a capture go (it ended, no data came, 12 s of
+  silence while the player says it plays, 4 s of silence while another player has started, the
+  stop event). `beat_watch.backend()` imports the system's capture at runtime and nothing
+  imports it directly: `doorways/beat_pipewire.py` is the Linux capture moved out unchanged
+  (`pw-record`, the link check, the three strategies; doctor reads the graph through it),
+  `doorways/beat_loopback.py` the Windows one. Both answer the same five calls (`find`, `open`,
+  `after`, `running`, `superseded`), and each capture three (`read`, `verify`, `close`).
+  `doorways.for_system()` on Windows is `smtc_watch`, `toast_watch` and `beat_watch`, for
+  `strawberry daemon` and the tray's children. The tray stops it through its stop event; a stop
+  in the middle of a capture releases it and exits 0 within a second.
+- The capture (`wasapi.py`, ctypes, no new dependency). `ActivateAudioInterfaceAsync` on
+  `VAD\Process_Loopback` with `AUDIOCLIENT_ACTIVATION_PARAMS` (process loopback, the target pid,
+  `PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE`) and a completion handler of our own: a
+  ctypes vtable for `IActivateAudioInterfaceCompletionHandler` that also answers `IAgileObject`,
+  so Windows may call it on its own worker thread. `ActivateCompleted` only reads
+  `GetActivateResult` and sets an event the caller waits on (5 s). A handler stays referenced
+  until its count is back to zero. The virtual device has no mix format (`GetMixFormat` is
+  E_NOTIMPL), so `Initialize` asks for exactly what `beat_track` wants, mono float32 at
+  22050 Hz, and `AUTOCONVERTPCM | SRC_DEFAULT_QUALITY` makes the audio engine resample and mix
+  down. That worked at once, so there is no fallback format. Shared mode, event driven
+  (`SetEventHandle`), a 200 ms buffer. Each read waits for the event and drains packets until
+  half a chunk (1024 samples, about 46 ms) has come, as `pw-record`'s reads are on Linux; a
+  packet flagged SILENT is zeros. Packets keep coming while the target renders silence, and the
+  capture ends (EOF) when the target process does. CPU while capturing: about 19 ms per second
+  of one core, the tracker included; 68 MB working set.
+- Why no package: comtypes would carry the COM plumbing, but the completion handler would
+  still be ours to write, and the calls here are a dozen vtable slots. The loopback libraries
+  (PyAudioWPatch, soundcard) capture a whole output device, not a process, and `sounddevice` /
+  PortAudio has no process loopback.
+- Which player. The SMTC session that is Playing (Windows' current one first), or the one
+  `[beat] target` names by its short name (`smtc.app_names`: `spotify`, `chrome`, `chromium`).
+  A session names its app (`SourceAppUserModelId`), not its process, so the process comes from
+  the audio sessions of every active output device (`IAudioSessionManager2`: pid and state per
+  session; the system sounds and multi-process sessions left out) and the Toolhelp process table:
+  - a packaged app (`<family>!<app>`): the process whose `GetApplicationUserModelId` is the
+    session's id (Media Player's exe is `Microsoft.Media.Player.exe`, which says nothing);
+  - a desktop app (`Spotify.exe`, `Chrome`, `MSEdge`, `python.exe`): the process whose image
+    name has the same `smtc.app_key`;
+  - an active audio session before an idle one; from it, up to the topmost ancestor with the
+    same image name, whose whole tree is captured (a browser's audio service is its child; a
+    venv's `python.exe` launcher is above the real interpreter);
+  - never our own processes: this doorway, the chain above it while it is ours (python,
+    pythonw, the `strawberry*` launchers, the tray) and everything under the topmost of them
+    (the daemon, the other doorways); nor the widget (`godot*`, `strawberry-widget*`), which
+    plays her voice.
+
+  An app with no media session at all is taken when it is a known player (`PLAYERS`, or the
+  target) with an active audio session; an app whose media session says paused is not.
+- What works and what does not:
+  - a desktop id that is the exe's name: seen live with `python.exe` (a `MediaPlayer` in an
+    unpackaged Python registers its session as `python.exe`; the audio session is the
+    interpreter's, a child of the venv launcher, and the launcher's tree was captured);
+  - Chrome (`Chrome`), Edge (`MSEdge`) and Spotify (`Spotify.exe` or its Store id): the same
+    rules, covered by the fakes, not tried on the real apps (the user's players are out of
+    bounds);
+  - packaged apps: `GetApplicationUserModelId`, covered by the fakes, not tried live;
+  - Firefox installed outside its default folder: its id is a hash of the folder and names no
+    process, and the log says "Firefox plays, but no process of its renders sound" once. `[beat]
+    target = "firefox"` finds it by its image name through its audio session instead;
+  - an app whose id is neither its package's nor its exe's name: not found, logged once;
+  - sound the player hands to a process outside its tree (an audio helper started by a service)
+    is not heard, nor exclusive-mode streams, which bypass the audio engine.
+- The volume: process loopback hears the player after its session volume and mute. The test
+  player's session muted in the volume mixer gave digital silence, and at session volume 0.25
+  its level was 12 dB down. So nothing is heard that the user did not let play, and a player
+  muted in the mixer reads as silent.
+- Tests: `tests/test_beat_watch.py` runs the shared watcher on a fake capture (a stream that
+  ends, a backend verdict, no data, a capture that cannot start, the stop event, silence), keeps
+  the PipeWire tests, and on Windows stops a watcher in a child process through its stop event.
+  `tests/test_beat_loopback.py` runs the player search on a fake process table, fake audio
+  sessions and the fake SMTC manager on any system, and on Windows captures its own silent
+  process through the real `wasapi.LoopbackCapture` (activation, handler, format, read, close)
+  and reads the real process table and audio sessions. `tests/conftest.py` refuses the
+  backend's capture of any other process. `tests/test_imports.py` imports the new modules
+  without jeepney and without winrt, and checks that `beat_watch` imports neither capture until
+  it picks one.
+- `scripts/beat_eval.py` is offline (numpy and wave files) and runs on Windows unchanged:
+  `run --synthetic` gave the scores of the table in WIRING §4c (acc1 0.836, acc2 0.924, phase
+  0.908, 1.76 ms CPU per second of audio).
+- Seen live 2026-09-23 against a throwaway daemon (port 8785, throwaway APPDATA and
+  LOCALAPPDATA; brain, gate, thinker, tools, speech and voice off; `[actions] mpris = false`;
+  `[media] only` and `[notifications] only_apps` naming no real app; `[beat] target = "python"`,
+  so no real player could be picked). The test player was a `Windows.Media.Playback.MediaPlayer`
+  in a scratch venv, which registers an SMTC session, playing a drum loop from `beat_eval`'s
+  generator at about -40 dBFS peak (file peak -28 or -20 dBFS, session volume 0.25). It was found
+  through its session, captured by process loopback and reported:
+
+  | the loop | known BPM | beat_watch | the same audio offline |
+  |---|---|---|---|
+  | four on the floor, off-beat bass | 124 | 123.1–123.6 | 123.7–123.8 |
+  | rock | 100 | 99.6–100.0 | 99.9 |
+  | four on the floor, off-beat bass | 140 | 139.6–139.8 | — |
+
+  Each locked at the first estimate after the tracker's 4 s. When the player exited, the
+  capture ended and the watcher went back to waiting. The rock loop at -28 dBFS peak came in at
+  -64 dB, below the -60 dB silence floor: it was posted as silent and the capture reconnected
+  after 12 s, as designed. The stop event ended the watcher once while it waited and once
+  mid-capture (exit 0), and the daemon's own event stopped the daemon. Nothing of the test was
+  left running.
+
+Left:
+
+- Not tried live: Spotify, the browsers, a packaged player, and Windows 10 (2004 and later
+  have process loopback; an older build refuses the activation, and the log says what it needs).
+- A player muted in the volume mixer while its session says Playing is silent to us, and the
+  capture is reconnected every 12 s or so until it plays again (one log line each time).
+- Two processes of one app with sound: the first active one wins, and only its tree is heard.
+- Doctor's beat check still reads the PipeWire graph: on Windows it says "the player link not
+  checked (pw-dump gave nothing)", and the PipeWire tools check fails (step 7).
 
 ## Step 6: where it stands
 

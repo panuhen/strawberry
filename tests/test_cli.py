@@ -116,7 +116,7 @@ def test_status_without_anything_running_says_so(monkeypatch, capsys):
     if sys.platform.startswith("linux"):
         assert cli.doorways() == ("mpris_watch", "notify_watch", "beat_watch")
     elif sys.platform == "win32":
-        assert cli.doorways() == ("smtc_watch", "toast_watch")    # media and notifications, so far
+        assert cli.doorways() == ("smtc_watch", "toast_watch", "beat_watch")    # media, notifications, the beat
 
 
 def test_the_cli_and_the_doorways_package_agree():

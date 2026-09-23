@@ -2,7 +2,7 @@
 
     strawberry-doorway mpris_watch      media players (MPRIS)                             Linux
     strawberry-doorway notify_watch     desktop notifications (D-Bus monitor)             Linux
-    strawberry-doorway beat_watch       the player's audio stream -> tempo (PipeWire)     Linux
+    strawberry-doorway beat_watch       the player's audio -> tempo (PipeWire; Windows: process loopback)
     strawberry-doorway smtc_watch       media players (System Media Transport Controls)   Windows
     strawberry-doorway toast_watch      other apps' toasts (UserNotificationListener)     Windows
 
@@ -21,8 +21,9 @@ from .. import osguard
 
 # In the order the tray starts them.
 DOORWAYS = ("mpris_watch", "notify_watch", "beat_watch")
-# The Windows port so far (WINDOWS.md): media and notifications; the beat comes later.
-WINDOWS_DOORWAYS = ("smtc_watch", "toast_watch")
+# The Windows port so far (WINDOWS.md): media, notifications and the beat (beat_watch picks its
+# capture by system).
+WINDOWS_DOORWAYS = ("smtc_watch", "toast_watch", "beat_watch")
 
 
 def for_system(platform: str | None = None) -> tuple[str, ...]:
@@ -39,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     """`strawberry-doorway <name> [args]`: run one doorway in this process."""
     osguard.require_supported()
     argv = list(sys.argv[1:] if argv is None else argv)
-    known = (*DOORWAYS, *WINDOWS_DOORWAYS)
+    known = tuple(dict.fromkeys((*DOORWAYS, *WINDOWS_DOORWAYS)))
     if not argv or argv[0] in ("-h", "--help") or argv[0] not in known:
         stream = sys.stdout if argv and argv[0] in ("-h", "--help") else sys.stderr
         print(f"usage: strawberry-doorway {{{','.join(known)}}} [--daemon URL] [--help]", file=stream)

@@ -23,20 +23,22 @@ def imports_without(blocked: str, modules: list[str]) -> subprocess.CompletedPro
 
 WINDOWS = ["strawberry_crab.smtc", "strawberry_crab.doorways.smtc_watch", "strawberry_crab.doorways.toast_watch",
            "strawberry_crab.wintray", "strawberry_crab.winproc", "strawberry_crab.startup", "strawberry_crab.winmic",
-           "strawberry_crab.hotkey"]
+           "strawberry_crab.hotkey", "strawberry_crab.wasapi", "strawberry_crab.doorways.beat_loopback"]
 # The tray's shared half: the supervisor and the menu run on both systems, the SNI only on Linux.
 TRAY = ["strawberry_crab.supervisor", "strawberry_crab.traymenu"]
+# The beat doorway is shared; its capture is picked at runtime (PipeWire or process loopback).
+BEAT = ["strawberry_crab.doorways.beat_watch"]
 
 
-@pytest.mark.parametrize("modules", [SHARED, WINDOWS, TRAY])
+@pytest.mark.parametrize("modules", [SHARED, WINDOWS, TRAY, BEAT])
 def test_windows_code_imports_without_jeepney(modules):
     result = imports_without("jeepney", modules)
     assert result.returncode == 0, result.stderr
 
 
 def test_linux_code_imports_without_winrt():
-    result = imports_without("winrt", [*SHARED, *WINDOWS, *TRAY, "strawberry_crab.mpris", "strawberry_crab.tray",
-                                       "strawberry_crab.doorways.notify_watch"])
+    result = imports_without("winrt", [*SHARED, *WINDOWS, *TRAY, *BEAT, "strawberry_crab.mpris", "strawberry_crab.tray",
+                                       "strawberry_crab.doorways.notify_watch", "strawberry_crab.doorways.beat_pipewire"])
     assert result.returncode == 0, result.stderr
 
 
@@ -72,5 +74,18 @@ def test_nothing_imports_sounddevice_until_the_microphone_opens():
             "from strawberry_crab.config import VoiceConfig\n"
             "voice.Listener(VoiceConfig())\n"
             "assert 'sounddevice' not in sys.modules, 'imported at start'\n")
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_beat_doorway_imports_neither_capture_until_it_picks_one():
+    """beat_watch never imports a system's capture module itself: backend() does, at runtime."""
+    code = ("import sys\n"
+            "from strawberry_crab.doorways import beat_watch\n"
+            "for name in ('beat_pipewire', 'beat_loopback'):\n"
+            "    assert 'strawberry_crab.doorways.' + name not in sys.modules, name\n"
+            "assert 'strawberry_crab.wasapi' not in sys.modules\n"
+            "picked = beat_watch.backend()\n"
+            "assert picked.__name__.endswith('beat_loopback' if sys.platform == 'win32' else 'beat_pipewire')\n")
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr

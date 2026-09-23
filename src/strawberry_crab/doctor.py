@@ -524,7 +524,7 @@ def check_beat(config, probes: Probes, health: dict | None) -> list[Check]:
     if not isinstance(graph, list):
         state = "posting" if age is not None and age <= TEMPO_STALE_S else "no recent estimate"
         return [Check(OK, "beat watcher", f"{state}; the player link not checked (pw-dump gave nothing)")]
-    from .doorways.beat_watch import NODE_NAME, capture_sources, pick_target, pipewire_streams
+    from .doorways.beat_pipewire import NODE_NAME, capture_sources, pick_target, pipewire_streams
 
     stream = pick_target(pipewire_streams(graph), config.beat.target)
     if stream is None:
