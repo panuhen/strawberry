@@ -18,7 +18,7 @@ Most of the system has nothing Linux-specific in it and carries over unchanged:
 
 | Part | Linux (now) | Windows |
 |---|---|---|
-| Notifications (`doorways/notify_watch.py`) | D-Bus `BecomeMonitor` on the session bus | `UserNotificationListener` (WinRT, via the `winrt-*` packages). The user grants access once in Settings. Reads other apps' toasts: app name, title, body. |
+| Notifications (`doorways/notify_watch.py`) | D-Bus `BecomeMonitor` on the session bus | `UserNotificationListener` (WinRT, via the `winrt-*` packages), polled: `doorways/toast_watch.py` (step 3). Access is the Settings switch "Let apps access your notifications". Reads other apps' toasts: app name and logo, title, body. |
 | Media (`mpris.py`, `doorways/mpris_watch.py`) | MPRIS over D-Bus | System Media Transport Controls: `GlobalSystemMediaTransportControlsSessionManager` (WinRT). Spotify, browsers and most players register with it. Play/pause/next/previous, now playing, change events. |
 | Beat capture (`doorways/beat_watch.py`) | `pw-record` of the player's own stream | WASAPI process loopback (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, Windows 10 2004+): capture one process's output, found through the SMTC session's app. `beat_track.py` is pure numpy and stays. |
 | Microphone (`voice.py`) | `pw-record` from the default source | WASAPI capture (e.g. `sounddevice`), 16 kHz mono. |
@@ -104,7 +104,7 @@ Done:
   picks. `mpris.py` (Linux) and `smtc.py` (Windows) are the reflexes; `media.controls()` picks
   one for the daemon. `doorways/mpris_watch.py` and `doorways/smtc_watch.py` are the watchers;
   `doorways.for_system()` says which doorways a system runs (Linux: the three as before;
-  Windows: `smtc_watch` only) and `cli.doorways()`, `strawberry daemon` and the tray's
+  Windows: `smtc_watch` only; step 3 adds `toast_watch`) and `cli.doorways()`, `strawberry daemon` and the tray's
   `child_specs` use it. Nothing was moved, so every Linux import and test stays as it was.
 - The interface is the one `actions.Actor` already used: `reflexes()`, `situation()`,
   `close()`. `smtc.Smtc` subclasses `mpris.Mpris` and replaces only what talks to the bus
@@ -143,6 +143,90 @@ Left:
   change when one closes.
 - A `pause` or `skip` from the user has not yet been tried on a real player; the fake covers
   the calls, and the calls on a test session of our own worked.
+
+## Step 3: where it stands
+
+Done:
+
+- Layout: `doorways/notifications.py` is what both notification doorways do once they have
+  read a notification: `clean`, the content deduper, `allowed` (own notifications, `only_apps`,
+  `ignore_apps`, `min_urgency`, replacements), the body decision (`body` / `body_apps`), the
+  event, the burst summary, and `Forwarder` (the log line with `body_len` and never the body,
+  the coalescing window, the 30 s POST). `notify_watch.py` keeps the D-Bus reading,
+  `parse_notify` and the XDG icon lookup, and re-exports the shared names, so Linux behaves as
+  before and its tests did not change. `doorways/toast_watch.py` is the Windows reader. The
+  privacy checks (`privacy.py`, the gate, "private") are the daemon's and were already shared.
+- Reading: `UserNotificationListener.Current`, `GetNotificationsAsync(NotificationKinds.Toast)`.
+  Per toast: `AppInfo.DisplayInfo.DisplayName` is the app, `AppInfo.AppUserModelId` gives the
+  short key (`smtc.app_key`, in the `desktop_entry` slot, so `ignore_apps`/`only_apps`/
+  `body_apps` match by name or key), and the `ToastGeneric` binding's text elements are the
+  title (the first) and the body (the rest, joined). Toasts carry no urgency, category or
+  replaces id: `normal`, empty, 0. The app's logo (`DisplayInfo.GetLogo`, packaged apps only in
+  practice) is written once per app to `%LOCALAPPDATA%\strawberry\cache\app-icons\<key>.png` and
+  is the event's `icon`.
+- Change events: none. `add_NotificationChanged` from an unpackaged process fails with
+  `OSError [WinError -2147023728]`, `0x80070490`, Element not found. The watcher polls every
+  second and diffs by `UserNotification.Id`; a read took 150-170 ms (one 500 ms) and about 4 ms of
+  CPU. What is already in the notification centre at start is not announced.
+- `doorways.for_system()` on Windows is `smtc_watch` and `toast_watch`, for `strawberry daemon`
+  and the tray's children. The tray passes its `--config` to either notification doorway and
+  restarts whichever runs when Message bodies changes.
+- Dependencies (`win32` only, 3.2.1, MIT): `winrt-Windows.UI.Notifications` (the toast's visual
+  and text elements, `NotificationKinds`), `winrt-Windows.UI.Notifications.Management` (the
+  listener), `winrt-Windows.ApplicationModel` (without it `UserNotification.AppInfo` raises
+  `ModuleNotFoundError`), `winrt-Windows.Storage.Streams` (the logo's bytes).
+- Tests: `tests/test_toast_watch.py` runs a fake listener shaped like the WinRT one on any
+  system, including one notification giving the same `allowed` and event on both systems;
+  `tests/conftest.py` makes the real listener unreachable in every test; the no-body-in-logs
+  canary in `tests/test_privacy.py` runs through both doorways; `tests/test_imports.py` imports
+  `toast_watch` without jeepney and without winrt.
+- Seen live 2026-09-23 on a throwaway daemon (port 8783), the gate down (no embeddinggemma): a
+  fake toast driven into the watcher and over HTTP came out as "Chat sent something private."
+  with bodies on (`private, gate unavailable`) and "Chat: Sam" with bodies off, and no body in
+  any log. The watcher with the real listener started, counted the toasts already there and
+  polled; its `only_apps` named no real app, so no real toast was forwarded or logged.
+
+### Access: what was found on this machine
+
+Windows 11, build 26200, from an unpackaged Python 3.12 and 3.13 process (no package
+identity, no manifest, no sparse package):
+
+| Call | Result |
+|---|---|
+| `UserNotificationListener.Current` | a listener, no exception |
+| `GetAccessStatus()` | `1`, `Allowed` |
+| `RequestAccessAsync()` | `1`, `Allowed`, at once; no prompt was shown |
+| `GetNotificationsAsync(Toast)` | the notification centre's toasts, with app names and text elements |
+| `add_NotificationChanged(handler)` | `OSError: [WinError -2147023728]` (`0x80070490`, Element not found) |
+
+The status follows Settings > Privacy & security > Notifications > "Let apps access your
+notifications" (`HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\userNotificationListener`,
+`Value = Allow` here; HKLM has the same key for the device-wide policy). There was no
+`NonPackaged` subkey, so desktop apps are not listed there separately on this build.
+
+So the listener works without identity tricks, and only the change event needs identity. What
+the user does: nothing, where that switch is on. Where it is off, the watcher logs
+`Windows says denied to reading notifications; turn it on in Settings > Privacy & security >
+Notifications, 'Let apps access your notifications'` and exits 3; turning the switch on and
+starting the doorway again is all it takes.
+
+Not needed, and not done: a sparse package or MSIX with an external location (it would give
+identity, hence `NotificationChanged` and a named entry in the Settings list, at the price of a
+signed package), the `userNotificationListener` capability (it belongs to a package manifest),
+and reading `%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db` (undocumented, and
+it holds every app's notification payload).
+
+Left:
+
+- Windows 10 (2004 and later) is untried: older builds may refuse the listener to an unpackaged
+  process. `GetAccessStatus` answers first there; a refusal is the same "denied" line and exit 3.
+- A toast that appears and is dismissed within one poll (1 s) is missed; a toast from an app
+  whose toasts do not go to the notification centre may be seen only while it is on screen, or not at all (not tried).
+- Toast scenarios (`urgent`, `alarm`, `incomingCall`) are not visible through the listener's
+  API, so every toast is `normal` urgency and `min_urgency = "critical"` drops all of them.
+- Desktop (unpackaged) apps usually have no logo through `GetLogo`, so no badge.
+- Doctor and setup have no notification-access check yet (step 7); doctor's D-Bus monitor check
+  says "not checked" on Windows.
 
 ## Before starting on the Windows machine
 
