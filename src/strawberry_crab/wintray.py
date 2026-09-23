@@ -537,7 +537,14 @@ class WindowsTray(TrayCore):
 
     async def run(self) -> int:
         self.loop = asyncio.get_running_loop()
-        await self.refresh()      # ask before showing: the first tooltip should be true
+        if self.children is None:
+            await self.refresh()      # ask before showing: the first tooltip should be true
+        else:
+            # Our own daemon is not started yet, and a refused connection to 127.0.0.1 takes
+            # about 2 s on Windows: show the icon now, the poll fills in the status.
+            self.read_prefs()
+            self.read_config()
+            await self.publish()
         self.icon = NotifyIcon(
             tooltip(self.state.status_label()), items=lambda: self.items,
             on_command=lambda item_id: self._submit(self.clicked(item_id)),
