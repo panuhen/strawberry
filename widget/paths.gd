@@ -7,16 +7,41 @@ extends RefCounted
 ##   config        $XDG_CONFIG_HOME/strawberry/config.toml     (the daemon's; "Settings file…")
 ##   voices        $XDG_DATA_HOME/strawberry/voices/            ("Voices folder…")
 ##   extracted     $XDG_CACHE_HOME/strawberry/widget/           (files the pack carries, copied out to run)
+##
+## On Windows the known folders instead, as paths.py has them (the XDG variables are not read):
+##
+##   preferences   %APPDATA%\strawberry\widget.cfg
+##   config        %APPDATA%\strawberry\config.toml
+##   voices        %LOCALAPPDATA%\strawberry\voices\
+##   extracted     %LOCALAPPDATA%\strawberry\cache\widget\
+##
+## with an unset or relative variable falling back to ~\AppData\Roaming or ~\AppData\Local.
 
 const APP := "strawberry"
 const PREFS_FILE := "widget.cfg"
 const LEGACY_PREFS := "user://widget.cfg"   # before PACKAGING.md step 4: Godot's own user dir
+
+static func windows() -> bool:
+	return OS.get_name() == "Windows"
 
 static func _xdg(variable: String, default: String) -> String:
 	var value := OS.get_environment(variable)
 	if value.begins_with("/"):
 		return value
 	return OS.get_environment("HOME").path_join(default)
+
+## %APPDATA% or %LOCALAPPDATA%, in forward slashes like the rest of Godot's paths.
+static func _known_folder(variable: String, default: String) -> String:
+	var value := OS.get_environment(variable).replace("\\", "/")
+	if value != "" and value.is_absolute_path():
+		return value
+	return home().path_join(default)
+
+## The user's home: HOME, or USERPROFILE on Windows (which has no HOME of its own).
+static func home() -> String:
+	if windows():
+		return OS.get_environment("USERPROFILE").replace("\\", "/")
+	return OS.get_environment("HOME")
 
 static func config_home() -> String:
 	return _xdg("XDG_CONFIG_HOME", ".config")
@@ -28,7 +53,21 @@ static func cache_home() -> String:
 	return _xdg("XDG_CACHE_HOME", ".cache")
 
 static func config_dir() -> String:
+	if windows():
+		return _known_folder("APPDATA", "AppData/Roaming").path_join(APP)
 	return config_home().path_join(APP)
+
+static func data_dir() -> String:
+	if windows():
+		return _known_folder("LOCALAPPDATA", "AppData/Local").path_join(APP)
+	return data_home().path_join(APP)
+
+## Files copied out of the pack. On Windows under the data dir, beside the widget binary's
+## folder rather than in it.
+static func cache_dir() -> String:
+	if windows():
+		return data_dir().path_join("cache")
+	return cache_home().path_join(APP)
 
 static func config_file() -> String:
 	return config_dir().path_join("config.toml")
@@ -37,7 +76,7 @@ static func prefs_file() -> String:
 	return config_dir().path_join(PREFS_FILE)
 
 static func voices_dir() -> String:
-	return data_home().path_join(APP).path_join("voices")
+	return data_dir().path_join("voices")
 
 ## The `strawberry` CLI: the tray puts its absolute path in STRAWBERRY_CLI for the widget child;
 ## otherwise whatever `strawberry` is on PATH (OS.execute and create_process search PATH).
@@ -68,7 +107,7 @@ static func migrate_prefs(target := "", source := LEGACY_PREFS) -> bool:
 static func on_disk(res_path: String) -> String:
 	if not OS.has_feature("template"):
 		return ProjectSettings.globalize_path(res_path)
-	var dest := cache_home().path_join(APP).path_join("widget").path_join(res_path.get_file())
+	var dest := cache_dir().path_join("widget").path_join(res_path.get_file())
 	DirAccess.make_dir_recursive_absolute(dest.get_base_dir())
 	if res_path.get_extension().to_lower() in ["png", "jpg", "jpeg", "svg", "webp"]:
 		if not FileAccess.file_exists(dest):
