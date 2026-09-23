@@ -17,6 +17,10 @@ and runs on a thread of its own with its message loop; the asyncio side is `Tray
 - Explorer restarting broadcasts "TaskbarCreated"; the icon is added again. At login the shell
   may not be ready: adding is retried every 2 s until it takes.
 - Logging off: WM_ENDSESSION stops the children before Windows ends the process.
+- The listen hotkey (`[voice] hotkey`, hotkey.py; default Ctrl+Alt+Space): `RegisterHotKey` on
+  the same window, so WM_HOTKEY arrives in its message loop and becomes `POST /listen`, what
+  `strawberry listen` sends. It is registered again whenever config.toml changes. A combination
+  another program (or Windows) holds is one warning in the log, and the tray runs on without it.
 """
 
 from __future__ import annotations
@@ -26,11 +30,13 @@ import ctypes
 import logging
 import sys
 import threading
+import tomllib
+import urllib.parse
 from ctypes import wintypes
 from pathlib import Path
 from typing import Callable
 
-from . import icons, paths, winproc
+from . import hotkey, icons, paths, winproc
 from .client import stop_on_signals
 from .supervisor import Children, child_specs, rotate_log
 from .traymenu import SHOW_HIDE_ID, MenuItem, TrayCore
@@ -50,6 +56,11 @@ WM_APP = 0x8000
 WM_TRAY = WM_APP + 1          # the icon's callback message
 WM_TOOLTIP = WM_APP + 2       # the asyncio side changed the tooltip
 WM_HIDE = WM_APP + 3          # the asyncio side is quitting: take the icon away now
+WM_SETHOTKEY = WM_APP + 4     # the asyncio side read a new [voice] hotkey
+WM_HOTKEY = 0x0312
+HOTKEY_ID = 1
+MOD_NOREPEAT = 0x4000         # holding the keys down sends one WM_HOTKEY, not a stream
+ERROR_HOTKEY_ALREADY_REGISTERED = 1409
 NIN_SELECT, NIN_KEYSELECT = 0x0400, 0x0401
 # Shell_NotifyIcon
 NIM_ADD, NIM_MODIFY, NIM_DELETE, NIM_SETVERSION = 0, 1, 2, 4
@@ -165,6 +176,10 @@ class _Api:
         u.CreateIconIndirect.argtypes = (ctypes.POINTER(ICONINFO),)
         u.DestroyIcon.argtypes = (wintypes.HICON,)
         u.GetIconInfo.argtypes = (wintypes.HICON, ctypes.POINTER(ICONINFO))
+        u.RegisterHotKey.restype = wintypes.BOOL
+        u.RegisterHotKey.argtypes = (wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT)
+        u.UnregisterHotKey.restype = wintypes.BOOL
+        u.UnregisterHotKey.argtypes = (wintypes.HWND, ctypes.c_int)
         try:
             u.SetThreadDpiAwarenessContext.restype = wintypes.HANDLE
             u.SetThreadDpiAwarenessContext.argtypes = (wintypes.HANDLE,)
@@ -193,6 +208,20 @@ def api() -> _Api:
 def shell_notify_icon(message: int, data: NOTIFYICONDATAW) -> bool:
     """The one call that shows anything on the user's taskbar (tests/conftest.py blocks it)."""
     return bool(api().shell32.Shell_NotifyIconW(message, ctypes.byref(data)))
+
+
+def register_hotkey(hwnd, hotkey_id: int, modifiers: int, vk: int) -> int:
+    """RegisterHotKey: 0 when it took, else the Windows error (1409: someone holds that key).
+    The one call that takes a key from the user's desktop (tests/conftest.py allows only F24)."""
+    if api().user32.RegisterHotKey(hwnd, hotkey_id, modifiers | MOD_NOREPEAT, vk):
+        return 0
+    return ctypes.get_last_error() or -1
+
+
+def hotkey_error(error: int) -> str:
+    if error == ERROR_HOTKEY_ALREADY_REGISTERED:
+        return "another program or Windows already uses it"
+    return ctypes.FormatError(error).strip() if error > 0 else "RegisterHotKey failed"
 
 
 # --- the icon's pixels --------------------------------------------------------------------
@@ -316,13 +345,19 @@ class NotifyIcon:
 
     def __init__(self, tip: str, items: Callable[[], list[MenuItem]], on_command: Callable[[int], None],
                  on_default: Callable[[], None], before_menu: Callable[[], None] = lambda: None,
-                 on_end_session: Callable[[], None] = lambda: None) -> None:
+                 on_end_session: Callable[[], None] = lambda: None,
+                 on_hotkey: Callable[[], None] = lambda: None) -> None:
         self.tip = tip
         self.items = items
         self.on_command = on_command
         self.on_default = on_default
         self.before_menu = before_menu
         self.on_end_session = on_end_session
+        self.on_hotkey = on_hotkey
+        self.hotkey: hotkey.Hotkey | None = None      # what set_hotkey asked for
+        self.hotkey_registered: hotkey.Hotkey | None = None
+        self.hotkey_error = 0                          # the last registration's error, 0 = none
+        self.hotkey_done = threading.Event()           # set after each registration attempt
         self.hwnd = None
         self.hicon = None
         self.shown = False
@@ -347,6 +382,13 @@ class NotifyIcon:
 
     def hide(self) -> None:
         self._post(WM_HIDE)
+
+    def set_hotkey(self, wanted: hotkey.Hotkey | None) -> None:
+        """Register `wanted` in place of the current hotkey (None: none), on the window's thread:
+        a hotkey belongs to the thread and the window that registered it."""
+        self.hotkey = wanted
+        self.hotkey_done.clear()
+        self._post(WM_SETHOTKEY)
 
     def close(self, timeout_s: float = 5.0) -> None:
         self._post(WM_CLOSE)
@@ -459,6 +501,13 @@ class NotifyIcon:
         if message == WM_HIDE:
             self._remove()
             return 0
+        if message == WM_SETHOTKEY:
+            self._register_hotkey()
+            return 0
+        if message == WM_HOTKEY:
+            if wparam == HOTKEY_ID:
+                self.on_hotkey()
+            return 0
         if message == WM_QUERYENDSESSION:
             return 1
         if message == WM_ENDSESSION:
@@ -468,6 +517,7 @@ class NotifyIcon:
             return 0
         if message == WM_CLOSE:
             self._remove()
+            self._unregister_hotkey()
             api().user32.DestroyWindow(hwnd)
             return 0
         if message == WM_DESTROY:
@@ -475,6 +525,31 @@ class NotifyIcon:
             api().user32.PostQuitMessage(0)
             return 0
         return None
+
+    def _unregister_hotkey(self) -> None:
+        if self.hotkey_registered is not None:
+            api().user32.UnregisterHotKey(self.hwnd, HOTKEY_ID)
+            self.hotkey_registered = None
+
+    def _register_hotkey(self) -> None:
+        wanted = self.hotkey
+        try:
+            if wanted == self.hotkey_registered:
+                return
+            self._unregister_hotkey()
+            if wanted is None:
+                self.hotkey_error = 0
+                log.info("hotkey: none")
+                return
+            self.hotkey_error = register_hotkey(self.hwnd, HOTKEY_ID, wanted.modifiers, wanted.vk)
+            if self.hotkey_error:
+                log.warning("hotkey %s not registered: %s; choose another with: strawberry hotkey COMBO",
+                            wanted.text, hotkey_error(self.hotkey_error))
+            else:
+                self.hotkey_registered = wanted
+                log.info("hotkey %s registered: it runs listen", wanted.text)
+        finally:
+            self.hotkey_done.set()
 
     def _show_menu(self, x: int, y: int) -> None:
         a = api()
@@ -505,6 +580,43 @@ class WindowsTray(TrayCore):
         self.icon: NotifyIcon | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.stopped = threading.Event()        # the children are down: logoff may go on
+        self.hotkey_setting: str | None = None  # `[voice] hotkey` as last read
+        self.hotkey: hotkey.Hotkey | None = None
+        self.listens = 0                        # hotkey presses handed to the daemon
+        self.port = urllib.parse.urlsplit(daemon_url).port or 0
+
+    def read_config(self) -> None:
+        """The body mode as on Linux, and `[voice] hotkey`: a new one is registered at once."""
+        seen = self.config_seen
+        super().read_config()
+        if self.config_seen != seen or self.hotkey_setting is None:
+            self.read_hotkey()
+
+    def read_hotkey(self) -> None:
+        try:
+            setting = hotkey.read_setting(self.config_file())
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+            return                              # mid-edit: the next change reads it again
+        if setting == self.hotkey_setting:
+            return
+        self.hotkey_setting = setting
+        try:
+            self.hotkey = hotkey.windows_hotkey(setting)
+        except ValueError as exc:
+            log.warning("hotkey: voice.hotkey %r is not a key combination (%s); none registered", setting, exc)
+            self.hotkey = None
+        if self.icon is not None:
+            self.icon.set_hotkey(self.hotkey)
+
+    async def listen(self) -> None:
+        """The hotkey: what `strawberry listen` does, a bare POST /listen (again = stop early)."""
+        from .cli import listen_fast
+
+        self.listens += 1
+        if await asyncio.to_thread(listen_fast, self.port):
+            log.warning("hotkey: the daemon did not take /listen (not running, or voice is off)")
+        else:
+            log.info("hotkey: listen")
 
     async def announce(self, updated: list[tuple[int, dict]], status_changed: bool) -> None:
         if status_changed and self.icon is not None:
@@ -549,12 +661,15 @@ class WindowsTray(TrayCore):
             tooltip(self.state.status_label()), items=lambda: self.items,
             on_command=lambda item_id: self._submit(self.clicked(item_id)),
             on_default=lambda: self._submit(self.activate(self.show_or_hide())),
-            before_menu=self._refresh_before_menu, on_end_session=self._end_session)
+            before_menu=self._refresh_before_menu, on_end_session=self._end_session,
+            on_hotkey=lambda: self._submit(self.listen()))
         try:
             await asyncio.to_thread(self.icon.start)
         except NotifyIconError as exc:
             log.error("no notification icon (%s)", exc)
             return 3
+        self.read_hotkey()
+        self.icon.set_hotkey(self.hotkey)
         try:
             if self.children:
                 self.children.start()

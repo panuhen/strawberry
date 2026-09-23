@@ -22,7 +22,8 @@ def imports_without(blocked: str, modules: list[str]) -> subprocess.CompletedPro
 
 
 WINDOWS = ["strawberry_crab.smtc", "strawberry_crab.doorways.smtc_watch", "strawberry_crab.doorways.toast_watch",
-           "strawberry_crab.wintray", "strawberry_crab.winproc", "strawberry_crab.startup"]
+           "strawberry_crab.wintray", "strawberry_crab.winproc", "strawberry_crab.startup", "strawberry_crab.winmic",
+           "strawberry_crab.hotkey"]
 # The tray's shared half: the supervisor and the menu run on both systems, the SNI only on Linux.
 TRAY = ["strawberry_crab.supervisor", "strawberry_crab.traymenu"]
 
@@ -57,5 +58,19 @@ def test_doctor_skips_the_dbus_checks_without_jeepney():
             "for check in (*doctor.check_tray_host(probes), *doctor.check_notification_monitor(probes),\n"
             "              *doctor.check_mpris(probes)):\n"
             "    assert check.status == doctor.WARN and 'not checked' in check.detail, check\n")
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+
+
+def test_nothing_imports_sounddevice_until_the_microphone_opens():
+    """sounddevice is a Windows-only dependency (the microphone, winmic.py): what runs on Linux
+    imports without it, and on Windows the daemon loads PortAudio only when she listens."""
+    result = imports_without("sounddevice", [*SHARED, *WINDOWS, *TRAY, "strawberry_crab.voice"])
+    assert result.returncode == 0, result.stderr
+    code = ("import sys\n"
+            "from strawberry_crab import daemon, voice, winmic, wintray\n"
+            "from strawberry_crab.config import VoiceConfig\n"
+            "voice.Listener(VoiceConfig())\n"
+            "assert 'sounddevice' not in sys.modules, 'imported at start'\n")
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr

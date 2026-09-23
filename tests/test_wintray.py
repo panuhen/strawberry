@@ -12,7 +12,8 @@ import time
 
 import pytest
 
-from strawberry_crab import icons, wintray
+from strawberry_crab import cli, configedit, hotkey, icons, wintray
+from strawberry_crab.config import default_path
 from strawberry_crab.traymenu import TrayState, menu_items
 
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="the Win32 API")
@@ -35,10 +36,14 @@ class FakeIcon:
 
     made = []
 
-    def __init__(self, tip, items, on_command, on_default, before_menu, on_end_session):
+    def __init__(self, tip, items, on_command, on_default, before_menu, on_end_session, on_hotkey=None):
         self.tip, self.items, self.on_command, self.on_default = tip, items, on_command, on_default
-        self.tips, self.hidden, self.closed = [tip], False, False
+        self.on_hotkey = on_hotkey
+        self.tips, self.hidden, self.closed, self.hotkeys = [tip], False, False, []
         FakeIcon.made.append(self)
+
+    def set_hotkey(self, wanted):
+        self.hotkeys.append(wanted.text if wanted else None)
 
     def start(self):
         pass
@@ -232,3 +237,102 @@ async def test_logging_off_waits_for_the_children(monkeypatch):
     assert time.monotonic() - started < tray.END_SESSION_WAIT_S
     assert tray.stopped.is_set()
     assert await asyncio.wait_for(runner, 5) == 0
+
+
+# --- the listen hotkey ----------------------------------------------------------------------
+
+TEST_COMBO = "<Control><Alt><Shift>F24"          # no keyboard has F24 (tests/conftest.py allows only it)
+
+
+async def wait_for(condition, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        await asyncio.sleep(0.01)
+
+
+async def test_the_tray_registers_the_hotkey_from_the_config_and_follows_changes(monkeypatch):
+    monkeypatch.setattr(wintray, "NotifyIcon", FakeIcon)
+    FakeIcon.made.clear()
+    pressed = []
+    monkeypatch.setattr(cli, "listen_fast", lambda port: pressed.append(port) or 0)
+    tray = wintray.WindowsTray("http://127.0.0.1:8786")
+    tray.daemon = FakeDaemon()
+    runner = asyncio.ensure_future(tray.run())
+    await wait_for(lambda: FakeIcon.made and FakeIcon.made[0].hotkeys)
+    icon = FakeIcon.made[0]
+    assert icon.hotkeys == ["<Control><Alt>space"]                # no config file: the default
+    icon.on_hotkey()                                              # WM_HOTKEY, on the icon's thread
+    await wait_for(lambda: pressed)
+    assert pressed == [8786] and tray.listens == 1
+    configedit.set_value(default_path(), "voice.hotkey", TEST_COMBO)
+    await tray.refresh()
+    configedit.set_value(default_path(), "voice.hotkey", "off")
+    await tray.refresh()
+    assert icon.hotkeys == ["<Control><Alt>space", TEST_COMBO, None]
+    tray.stopping.set()
+    assert await asyncio.wait_for(runner, 5) == 0
+
+
+def test_a_hotkey_that_does_not_parse_registers_nothing(caplog):
+    path = default_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('[voice]\nhotkey = "<Hyper>space"\n', encoding="utf-8")       # by hand, past configedit
+    tray = wintray.WindowsTray("http://127.0.0.1:1")
+    with caplog.at_level("WARNING"):
+        tray.read_config()
+    assert tray.hotkey is None and "not a key combination" in caplog.text
+
+
+def hidden_window(monkeypatch, on_hotkey=lambda: None):
+    """A NotifyIcon whose window and message loop are real and whose icon is never added: the
+    taskbar "is not there yet", so nothing shows."""
+    monkeypatch.setattr(wintray, "shell_notify_icon", lambda message, data: False)
+    icon = wintray.NotifyIcon("Strawberry: Idle", items=lambda: [], on_command=lambda i: None,
+                              on_default=lambda: None, on_hotkey=on_hotkey)
+    icon.start()
+    return icon
+
+
+def set_and_wait(icon, wanted):
+    icon.set_hotkey(wanted)
+    assert icon.hotkey_done.wait(5)
+
+
+@windows_only
+def test_the_window_registers_the_hotkey_and_hears_it(monkeypatch):
+    heard = []
+    icon = hidden_window(monkeypatch, on_hotkey=lambda: heard.append(True))
+    try:
+        combo = hotkey.parse(TEST_COMBO)
+        set_and_wait(icon, combo)
+        assert icon.hotkey_registered == combo and icon.hotkey_error == 0
+        # What Windows posts when the keys are pressed; no key is sent to the desktop.
+        wintray.api().user32.PostMessageW(icon.hwnd, wintray.WM_HOTKEY, wintray.HOTKEY_ID, 0)
+        deadline = time.monotonic() + 5
+        while not heard and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert heard == [True]
+        set_and_wait(icon, None)
+        assert icon.hotkey_registered is None
+    finally:
+        icon.close()
+    assert not icon.thread.is_alive()
+
+
+@windows_only
+def test_a_hotkey_someone_else_holds_is_a_warning_not_a_crash(monkeypatch, caplog):
+    combo = hotkey.parse(TEST_COMBO)
+    user32 = wintray.api().user32
+    assert user32.RegisterHotKey(None, 7, combo.modifiers, combo.vk)       # another program holds it
+    icon = hidden_window(monkeypatch)
+    try:
+        with caplog.at_level("WARNING"):
+            set_and_wait(icon, combo)
+        assert icon.hotkey_registered is None
+        assert icon.hotkey_error == wintray.ERROR_HOTKEY_ALREADY_REGISTERED
+        assert "not registered: another program or Windows already uses it" in caplog.text
+        assert icon.thread.is_alive()                            # the tray runs on without it
+    finally:
+        icon.close()
+        user32.UnregisterHotKey(None, 7)

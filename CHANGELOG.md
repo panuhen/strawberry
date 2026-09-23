@@ -32,13 +32,21 @@ package and the widget binary.
   it, and `strawberry status` says where the shortcut is. It runs without a console window and
   writes its log, and one per child, to `%LOCALAPPDATA%\strawberry\state`. A new command,
   `strawberry-tray`, is `strawberry tray` without a console window.
+- The microphone and the listen hotkey on Windows, the sixth step of the port. She records from
+  Windows' default recording device (or the one `[voice] source` names) through WASAPI, at the
+  same 16 kHz mono as on Linux, and stops on the same silence. The tray registers the hotkey,
+  Ctrl+Alt+Space by default (Windows keeps Win-key combinations such as Win+Shift+Space for
+  itself); `strawberry hotkey COMBO` changes it, `--remove` turns it off, and a running tray
+  follows at once. It is kept as `[voice] hotkey` in config.toml; a combination another program
+  holds is a line in the tray's log. Whisper on CUDA (`[voice] device = "cuda"`) works on Windows
+  with the `gpu` wheels alone, without a CUDA toolkit installed.
 
 ### Changed
 
 - The config file and the widget's preferences are read and written as UTF-8 whatever the
   system's locale.
 - `jeepney` is installed on Linux only, and the `winrt-*` packages for Windows' media controls
-  and notifications on Windows only.
+  and notifications and `sounddevice` for its microphone on Windows only.
 - `strawberry stop` on Windows stops the daemon, the doorways and the tray cleanly (each shuts
   down as on SIGTERM on Linux) instead of ending them at once; one that does not stop within
   10 s (20 s for the tray) is still ended. `strawberry restart` there restarts the tray's

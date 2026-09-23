@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import threading
 
 import numpy as np
@@ -246,3 +247,49 @@ async def test_the_recogniser_gets_the_daemons_hotwords():
     config.voice.hotwords = False
     assert daemon.hotwords() == ""
     await daemon.close()
+
+
+def test_capture_ends_on_silence_after_speech_or_at_the_end_of_the_stream():
+    from strawberry_crab.voice import CHUNK, capture
+
+    loud = (np.full(CHUNK, 0.3 * 32767)).astype(np.int16).tobytes()
+    quiet = np.zeros(CHUNK, np.int16).tobytes()
+    blocks = [quiet, *[loud] * 8, *[quiet] * 20]
+    rec = capture(lambda timeout: blocks.pop(0) if blocks else None, "test", threading.Event(), 15.0, 1.1, 0.4, -50.0)
+    assert rec.stopped_by == "silence" and rec.speech_seconds == pytest.approx(0.8)
+    assert rec.seconds == pytest.approx(2.1)                      # 1 + 8 + 12 (0.1 added 11 times is < 1.1)
+    halves = [loud[: CHUNK], loud[CHUNK:], b"", loud]              # split and empty reads are fine
+    rec = capture(lambda timeout: halves.pop(0) if halves else None, "test", threading.Event(), 15.0, 1.1, 0.4, -50.0)
+    assert rec.stopped_by == "end" and rec.seconds == pytest.approx(0.2)
+
+
+def test_no_nvidia_wheels_is_nothing_preloaded(monkeypatch):
+    import importlib.util
+
+    from strawberry_crab import voice
+
+    def missing(name, *args):
+        raise ModuleNotFoundError(f"No module named {name.split('.')[0]!r}")
+
+    monkeypatch.setattr(importlib.util, "find_spec", missing)
+    assert voice.preload_cuda_libraries() == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the Windows DLL search path")
+def test_windows_preloads_cublas_from_the_wheels_bin_by_path(monkeypatch, tmp_path):
+    from strawberry_crab import voice
+
+    loaded = []
+    monkeypatch.setattr(voice.os, "add_dll_directory", lambda path: loaded.append(("dir", path)))
+    monkeypatch.setenv("PATH", r"C:\elsewhere")
+    import ctypes
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda path: loaded.append(("dll", path)))
+    bin_dir = tmp_path / "nvidia" / "cublas" / "bin"
+    bin_dir.mkdir(parents=True)
+    for name in ("cublas64_12.dll", "cublasLt64_12.dll", "nvblas64_12.dll"):
+        (bin_dir / name).write_bytes(b"MZ")
+    assert voice._preload_windows_dlls(bin_dir) == ["cublasLt64_12.dll", "cublas64_12.dll"]   # Lt first
+    assert loaded[0] == ("dir", str(bin_dir)) and len(loaded) == 3
+    assert voice.os.environ["PATH"].split(voice.os.pathsep)[:2] == [str(bin_dir), r"C:\elsewhere"]
+    assert voice._preload_windows_dlls(tmp_path / "missing") == []

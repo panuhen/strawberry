@@ -23,6 +23,9 @@ dependencies = [
     "mcp>=1.2",
     "numpy>=1.26",
     "piper-tts>=1.8.0",
+    # The microphone on Windows: WASAPI through PortAudio (voice.py); its wheels carry PortAudio.
+    # Linux records with pw-record.
+    "sounddevice>=0.5; sys_platform == 'win32'",
     # Media on Windows: the System Media Transport Controls (smtc.py, doorways/smtc_watch.py).
     "winrt-runtime>=3.2; sys_platform == 'win32'",
     "winrt-Windows.Foundation>=3.2; sys_platform == 'win32'",

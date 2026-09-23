@@ -3,9 +3,9 @@
 Lives inside the daemon so the whisper model loads once and stays resident; the hotkey is a
 bare `POST /listen`. One session:
 
-    listening   pw-record from the microphone (16 kHz mono) until a second of silence after
-                speech, a second poke, or max_seconds
-    thinking    faster-whisper on the CPU (the GPU stays with Ollama)
+    listening   the microphone at 16 kHz mono (pw-record on Linux, WASAPI on Windows through
+                winmic.py) until a second of silence after speech, a second poke, or max_seconds
+    thinking    faster-whisper on the CPU (the GPU stays with Ollama; `device = "cuda"` if it has room)
     talking     the transcript enters the normal event path as source=voice, so the brain
                 answers in her voice; an empty transcript gets a fixed "didn't catch that"
 
@@ -21,6 +21,7 @@ import math
 import os
 import select
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -166,12 +167,8 @@ def dbfs(chunk: np.ndarray) -> float:
 
 def record(source: str, stop: threading.Event, max_seconds: float, silence_s: float,
            min_speech_s: float, level_db: float) -> Recording:
-    """Blocking: capture from `source` until silence after speech, `stop`, or `max_seconds`.
-
-    Speech is any 0.1 s chunk louder than max(noise floor + 12 dB, level_db), the noise floor
-    being the quietest chunk heard so far. Leading silence before the first speech is kept short
-    so whisper is not fed ten seconds of room tone.
-    """
+    """Blocking: pw-record from `source` until silence after speech, `stop`, or `max_seconds`
+    (capture() says when)."""
     cmd = ["pw-record", "--target", source, "--rate", str(RATE), "--channels", "1", "--format", "s16",
            "--latency", "50ms", "-"]
     try:
@@ -181,6 +178,31 @@ def record(source: str, stop: threading.Event, max_seconds: float, silence_s: fl
         return Recording(np.zeros(0, np.float32), 0.0, 0.0, "error")
     assert proc.stdout is not None
     fd = proc.stdout.fileno()
+
+    def read(timeout: float) -> bytes | None:
+        # select(): a capture PipeWire never links delivers nothing, and a blocking read
+        # would hang here forever with her stuck in the listening pose.
+        ready, _, _ = select.select([fd], [], [], timeout)
+        if not ready:
+            return b""
+        return os.read(fd, CHUNK * 2) or None
+
+    try:
+        return capture(read, source, stop, max_seconds, silence_s, min_speech_s, level_db)
+    finally:
+        proc.kill()
+        proc.wait(timeout=2)
+
+
+def capture(read: Callable[[float], bytes | None], source: str, stop: threading.Event, max_seconds: float,
+            silence_s: float, min_speech_s: float, level_db: float) -> Recording:
+    """Blocking: 16 kHz mono s16 from `read` until silence after speech, `stop`, or `max_seconds`.
+
+    `read(timeout)` returns what arrived within `timeout` (b"" for nothing yet) or None at the end
+    of the stream; the recorder of each system supplies it (pw-record on Linux, WASAPI on
+    Windows: winmic.py). Speech is any 0.1 s chunk louder than max(noise floor + 12 dB,
+    level_db), the noise floor being the quietest chunk heard so far.
+    """
     chunks: list[np.ndarray] = []
     floor = 0.0
     speech = 0.0
@@ -190,49 +212,58 @@ def record(source: str, stop: threading.Event, max_seconds: float, silence_s: fl
     started = time.monotonic()
     last_data = started
     pending = b""
-    try:
-        while True:
-            # select(): a capture PipeWire never links delivers nothing, and a blocking read
-            # would hang here forever with her stuck in the listening pose.
-            ready, _, _ = select.select([fd], [], [], 0.2)
-            if ready:
-                raw = os.read(fd, CHUNK * 2)
-                if not raw:
-                    break
-                last_data = time.monotonic()
-                pending += raw
-                while len(pending) >= CHUNK * 2:
-                    chunk = np.frombuffer(pending[: CHUNK * 2], dtype=np.int16).astype(np.float32) / 32768.0
-                    pending = pending[CHUNK * 2:]
-                    chunks.append(chunk)
-                    level = dbfs(chunk)
-                    floor = level if len(chunks) == 1 else min(floor, level)
-                    threshold = max(floor + 12.0, level_db)
-                    if level > threshold:
-                        speech += 0.1
-                        silence = 0.0
-                        heard_speech = heard_speech or speech >= min_speech_s
-                    else:
-                        silence += 0.1
-            elif time.monotonic() - last_data > NO_DATA_S:
-                log.warning("voice: no audio from %s for %.0fs; giving up", source, time.monotonic() - last_data)
-                stopped_by = "error"
-                break
-            elapsed = time.monotonic() - started
-            if stop.is_set():
-                stopped_by = "poke"
-                break
-            if heard_speech and silence >= silence_s:
-                stopped_by = "silence"
-                break
-            if elapsed >= max_seconds:
-                stopped_by = "max"
-                break
-    finally:
-        proc.kill()
-        proc.wait(timeout=2)
+    while True:
+        raw = read(0.2)
+        if raw is None:
+            break
+        if raw:
+            last_data = time.monotonic()
+            pending += raw
+            while len(pending) >= CHUNK * 2:
+                chunk = np.frombuffer(pending[: CHUNK * 2], dtype=np.int16).astype(np.float32) / 32768.0
+                pending = pending[CHUNK * 2:]
+                chunks.append(chunk)
+                level = dbfs(chunk)
+                floor = level if len(chunks) == 1 else min(floor, level)
+                threshold = max(floor + 12.0, level_db)
+                if level > threshold:
+                    speech += 0.1
+                    silence = 0.0
+                    heard_speech = heard_speech or speech >= min_speech_s
+                else:
+                    silence += 0.1
+        elif time.monotonic() - last_data > NO_DATA_S:
+            log.warning("voice: no audio from %s for %.0fs; giving up", source, time.monotonic() - last_data)
+            stopped_by = "error"
+            break
+        elapsed = time.monotonic() - started
+        if stop.is_set():
+            stopped_by = "poke"
+            break
+        if heard_speech and silence >= silence_s:
+            stopped_by = "silence"
+            break
+        if elapsed >= max_seconds:
+            stopped_by = "max"
+            break
     audio = np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
     return Recording(audio, len(audio) / RATE, speech if heard_speech else 0.0, stopped_by)
+
+
+def default_backend() -> tuple[Callable[..., Recording], Callable[[str, bool], tuple[str | None, Callable[[], None]]]]:
+    """(recorder, microphone) for this system: pw-record and pactl on Linux, WASAPI on Windows
+    (winmic.py, which imports sounddevice only when it opens the microphone)."""
+    if sys.platform == "win32":
+        from . import winmic
+
+        return winmic.record, winmic.acquire_microphone
+    return record, acquire_microphone
+
+
+# Windows: what ctranslate2 loads by name and does not ship, in dependency order (cublas64
+# imports cublasLt64). Its wheel carries its own cudnn64_9.dll, which loads the rest of cuDNN
+# only if it needs it, by name, from the search path (whisper on this machine did not).
+WINDOWS_CUDA_DLLS = ("cublasLt64_", "cublas64_")
 
 
 def preload_cuda_libraries() -> list[str]:
@@ -244,8 +275,14 @@ def preload_cuda_libraries() -> list[str]:
 
     loaded = []
     for package in ("nvidia.cublas", "nvidia.cudnn"):
-        spec = importlib.util.find_spec(package)
+        try:
+            spec = importlib.util.find_spec(package)
+        except ModuleNotFoundError:          # no `nvidia` namespace at all: the gpu group is not installed
+            break
         if spec is None or not spec.submodule_search_locations:
+            continue
+        if sys.platform == "win32":
+            loaded += _preload_windows_dlls(Path(list(spec.submodule_search_locations)[0]) / "bin")
             continue
         lib_dir = Path(list(spec.submodule_search_locations)[0]) / "lib"
         for so in sorted(lib_dir.glob("*.so*")):
@@ -255,6 +292,30 @@ def preload_cuda_libraries() -> list[str]:
                     loaded.append(so.name)
                 except OSError as exc:
                     log.debug("voice: could not preload %s (%s)", so.name, exc)
+    return loaded
+
+
+def _preload_windows_dlls(bin_dir: Path) -> list[str]:
+    """Windows keeps the wheels' DLLs in `nvidia/<name>/bin`, and ctranslate2 asks for
+    cublas64_12.dll by name, which the loader looks for beside the program and on PATH, not
+    there. (A CUDA toolkit on PATH hides this: its bin has cuBLAS too.) A DLL loaded by full path
+    first is the one a later load by name gets; the directory also goes on PATH and the DLL
+    search path for what those load in turn."""
+    import ctypes
+
+    if not bin_dir.is_dir():
+        return []
+    os.add_dll_directory(str(bin_dir))
+    if str(bin_dir) not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+    loaded = []
+    for prefix in WINDOWS_CUDA_DLLS:
+        for dll in sorted(bin_dir.glob(f"{prefix}*.dll")):
+            try:
+                ctypes.WinDLL(str(dll))
+                loaded.append(dll.name)
+            except OSError as exc:
+                log.debug("voice: could not preload %s (%s)", dll.name, exc)
     return loaded
 
 
@@ -293,14 +354,15 @@ class Listener:
     ) -> None:
         self.config = config
         self.transcriber_factory = transcriber_factory or whisper_transcriber
-        self.recorder = recorder or record
+        system_recorder, system_microphone = default_backend()
+        self.recorder = recorder or system_recorder
         # Tests inject a plain picker; production acquires the mic (Bluetooth profile switch included).
         if microphone is not None:
             self.microphone = microphone
         elif source_picker is not None:
             self.microphone = lambda preferred, _bt: (source_picker(preferred), (lambda: None))
         else:
-            self.microphone = acquire_microphone
+            self.microphone = system_microphone
         self.transcriber: Transcriber | None = None
         self.stop = threading.Event()
         self.busy = False
