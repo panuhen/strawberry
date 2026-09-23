@@ -3,6 +3,7 @@
     "Sentences the gate must read right (WIRING.md §8a). Run: scripts/gate_check.py",
     "Each entry: text, expected kind (request|question|chat|other), optional topic, decision, tool (the topic's tool question).",
     "Optional catalogue: true|false, whether needs_catalogue must be >= 0.5 (a request for particular music; with no music server configured she says it needs a music add-on, §8b).",
+    "Recommending or talking about music is catalogue: false: she answers that from her own knowledge.",
     "Add the ones she gets wrong in real use; the fix is an example under [gate.examples] in the config,",
     "or in KIND/TOPIC in strawberryd/systemone.py when it should ship for everyone.",
     "Run it against your own config: 'save this song' and 'play my running playlist' only mean something",
@@ -443,6 +444,84 @@
       "topic": "music",
       "tool": "skip",
       "catalogue": false
+    },
+    {
+      "text": "can you recommend some techno artists",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": false
+    },
+    {
+      "text": "any good techno from Detroit?",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": false
+    },
+    {
+      "text": "what should I listen to if I like Daft Punk",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": false
+    },
+    {
+      "text": "tell me about Radiohead",
+      "kind": "question",
+      "topic": "music",
+      "catalogue": false
+    },
+    {
+      "text": "please share if you have any knowledge of good Detroit techno",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": false
+    },
+    {
+      "text": "suggest some artists like Daft Punk",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": false
+    },
+    {
+      "text": "what are the best Daft Punk albums",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": false
+    },
+    {
+      "text": "what's a good album to start with Radiohead",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": false
+    },
+    {
+      "text": "recommend some good trance",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": false
+    },
+    {
+      "text": "tell me about Aphex Twin",
+      "kind": "question",
+      "topic": "music",
+      "catalogue": false
+    },
+    {
+      "text": "play something by Radiohead",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": true
+    },
+    {
+      "text": "play something like Daft Punk",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": true
+    },
+    {
+      "text": "queue something by Kraftwerk",
+      "kind": "request",
+      "topic": "music",
+      "catalogue": true
     }
   ]
 }

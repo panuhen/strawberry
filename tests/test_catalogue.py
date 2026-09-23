@@ -146,3 +146,6 @@ def test_the_no_tools_prompt_says_music_needs_an_add_on():
     assert NO_TOOLS in prompt and TOOLS_GUIDE not in prompt
     assert "music add-on" in NO_TOOLS and "Never say you did something you did not do" in NO_TOOLS
     assert "add-on" not in TOOLS_GUIDE   # with tools she uses them; no talk of add-ons
+    # Only playing needs it: recommending and talking about music are hers to answer (live, the
+    # add-on sentence alone answered "any good techno from <a country>?" 5/5).
+    assert "Recommending music" in NO_TOOLS and "Only when you are asked to play" in NO_TOOLS

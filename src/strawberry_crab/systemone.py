@@ -440,6 +440,12 @@ NEEDS_CATALOGUE = Noul(
         "tell me about this artist", "what year did this come out", "recommend me some music",
         "what should I listen to", "I love this track", "how are you today", "what's on my calendar tomorrow",
         "play the previous one again", "music back on please", "who are the members of this band",
+        # Recommending and talking about music need knowledge, not a catalogue: live, "what's a
+        # good album to start with Radiohead" read 0.55 and got the no-catalogue line.
+        "recommend some good jazz singers", "suggest a few artists like Nina Simone", "tell me about Kraftwerk",
+        "what should I listen to if I like Massive Attack", "any good house music from Japan",
+        "which album should I start with by this band", "who are the best drum and bass producers",
+        "give me some hip hop recommendations",
     )),
 )
 
