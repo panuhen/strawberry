@@ -95,6 +95,7 @@ def test_install_rewrites_an_old_unit_and_restarts_it(isolated, monkeypatch, cap
     assert "rewrote" in capsys.readouterr().out
 
 
+@pytest.mark.linux_only     # systemd units; Windows: tests/test_startup.py
 def test_uninstall_removes_the_unit_and_the_autostart(isolated):
     here = cli.Here()
     here.unit_dir.mkdir(parents=True)
@@ -323,6 +324,7 @@ def test_an_installed_hook_runs_git_event_and_never_fails_git(tmp_path, repo):
     assert subprocess.run(run, cwd=repo).returncode == 0
 
 
+@pytest.mark.linux_only     # the GNOME app switcher; Windows needs no entry (WINDOWS.md)
 def test_install_gives_the_app_switcher_her_name_and_the_berry(isolated, monkeypatch):
     monkeypatch.setattr(cli, "wait_daemon", lambda here: True)
     here = cli.Here()
