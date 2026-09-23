@@ -529,7 +529,7 @@ class Listener:
                  self.config.compute_type, self.load_s, how)
 
     async def loaded(self) -> bool:
-        """Wait for the load that start() began (tests, the probe); True when she can listen."""
+        """Wait for the load that start() began (the tests); True when she can listen."""
         if self.load_task is not None:
             await asyncio.shield(self.load_task)
         return self.ready
