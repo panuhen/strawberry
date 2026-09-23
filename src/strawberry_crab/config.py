@@ -64,7 +64,8 @@ class VoiceConfig:
     language: str = ""            # "" = detect; "en" pins English and is faster
     device: str = "cpu"           # keep the GPU for Ollama; "cuda" works if you have room
     compute_type: str = "int8"
-    source: str = ""              # microphone (pactl source name fragment); "" = auto (see bluetooth)
+    source: str = ""              # microphone (pactl source name fragment; Windows: a fragment of the device's
+                                  # name); "" = auto (see bluetooth; Windows: the default recording device)
     bluetooth: bool = True        # auto: prefer a connected Bluetooth headset's mic, switching it to its
                                   # headset profile while she listens (music drops to phone quality for those seconds)
     max_seconds: float = 15.0

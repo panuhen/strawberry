@@ -116,3 +116,17 @@ def no_real_system_bus(monkeypatch):
         raise ConnectionError("the system bus is out of bounds in tests")
 
     monkeypatch.setattr(wake, "open_system_bus", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_real_microphone(monkeypatch):
+    """Nor the microphone: no test may open the user's recording device. The Windows recorder's
+    tests hand winmic a fake sounddevice (tests/test_winmic.py); tests/test_voice.py fakes the
+    recorder itself."""
+    from strawberry_crab import winmic
+
+    def refuse():
+        raise winmic.MicrophoneError("the microphone is out of bounds in tests")
+
+    monkeypatch.setattr(winmic, "_sounddevice", refuse)
+
