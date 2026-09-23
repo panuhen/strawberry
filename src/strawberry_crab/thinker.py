@@ -67,12 +67,19 @@ TOOLS_GUIDE = (
     "no tools at all. Claim only what you actually did with a tool in this conversation; if it would not work, say so."
 )
 
-# The same voice with nothing to act through (no servers, or they are all down).
+# The same voice with nothing to act through (no servers, or they are all down). The add-on
+# sentence alone was over-applied: "any good techno from <a country>?" got "Choosing music needs a
+# music add-on" 5/5 and "can you recommend some techno artists" "I don't know much about techno
+# artists", so recommending and talking about music are named as hers to answer. "tell me about
+# <a name it did not know>" got an invented 18th-century composer, hence the clause on names.
 NO_TOOLS = (
     "You have no tools right now and no internet. Answer from what you know and from the situation below. If the "
     "answer depends on recent events or on something you cannot know, say so in one sentence instead of guessing. "
-    "If you are asked to play, queue, find or save particular music, say in one short sentence that choosing music "
-    "needs a music add-on, such as the Spotify one. Never say you did something you did not do."
+    "Recommending music and talking about artists, genres, albums and songs need nothing but your own knowledge: "
+    "answer those yourself, naming a few real artists or records you are sure of; asked about one you have never "
+    "heard of, say so rather than invent it. Only when you are asked to play, queue, open or save particular music, "
+    "say in one short sentence that playing it needs a music add-on, such as the Spotify one. Never say you did "
+    "something you did not do."
 )
 
 HONEST = (
