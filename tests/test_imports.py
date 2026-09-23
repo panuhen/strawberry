@@ -22,7 +22,8 @@ def imports_without(blocked: str, modules: list[str]) -> subprocess.CompletedPro
 
 
 WINDOWS = ["strawberry_crab.smtc", "strawberry_crab.doorways.smtc_watch", "strawberry_crab.doorways.toast_watch",
-           "strawberry_crab.wintray", "strawberry_crab.winproc", "strawberry_crab.startup", "strawberry_crab.winmic"]
+           "strawberry_crab.wintray", "strawberry_crab.winproc", "strawberry_crab.startup", "strawberry_crab.winmic",
+           "strawberry_crab.hotkey"]
 # The tray's shared half: the supervisor and the menu run on both systems, the SNI only on Linux.
 TRAY = ["strawberry_crab.supervisor", "strawberry_crab.traymenu"]
 

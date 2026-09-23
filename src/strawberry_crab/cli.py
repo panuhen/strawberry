@@ -792,6 +792,8 @@ def _keybinding_paths() -> list[str]:
 
 
 def cmd_hotkey(combo: str | None, remove: bool) -> int:
+    if paths.windows():
+        return cmd_hotkey_windows(combo, remove)
     key = f"{HOTKEY_SCHEMA}.custom-keybinding:{HOTKEY_PATH}"
     if remove:
         remaining = [p for p in _keybinding_paths() if p != HOTKEY_PATH]
@@ -808,6 +810,30 @@ def cmd_hotkey(combo: str | None, remove: bool) -> int:
     _gsettings("set", key, "command", command)
     _gsettings("set", key, "binding", combo)
     print(f"hotkey {combo} -> {command}")
+    return 0
+
+
+def cmd_hotkey_windows(combo: str | None, remove: bool) -> int:
+    """Windows has no desktop shortcut that runs a command, so the tray registers the key
+    (wintray.py) and this only writes `[voice] hotkey` into config.toml: the combination, "" for
+    the default, "off" for none. A running tray reads it again within a couple of seconds."""
+    from . import configedit, hotkey
+    from .config import ConfigError, default_path
+
+    value = hotkey.OFF if remove else (combo or "").strip()
+    try:
+        chosen = hotkey.windows_hotkey(value)
+    except ValueError as exc:
+        raise CliError(f"strawberry hotkey: {exc}", 2) from None
+    path = default_path()
+    try:
+        configedit.set_value(path, "voice.hotkey", value)
+    except (ConfigError, OSError) as exc:
+        raise CliError(f"strawberry hotkey: {path} not written ({exc})") from None
+    if chosen is None:
+        print(f"hotkey off (voice.hotkey in {path}); the tray registers none")
+    else:
+        print(f"hotkey {chosen.text} -> listen, registered by the tray (voice.hotkey in {path})")
     return 0
 
 
@@ -1131,7 +1157,13 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--init", action="store_true", help="only create it if missing and print its path "
                                                        "(what the widget's \"Settings file…\" runs)")
     add("listen", "talk to her once (what the hotkey runs); press again to stop early")
-    p = add("hotkey", f"GNOME shortcut for `listen` (default {HOTKEY_DEFAULT})")
+    if paths.windows():
+        from .hotkey import WINDOWS_DEFAULT
+
+        p = add("hotkey", f"the tray's key for `listen`, kept in config.toml as voice.hotkey "
+                          f"(default {WINDOWS_DEFAULT}; --remove: none)")
+    else:
+        p = add("hotkey", f"GNOME shortcut for `listen` (default {HOTKEY_DEFAULT})")
     p.add_argument("combo", nargs="?", default=None)
     p.add_argument("--remove", action="store_true", help="remove the shortcut")
     p = add("route", "what the gate makes of a sentence (kind, topic, confidence, decision); for tuning")

@@ -79,6 +79,9 @@ class VoiceConfig:
     hotwords: bool = True
     max_hotwords: int = 60
     vocabulary_refresh_s: float = 600.0
+    # Windows: the tray's hotkey for listen (hotkey.py); "" = <Control><Alt>space, "off" = none.
+    # Linux keeps it in a GNOME shortcut instead (strawberry hotkey).
+    hotkey: str = ""
 
 
 @dataclass
@@ -307,6 +310,12 @@ def _validate(config: Config) -> None:
         raise ConfigError("voice.device must be cpu, cuda, or auto")
     if not all(isinstance(w, str) for w in config.voice.vocabulary):
         raise ConfigError("voice.vocabulary must be a list of strings")
+    try:
+        from .hotkey import windows_hotkey
+
+        windows_hotkey(config.voice.hotkey)
+    except ValueError as exc:
+        raise ConfigError(f"voice.hotkey: {exc}") from None
     if config.gate.temperature <= 0:
         raise ConfigError("gate.temperature must be positive")
     if config.gate.timeout_s <= 0 or config.gate.retry_timeout_s < 0:
@@ -475,6 +484,7 @@ def default_toml() -> str:
         "max_seconds = 15.0",
         "silence_s = 1.1                # quiet after speech that ends the recording",
         'vocabulary = []                # names she should recognise, e.g. ["Lighthouse", "Alex"]; artists come from Spotify',
+        "# hotkey = \"<Control><Alt>space\"   # Windows: the tray's key for listen (\"off\" = none); strawberry hotkey sets it",
         "",
         "[gate]",
         "enabled = true                 # sorts what you said: chat, or a request/question for the action path",

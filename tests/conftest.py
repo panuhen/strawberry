@@ -130,3 +130,18 @@ def no_real_microphone(monkeypatch):
 
     monkeypatch.setattr(winmic, "_sounddevice", refuse)
 
+
+@pytest.fixture(autouse=True)
+def no_real_hotkey(monkeypatch):
+    """Nor a key the user presses: the Windows tray's hotkey tests register Ctrl+Alt+Shift+F24,
+    which no keyboard has, and anything else is refused (tests/test_wintray.py)."""
+    from strawberry_crab import wintray
+
+    real = wintray.register_hotkey
+
+    def only_f24(hwnd, hotkey_id, modifiers, vk):
+        if vk != 0x87:
+            raise AssertionError(f"a test tried to register a real hotkey (vk {vk:#x})")
+        return real(hwnd, hotkey_id, modifiers, vk)
+
+    monkeypatch.setattr(wintray, "register_hotkey", only_f24)
