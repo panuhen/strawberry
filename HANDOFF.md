@@ -1,16 +1,20 @@
 # Handoff (temporary)
 
-The state of the work when development moved to Windows, for the next session. Delete this file
-when the port is done.
+The state of the work for the next session. Delete this file when the user says the Windows port
+is done.
 
 ## Where things stand
 
 - Released: 0.1.1 on PyPI (`strawberry-crab`) and GitHub (`v0.1.1`, wheel, sdist and the Linux
   widget binary). The release workflow has run twice, green both times.
-- Linux is complete for this version: tray, daemon, doorways, widget binary, `setup`, `doctor`,
-  privacy modes, the gate retry and warm-on-wake. 487 tests.
-- The user's own Linux machine runs the tray from a checkout (developer mode) as a systemd user
-  service.
+- Linux is complete for 0.1.1: tray, daemon, doorways, widget binary, `setup`, `doctor`,
+  privacy modes, the gate retry and warm-on-wake. The user's own Linux machine runs the tray from
+  a checkout (developer mode) as a systemd user service.
+- The Windows port (`WINDOWS.md`) has all eight steps done, unreleased and untagged: `win32` is in `osguard.SUPPORTED`; the widget ran on Windows 11 in developer mode
+  and as the exported `strawberry-widget-<ver>-windows-x86_64.exe`; `ci.yml` tests on
+  `windows-latest` and `release.yml` builds and attaches the `.exe`. Neither workflow has run on
+  GitHub with the Windows jobs yet. `CHANGELOG.md` `[Unreleased]` describes the whole port.
+- `WINDOWS.md` is now the "how it works on Windows / what is left" document.
 
 ## Open on Linux
 
@@ -28,8 +32,20 @@ when the port is done.
 
 ## Next
 
-The Windows port: `WINDOWS.md` has the plan and the order of work. Start with step 1 (daemon
-and widget by hand, paths, the test suite on Windows).
+Before a release with Windows in it (the user decides when):
+
+1. On the Linux machine, from a checkout of the merged `main`: `uv sync --inexact --group gpu`,
+   `uv run pytest -q`, `scripts/check_phase1.sh`, `scripts/check_tray.sh`, and the widget by hand
+   (the widget's passthrough and menu code changed; the Linux paths should be unchanged).
+2. Bump the version (`pyproject.toml`, `src/strawberry_crab/__init__.py`), turn `[Unreleased]`
+   into the version's section, update the compare links, `uv lock`, commit, push `main`.
+3. Push `main` first and let `ci.yml` run: the `windows-latest` test job has never run.
+4. Tag `vX.Y.Z`; `release.yml` builds the Linux and Windows widgets; approve the `pypi`
+   environment.
+5. Afterwards, on both systems, `uv tool install strawberry-crab==X.Y.Z` in a throwaway place,
+   `strawberry widget --fetch`, `strawberry doctor`.
+
+The open items on Windows are listed at the end of `WINDOWS.md` ("What is left").
 
 ## Working agreements (also in CLAUDE.md)
 

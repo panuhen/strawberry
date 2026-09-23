@@ -10,7 +10,8 @@ These are inside what we publish (the wheel, the sdist or the widget binary).
 
 | What | Where it is | Licence |
 |---|---|---|
-| [Godot Engine](https://godotengine.org) 4.7.2 (export template) | the widget binary is a Godot export: the engine plus our project | MIT, plus the third-party components listed in Godot's [COPYRIGHT.txt](https://github.com/godotengine/godot/blob/master/COPYRIGHT.txt) (FreeType, HarfBuzz, and others; all permissive) |
+| [Godot Engine](https://godotengine.org) 4.7.2 (export template) | the widget binaries, Linux and Windows, are Godot exports: the engine plus our project | MIT, plus the third-party components listed in Godot's [COPYRIGHT.txt](https://github.com/godotengine/godot/blob/master/COPYRIGHT.txt) (FreeType, HarfBuzz, and others; all permissive) |
+| The Windows widget `.exe` | `strawberry-widget-<version>-windows-x86_64.exe` on the GitHub release | Godot's official `windows_release_x86_64.exe` template, with the same COPYRIGHT.txt; the export writes only the `.exe` (the pack inside it), without the ANGLE or Direct3D 12 Agility SDK libraries Godot can put beside it, so their licences do not come into it |
 | The 🍓 tray icon, rendered from [Noto Color Emoji](https://github.com/googlefonts/noto-emoji) | `src/strawberry_crab/assets/icons/` | the emoji artwork is Apache-2.0; the font file itself is SIL OFL-1.1 and is not shipped |
 
 ## Python dependencies
@@ -29,6 +30,11 @@ Direct dependencies from `pyproject.toml`, with the licence each declares:
 | [sounddevice](https://github.com/spatialaudio/python-sounddevice) | MIT | Windows only: the microphone through WASAPI; its Windows wheels carry [PortAudio](https://www.portaudio.com) (MIT) (pulls in cffi, MIT-0, and pycparser, BSD-3-Clause) |
 | [winrt-runtime, winrt-Windows.Foundation, winrt-Windows.Foundation.Collections, winrt-Windows.Media.Control](https://github.com/pywinrt/pywinrt) | MIT | Windows only: the System Media Transport Controls, for media (pulls in typing-extensions, PSF-2.0) |
 | [winrt-Windows.UI.Notifications, winrt-Windows.UI.Notifications.Management, winrt-Windows.ApplicationModel, winrt-Windows.Storage.Streams](https://github.com/pywinrt/pywinrt) | MIT | Windows only: other apps' toasts through UserNotificationListener, with the app's name and logo, for notifications |
+
+On Windows the dependencies above also pull in [pywin32](https://github.com/mhammond/pywin32)
+(PSF-2.0, through mcp) and [colorama](https://github.com/tartley/colorama) (BSD-3-Clause, through
+tqdm). The tray icon, the process loopback capture, the hotkey, the wake watcher and the stop
+events call Windows' own APIs through ctypes and add no package.
 
 **Piper is GPL.** The `piper-tts` package from 1.3 on is licensed GPL-3.0-or-later (it bundles
 espeak-ng). Strawberry does not copy or bundle it: the installer fetches it from PyPI as a
@@ -51,7 +57,7 @@ Setup names the licence of each model before it pulls it.
 
 | What | Default name | Downloaded from | Licence |
 |---|---|---|---|
-| Ollama (the model server) | `ollama` | [ollama.com](https://ollama.com), their install script | MIT |
+| Ollama (the model server) | `ollama` | [ollama.com](https://ollama.com), their install script (Linux) or installer (Windows, also `winget install Ollama.Ollama`) | MIT |
 | The gate's embedder | `embeddinggemma` | Ollama library | [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and the Gemma Prohibited Use Policy |
 | The small model (her one-liners) | `gemma3:1b` | Ollama library | [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and the Gemma Prohibited Use Policy |
 | The brain (tools, questions) | `qwen3.8:27b` | Ollama library | Apache-2.0 is expected for the Qwen3 family; check the model card on Ollama or Hugging Face before you pull it |

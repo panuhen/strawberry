@@ -7,72 +7,73 @@ package and the widget binary.
 
 ## [Unreleased]
 
+Strawberry runs on Windows 10 (2004 or later) and 11, with the same package and the same
+commands as on Linux: `uv tool install strawberry-crab`, `strawberry setup`, `strawberry`,
+`strawberry install`. README.md has the Windows install and its known limits; WINDOWS.md says how
+each part works there.
+
 ### Added
 
-- The first step of the Windows port (`WINDOWS.md`): the daemon and the CLI run on Windows by
-  hand with `STRAWBERRY_ALLOW_UNSUPPORTED=1`, keeping the config in `%APPDATA%\strawberry` and
-  data and state in `%LOCALAPPDATA%\strawberry`. Windows is not a supported system until the
-  port is done.
-- Media on Windows, the second step of the port: play, pause, skip, previous and "what's
-  playing" work with any player that shows in Windows' media controls (the System Media
-  Transport Controls), and a new doorway, `smtc_watch`, makes her dance while music plays and
-  names each new track, as on Linux. `strawberry daemon` starts it on Windows. There is no
-  volume control through it.
-- Notifications on Windows, the third step of the port: a new doorway, `toast_watch`, reads
-  other apps' toasts from Windows' notification centre (the app's name and logo, the title and
-  the body) and hands them to the daemon exactly as the Linux doorway does, with the same
-  `[notifications]` settings, body modes and privacy checks. It needs "Let apps access your
-  notifications" on in Windows' privacy settings, and it checks for new toasts once a second.
-  `strawberry daemon` starts it on Windows beside the media doorway.
-- The tray and start on login on Windows, the fourth step of the port: the berry sits in the
-  notification area with the same menu as on Linux (check marks, the radio lists, the
-  submenus; a left click shows or hides her) and runs the daemon, the doorways and the widget
-  as its children, restarting one that stops. `strawberry install` puts a shortcut to it in the
-  user's Startup folder and starts it, `strawberry uninstall` removes the shortcut and stops
-  it, and `strawberry status` says where the shortcut is. It runs without a console window and
-  writes its log, and one per child, to `%LOCALAPPDATA%\strawberry\state`. A new command,
-  `strawberry-tray`, is `strawberry tray` without a console window.
-- The beat on Windows, the fifth step of the port: the beat doorway, `beat_watch`, now runs on
-  Windows too. It listens to the player's own sound only (WASAPI process loopback, Windows 10
-  2004 or later), finds the player through the media session that plays, and posts the same
-  tempo and beat to the daemon as on Linux, so she dances on the beat there as well.
-  `strawberry daemon` and the tray start it beside the media and notification doorways.
-  `[beat] target` takes the player's short name there (`spotify`, `chrome`).
-- The microphone and the listen hotkey on Windows, the sixth step of the port. She records from
-  Windows' default recording device (or the one `[voice] source` names) through WASAPI, at the
-  same 16 kHz mono as on Linux, and stops on the same silence. The tray registers the hotkey,
-  Ctrl+Alt+Space by default (Windows keeps Win-key combinations such as Win+Shift+Space for
-  itself); `strawberry hotkey COMBO` changes it, `--remove` turns it off, and a running tray
-  follows at once. It is kept as `[voice] hotkey` in config.toml; a combination another program
-  holds is a line in the tray's log. Whisper on CUDA (`[voice] device = "cuda"`) works on Windows
-  with the `gpu` wheels alone, without a CUDA toolkit installed.
-- Warm on wake, `doctor` and `setup` on Windows, the seventh step of the port. The daemon hears
-  Windows' own suspend and resume notification and reloads the gate's model and the reaction
-  model after a resume, as it does after logind's signal on Linux, so a notification right after
-  a wake is read rather than dropped as private. `strawberry doctor` on Windows checks, in place
-  of PipeWire, D-Bus, the tray host and systemd: whether Windows lets her read notifications, how
-  many media sessions there are, the microphone and its privacy switches, whether this Windows
-  can capture a player's sound (build 19041 or later), the Startup shortcut and what it runs, and
-  whether the tray runs; it only reads. `strawberry setup` on Windows names Ollama's Windows
-  installer (or winget), and offers the Startup shortcut for start on login.
-- `strawberry setup --no-download` writes the config as usual but pulls no model and fetches no
-  voice or widget; it names each one it would have fetched.
+- Windows is a supported system. The config lives in `%APPDATA%\strawberry`, the widget, voices,
+  cache, logs and state in `%LOCALAPPDATA%\strawberry`. `STRAWBERRY_ALLOW_UNSUPPORTED=1` remains
+  for trying her on a system that is not supported (macOS).
+- The widget for Windows: `strawberry-widget-<version>-windows-x86_64.exe` on each GitHub release,
+  with the berry as its icon. `strawberry widget --fetch` and `strawberry setup` download it and
+  check its SHA-256, as on Linux. She is transparent, always on top and clicks go through her
+  empty space, as on Linux.
+- Media on Windows: play, pause, skip, previous and "what's playing" work with any player that
+  shows in Windows' media controls (the System Media Transport Controls), and the `smtc_watch`
+  doorway makes her dance while music plays and names each new track. There is no volume
+  control there.
+- Notifications on Windows: the `toast_watch` doorway reads other apps' toasts from the
+  notification centre (the app's name and logo, the title and the body) with the same
+  `[notifications]` settings, body modes and privacy checks as on Linux. It needs "Let apps access
+  your notifications" on in Windows' privacy settings, and it checks for new toasts once a second.
+- The beat on Windows: `beat_watch` listens to the playing player's own sound only (WASAPI process
+  loopback), found through its media session, and she dances on the beat as on Linux. `[beat]
+  target` takes the player's short name there (`spotify`, `chrome`).
+- The tray and start on login on Windows: the berry in the notification area with the same menu
+  as on Linux (a left click shows or hides her); it runs the daemon, the doorways and the widget
+  and restarts one that stops. `strawberry install` puts a shortcut to it in the Startup folder
+  and starts it, `strawberry uninstall` removes it. It runs without a console window and logs to
+  `%LOCALAPPDATA%\strawberry\state`. A new command, `strawberry-tray`, is `strawberry tray`
+  without a console window.
+- The microphone and the listen hotkey on Windows: she records from Windows' default recording
+  device (or the one `[voice] source` names) at the same 16 kHz mono. The tray holds the hotkey,
+  Ctrl+Alt+Space by default (Windows keeps Win-key combinations for itself); `strawberry hotkey
+  COMBO` changes it and `--remove` turns it off. It is kept as `[voice] hotkey`. Whisper on CUDA
+  works with the `gpu` wheels alone, without a CUDA toolkit.
+- Warm on wake on Windows: after a resume the daemon reloads the gate's model and the reaction
+  model, as it does after logind's signal on Linux.
+- `strawberry doctor` on Windows checks, in place of PipeWire, D-Bus, the tray host and systemd:
+  whether Windows lets her read notifications, the media sessions, the microphone and its privacy
+  switches, whether the build can capture a player's sound, the Startup shortcut and what it
+  runs, and the tray. `strawberry setup` there names Ollama's Windows installer (or winget) and
+  offers the Startup shortcut.
+- `strawberry setup --no-download` writes the config but pulls no model and fetches no voice or
+  widget; it names each one it would have fetched.
+- On Windows the widget falls asleep after inactivity as on Linux: its idle helper reads
+  `GetLastInputInfo` on the interpreter `strawberry widget` and the tray pass it.
+- The tests run on Windows in CI, and the release builds and checks the Windows widget beside
+  the Linux one.
 
 ### Changed
 
+- `jeepney` is installed on Linux only; the `winrt-*` packages and `sounddevice` on Windows only.
 - The config file and the widget's preferences are read and written as UTF-8 whatever the
   system's locale.
-- `jeepney` is installed on Linux only, and the `winrt-*` packages for Windows' media controls
-  and notifications and `sounddevice` for its microphone on Windows only.
-- `strawberry stop` on Windows stops the daemon, the doorways and the tray cleanly (each shuts
-  down as on SIGTERM on Linux) instead of ending them at once; one that does not stop within
-  10 s (20 s for the tray) is still ended. `strawberry restart` there restarts the tray's
-  children, as the tray's own Restart does.
+- `scripts/build_widget.sh` and `scripts/check_phase1.sh` also run under Git Bash on Windows.
 
 ### Fixed
 
-- The Windows tray logged "the notification area is not there yet" every 2 s while it waited for
-  the taskbar at login; it now logs it once, and says so when the icon is added.
+- The gate gave up at start when Ollama answered its first request with an error, and routed
+  everything to chat (with every notification body private) until a restart or a resume. Seen
+  with Ollama on Windows, where the first embed of a start sometimes went to a model runner that
+  had just gone; an HTTP error at start is now tried once more.
+- The widget's *Restart widget* passed `--display-driver X11` (or `Windows`) to the new process,
+  which accepts only the lower-case names.
+- `scripts/gate_check.py` and `scripts/sensitive_check.py` read their phrase files in the
+  locale's encoding; they are UTF-8.
 
 ## [0.1.1] - 2026-09-23
 
