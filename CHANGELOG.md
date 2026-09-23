@@ -16,8 +16,8 @@ package and the widget binary.
 - Media on Windows, the second step of the port: play, pause, skip, previous and "what's
   playing" work with any player that shows in Windows' media controls (the System Media
   Transport Controls), and a new doorway, `smtc_watch`, makes her dance while music plays and
-  names each new track, as on Linux. `strawberry daemon` starts it on Windows; the beat doorway
-  is still Linux-only. There is no volume control through it.
+  names each new track, as on Linux. `strawberry daemon` starts it on Windows. There is no
+  volume control through it.
 - Notifications on Windows, the third step of the port: a new doorway, `toast_watch`, reads
   other apps' toasts from Windows' notification centre (the app's name and logo, the title and
   the body) and hands them to the daemon exactly as the Linux doorway does, with the same
@@ -32,6 +32,12 @@ package and the widget binary.
   it, and `strawberry status` says where the shortcut is. It runs without a console window and
   writes its log, and one per child, to `%LOCALAPPDATA%\strawberry\state`. A new command,
   `strawberry-tray`, is `strawberry tray` without a console window.
+- The beat on Windows, the fifth step of the port: the beat doorway, `beat_watch`, now runs on
+  Windows too. It listens to the player's own sound only (WASAPI process loopback, Windows 10
+  2004 or later), finds the player through the media session that plays, and posts the same
+  tempo and beat to the daemon as on Linux, so she dances on the beat there as well.
+  `strawberry daemon` and the tray start it beside the media and notification doorways.
+  `[beat] target` takes the player's short name there (`spotify`, `chrome`).
 
 ### Changed
 
