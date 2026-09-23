@@ -15,11 +15,12 @@ from strawberry_crab.brain import OllamaReactor
 from strawberry_crab.config import Config, GateConfig, NotificationsConfig
 from strawberry_crab.contract import Performance
 from strawberry_crab.daemon import Daemon
-from strawberry_crab.doorways import notify_watch
+from strawberry_crab.doorways import notify_watch, toast_watch
 from strawberry_crab.events import CannedReactor, Event
 from strawberry_crab.server import create_app
 from strawberry_crab.systemone import Gate
 from tests.test_notify_watch import bus_notify
+from tests.test_toast_watch import FakeListener, FakeNotification
 from tests.test_systemone import FakeEmbedder
 
 
@@ -318,10 +319,12 @@ def fake_gemma():
 CANARY = "zebra-canary-5b2e"
 
 
+@pytest.mark.parametrize("backend", ["dbus", "toasts"])
 @pytest.mark.parametrize("mode", ["react", "glance"])
-async def test_no_message_text_in_any_log_record(aiohttp_server, caplog, monkeypatch, mode):
+async def test_no_message_text_in_any_log_record(aiohttp_server, caplog, monkeypatch, mode, backend):
     """Watcher -> HTTP -> daemon -> gate -> Gemma (fake) -> widget, everything at DEBUG: the
-    canary reaches Gemma and no log record anywhere."""
+    canary reaches Gemma and no log record anywhere. Both doorways: the D-Bus one (Linux) and
+    the toast one (Windows), each on its fake."""
     ollama_app, seen = fake_gemma()
     ollama = await aiohttp_server(ollama_app)
     url = str(ollama.make_url("")).rstrip("/")
@@ -336,11 +339,21 @@ async def test_no_message_text_in_any_log_record(aiohttp_server, caplog, monkeyp
                     gate=Gate(config.gate, url))
     server = await aiohttp_server(create_app(daemon))
     monkeypatch.setattr(notify_watch, "resolve_icon", lambda *a, **k: None)
-    watcher = notify_watch.Watcher(str(server.make_url("")).rstrip("/"), config.notifications)
+    daemon_url = str(server.make_url("")).rstrip("/")
     body = f"did you get the plan? the word is {CANARY}, see you there"
+    listener = FakeListener()
+    if backend == "dbus":
+        watcher = notify_watch.Watcher(daemon_url, config.notifications)
+    else:
+        watcher = toast_watch.Watcher(daemon_url, config.notifications, toast_watch.Toasts(listener))
     with caplog.at_level(logging.DEBUG):
         await daemon.start()
-        await watcher.handle(bus_notify(app="Slack", summary="Alex", body=body))
+        if backend == "dbus":
+            await watcher.handle(bus_notify(app="Slack", summary="Alex", body=body))
+        else:
+            await watcher.poll_once()
+            listener.toasts.append(FakeNotification(1, app="Slack", texts=("Alex", body)))
+            await watcher.poll_once()
         for _ in range(100):
             if daemon.performed:
                 break

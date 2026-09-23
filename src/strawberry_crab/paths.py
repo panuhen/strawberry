@@ -4,6 +4,7 @@ r"""Where Strawberry keeps things on disk: the XDG base directories, in one plac
     data     $XDG_DATA_HOME/strawberry/     (~/.local/share/strawberry/)   voices/, widget/strawberry-widget
     state    $XDG_STATE_HOME/strawberry/    (~/.local/state/strawberry/)   tray.json, pidfiles, logs, token caches,
                                                                     privacy-notice-shown
+    cache    $XDG_CACHE_HOME/strawberry/    (~/.cache/strawberry/)         what can be made again: widget/, app-icons/
 
 An unset, empty or relative XDG variable falls back to the default, as the spec says. Nothing
 here creates a directory; the caller that writes does that. The widget (widget/paths.gd)
@@ -15,6 +16,7 @@ read there:
     config   %APPDATA%\strawberry\               config.toml, widget.cfg, git-hooks\
     data     %LOCALAPPDATA%\strawberry\          voices\, widget\strawberry-widget.exe
     state    %LOCALAPPDATA%\strawberry\state\    tray.json, pidfiles, logs, ...
+    cache    %LOCALAPPDATA%\strawberry\cache\    widget\, app-icons\ (the notifying apps' logos)
 
 An unset, empty or relative APPDATA or LOCALAPPDATA falls back to ~\AppData\Roaming or
 ~\AppData\Local.
@@ -66,6 +68,10 @@ def xdg_state_home() -> Path:
     return _xdg("XDG_STATE_HOME", ".local/state")
 
 
+def xdg_cache_home() -> Path:
+    return _xdg("XDG_CACHE_HOME", ".cache")
+
+
 def config_dir() -> Path:
     return appdata() / APP if windows() else xdg_config_home() / APP
 
@@ -85,6 +91,16 @@ def voices_dir() -> Path:
 
 def state_dir() -> Path:
     return local_appdata() / APP / "state" if windows() else xdg_state_home() / APP
+
+
+def cache_dir() -> Path:
+    """Files that can be made again; the widget copies its pack's files out here too (paths.gd)."""
+    return data_dir() / "cache" if windows() else xdg_cache_home() / APP
+
+
+def app_icons_dir() -> Path:
+    """The notifying apps' logos, written by the Windows notification doorway (toast_watch.py)."""
+    return cache_dir() / "app-icons"
 
 
 def tray_state_file() -> Path:
