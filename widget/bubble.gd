@@ -3,7 +3,6 @@ extends Label3D
 ## fades, and reports `finished` so the widget can fall back to idle (WIRING.md §6).
 ## Duration comes from the audio when there is audio; otherwise from text length.
 
-signal started
 signal finished
 
 const TINTS := {
@@ -59,7 +58,6 @@ func speak(new_line: String, emotion := "neutral", duration := 0.0, hold := 0.9)
 	tween.tween_property(self, "modulate:a", 0.0, 0.35).set_ease(Tween.EASE_IN)
 	tween.parallel().tween_property(self, "outline_modulate:a", 0.0, 0.35)
 	tween.tween_callback(_done)
-	started.emit()
 
 ## The corners of the whole line's block in world space, as it will stand once revealed:
 ## centred on the anchor, growing up from it (VERTICAL_ALIGNMENT_BOTTOM). Empty when hidden.

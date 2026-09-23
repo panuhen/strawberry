@@ -36,6 +36,12 @@ const PERSISTENT := ["idle", "dancing"]
 # their own file in Godot's user dir, so acceptance runs never touch the live prefs.
 const HEADLESS_SETTINGS_PATH := "user://widget_headless.cfg"
 const PASSTHROUGH_PADDING := 18.0
+# Windows: the window region follows her pose (follow_pose). A pose stays inside it this long after
+# she has moved on; it is set this much wider than the poses, so small moves stay inside it, and it
+# shrinks at most once a REGION_HOLD_S, when that frees a few percent of it.
+const REGION_HOLD_S := 1.5
+const REGION_SLACK := 8.0
+const REGION_SHRINK := 0.97
 
 var ws_url := "ws://127.0.0.1:8770/ws"
 var capture_path := ""
@@ -78,6 +84,10 @@ var one_shot := ""
 var performances := 0
 var dragging := false
 var drag_offset := Vector2i.ZERO
+var bone_boxes := {}            # mesh -> [[bone, bind pose, box of what that bone moves], ...] (body_points)
+var recent_hulls: Array = []    # [seconds, padded hull] of the last REGION_HOLD_S (Windows)
+var region := PackedVector2Array()
+var region_set_at := 0.0
 
 func _ready() -> void:
 	if hand_over_to_acceptance():
@@ -166,6 +176,9 @@ func update_passthrough() -> void:
 		return
 	if menu and menu.visible:
 		return     # the open menu takes the whole window; popup_hide brings the polygon back
+	if Paths.windows():
+		follow_pose(true)
+		return
 	var points := PackedVector2Array()
 	for node in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh := node as MeshInstance3D
@@ -174,15 +187,6 @@ func update_passthrough() -> void:
 		var aabb: AABB = mesh.global_transform * mesh.get_aabb()
 		for i in 8:
 			points.append(camera.unproject_position(aabb.get_endpoint(i)))
-	if Paths.windows():
-		# Windows cuts the window to this polygon (SetWindowRgn): what lies outside is neither
-		# clicked nor drawn. So the bubble and the badge are inside it while they show.
-		for corner in bubble.outline():
-			points.append(camera.unproject_position(corner))
-		if badge.visible:
-			var box: AABB = badge.global_transform * badge.get_aabb()
-			for i in 8:
-				points.append(camera.unproject_position(box.get_endpoint(i)))
 	if type_box and type_box.visible:
 		# The glass box sits below her; while it is open it takes clicks as well.
 		var rect := type_box.get_global_rect()
@@ -199,6 +203,137 @@ func update_passthrough() -> void:
 	for p in hull:
 		padded.append(p + (p - center).normalized() * PASSTHROUGH_PADDING)
 	get_window().mouse_passthrough_polygon = padded
+
+## Windows makes the polygon the window's region (SetWindowRgn): what lies outside it is neither
+## clicked nor drawn. So there it is her pose, not her meshes at rest: run before each frame is
+## drawn, it takes the padded hull of her posed parts (body_points), the bubble, the badge and the
+## type box, keeps each frame's for REGION_HOLD_S, and sets the hull of them all when she reaches
+## outside the region or when it could shrink. A dance or a wave then stays inside one region.
+## (The whole-window passthrough flag would keep the drawing whole, but on Windows it only answers
+## HTTRANSPARENT to hit tests, which other programs' windows never see: clicks still land on her.)
+func follow_pose(force := false) -> void:
+	if is_headless() or model == null or not visible:
+		return     # hidden: run_command's tiny polygon stays
+	if menu and menu.visible:
+		return
+	var points := body_points()
+	for corner in bubble.outline():
+		points.append(camera.unproject_position(corner))
+	if badge.visible:
+		var box: AABB = badge.global_transform * badge.get_aabb()
+		for i in 8:
+			points.append(camera.unproject_position(box.get_endpoint(i)))
+	if type_box and type_box.visible:
+		var rect := type_box.get_global_rect()
+		for i in 4:
+			points.append(rect.position + Vector2(rect.size.x * (i % 2), rect.size.y * (i >> 1)))
+	if points.size() < 3:
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	var hull := padded_hull(points, PASSTHROUGH_PADDING)
+	recent_hulls.append([now, hull])
+	while recent_hulls[0][0] < now - REGION_HOLD_S:
+		recent_hulls.pop_front()
+	var reached_out := region.size() < 3
+	for p in hull:
+		if reached_out or not Geometry2D.is_point_in_polygon(p, region):
+			reached_out = true
+			break
+	var all := PackedVector2Array()
+	for entry in recent_hulls:
+		all.append_array(entry[1])
+	var wanted := padded_hull(all, REGION_SLACK)
+	var shrinks := now - region_set_at >= REGION_HOLD_S and area(wanted) < REGION_SHRINK * area(region)
+	if force or reached_out or shrinks:
+		region = wanted
+		region_set_at = now
+		get_window().mouse_passthrough_polygon = wanted
+
+## Her meshes' corners on screen, as posed now. Each skinned mesh is bound to bones rigidly (one
+## per vertex, WIRING.md §13), so the box of what a bone moves goes where the bone takes it; a
+## mesh's own AABB is its rest shape and stays put while a claw swings out of it.
+func body_points() -> PackedVector2Array:
+	if bone_boxes.is_empty():
+		bone_boxes = find_bone_boxes()
+	var points := PackedVector2Array()
+	for node in model.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node as MeshInstance3D
+		if not mesh.is_visible_in_tree():
+			continue
+		if not bone_boxes.has(mesh):
+			var aabb: AABB = mesh.global_transform * mesh.get_aabb()   # the hat: posed by its node
+			for i in 8:
+				points.append(camera.unproject_position(aabb.get_endpoint(i)))
+			continue
+		var skeleton := mesh.get_node(mesh.skeleton) as Skeleton3D
+		for part: Array in bone_boxes[mesh]:
+			var pose: Transform3D = skeleton.global_transform * skeleton.get_bone_global_pose(part[0]) * part[1]
+			var box: AABB = pose * (part[2] as AABB)
+			for i in 8:
+				points.append(camera.unproject_position(box.get_endpoint(i)))
+	return points
+
+## Once: per skinned mesh, the bind each vertex follows most and the box of those vertices, each
+## blend shape's full extent included (an open claw, the squash, the lids, a tucked leg).
+func find_bone_boxes() -> Dictionary:
+	var found := {}
+	for node in model.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node as MeshInstance3D
+		var skeleton := mesh.get_node_or_null(mesh.skeleton) as Skeleton3D
+		if mesh.skin == null or skeleton == null or mesh.mesh == null:
+			continue
+		var boxes := {}
+		for s in mesh.mesh.get_surface_count():
+			var arrays := mesh.mesh.surface_get_arrays(s)
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+			var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+			if vertices.is_empty() or bones.size() != weights.size() or bones.size() < vertices.size():
+				continue
+			var shapes: Array[PackedVector3Array] = []
+			for shape: Array in mesh.mesh.surface_get_blend_shape_arrays(s):
+				var moved: PackedVector3Array = shape[Mesh.ARRAY_VERTEX]
+				if moved.size() == vertices.size():
+					shapes.append(moved)
+			var per := bones.size() / vertices.size()
+			for v in vertices.size():
+				var best := v * per
+				for k in range(v * per + 1, v * per + per):
+					if weights[k] > weights[best]:
+						best = k
+				var bind: int = bones[best]
+				var box: AABB = boxes[bind] if boxes.has(bind) else AABB(vertices[v], Vector3.ZERO)
+				box = box.expand(vertices[v])
+				for moved in shapes:
+					box = box.expand(moved[v])
+				boxes[bind] = box
+		var parts := []
+		for bind: int in boxes:
+			var bone := mesh.skin.get_bind_bone(bind)
+			if bone < 0:
+				bone = skeleton.find_bone(mesh.skin.get_bind_name(bind))
+			if bone >= 0:
+				parts.append([bone, mesh.skin.get_bind_pose(bind), boxes[bind]])
+		if not parts.is_empty():
+			found[mesh] = parts
+	return found
+
+func padded_hull(points: PackedVector2Array, padding: float) -> PackedVector2Array:
+	var hull := Geometry2D.convex_hull(points)
+	var center := Vector2.ZERO
+	for p in hull:
+		center += p
+	center /= hull.size()
+	var padded := PackedVector2Array()
+	for p in hull:
+		padded.append(p + (p - center).normalized() * padding)
+	return padded
+
+static func area(polygon: PackedVector2Array) -> float:
+	var sum := 0.0
+	for i in polygon.size():
+		sum += polygon[i].cross(polygon[(i + 1) % polygon.size()])
+	return absf(sum) / 2.0
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -412,11 +547,10 @@ func setup_bubble() -> void:
 	# so the text can grow upward as far as it likes without running into it.
 	badge.position = Vector3(0.5, 0.86, 0)
 	add_child(badge)
-	if Paths.windows():
-		# The window's region is its visible shape there (update_passthrough): it grows with a
-		# line and shrinks back after it.
-		bubble.started.connect(update_passthrough, CONNECT_DEFERRED)
-		bubble.finished.connect(update_passthrough, CONNECT_DEFERRED)
+	if Paths.windows() and not is_headless():
+		# The window's region is its visible shape there: it follows her pose and the bubble,
+		# checked after everything has moved and before the frame is drawn (follow_pose).
+		RenderingServer.frame_pre_draw.connect(follow_pose)
 
 ## World-space y of the top edge of the orthographic view (KEEP_WIDTH: height follows the aspect).
 func view_top() -> float:
