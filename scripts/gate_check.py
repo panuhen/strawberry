@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the gate over scripts/gate_phrases.json against live Ollama (WIRING.md §8a).
+"""Run the gate over scripts/gate_phrases.json on the configured embedder (WIRING.md §8a).
 
 Prints every miss with its probabilities, then the tally and the per-sentence latency.
 Exit code 1 on any miss, so it can sit in the acceptance run once a model is present.

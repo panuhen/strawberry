@@ -25,9 +25,11 @@ Direct dependencies from `pyproject.toml`, with the licence each declares:
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT | speech to text (pulls in CTranslate2, MIT; PyAV, BSD-3-Clause; tokenizers and huggingface-hub, Apache-2.0) |
 | [jeepney](https://gitlab.com/takluyver/jeepney) | MIT | D-Bus: notifications, MPRIS, the tray (Linux only) |
 | [mcp](https://github.com/modelcontextprotocol/python-sdk) | MIT | the MCP client for tool servers |
-| [numpy](https://numpy.org) | BSD-3-Clause (bundled parts 0BSD, MIT, Zlib, CC0-1.0) | the beat tracker |
-| [piper-tts](https://github.com/OHF-Voice/piper1-gpl) | **GPL-3.0-or-later** | text to speech (pulls in onnxruntime, MIT) |
+| [numpy](https://numpy.org) | BSD-3-Clause (bundled parts 0BSD, MIT, Zlib, CC0-1.0) | the beat tracker, the gate's scoring |
+| [onnxruntime](https://github.com/microsoft/onnxruntime) | MIT | the gate's embeddinggemma in-process, on the CPU (pulls in flatbuffers, Apache-2.0; protobuf, BSD-3-Clause; packaging, Apache-2.0 or BSD-2-Clause) |
+| [piper-tts](https://github.com/OHF-Voice/piper1-gpl) | **GPL-3.0-or-later** | text to speech (pulls in onnxruntime too) |
 | [sounddevice](https://github.com/spatialaudio/python-sounddevice) | MIT | Windows only: the microphone through WASAPI; its Windows wheels carry [PortAudio](https://www.portaudio.com) (MIT) (pulls in cffi, MIT-0, and pycparser, BSD-3-Clause) |
+| [tokenizers](https://github.com/huggingface/tokenizers) | Apache-2.0 | the gate's tokenizer, in-process |
 | [winrt-runtime, winrt-Windows.Foundation, winrt-Windows.Foundation.Collections, winrt-Windows.Media.Control](https://github.com/pywinrt/pywinrt) | MIT | Windows only: the System Media Transport Controls, for media (pulls in typing-extensions, PSF-2.0) |
 | [winrt-Windows.UI.Notifications, winrt-Windows.UI.Notifications.Management, winrt-Windows.ApplicationModel, winrt-Windows.Storage.Streams](https://github.com/pywinrt/pywinrt) | MIT | Windows only: other apps' toasts through UserNotificationListener, with the app's name and logo, for notifications |
 
@@ -58,7 +60,8 @@ Setup names the licence of each model before it pulls it.
 | What | Default name | Downloaded from | Licence |
 |---|---|---|---|
 | Ollama (the model server) | `ollama` | [ollama.com](https://ollama.com), their install script (Linux) or installer (Windows, also `winget install Ollama.Ollama`) | MIT |
-| The gate's embedder | `embeddinggemma` | Ollama library | [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and the Gemma Prohibited Use Policy |
+| The gate's embedder, in-process | embeddinggemma 300M as ONNX, fp32 (`onnx/model.onnx`, `onnx/model.onnx_data`, `tokenizer.json`) | Hugging Face, [onnx-community/embeddinggemma-300m-ONNX](https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX) | [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and the Gemma Prohibited Use Policy |
+| The gate's embedder, through Ollama (the fallback) | `embeddinggemma` | Ollama library | [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and the Gemma Prohibited Use Policy |
 | The small model (her one-liners) | `gemma3:1b` | Ollama library | [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and the Gemma Prohibited Use Policy |
 | The brain (tools, questions) | `qwen3.8:27b` | Ollama library | Apache-2.0 is expected for the Qwen3 family; check the model card on Ollama or Hugging Face before you pull it |
 | Speech recognition weights | whisper `small` (config `[voice] model`) | Hugging Face (the CTranslate2 conversions faster-whisper uses) | MIT (OpenAI Whisper weights) |
