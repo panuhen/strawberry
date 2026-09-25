@@ -200,7 +200,8 @@ adapter then recognises it and adds its reflexes and your artist and playlist na
 
 Start with [WIRING.md](WIRING.md): the message contract, the daemon, the watchers, the gate, the
 widget and the tray. [PACKAGING.md](PACKAGING.md) is the plan for the package and the release
-process; [ADAPTERS.md](ADAPTERS.md) covers MCP servers and adapters; [CHANGELOG.md](CHANGELOG.md)
+process; [PROTOCOL.md](PROTOCOL.md) is the wire protocol for writing another body;
+[ADAPTERS.md](ADAPTERS.md) covers MCP servers and adapters; [CHANGELOG.md](CHANGELOG.md)
 lists what changed in each version.
 
 From a checkout, `bin/strawberry` stands in for `strawberry` and runs from the checkout's `.venv`.

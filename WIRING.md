@@ -62,6 +62,8 @@ Optional fields are omitted on the wire, never sent as `null`. Unknown fields, u
 
 Source of truth: `src/strawberry_crab/contract.py` and the constants at the top of `widget/widget.gd`.
 
+**The full wire protocol** (every message both ways, the HTTP routes, the handshake, and the proposed v2 additions for other bodies) is [PROTOCOL.md](PROTOCOL.md). Write a new body from that file.
+
 ---
 
 ## 2. Backend daemon — `strawberryd`
@@ -595,6 +597,7 @@ quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 
 ```
 WIRING.md                this document
+PROTOCOL.md              the bus protocol between the brain and its bodies (v1 as built, v2 proposed)
 PACKAGING.md             the plan from a developer checkout to `uv tool install strawberry-crab`
 ADAPTERS.md              adding an MCP server, and writing an adapter for one
 README.md                for users: install, setup, configuration, privacy

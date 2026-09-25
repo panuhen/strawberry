@@ -7,6 +7,11 @@ package and the widget binary.
 
 ## [Unreleased]
 
+### Added
+
+- PROTOCOL.md: the bus protocol between the daemon and its bodies, as built (v1), and proposed
+  additions (v2) for bodies other than the crab.
+
 ## [0.2.0] - 2026-09-23
 
 Strawberry runs on Windows 10 (2004 or later) and 11, with the same package and the same
