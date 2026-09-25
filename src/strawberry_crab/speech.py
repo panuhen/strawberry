@@ -119,10 +119,18 @@ class Speaker:
         self.failed = 0
         self.last_ms = 0.0
         self.disabled_reason: str | None = None if config.enabled else "disabled in config"
+        self.loading: asyncio.Task | None = None    # begin(): start() in the background
 
     @property
     def ready(self) -> bool:
         return self.synth is not None and self.disabled_reason is None
+
+    def begin(self) -> asyncio.Task:
+        """start() in the background (Daemon.start), so the port opens without waiting for the voice
+        (~1-2 s). A line that comes before it is loaded waits for it in say()."""
+        if self.loading is None:
+            self.loading = asyncio.get_running_loop().create_task(self.start())
+        return self.loading
 
     async def start(self) -> None:
         if not self.config.enabled:
@@ -144,6 +152,9 @@ class Speaker:
         log.info("voice %s ready in %.1fs (wavs in %s)", self.model_path.stem, time.perf_counter() - started, self.out_dir)
 
     async def close(self) -> None:
+        if self.loading is not None and not self.loading.done():
+            self.loading.cancel()
+            await asyncio.gather(self.loading, return_exceptions=True)
         for path in list(self.recent):
             path.unlink(missing_ok=True)
         self.recent.clear()
@@ -160,6 +171,7 @@ class Speaker:
             "enabled": self.config.enabled,
             "voice": self.model_path.stem if self.config.enabled else None,
             "ready": self.ready,
+            "loading": self.loading is not None and not self.loading.done(),
             "reason": self.disabled_reason,
             "quiet_now": in_quiet_hours(self.quiet, self.clock()),
             "spoken": self.spoken,
@@ -169,6 +181,8 @@ class Speaker:
 
     async def say(self, text: str) -> str | None:
         """Synthesise `text`; return the wav path or None for silence."""
+        if self.loading is not None and not self.loading.done():
+            await asyncio.shield(self.loading)   # the first line after the start: a second at most
         if not self.ready or self.out_dir is None:
             return None
         if in_quiet_hours(self.quiet, self.clock()):

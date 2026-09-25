@@ -40,6 +40,12 @@ package and the widget binary.
   before, to 1e-9).
 - New dependencies: `onnxruntime` (the CPU build, Linux and Windows) and `tokenizers`; both
   were already installed through faster-whisper.
+- The daemon's port opens at once (~0.3 s) instead of after the models load (~5 s with the gate
+  in-process, more when Ollama is slow). The gate's examples, Piper's voice and the reaction
+  model's warm-up load in the background. A sentence that comes before the gate is ready waits
+  up to 2 s and is then answered as chat, a notification body waits for it as for a reload, and
+  the first line waits for Piper rather than going silent. `/health` shows `gate.starting` and
+  `speech.loading` meanwhile.
 
 ### Fixed
 

@@ -102,12 +102,20 @@ class Daemon:
         return time.monotonic() - self.started
 
     async def start(self) -> None:
-        start = getattr(self.reactor, "start", None)
-        if start:
-            await start()
-        await self.speaker.start()
-        await self.listener.start()
-        await self.gate.start()
+        """Start every part without waiting for a model, so the port opens at once (WIRING.md §2).
+        The reaction model's warm-up, Piper's voice, whisper and the gate's examples load in the
+        background, and each copes with what arrives first: Gemma's short call falls back to the
+        canned line, a line waits for Piper (a second), /listen says she is getting her ears on,
+        a sentence waits up to 2 s for the gate and is then chat, a notification body waits for it
+        as for a reload. A part without begin() (a stand-in in the tests) is started in full."""
+        for part in (self.reactor, self.speaker, self.listener, self.gate):
+            begin = getattr(part, "begin", None)
+            if begin is not None:
+                begin()
+                continue
+            start = getattr(part, "start", None)
+            if start:
+                await start()
         await self.toolbox.start()
         await self.thinker.start()
         self.outcomes.start()
@@ -482,13 +490,15 @@ class Daemon:
         off or not ready is reported with its reason instead of a time."""
         skipped: dict[str, str] = {}
         if not self.gate.ready:
-            skipped["gate"] = self.gate.disabled_reason or "gate off"
+            skipped["gate"] = self.gate.disabled_reason or ("still starting" if getattr(self.gate, "is_starting", False)
+                                                            else "gate off")
         if not self.config.brain.enabled or getattr(self.reactor, "session", None) is None:
             skipped["voice"] = "brain off (canned lines)"
         if not self.thinker.enabled:
             skipped["brain"] = "thinker off"
         if not self.speaker.ready:
-            skipped["tts"] = self.speaker.stats().get("reason") or "speech off"
+            stats = self.speaker.stats()
+            skipped["tts"] = stats.get("reason") or ("still loading" if stats.get("loading") else "speech off")
         if not self.listener.ready:
             skipped["whisper"] = self.listener.reason or "voice off"
         lines: list[dict[str, Any]] = []

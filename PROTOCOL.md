@@ -39,7 +39,7 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 | `POST /perform` | a performance (§3) | `{"sent": n, "performance": {…}}` | the media doorways, `strawberry say`, curl, tests | `server.py:183-190` |
 | `POST /tempo` | a beat estimate (§4) | `{"sent": n}` | `doorways/beat_watch.py` | `server.py:329-336` |
 | `POST /command` | `{command, value}` (§5) | `{"sent": n, "command": {…}}` | the tray | `server.py:286-303` |
-| `POST /listen` | none | `{"listening": true}`, or `false` with `loading`/`error`/`busy`/`stopped`/`debounced`; 503 when `error` | the listen hotkey | `server.py:306-309`, `daemon.py:176-203` |
+| `POST /listen` | none | `{"listening": true}`, or `false` with `loading`/`error`/`busy`/`stopped`/`debounced`; 503 when `error` | the listen hotkey | `server.py:306-309`, `daemon.py:184-211` |
 | `POST /probe` | none | per-slot timings | `strawberry doctor --talk`; loopback clients only (403 otherwise) | `server.py:315-326` |
 | `GET /health` | – | status object (below) | the tray (every 2 s), `strawberry doctor` | `server.py:150-175` |
 | `GET /config` | – | the effective settings | inspection (curl) | `server.py:179-181` |
@@ -51,7 +51,7 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 `/health` fields: `ok`, `widgets` (open sockets), `widget_versions` (one per socket that said
 hello), `version` (the brain's), `performed`, `uptime_s`, `brain`, `speech`, `voice`, `gate`,
 `wake`, `tools`, `actions`, `thinker`, `ledger`, `state` (now; a transient older than 6 s reads as
-the resting state, `daemon.py:234-244`), `rest_state`, `tempo` (the fresh estimate or `null`),
+the resting state, `daemon.py:242-252`), `rest_state`, `tempo` (the fresh estimate or `null`),
 `tempo_age_s` (`server.py:152-174`). A body does not need `/health`; it is for the tray and
 `doctor`.
 
@@ -86,7 +86,7 @@ In order, on one socket:
 1. The body opens `GET /ws` with no `Origin`.
 2. **The brain sends catch-up messages at once, before any hello arrives** (`server.py:355-360`):
    - `{"state": "<rest_state>"}` if the resting state is not `idle` (music is playing);
-   - `{"tempo": {…}}` if a beat estimate arrived in the last 6 s (`daemon.py:246-251`).
+   - `{"tempo": {…}}` if a beat estimate arrived in the last 6 s (`daemon.py:254-259`).
 3. The body sends its hello (§2.1).
 4. From then on the brain broadcasts performances, tempo and commands to every open socket, and
    the body may send `ping` and `heard`.
@@ -128,7 +128,7 @@ After a hello that is not refused, the brain may send the one-time privacy note 
 
 One JSON object per performance. **It has no `type` field**: a body recognises it by having a
 `state` key (`widget.gd:656-659`). Built by `Performance.to_dict` (`contract.py:53-68`) and sent by
-`Daemon.perform` (`daemon.py:209-230`).
+`Daemon.perform` (`daemon.py:217-238`).
 
 ```json
 {"state": "talking", "emotion": "happy", "anim": "notify_perk",
@@ -169,14 +169,14 @@ From `widget.gd:661-716`:
 
 ### 3.2 How `audio` is delivered and how the bubble is timed
 
-- The brain runs Piper for any performance that has `text` and no `audio` (`daemon.py:215-218`,
-  `speech.py:170-196`). It writes a wav (16-bit PCM, mono, the voice's sample rate) into a per-daemon
-  temp directory, `strawberry-speech-*` (`speech.py:143`), and puts the **absolute path** in `audio`.
+- The brain runs Piper for any performance that has `text` and no `audio` (`daemon.py:223-226`,
+  `speech.py:182-210`). It writes a wav (16-bit PCM, mono, the voice's sample rate) into a per-daemon
+  temp directory, `strawberry-speech-*` (`speech.py:151`), and puts the **absolute path** in `audio`.
   No audio bytes cross the socket: **the body must share the brain's filesystem.**
 - The brain keeps only the last `[speech] keep_files` wavs (default 3) and deletes older ones
-  (`speech.py:191-192`, `config.py:130`). A body must open the file soon after receipt.
+  (`speech.py:205-206`, `config.py:130`). A body must open the file soon after receipt.
 - No `audio` means silent mode: speech off, quiet hours, no voice installed, or a failed
-  synthesis (`speech.py:170-182`). The bubble still shows.
+  synthesis (`speech.py:182-196`). The bubble still shows.
 - The widget plays the wav through its own analysed audio bus and drives the claws from its
   loudness (`speech_player.gd:50-60`, `:62-75`). It does not play it when the user has muted her
   or set "quiet for a while" (`widget.gd:693`, `:419-420`).
@@ -196,11 +196,11 @@ From `widget.gd:661-716`:
 
 | Sender | Example | Code |
 |---|---|---|
-| Every desktop event and reply | `{"state":"talking","text":…,"emotion":…,…}` | `daemon.py:289-305` and the handlers below it |
+| Every desktop event and reply | `{"state":"talking","text":…,"emotion":…,…}` | `daemon.py:297-313` and the handlers below it |
 | Voice session start | `{"state":"listening","emotion":"neutral"}` | `voice.py:576` |
 | Recording done, transcribing | `{"state":"thinking","emotion":"neutral"}` | `voice.py:597` |
-| Thinker started | `{"state":"thinking","emotion":"neutral"}`, then after `ack_after_s` `{"state":"thinking","text":"On it.",…}`, then `"Still on it."` | `daemon.py:434-440` |
-| Whisper still loading | `{"state":"talking","text":"<ears loading line>",…}` | `daemon.py:185` |
+| Thinker started | `{"state":"thinking","emotion":"neutral"}`, then after `ack_after_s` `{"state":"thinking","text":"On it.",…}`, then `"Still on it."` | `daemon.py:442-448` |
+| Whisper still loading | `{"state":"talking","text":"<ears loading line>",…}` | `daemon.py:193` |
 | Media doorways | `POST /perform {"state":"dancing"}` / `{"state":"idle"}` | `doorways/mpris_watch.py:189`, `doorways/smtc_watch.py:186` |
 | Catch-up on connect | `{"state":"dancing"}` | `server.py:355-357` |
 | First-run privacy note | `{"state":"talking","reaction":"wave","anim":"notify_perk","emotion":"happy","text":…}` | `server.py:410-412` |
@@ -209,7 +209,7 @@ From `widget.gd:661-716`:
 
 The beat watcher posts an estimate to `POST /tempo` every 2 s; the brain validates it
 (`server.py:193-233`), keeps it, and forwards it to every body wrapped in a `tempo` key
-(`daemon.py:253-257`). A body that connects while an estimate is fresh (6 s) gets it at once
+(`daemon.py:261-265`). A body that connects while an estimate is fresh (6 s) gets it at once
 (`server.py:358-360`).
 
 ```json

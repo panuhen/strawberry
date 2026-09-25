@@ -561,6 +561,7 @@ class Gate:
 
     WARM_UP_S = 120.0
     START_RETRY_S = 1.0     # the pause before start's one more try (start)
+    START_WAIT_S = 2.0      # a sentence that arrives while the gate starts waits this long, then is chat
 
     def __init__(self, config: GateConfig, ollama_url: str = "", embedder: Embedder | None = None,
                  examples: dict[str, list[str]] | None = None) -> None:
@@ -602,10 +603,49 @@ class Gate:
         self.retries = 0                 # notifications asked again after a timeout
         self.warmups = 0                 # background reloads that finished
         self.warming: asyncio.Task | None = None
+        self.starting: asyncio.Task | None = None   # begin(): start() in the background
 
-    async def start(self) -> None:
+    def begin(self) -> asyncio.Task | None:
+        """start() in the background (Daemon.start): the port opens without waiting for the model
+        and the examples (~1.7 s and ~4 s on the CPU). Until it is done /health says `starting`, a
+        sentence waits up to START_WAIT_S and is then chat, and a notification check waits as for a
+        reload (retry_timeout_s). None when the gate is off."""
         if not self.config.enabled or not self.systemone:
+            return None
+        if self.starting is None:
+            self.starting = asyncio.get_running_loop().create_task(self.start())
+            self.starting.add_done_callback(self._started)
+        return self.starting
+
+    def _started(self, task: asyncio.Task) -> None:
+        if task.cancelled() or task.exception() is None:
             return
+        # start() handles what it expects (a missing model, Ollama down); anything else is said here,
+        # where nobody awaits the task, and the gate stays off.
+        self.disabled_reason = f"failed to start: {task.exception()!r}"
+        log.error("gate: %s; routing every sentence to chat", self.disabled_reason)
+
+    @property
+    def is_starting(self) -> bool:
+        return self.starting is not None and not self.starting.done()
+
+    async def wait_started(self, budget: float) -> bool:
+        """Wait up to `budget` for a start still running; True when the gate is ready. Shielded:
+        a caller giving up does not cancel the start the next one needs."""
+        if self.is_starting and budget > 0:
+            assert self.starting
+            try:
+                await asyncio.wait_for(asyncio.shield(self.starting), budget)
+            except asyncio.TimeoutError:
+                pass
+            except Exception:  # noqa: BLE001 - _started has said why; the gate is simply not ready
+                pass
+        return self.ready
+
+    async def start(self) -> bool:
+        """Load the embedder and embed every example; True when the gate is ready."""
+        if not self.config.enabled or not self.systemone:
+            return False
         if self.owned:
             try:
                 await self.owned.start()
@@ -630,10 +670,11 @@ class Gate:
                     continue
                 self.disabled_reason = f"could not embed the examples: {exc}"
                 log.warning("gate: %s; routing every sentence to chat", self.disabled_reason)
-                return
+                return False
         self.ready = True
         log.info("gate: %s ready in %.1fs (%d examples)", self.model_name, time.perf_counter() - started,
                  self.systemone.examples)
+        return True
 
     def _fall_back(self, reason: str) -> None:
         """The ONNX model could not be loaded: Ollama's embeddinggemma instead, and /health says why."""
@@ -652,8 +693,11 @@ class Gate:
         return "embeddinggemma (ONNX, in-process)" if self.backend == "onnx" else self.config.model
 
     async def close(self) -> None:
-        if self.warming is not None and not self.warming.done():
-            self.warming.cancel()
+        # Cancelled and awaited, so nothing is still embedding when the embedder closes.
+        pending = [t for t in (self.warming, self.starting) if t is not None and not t.done()]
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
         if self.owned:
             await self.owned.close()
 
@@ -661,7 +705,12 @@ class Gate:
         """None when the gate is off or failing; the caller then treats the sentence as chat.
 
         No retry here: a spoken sentence wants an answer now, and chat is a safe reading of it. A
-        timeout only starts the background reload, so the next sentence finds the model warm."""
+        timeout only starts the background reload, so the next sentence finds the model warm. A
+        sentence in the first seconds after the daemon started waits a little for the start."""
+        if not self.ready and self.is_starting:
+            started = time.perf_counter()
+            if not await self.wait_started(self.START_WAIT_S):
+                log.info("gate: still starting after %.1fs; treating a sentence as chat", time.perf_counter() - started)
         if not self.ready or not self.systemone:
             return None
         self.calls += 1
@@ -714,7 +763,12 @@ class Gate:
         waits for the one shared reload (up to `retry_timeout_s`) and asks once more. A hard error
         (Ollama not running, an HTTP error) fails closed at once, and so does a retry that fails.
         A notification that arrives while a reload is already running skips the doomed short call
-        and waits for that reload too, so a burst at wake shares one wait instead of queueing."""
+        and waits for that reload too, so a burst at wake shares one wait instead of queueing. The
+        same holds for the gate's start, in the first seconds after the daemon started."""
+        if not self.ready and self.is_starting:
+            log.info("gate: %s is starting; the notification waits for it (up to %.0fs)", self.model_name,
+                     self.config.retry_timeout_s)
+            await self.wait_started(self.config.retry_timeout_s)
         if not self.ready or not self.systemone:
             return None
         self.sensitive_calls += 1
@@ -790,6 +844,8 @@ class Gate:
         whose examples could not be embedded at start (Ollama was down then)."""
         if not self.config.enabled or not self.systemone:
             return None
+        if self.is_starting:
+            return self.starting         # the start is the load; its result is True when ready too
         if self.warming is not None and not self.warming.done():
             return self.warming
         self.warming = asyncio.get_running_loop().create_task(self._warm(reason))
@@ -838,6 +894,7 @@ class Gate:
             "model": self.config.model if self.config.enabled else None,
             "embedder": self.embedder_stats(),
             "ready": self.ready,
+            "starting": self.is_starting,
             "calls": self.calls,
             "sensitive_calls": self.sensitive_calls,
             "failures": self.failures,
