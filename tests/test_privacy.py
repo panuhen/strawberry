@@ -334,6 +334,7 @@ async def test_no_message_text_in_any_log_record(aiohttp_server, caplog, monkeyp
     config.brain.ollama_url = url
     config.brain.timeout_s = 2.0
     config.gate.query_prefix = config.gate.document_prefix = ""
+    config.gate.embedder = "ollama"                # the fake Ollama above embeds
     config.notifications = NotificationsConfig(body=mode, coalesce_s=0.01)
     daemon = Daemon(reactor=OllamaReactor(config.brain, fallback=CannedReactor()), config=config,
                     gate=Gate(config.gate, url))

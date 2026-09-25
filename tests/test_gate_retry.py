@@ -57,7 +57,7 @@ class ColdOllama:
 async def cold_gate(aiohttp_server, load_s: float = 0.3, **config) -> tuple[Gate, ColdOllama, object]:
     ollama = ColdOllama(load_s)
     server = await aiohttp_server(ollama.app())
-    settings = dict(query_prefix="", document_prefix="", timeout_s=0.1, retry_timeout_s=2.0) | config
+    settings = dict(embedder="ollama", query_prefix="", document_prefix="", timeout_s=0.1, retry_timeout_s=2.0) | config
     gate = Gate(GateConfig(**settings), str(server.make_url("")).rstrip("/"))
     await gate.start()
     assert gate.ready
@@ -183,7 +183,7 @@ async def test_a_reload_brings_up_a_gate_that_could_not_start(aiohttp_server):
     ollama = ColdOllama()
     ollama.status = 500
     server = await aiohttp_server(ollama.app())
-    gate = Gate(GateConfig(query_prefix="", document_prefix="", timeout_s=0.5),
+    gate = Gate(GateConfig(embedder="ollama", query_prefix="", document_prefix="", timeout_s=0.5),
                 str(server.make_url("")).rstrip("/"))
     await gate.start()
     assert not gate.ready and gate.disabled_reason
