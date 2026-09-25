@@ -1,7 +1,8 @@
 r"""Where Strawberry keeps things on disk: the XDG base directories, in one place (WIRING.md §15).
 
     config   $XDG_CONFIG_HOME/strawberry/   (~/.config/strawberry/)        config.toml, widget.cfg
-    data     $XDG_DATA_HOME/strawberry/     (~/.local/share/strawberry/)   voices/, widget/strawberry-widget
+    data     $XDG_DATA_HOME/strawberry/     (~/.local/share/strawberry/)   voices/, widget/strawberry-widget,
+                                                                    models/ (the gate's ONNX model)
     state    $XDG_STATE_HOME/strawberry/    (~/.local/state/strawberry/)   tray.json, pidfiles, logs, token caches,
                                                                     privacy-notice-shown
     cache    $XDG_CACHE_HOME/strawberry/    (~/.cache/strawberry/)         what can be made again: widget/, app-icons/
@@ -14,7 +15,7 @@ On Windows (WINDOWS.md) the same three are in the known folders, and the XDG var
 read there:
 
     config   %APPDATA%\strawberry\               config.toml, widget.cfg, git-hooks\
-    data     %LOCALAPPDATA%\strawberry\          voices\, widget\strawberry-widget.exe
+    data     %LOCALAPPDATA%\strawberry\          voices\, widget\strawberry-widget.exe, models\
     state    %LOCALAPPDATA%\strawberry\state\    tray.json, pidfiles, logs, ...
     cache    %LOCALAPPDATA%\strawberry\cache\    widget\, app-icons\ (the notifying apps' logos)
 
@@ -87,6 +88,16 @@ def data_dir() -> Path:
 def voices_dir() -> Path:
     """Piper voices (`<name>.onnx` + `.onnx.json`), unless `[speech] voices_dir` says otherwise."""
     return data_dir() / "voices"
+
+
+def models_dir() -> Path:
+    """Models that run in Strawberry's own process (not Ollama's, not whisper's Hugging Face cache)."""
+    return data_dir() / "models"
+
+
+def gate_model_dir() -> Path:
+    """The gate's embeddinggemma as ONNX (embedder.py), unless `[gate] onnx_dir` says otherwise."""
+    return models_dir() / "embeddinggemma-300m-onnx"
 
 
 def state_dir() -> Path:

@@ -71,7 +71,7 @@ async def main() -> int:
         await gate.close()
     n = len(cases)
     print(f"\nfilter {n - misses}/{n} right; gate alone {n - gate_misses}/{n} (p >= {privacy.SENSITIVE_P}); "
-          f"gate {statistics.median(latencies):.0f} ms median, {max(latencies):.0f} ms max per body ({config.gate.model})")
+          f"gate {statistics.median(latencies):.0f} ms median, {max(latencies):.0f} ms max per body ({gate.model_name})")
     return 1 if misses else 0
 
 

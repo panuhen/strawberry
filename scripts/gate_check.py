@@ -76,7 +76,7 @@ async def main() -> int:
         await gate.close()
     n = len(phrases)
     print(f"\n{n - misses}/{n} right; {statistics.median(latencies):.0f} ms median, {max(latencies):.0f} ms max per sentence "
-          f"({config.gate.model}, T={config.gate.temperature}, act>={config.gate.act}, offer>={config.gate.offer})")
+          f"({gate.model_name}, T={config.gate.temperature}, act>={config.gate.act}, offer>={config.gate.offer})")
     return 1 if misses else 0
 
 

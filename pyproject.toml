@@ -25,10 +25,14 @@ dependencies = [
     "jeepney>=0.9.0; sys_platform == 'linux'",
     "mcp>=1.2",
     "numpy>=1.26",
+    # The gate's embeddinggemma in-process (embedder.py). The CPU build on every system: onnxruntime
+    # has Linux and Windows wheels, and the GPU stays Ollama's.
+    "onnxruntime>=1.20",
     "piper-tts>=1.8.0",
     # The microphone on Windows: WASAPI through PortAudio (voice.py); its wheels carry PortAudio.
     # Linux records with pw-record.
     "sounddevice>=0.5; sys_platform == 'win32'",
+    "tokenizers>=0.20",
     # Media on Windows: the System Media Transport Controls (smtc.py, doorways/smtc_watch.py).
     "winrt-runtime>=3.2; sys_platform == 'win32'",
     "winrt-Windows.Foundation>=3.2; sys_platform == 'win32'",
