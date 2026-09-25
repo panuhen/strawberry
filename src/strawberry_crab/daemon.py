@@ -18,6 +18,7 @@ from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
 from .ledger import Ledger
 from . import media, privacy
+from .outcomes import OutcomeLog
 from .reactions import decorate, is_burst
 from .speech import Speaker
 from .systemone import Gate, Route
@@ -77,6 +78,9 @@ class Daemon:
         self.vocabulary_at = 0.0
         # Her memory across turns (§8b): the last few exchanges, given to whoever answers.
         self.ledger = Ledger(self.config.actions.ledger_turns, self.config.actions.ledger_age_s)
+        # The router's learning loop, data only (§8c): each routed sentence and what came of it,
+        # in a local file, when [learning] log_outcomes is on. Off, every call is a no-op.
+        self.outcomes = OutcomeLog(self.config.learning)
         self.background_tasks: set[asyncio.Task] = set()
         # Resume from suspend (logind on the system bus; Windows' power notification): the models
         # are loaded again before the first notification needs them (wake.py, winwake.py). No bus,
@@ -106,6 +110,7 @@ class Daemon:
         await self.gate.start()
         await self.toolbox.start()
         await self.thinker.start()
+        self.outcomes.start()
         if self.config.voice.enabled and self.config.voice.hotwords and self.toolbox.servers:
             self.vocabulary_task = asyncio.get_running_loop().create_task(self._vocabulary_loop())
         if self.wake is not None:
@@ -153,6 +158,7 @@ class Daemon:
                 pass
         for task in list(self.background_tasks):
             task.cancel()
+        self.outcomes.close()
         # Each part is closed even if another one fails: an HTTP session left open is an
         # "Unclosed client session" error in the journal at exit.
         parts = [("reactor", self.reactor), ("speaker", self.speaker), ("listener", self.listener),
@@ -374,6 +380,7 @@ class Daemon:
         otherwise Qwen in her own voice with the tools (§8b). Gemma answers only if Qwen is off."""
         text = event.title
         route = await self.route(text)
+        record = self.outcomes.heard(text, route, "voice" if event.spoken else "typed")
         music = route is not None and route.topic == "music"
         if music:
             # Set before acting: the MPRIS doorway reports the new track while the skip is still
@@ -383,16 +390,21 @@ class Daemon:
         if outcome is not None:
             # A reflex: code wrote the fact, the reaction path adds the quip.
             self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
+            done_by = (getattr(self.actor, "last", None) or {}).get("server", "")
+            self.outcomes.acted(record, "reflex", outcome.ok, reflex=f"{done_by}.{route.tool}")
             performance, sent = await self.report(outcome.event(text), outcome.ok)
             self.ledger.record(text, performance.text or "", did=outcome.did)
             return performance, sent
         if route is not None and self.actor.needs_catalogue(route):
+            self.outcomes.acted(record, "no_catalogue", True)
             return await self.no_catalogue(event, route)
         if not self.thinker.enabled:
             if music:
                 self.quiet_media_until = 0.0  # Gemma cannot touch the music; it is not hers to explain
+            self.outcomes.acted(record, "chat", True)
             return await self.chat(event)
         outcome = await self.think(text, route)
+        self.outcomes.acted(record, "thinker", outcome.ok, calls=outcome.calls)
         if music and not outcome.calls:
             self.quiet_media_until = 0.0  # she only talked; a track change now is somebody else's
         elif outcome.calls:

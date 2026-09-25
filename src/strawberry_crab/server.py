@@ -159,6 +159,7 @@ async def health(request: web.Request) -> web.Response:
             "tools": daemon.toolbox.stats(),
             "actions": daemon.actor.stats(),
             "thinker": daemon.thinker.stats(),
+            "learning": daemon.outcomes.stats(),
             "ledger": daemon.ledger.to_list(),
             "state": daemon.current_state(),
             "rest_state": daemon.rest_state,

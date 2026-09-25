@@ -607,7 +607,7 @@ class Listener:
                 await daemon.perform(Performance(state="talking", text=DIDNT_CATCH))
                 return {"transcript": "", "seconds": rec.seconds}
             log.info("voice: heard %r in %.0f ms", text, self.last_ms)
-            performance, _sent = await daemon.handle_event(Event(source="voice", title=text))
+            performance, _sent = await daemon.handle_event(Event(source="voice", title=text, spoken=True))
             return {"transcript": text, "seconds": rec.seconds, "performance": performance.to_dict()}
         finally:
             self.phase = "idle"

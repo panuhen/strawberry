@@ -3,7 +3,7 @@ r"""Where Strawberry keeps things on disk: the XDG base directories, in one plac
     config   $XDG_CONFIG_HOME/strawberry/   (~/.config/strawberry/)        config.toml, widget.cfg
     data     $XDG_DATA_HOME/strawberry/     (~/.local/share/strawberry/)   voices/, widget/strawberry-widget
     state    $XDG_STATE_HOME/strawberry/    (~/.local/state/strawberry/)   tray.json, pidfiles, logs, token caches,
-                                                                    privacy-notice-shown
+                                                                    privacy-notice-shown, outcomes.jsonl
     cache    $XDG_CACHE_HOME/strawberry/    (~/.cache/strawberry/)         what can be made again: widget/, app-icons/
 
 An unset, empty or relative XDG variable falls back to the default, as the spec says. Nothing
@@ -111,6 +111,11 @@ def tray_state_file() -> Path:
 def privacy_notice_marker() -> Path:
     """Written once the first-run privacy note has been shown in her bubble (firstrun.py)."""
     return state_dir() / "privacy-notice-shown"
+
+
+def outcomes_file() -> Path:
+    """The learning loop's records, when `[learning] log_outcomes` is on (outcomes.py)."""
+    return state_dir() / "outcomes.jsonl"
 
 
 def systemd_user_dir() -> Path:

@@ -170,7 +170,8 @@ async def test_gate_routes_and_logs_a_request():
     assert route.kind == "request" and route.topic == "music"
     assert route.decision in ("act", "offer")
     assert set(route.answers) == {"kind", "topic", "is_urgent", "is_about_her", "has_argument", "wants_library_change", "music_tool",
-                                     "needs_catalogue"}
+                                     "needs_catalogue", "is_sensitive"}   # is_sensitive: the learning loop's guard
+    assert len(route.vector) > 0 and "vector" not in route.to_dict()
     assert route.tool == "skip" and route.tool_confidence > 0.0
     stats = gate.stats()
     assert stats["calls"] == 1 and stats["ready"] is True

@@ -7,6 +7,19 @@ package and the widget binary.
 
 ## [Unreleased]
 
+### Added
+
+- An outcome log for the router's learning loop, off by default (`[learning] log_outcomes =
+  true` turns it on). Each sentence you say or type is kept in `outcomes.jsonl` in the state
+  directory with the gate's full reading, whether a reflex or the thinker handled it (for the
+  thinker, the tool names it called, never their results), and what came of it: a correction
+  ("no, I meant…"), an undo (skip, then previous), a rephrase, a repeat, or silence. A future
+  step will tune the routing on it; nothing reads it yet. Sentences that read as private and
+  other voices in the room are never kept, no sentence goes into a log, and the file is
+  readable only by you and pruned to 30 days and 5000 records (`max_days`, `max_records`).
+  `strawberry outcomes` shows the counts and the last records, `--clear` deletes the file, and
+  `/health` has a `learning` entry. WIRING.md §8c.
+
 ## [0.2.0] - 2026-09-23
 
 Strawberry runs on Windows 10 (2004 or later) and 11, with the same package and the same

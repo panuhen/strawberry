@@ -202,6 +202,20 @@ class ThinkerConfig:
 
 
 @dataclass
+class LearningConfig:
+    """The router's learning loop, its first half: what came of each routed sentence (WIRING.md §8c).
+    Off by default: on, the sentences you say or type are kept in a local file (outcomes.py)."""
+
+    log_outcomes: bool = False     # keep routed sentences and their outcomes in <state>/outcomes.jsonl
+    max_days: int = 30             # records older than this are pruned…
+    max_records: int = 5000        # …and at most this many are kept, the newest
+    undo_s: float = 10.0           # the opposite reflex this soon after one (skip, then previous) is an undo
+    rephrase_s: float = 10.0       # a close sentence, or a correction ("no, I meant…"), this soon after is about it
+    silence_s: float = 30.0        # nothing said for this long after a sentence: the weak "that was right"
+    rephrase_similarity: float = 0.8   # cosine of the gate's two embeddings from which a sentence is a rephrase
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
@@ -214,6 +228,7 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     actions: ActionsConfig = field(default_factory=ActionsConfig)
     thinker: ThinkerConfig = field(default_factory=ThinkerConfig)
+    learning: LearningConfig = field(default_factory=LearningConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -229,6 +244,7 @@ class Config:
             "tools": asdict(self.tools),
             "actions": asdict(self.actions),
             "thinker": asdict(self.thinker),
+            "learning": asdict(self.learning),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -246,6 +262,7 @@ _SECTIONS = {
     "tools": ToolsConfig,
     "actions": ActionsConfig,
     "thinker": ThinkerConfig,
+    "learning": LearningConfig,
 }
 
 
@@ -358,6 +375,13 @@ def _validate(config: Config) -> None:
         raise ConfigError("thinker.max_tools must be >= 1 (it caps the tool schemas in the prompt)")
     if not config.thinker.acks or not all(isinstance(a, str) and a for a in config.thinker.acks):
         raise ConfigError("thinker.acks must be a non-empty list of strings")
+    learning = config.learning
+    if learning.max_days < 1 or learning.max_records < 1:
+        raise ConfigError("learning.max_days and learning.max_records must be >= 1")
+    if learning.undo_s <= 0 or learning.rephrase_s <= 0 or learning.silence_s < max(learning.undo_s, learning.rephrase_s):
+        raise ConfigError("learning.undo_s and learning.rephrase_s must be positive, and learning.silence_s at least both")
+    if not (0.0 < learning.rephrase_similarity <= 1.0):
+        raise ConfigError("learning.rephrase_similarity must be above 0 and at most 1")
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
 
     try:
@@ -417,6 +441,7 @@ def default_toml() -> str:
     d = DaemonConfig()
     n = NotificationsConfig()
     s = SpeechConfig()
+    lr = LearningConfig()
     lines = [
         "# Strawberry settings. Every key is optional; these are the defaults.",
         "# Restart the daemon after editing: bin/strawberry stop && bin/strawberry daemon",
@@ -526,6 +551,18 @@ def default_toml() -> str:
         'think = false                  # false | "low" | "medium" | true; off is fine, the gate already routed',
         'keep_alive = "30m"             # a cold load is 7-17 s; she says an acknowledgement while it happens',
         "max_tools = 30                 # more tool schemas than this and the least likely are cut (§8b)",
+        "",
+        "[learning]",
+        "# The router's learning loop, data only for now: each sentence you say or type, how the gate read",
+        "# it and what came of it (an undo, a correction, a rephrase, silence), kept on this machine in",
+        "# outcomes.jsonl in the state dir. Nothing leaves it; `strawberry outcomes` shows the file and where",
+        "# it is, `--clear` deletes it. Sensitive sentences and other voices (the TV) are never kept.",
+        f"log_outcomes = {str(lr.log_outcomes).lower()}",
+        f"max_days = {lr.max_days}                  # older records are pruned",
+        f"max_records = {lr.max_records}             # and only the newest this many are kept",
+        f"undo_s = {lr.undo_s}                  # the opposite reflex this soon after one is an undo (skip, then previous)",
+        f"rephrase_s = {lr.rephrase_s}              # a close sentence or a \"no, I meant\" this soon after is about it",
+        f"silence_s = {lr.silence_s}               # nothing said for this long afterwards counts as a weak \"right\"",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

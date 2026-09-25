@@ -34,9 +34,15 @@ def log_text(config: Config) -> str:
         reading = f'notification bodies are read (body = "{config.notifications.body}", body_apps set per app)'
     else:
         reading = "notification bodies are off by default: she reads only the app and the sender"
+    if config.learning.log_outcomes:
+        learning = (f" The sentences you say or type to her are kept with how she routed them, for the "
+                    f"learning loop, in {paths.outcomes_file()} ([learning] log_outcomes; private ones never; "
+                    f"`strawberry outcomes --clear` deletes them).")
+    else:
+        learning = " What you say to her is not stored ([learning] log_outcomes is off)."
     return (f"privacy: {reading}. Modes: off, react, glance; codes, sign-ins and bank alerts are "
             f"always dropped. Change [notifications] body in {where}. Everything runs on this "
-            f"machine; no message text is logged.")
+            f"machine; no message text is logged.{learning}")
 
 
 def bubble_text(config: Config) -> str:

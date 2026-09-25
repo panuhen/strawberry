@@ -6,7 +6,7 @@
     strawberry install         start on login (a systemd user unit for the tray; on Windows a
                                shortcut in the Startup folder)
     strawberry setup | doctor  models, voice and widget; then check it all (setupcmd.py, doctor.py)
-    strawberry status | stop | restart | config | say | listen | route | talk | ...
+    strawberry status | stop | restart | config | say | listen | route | talk | outcomes | ...
 
 The daemon itself is `strawberryd` (strawberryd.py); the by-hand tools that share its config
 (route, tools, tool, think, talk, tray) call its main() in this process. Everything else is the
@@ -1122,6 +1122,56 @@ def cmd_doctor(talk: bool) -> int:
     return doctor.main(talk_too=talk)
 
 
+def _tally(values) -> str:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return ", ".join(f"{k} {n}" for k, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))) or "none"
+
+
+def cmd_outcomes(last: int, clear: bool) -> int:
+    """The learning loop's file (WIRING.md §8c): counts per signal and the last records, or --clear.
+    Read from the disk, so it works with the daemon down; the sentences are printed here, to the
+    user who said them, and nowhere else."""
+    from .config import ConfigError, load
+    from .outcomes import read
+
+    path = paths.outcomes_file()
+    try:
+        on = load().learning.log_outcomes
+    except ConfigError as exc:
+        raise CliError(f"config error: {exc}", 2) from None
+    state = "on" if on else f"off (turn it on with [learning] log_outcomes = true in {paths.config_file()})"
+    if clear:
+        if path.exists():
+            count = len(read(path))
+            path.unlink()
+            print(f"deleted {path} ({count} record(s)); logging is {state}")
+        else:
+            print(f"nothing to delete: {path} does not exist; logging is {state}")
+        return 0
+    records = read(path) if path.exists() else []
+    print(f"{path}: {len(records)} record(s); logging is {state}")
+    if not records:
+        return 0
+    print(f"  signals  {_tally(r.get('outcome') or '?' for r in records)}")
+    print(f"  paths    {_tally(r.get('path') or '-' for r in records)}")
+    print(f"  sources  {_tally(r.get('source') or '?' for r in records)}")
+    teachers = [r["teacher"] for r in records if r.get("teacher")]
+    if teachers:
+        print(f"  teacher  {len(teachers)}: {_tally(teachers)}   (the thinker did what a reflex does)")
+    if last > 0:
+        print(f"last {min(last, len(records))}:")
+        for r in records[-last:]:
+            when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.get("ts", 0)))
+            route = r.get("route") or {}
+            how = r.get("reflex") or r.get("path") or "-"
+            after = f" {r['after_s']:.1f}s" if isinstance(r.get("after_s"), (int, float)) else ""
+            print(f"  {when}  {r.get('source', '?'):5}  {route.get('kind', '?')}/{route.get('topic', '?')} "
+                  f"{how:16} -> {r.get('outcome', '?')}{after}  {json.dumps(r.get('text', ''), ensure_ascii=False)}")
+    return 0
+
+
 # --- the command line -----------------------------------------------------------
 
 def parser() -> argparse.ArgumentParser:
@@ -1197,6 +1247,9 @@ def parser() -> argparse.ArgumentParser:
                    help="the model tier instead of the one VRAM suggests: 24gb | 16gb | 10gb | 6gb | cpu")
     p.add_argument("--no-download", action="store_true",
                    help="write the config, but pull no model and fetch no voice or widget (it names what it would)")
+    p = add("outcomes", "the learning loop's local file ([learning] log_outcomes): counts per signal, the last records")
+    p.add_argument("--last", type=int, default=10, metavar="N", help="show the last N records (default 10; 0: none)")
+    p.add_argument("--clear", action="store_true", help="delete the file")
     p = add("doctor", "check everything she needs and say how to fix what is missing (exit 1 if something is)")
     p.add_argument("--talk", action="store_true",
                    help="also time a short scripted conversation through the running daemon, per slot")
@@ -1243,6 +1296,8 @@ def dispatch(command: str, args: argparse.Namespace, extra: list[str]) -> int:
         return cmd_setup(args.yes, args.install, args.tier, download=not args.no_download)
     if command == "doctor":
         return cmd_doctor(args.talk)
+    if command == "outcomes":
+        return cmd_outcomes(args.last, args.clear)
     if command == "config":
         return cmd_config(init_only=args.init)
     if command == "widget" and (args.fetch or args.widget_version):
