@@ -38,6 +38,7 @@ from .actions import Outcome
 from .config import ThinkerConfig
 from .contract import EMOTIONS
 from .ledger import as_context
+from .logtext import line, sentence
 from .tools import Toolbox, ToolResult, ToolSpec
 
 log = logging.getLogger("strawberryd.thinker")
@@ -250,7 +251,8 @@ class Thinker:
             "asked": text, "did": outcome.did, "said": outcome.fact, "emotion": outcome.emotion, "ok": outcome.ok,
             "s": round(self.last_s, 2), "calls": [c.to_dict() | {"text": c.text[:200]} for c in outcome.calls],
         }
-        log.info("thinker: %r -> %s -> [%s] %r in %.1fs", text, outcome.did, outcome.emotion, outcome.fact, self.last_s)
+        log.info("thinker: %s -> %s -> [%s] %r in %.1fs", sentence(text), outcome.did, outcome.emotion, line(outcome.fact),
+                 self.last_s)
         return outcome
 
     def fit_prompt(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], text: str, context: str,

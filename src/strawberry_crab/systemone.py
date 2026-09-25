@@ -45,6 +45,7 @@ import aiohttp
 import numpy as np
 
 from .config import GateConfig
+from .logtext import sentence
 
 log = logging.getLogger("strawberryd.gate")
 
@@ -721,7 +722,7 @@ class Gate:
             vector, answers = await self.systemone.read(text, *self.questions, IS_SENSITIVE)
         except GateError as exc:
             self.failures += 1
-            log.warning("gate: %s; treating %r as chat", exc, text)
+            log.warning("gate: %s; treating %s as chat", exc, sentence(text))
             if isinstance(exc, GateTimeout):
                 self.warm("after a timeout")
             return None
@@ -750,7 +751,7 @@ class Gate:
         )
         self.last_route = route
         self.last_ms = ms
-        log.info("gate: %r -> %s/%s conf %.2f -> %s%s arg %.2f (%.0f ms) %s", text, route.kind, route.topic,
+        log.info("gate: %s -> %s/%s conf %.2f -> %s%s arg %.2f (%.0f ms) %s", sentence(text), route.kind, route.topic,
                  route.confidence, route.decision, f" tool {route.tool} {route.tool_confidence:.2f}" if route.tool else "",
                  route.has_argument, ms, {k: round(v, 2) for k, v in kind.probabilities.items()})
         return route

@@ -17,6 +17,7 @@ from typing import Any
 
 import aiohttp
 
+from . import logtext
 from .config import BrainConfig
 from .contract import EMOTIONS, Performance, anim_for
 from .events import MAX_LINE, Event, Reactor
@@ -290,7 +291,7 @@ class OllamaReactor:
             data = await self._ask(describe(event, context))
         except (aiohttp.ClientError, asyncio.TimeoutError, BrainError) as exc:
             self.fallbacks += 1
-            log.warning("brain: fallback after %.2fs (%s)", time.perf_counter() - started, exc)
+            log.warning("brain: fallback after %.2fs (%s)", time.perf_counter() - started, logtext.line(str(exc)))
             if isinstance(exc, asyncio.TimeoutError):
                 self.schedule_rewarm()
             return await self.fallback.react(event)
@@ -307,7 +308,7 @@ class OllamaReactor:
                 again = await self._ask(describe(event, context), avoid=stale, temperature=min(self.brain.temperature + 0.3, 1.5))
                 second = tidy(again["line"], self.brain.max_words)
                 if second and len(stale_words(second, list(self.recent))) < len(stale):
-                    log.info("brain: reworded (avoided %s): %r -> %r", stale, line, second)
+                    log.info("brain: reworded (avoided %s): %r -> %r", stale, logtext.line(line), logtext.line(second))
                     line, emotion = second, again["emotion"]
             except (aiohttp.ClientError, asyncio.TimeoutError, BrainError) as exc:
                 log.debug("brain: retry failed (%s); keeping the first line", exc)
@@ -316,5 +317,5 @@ class OllamaReactor:
             self.fallbacks += 1
             return await self.fallback.react(event)
         self.recent.append(line)
-        log.info("brain: %.2fs [%s] %s", self.last_latency, emotion, line)
+        log.info("brain: %.2fs [%s] %s", self.last_latency, emotion, logtext.line(line))
         return Performance(state="talking", anim=anim_for(emotion), text=line, emotion=emotion)

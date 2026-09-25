@@ -139,6 +139,7 @@ The settings you are most likely to change:
 | `[speech]` | `enabled`, `voice`, `quiet_hours` | her voice (off by default; the bubble always shows) |
 | `[brain]`, `[thinker]` | `reaction_model`, `action_model` | which Ollama models she uses |
 | `[tools.servers.*]` | | MCP servers; see [ADAPTERS.md](ADAPTERS.md) |
+| `[daemon]` | `log_sentences` | write what you say or type to the log (off: only its length); see [Privacy](#privacy) |
 | `[learning]` | `log_outcomes` | keep what you say and how it was routed, locally, for tuning (off); see [Privacy](#privacy) |
 
 Files she keeps: settings in `~/.config/strawberry/`, the widget binary and voices in
@@ -184,7 +185,9 @@ What she reads:
 - **Git.** Only if you run `strawberry git-hooks install`: the repository and branch name, the
   commit subject, and for a push the remote's name and the number of commits.
 
-No message text is written to any log. The first time she starts she says in her bubble that
+No message text is written to any log, and neither is what you say or type to her: the log
+says only how long a sentence was (`<sentence, 23 chars>`). `[daemon] log_sentences = true` writes
+your sentences into the log as they are, which helps when tuning how she routes them. The first time she starts she says in her bubble that
 notification bodies are off and where to change it, and logs the same note.
 
 She remembers the last few exchanges of conversation in memory, for context, and nothing more,

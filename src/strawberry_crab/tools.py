@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from .config import ToolsConfig
+from . import logtext
 
 log = logging.getLogger("strawberryd.tools")
 
@@ -263,7 +264,7 @@ class Server:
             text = text[:result_chars] + f"\n… [{len(text) - result_chars} more characters cut]"
         if not ok:
             self.failures += 1
-        log.info("tools: %s.%s(%s) -> %s in %.0f ms: %s", self.name, name, json.dumps(arguments, ensure_ascii=False)[:120],
+        log.info("tools: %s.%s(%s) -> %s in %.0f ms: %s", self.name, name, logtext.arguments(arguments),
                  "ok" if ok else "error", ms, text[:160].replace("\n", " "))
         return ToolResult(self.name, name, ok, text, ms, truncated, arguments)
 

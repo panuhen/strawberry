@@ -23,6 +23,11 @@ package and the widget binary.
   readable only by you and pruned to 30 days and 5000 records (`max_days`, `max_records`).
   `strawberry outcomes` shows the counts and the last records, `--clear` deletes the file, and
   `/health` has a `learning` entry. WIRING.md §8c.
+- `[daemon] log_sentences`, off by default. What you say or type to her is no longer written to
+  the log: the server, whisper, the gate, the reflexes, the thinker and the arguments of the
+  tool calls it fills in now log only the sentence's length (`<sentence, 23 chars>`), and her
+  lines in the log leave out the sentence she is answering. `true` logs the sentences as before,
+  for tuning the gate from the journal. `GET /config` shows it. WIRING.md §15.
 
 ### Changed
 

@@ -35,6 +35,7 @@ from .config import Config, ConfigError
 from .contract import ContractError, Performance, anim_for
 from .daemon import Daemon
 from .events import Event
+from .logtext import sentence
 
 log = logging.getLogger("strawberryd.http")
 
@@ -391,9 +392,9 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
         # so the socket keeps answering pings while Qwen thinks (the widget drops a silent socket).
         text = str(data.get("text", "")).strip()
         if text:
-            log.info("widget typed: %r", text)
+            log.info("widget typed: %s", sentence(text))
             daemon.background(daemon.handle_event(Event.from_dict({"source": "voice", "title": text})),
-                              f"typed {text[:40]!r}")
+                              f"typed {sentence(text)}")
     else:
         log.debug("widget message: %s", data)
 

@@ -31,6 +31,7 @@ from typing import Any, Awaitable, Callable
 
 from .config import ActionsConfig
 from .events import Event
+from .logtext import line, sentence
 from .systemone import Route
 from .tools import Toolbox, ToolResult
 
@@ -156,8 +157,8 @@ class Actor:
         found = self.reflex_for(route)
         if found is None:
             self.deferred += 1
-            log.info("actions: %r (%s/%s tool %s %.2f arg %.2f) is not a bare reflex; over to the thinker",
-                     text, route.kind, route.topic, route.tool or "-", route.tool_confidence, route.has_argument)
+            log.info("actions: %s (%s/%s tool %s %.2f arg %.2f) is not a bare reflex; over to the thinker",
+                     sentence(text), route.kind, route.topic, route.tool or "-", route.tool_confidence, route.has_argument)
             return None
         server, reflex = found
         started = time.perf_counter()
@@ -174,7 +175,8 @@ class Actor:
             "asked": text, "tool": route.tool, "server": server, "did": outcome.did, "fact": outcome.fact,
             "ok": outcome.ok, "ms": round(ms, 1), "calls": [c.to_dict() | {"text": c.text[:200]} for c in outcome.calls],
         }
-        log.info("actions: %r -> %s.%s: %s -> %r (%.0f ms)", text, server, route.tool, outcome.did, outcome.fact, ms)
+        log.info("actions: %s -> %s.%s: %s -> %r (%.0f ms)", sentence(text), server, route.tool, outcome.did,
+                 line(outcome.fact), ms)
         return outcome
 
     async def situation(self, topic: str | None = None) -> str:

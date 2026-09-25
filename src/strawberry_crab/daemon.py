@@ -17,7 +17,8 @@ from .contract import Performance
 from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
 from .ledger import Ledger
-from . import media, privacy
+from .logtext import sentence
+from . import logtext, media, privacy
 from .outcomes import OutcomeLog
 from .reactions import decorate, is_burst
 from .speech import Speaker
@@ -37,6 +38,7 @@ class Daemon:
                  listener: Listener | None = None, gate: Gate | None = None, toolbox: Toolbox | None = None,
                  actor: Actor | None = None, thinker: Thinker | None = None) -> None:
         self.config = config or Config()
+        logtext.configure(self.config.daemon.log_sentences)
         self.hub = WidgetHub()
         self.reactor: Reactor = reactor or self._default_reactor()
         self.speaker = speaker or Speaker(self.config.speech)
@@ -237,10 +239,11 @@ class Daemon:
         payload = performance.to_dict()
         sent = await self.hub.send(payload)
         self.performed += 1
+        logged = payload | {"text": logtext.line(payload["text"])} if "text" in payload else payload
         if sent == 0:
-            log.warning("no widget connected; dropped %s", payload)
+            log.warning("no widget connected; dropped %s", logged)
         else:
-            log.info("perform -> %d widget(s): %s", sent, payload)
+            log.info("perform -> %d widget(s): %s", sent, logged)
         return sent
 
     TRANSIENT_S = 6.0
@@ -302,7 +305,9 @@ class Daemon:
 
     async def handle_event(self, event: Event) -> tuple[Performance, int]:
         # The body is never logged: a notification's text stays out of the journal (§4).
-        log.info("event %s app=%r title=%r urgency=%s body_len=%d", event.source, event.app, event.title,
+        # A voice event's title is the user's own sentence (logtext.py, [daemon] log_sentences).
+        title = sentence(event.title) if event.source == "voice" else repr(event.title)
+        log.info("event %s app=%r title=%s urgency=%s body_len=%d", event.source, event.app, title,
                  event.urgency, len(event.body))
         if event.source == "media" and time.monotonic() < self.quiet_media_until:
             log.info("media event swallowed: she caused it (%r)", event.title)
@@ -386,6 +391,10 @@ class Daemon:
     async def handle_voice(self, event: Event) -> tuple[Performance, int]:
         """A sentence the user said or typed: the gate (§8a), a bare reflex if it is plainly one,
         otherwise Qwen in her own voice with the tools (§8b). Gemma answers only if Qwen is off."""
+        with logtext.hearing(event.title):   # her lines in the log leave it out (log_sentences)
+            return await self._handle_voice(event)
+
+    async def _handle_voice(self, event: Event) -> tuple[Performance, int]:
         text = event.title
         route = await self.route(text)
         record = self.outcomes.heard(text, route, "voice" if event.spoken else "typed")
@@ -428,8 +437,8 @@ class Daemon:
         """A request for particular music with only MPRIS to act through: her fixed line that it
         needs a music add-on, instead of a model that would claim it played something (§8b)."""
         self.quiet_media_until = 0.0   # she changed nothing; a track change now is somebody else's
-        log.info("voice: %r wants music found (needs_catalogue %.2f) and no music server is configured; "
-                 "saying so (ADAPTERS.md: adding a server)", event.title, route.catalogue)
+        log.info("voice: %s wants music found (needs_catalogue %.2f) and no music server is configured; "
+                 "saying so (ADAPTERS.md: adding a server)", sentence(event.title), route.catalogue)
         performance = decorate(event, Performance(state="talking", text=self.rng.choice(NO_CATALOGUE),
                                                   emotion="neutral"))
         sent = await self.perform(performance)
