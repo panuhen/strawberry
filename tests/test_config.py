@@ -127,6 +127,17 @@ def test_default_template_round_trips(tmp_path):
     # No MCP server ships configured; the template shows how to add one (ADAPTERS.md).
     assert config.tools.servers == {}
     assert "# [tools.servers.spotify]" in default_toml() and "ADAPTERS.md" in default_toml()
+    assert config.voice.fallback_model == ""    # CUDA out of memory: the CPU with the same size
+
+
+def test_voice_fallback_and_thinker_room(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[voice]\ndevice = "cuda"\nfallback_model = "small"\n')
+    config = load(path, env={})
+    assert config.voice.fallback_model == "small" and config.to_dict()["voice"]["fallback_model"] == "small"
+    path.write_text("[thinker]\nnum_ctx = 2048\nnum_predict = 1500\n")
+    with pytest.raises(ConfigError, match="num_predict"):
+        load(path, env={})
 
 
 def test_a_server_may_name_its_adapter(tmp_path):

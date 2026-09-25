@@ -5,7 +5,8 @@ bare `POST /listen`. One session:
 
     listening   the microphone at 16 kHz mono (pw-record on Linux, WASAPI on Windows through
                 winmic.py) until a second of silence after speech, a second poke, or max_seconds
-    thinking    faster-whisper on the CPU (the GPU stays with Ollama; `device = "cuda"` if it has room)
+    thinking    faster-whisper on the CPU (the GPU stays with Ollama; `device = "cuda"` if it has room,
+                and back to the CPU when CUDA runs out of memory: Whisper below)
     talking     the transcript enters the normal event path as source=voice, so the brain
                 answers in her voice; an empty transcript gets a fixed "didn't catch that"
 
@@ -367,28 +368,99 @@ def fetch_whisper(model: str) -> str:
         repo, allow_patterns=["config.json", "preprocessor_config.json", "model.bin", "tokenizer.json", "vocabulary.*"])
 
 
-def whisper_transcriber(voice: VoiceConfig) -> Transcriber:
-    """Load faster-whisper once; import is local so tests never need the package or a model."""
-    if voice.device in ("cuda", "auto"):
-        loaded = preload_cuda_libraries()
-        log.info("voice: CUDA libraries preloaded: %s", ", ".join(loaded) or "none found (uv sync --group gpu)")
+# How CTranslate2 (under faster-whisper) says the GPU is full: a RuntimeError from its CUDA_CHECK
+# ("CUDA failed with error " + cudaGetErrorString, which is "out of memory" for
+# cudaErrorMemoryAllocation) or its CUBLAS_CHECK ("cuBLAS failed with status " + the status name).
+# Both come from the model's constructor and from encode/generate while transcribe()'s segments
+# are read. Ollama cannot give VRAM back for whisper, so this is what a load after Qwen's gets.
+CUDA_OOM = ("CUDA failed with error out of memory", "CUBLAS_STATUS_ALLOC_FAILED")
+CPU_COMPUTE_TYPE = "int8"
+
+
+def cuda_out_of_memory(exc: BaseException) -> bool:
+    """Whether `exc` is CTranslate2 running out of GPU memory (not a missing cuBLAS, not host RAM:
+    std::bad_alloc is a MemoryError, and the CPU would not help with that)."""
+    return isinstance(exc, RuntimeError) and any(marker in str(exc) for marker in CUDA_OOM)
+
+
+def load_whisper(model: str, device: str, compute_type: str) -> Any:
+    """A faster-whisper WhisperModel; the import is local so tests never need the package."""
     from faster_whisper import WhisperModel
 
     try:
         # A cached model must not phone huggingface.co on every start (nothing leaves the machine).
-        model = WhisperModel(voice.model, device=voice.device, compute_type=voice.compute_type, local_files_only=True)
-    except Exception:  # not downloaded yet: this once, fetch it
-        model = WhisperModel(voice.model, device=voice.device, compute_type=voice.compute_type)
+        return WhisperModel(model, device=device, compute_type=compute_type, local_files_only=True)
+    except Exception as exc:  # not downloaded yet: this once, fetch it
+        if cuda_out_of_memory(exc):
+            raise                 # a download would not make room on the GPU
+        return WhisperModel(model, device=device, compute_type=compute_type)
 
-    def transcribe(audio: np.ndarray, hotwords: str = "") -> str:
+
+class Whisper:
+    """faster-whisper, loaded once, that moves to the CPU when CUDA runs out of memory.
+
+    Whisper runs in the daemon, outside Ollama, so nothing frees VRAM for it: when Qwen fills the
+    card first, a CUDA load or a transcription fails. Then the model is loaded again on the CPU
+    (`int8`; `[voice] fallback_model`, or the same size) and a failed transcription is run again
+    there, so the sentence is not lost. It stays on the CPU until the daemon restarts: going
+    back would load a second model on a card that was full a moment ago, mid-sentence.
+    """
+
+    def __init__(self, voice: VoiceConfig, construct: Callable[[str, str, str], Any] = load_whisper,
+                 cached: Callable[[str], bool | None] = whisper_cached) -> None:
+        self.voice = voice
+        self.construct = construct
+        self.cached = cached
+        self.lock = threading.Lock()
+        self.model_name, self.device, self.compute_type = voice.model, voice.device, voice.compute_type
+        self.fallback: str | None = None    # why she is on the CPU when the config said cuda; None otherwise
+        try:
+            self.model = construct(voice.model, voice.device, voice.compute_type)
+        except Exception as exc:
+            if voice.device == "cpu" or not cuda_out_of_memory(exc):
+                raise
+            self._to_cpu("loading", exc)
+
+    def _to_cpu(self, when: str, exc: BaseException) -> None:
+        size = self.voice.fallback_model or self.voice.model
+        if size != self.voice.model and self.cached(size) is False:
+            # A download now would keep the user waiting minutes for this sentence.
+            log.warning("voice: fallback_model %s is not in the cache; using %s on the CPU instead", size, self.voice.model)
+            size = self.voice.model
+        self.fallback = f"CUDA out of memory while {when}; on the CPU until the daemon restarts"
+        log.warning("voice: CUDA out of memory while %s (%s); whisper %s now runs on the CPU (%s) until the "
+                    "daemon restarts", when, exc, size, CPU_COMPUTE_TYPE)
+        self.model = None             # the CUDA model's memory goes back first
+        self.model = self.construct(size, "cpu", CPU_COMPUTE_TYPE)
+        self.model_name, self.device, self.compute_type = size, "cpu", CPU_COMPUTE_TYPE
+
+    def _transcribe(self, audio: np.ndarray, hotwords: str) -> str:
         # `hotwords` biases decoding toward these names without asserting they were said.
-        segments, _info = model.transcribe(
-            audio, language=voice.language or None, beam_size=voice.beam_size, vad_filter=True,
+        segments, _info = self.model.transcribe(
+            audio, language=self.voice.language or None, beam_size=self.voice.beam_size, vad_filter=True,
             condition_on_previous_text=False, hotwords=hotwords or None,
         )
+        # The segments are a generator: CUDA does its work (and runs out) while they are read.
         return " ".join(seg.text.strip() for seg in segments).strip()
 
-    return transcribe
+    def __call__(self, audio: np.ndarray, hotwords: str = "") -> str:
+        try:
+            return self._transcribe(audio, hotwords)
+        except Exception as exc:
+            if self.device == "cpu" or not cuda_out_of_memory(exc):
+                raise
+            with self.lock:           # the probe and a session may both be here
+                if self.device != "cpu":
+                    self._to_cpu("transcribing", exc)
+            return self._transcribe(audio, hotwords)
+
+
+def whisper_transcriber(voice: VoiceConfig) -> Transcriber:
+    """Load faster-whisper once (Whisper above: CUDA, else the CPU when the GPU is full)."""
+    if voice.device in ("cuda", "auto"):
+        loaded = preload_cuda_libraries()
+        log.info("voice: CUDA libraries preloaded: %s", ", ".join(loaded) or "none found (uv sync --group gpu)")
+    return Whisper(voice)
 
 
 def in_thread(fn: Callable[[], Any], name: str) -> asyncio.Future:
@@ -525,8 +597,8 @@ class Listener:
                 self.phase = "idle"
         self.load_s = time.perf_counter() - self.load_started
         how = {True: "downloaded and loaded", False: "loaded from the cache"}.get(downloaded[0], "loaded")
-        log.info("voice: whisper %s (%s/%s) ready in %.1fs (%s)", self.config.model, self.config.device,
-                 self.config.compute_type, self.load_s, how)
+        model, device = self.in_use()
+        log.info("voice: whisper %s (%s) ready in %.1fs (%s)", model, device, self.load_s, how)
 
     async def loaded(self) -> bool:
         """Wait for the load that start() began (the tests); True when she can listen."""
@@ -548,11 +620,22 @@ class Listener:
             return round(time.perf_counter() - self.load_started, 1)
         return round(self.load_s, 1) if self.load_s is not None else None
 
+    def in_use(self) -> tuple[str, str]:
+        """(model, device/compute_type) whisper actually runs with: the config's, unless CUDA ran
+        out of memory and Whisper moved to the CPU."""
+        t = self.transcriber
+        if isinstance(t, Whisper):
+            return t.model_name, f"{t.device}/{t.compute_type}"
+        return self.config.model, f"{self.config.device}/{self.config.compute_type}"
+
     def stats(self) -> dict[str, Any]:
+        model, device = self.in_use()
         return {
             "enabled": self.config.enabled,
-            "model": self.config.model if self.config.enabled else None,
-            "device": f"{self.config.device}/{self.config.compute_type}" if self.config.enabled else None,
+            "model": model if self.config.enabled else None,
+            "device": device if self.config.enabled else None,
+            # Why `device` is not the configured one (CUDA out of memory); None when it is.
+            "fallback": getattr(self.transcriber, "fallback", None) if self.config.enabled else None,
             "ready": self.ready,
             "reason": self.reason,
             "phase": self.phase,

@@ -64,6 +64,8 @@ class VoiceConfig:
     language: str = ""            # "" = detect; "en" pins English and is faster
     device: str = "cpu"           # keep the GPU for Ollama; "cuda" works if you have room
     compute_type: str = "int8"
+    fallback_model: str = ""      # CUDA out of memory (Qwen filled the card): whisper moves to the CPU (int8)
+                                  # with this size until a restart; "" = the same model ("small" is quicker there)
     source: str = ""              # microphone (pactl source name fragment; Windows: a fragment of the device's
                                   # name); "" = auto (see bluetooth; Windows: the default recording device)
     bluetooth: bool = True        # auto: prefer a connected Bluetooth headset's mic, switching it to its
@@ -354,6 +356,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("actions.ledger_turns >= 1 and actions.ledger_age_s > 0 are required")
     if config.thinker.max_rounds < 1 or config.thinker.timeout_s <= 0 or config.thinker.num_ctx < 1024:
         raise ConfigError("thinker.max_rounds >= 1, timeout_s > 0 and num_ctx >= 1024 are required")
+    if not (1 <= config.thinker.num_predict <= config.thinker.num_ctx // 2):
+        raise ConfigError("thinker.num_predict must be between 1 and half of num_ctx (the prompt needs the rest)")
     if config.thinker.max_tools < 1:
         raise ConfigError("thinker.max_tools must be >= 1 (it caps the tool schemas in the prompt)")
     if not config.thinker.acks or not all(isinstance(a, str) and a for a in config.thinker.acks):
@@ -479,6 +483,7 @@ def default_toml() -> str:
         'model = "small"                # tiny | base | small | medium | large-v3; small is ~460 MB, ~1 s on CPU',
         'language = ""                  # "" detects; "en" is faster and steadier',
         'device = "cpu"                 # "cuda" if the GPU has room next to Ollama',
+        'fallback_model = ""            # CUDA out of memory: the CPU with this size until a restart; "" = model',
         'source = ""                    # microphone name fragment (pactl list sources short); "" = auto',
         "bluetooth = true               # auto prefers a Bluetooth headset mic (its profile is switched while she listens)",
         "max_seconds = 15.0",
