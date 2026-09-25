@@ -37,6 +37,7 @@ from pathlib import Path
 from .config import VoiceConfig
 from .contract import Performance
 from .events import Event
+from .logtext import sentence
 
 log = logging.getLogger("strawberryd.voice")
 
@@ -689,7 +690,7 @@ class Listener:
                 self.empty += 1
                 await daemon.perform(Performance(state="talking", text=DIDNT_CATCH))
                 return {"transcript": "", "seconds": rec.seconds}
-            log.info("voice: heard %r in %.0f ms", text, self.last_ms)
+            log.info("voice: heard %s in %.0f ms", sentence(text), self.last_ms)
             performance, _sent = await daemon.handle_event(Event(source="voice", title=text, spoken=True))
             return {"transcript": text, "seconds": rec.seconds, "performance": performance.to_dict()}
         finally:

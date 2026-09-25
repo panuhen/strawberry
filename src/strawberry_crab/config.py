@@ -35,6 +35,9 @@ class DaemonConfig:
     port: int = 8770
     log_level: str = "INFO"
     warm_on_wake: bool = True      # on resume from suspend (logind), load the gate and reaction models again
+    # The user's own sentences (said or typed) in the journal: false logs "<sentence, 23 chars>" in their
+    # place (the gate, the reflexes, the thinker, whisper, tool arguments); true logs them as they were.
+    log_sentences: bool = False
 
 
 @dataclass
@@ -468,6 +471,8 @@ def default_toml() -> str:
         f"port = {d.port}",
         f'log_level = "{d.log_level}"',
         f"warm_on_wake = {str(d.warm_on_wake).lower()}            # reload the gate and reaction models after a suspend",
+        f"log_sentences = {str(d.log_sentences).lower()}          # true: what you say or type is written to the log as it is;",
+        "                               # false: only its length (\"<sentence, 23 chars>\")",
         "",
         "[brain]",
         f"enabled = {str(b.enabled).lower()}          # false: canned one-liners, no model",

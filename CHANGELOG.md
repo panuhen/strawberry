@@ -23,6 +23,11 @@ package and the widget binary.
   readable only by you and pruned to 30 days and 5000 records (`max_days`, `max_records`).
   `strawberry outcomes` shows the counts and the last records, `--clear` deletes the file, and
   `/health` has a `learning` entry. WIRING.md §8c.
+- `[daemon] log_sentences`, off by default. What you say or type to her is no longer written to
+  the log: the server, whisper, the gate, the reflexes, the thinker and the arguments of the
+  tool calls it fills in now log only the sentence's length (`<sentence, 23 chars>`), and her
+  lines in the log leave out the sentence she is answering. `true` logs the sentences as before,
+  for tuning the gate from the journal. `GET /config` shows it. WIRING.md §15.
 
 ### Changed
 
@@ -40,6 +45,12 @@ package and the widget binary.
   before, to 1e-9).
 - New dependencies: `onnxruntime` (the CPU build, Linux and Windows) and `tokenizers`; both
   were already installed through faster-whisper.
+- The daemon's port opens at once (~0.3 s) instead of after the models load (~5 s with the gate
+  in-process, more when Ollama is slow). The gate's examples, Piper's voice and the reaction
+  model's warm-up load in the background. A sentence that comes before the gate is ready waits
+  up to 2 s and is then answered as chat, a notification body waits for it as for a reload, and
+  the first line waits for Piper rather than going silent. `/health` shows `gate.starting` and
+  `speech.loading` meanwhile.
 
 ### Fixed
 
@@ -57,6 +68,13 @@ package and the widget binary.
   sentence are never cut. When those alone do not fit, the request is not sent and she says it
   was too much to hold in her head. The journal line has counts only.
 - `thinker.num_predict` is checked at start: between 1 and half of `num_ctx`.
+- `GET /health` refuses browsers like every other route (403 on an `Origin` header). It holds
+  the ledger, the user's recent sentences and her replies, and was the one route without the
+  check. One middleware does it for every route now.
+- A state change no longer cuts her voice. Any performance without audio stopped the line she
+  was saying, so the music starting mid-sentence (the media doorway's `dancing`) silenced her
+  while the bubble carried on. Now she dances to the end of the sentence; a new line, or the
+  listen hotkey, still stops it.
 
 ## [0.2.0] - 2026-09-23
 

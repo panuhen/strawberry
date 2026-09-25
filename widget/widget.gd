@@ -689,15 +689,19 @@ func perform(data: Dictionary) -> void:
 	var audio := str(data.get("audio", ""))
 	# With audio the bubble is timed to the wav; without it, to the text length (§6).
 	var duration := 0.0
+	var new_line := text != "" or audio != ""
 	if audio != "" and not is_quiet():
 		duration = speech.play_file(audio)
-	elif speech.playing:
+	elif speech.playing and (new_line or new_state == "listening"):
+		# A new line replaces the one she is saying, and listening stops it (her voice would go
+		# into the microphone). A state alone leaves it playing: the media doorway's dancing
+		# arrives whenever the music starts, and she dances to the end of her sentence.
 		speech.stop()
 
 	var icon := str(data.get("icon", ""))
 	if icon != "" and text != "":
 		badge.show_icon(icon)
-	else:
+	elif new_line:
 		badge.hide_icon()
 
 	if text != "":

@@ -5,6 +5,7 @@ STRAWBERRY_GATE_MODEL at a directory with the fp32 files (`python -m strawberry_
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tomllib
@@ -149,8 +150,8 @@ async def test_health_says_the_gate_fell_back(tmp_path, fake_ollama, aiohttp_cli
     config.thinker.enabled = False
     config.gate.onnx_dir = str(tmp_path)
     daemon = Daemon(reactor=CannedReactor(), config=config)
-    client = await aiohttp_client(create_app(daemon))
-    await daemon.start()
+    client = await aiohttp_client(create_app(daemon))       # on_startup starts the gate, in the background
+    await asyncio.wait_for(daemon.gate.starting, 5)
     gate = (await (await client.get("/health")).json())["gate"]
     assert gate["ready"] and gate["embedder"]["backend"] == "ollama"
     assert gate["embedder"]["fallback"].endswith(f"not in {tmp_path}")
