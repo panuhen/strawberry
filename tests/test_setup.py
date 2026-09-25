@@ -9,7 +9,7 @@ import tomllib
 
 import pytest
 
-from strawberry_crab import cli, paths, setupcmd, voice, widgetbin
+from strawberry_crab import cli, embedder, paths, setupcmd, voice, widgetbin
 from strawberry_crab.config import ConfigError, default_toml, load
 from tests.portable import point_dirs
 
@@ -185,6 +185,7 @@ class World:
         self.models = list(models)
         self.commands: list[list[str]] = []
         self.whisper: set[str] = set()         # the whisper models in the (fake) Hugging Face cache
+        self.gate_model: set[str] = set()      # the directories the gate's ONNX model is (faked to be) in
 
     def run(self, argv, **kwargs):
         self.commands.append(list(argv))
@@ -197,6 +198,9 @@ class World:
             return subprocess.CompletedProcess(argv, 0, "", "")
         if argv[1:4] == ["-m", "strawberry_crab.voice", "--fetch"]:
             self.whisper.add(argv[4])
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv[1:5] == ["-m", "strawberry_crab.embedder", "--fetch", "--dir"]:
+            self.gate_model.add(argv[5])
             return subprocess.CompletedProcess(argv, 0, "", "")
         if "piper.download_voices" in argv:
             directory, voice = argv[argv.index("--download-dir") + 1], argv[-1]
@@ -213,6 +217,9 @@ class World:
     def whisper_fetches(self) -> list[str]:
         return [c[4] for c in self.commands if c[1:4] == ["-m", "strawberry_crab.voice", "--fetch"]]
 
+    def gate_fetches(self) -> list[str]:
+        return [c[5] for c in self.commands if c[1:4] == ["-m", "strawberry_crab.embedder", "--fetch"]]
+
 
 @pytest.fixture
 def world(monkeypatch):
@@ -221,6 +228,7 @@ def world(monkeypatch):
     fetched = []
     monkeypatch.setattr(widgetbin, "fetch", lambda version, **kw: fetched.append(version))
     monkeypatch.setattr(voice, "whisper_cached", lambda model: model in w.whisper)
+    monkeypatch.setattr(embedder, "missing", lambda directory: [] if str(directory) in w.gate_model else ["tokenizer.json"])
     w.fetched = fetched
     return w
 
@@ -253,6 +261,8 @@ def test_yes_on_a_fresh_machine_writes_the_tested_setup_and_pulls_what_is_missin
     assert (paths.voices_dir() / "en_GB-alba-medium.onnx").is_file()
     assert world.whisper_fetches() == ["medium"]
     assert "whisper medium — ~1.5 GB, MIT (OpenAI Whisper weights, converted by Systran)" in out
+    assert world.gate_fetches() == [str(paths.gate_model_dir())]
+    assert "onnx-community/embeddinggemma-300m-ONNX, fp32 — ~1.2 GB, Gemma Terms of Use" in out
     assert world.fetched == [__import__("strawberry_crab").__version__]
     assert "setup --yes --install" in out                              # install offered, not run
     assert not list(paths.config_file().parent.glob("*.bak-*"))       # nothing to back up
@@ -267,6 +277,7 @@ def test_a_second_run_changes_nothing_and_pulls_nothing(world, monkeypatch):
     assert code == 0
     assert world.pulls() == [] and world.fetched == [__import__("strawberry_crab").__version__]
     assert world.whisper_fetches() == [] and "✓ whisper medium is in the Hugging Face cache" in out
+    assert world.gate_fetches() == [] and f"✓ it is in {paths.gate_model_dir()}" in out
     assert paths.config_file().read_text() == before
     assert "✓ strawberry-widget" in out
 
@@ -345,11 +356,32 @@ def test_no_download_writes_the_config_and_fetches_nothing(world):
     assert not (paths.voices_dir() / "en_GB-alba-medium.onnx").exists()
     assert "not pulled (--no-download); later: ollama pull embeddinggemma; ollama pull gemma3:1b" in out
     assert "not downloaded (--no-download); later: strawberry voices en_GB-alba-medium" in out
-    assert world.whisper_fetches() == []
+    assert world.whisper_fetches() == [] and world.gate_fetches() == []
     assert "not downloaded (--no-download); otherwise her first start downloads it, in the background" in out
+    assert "not downloaded (--no-download); until then the gate uses Ollama's embeddinggemma" in out
     assert f"not fetched (--no-download): {widgetbin.asset_name(__import__('strawberry_crab').__version__)}" in out
-    assert "without downloading embeddinggemma, gemma3:1b, qwen3.8:27b, en_GB-alba-medium, whisper medium, " \
-           "the widget" in out
+    assert "without downloading embeddinggemma, gemma3:1b, qwen3.8:27b, the gate's ONNX model, en_GB-alba-medium, " \
+           "whisper medium, the widget" in out
+
+
+def test_the_gate_model_goes_where_the_config_says_and_not_at_all_for_ollama(world, tmp_path):
+    paths.config_file().parent.mkdir(parents=True)
+    paths.config_file().write_text(f'[gate]\nonnx_dir = "{(tmp_path / "gemma").as_posix()}"\n')
+    code, out, _ = run_setup(world, yes=True)
+    assert code == 0, out
+    assert world.gate_fetches() == [str(tmp_path / "gemma")]
+    paths.config_file().write_text('[gate]\nembedder = "ollama"\n')
+    world.commands.clear()
+    code, out, _ = run_setup(world, yes=True)
+    assert code == 0 and world.gate_fetches() == []
+    assert 'the gate uses Ollama ([gate] embedder = "ollama"); nothing to fetch' in out
+    paths.config_file().write_text("")
+    real = world.run
+    world.run = lambda argv, **kw: (subprocess.CompletedProcess(argv, 1, "", "") if "strawberry_crab.embedder" in argv
+                                    else real(argv, **kw))
+    code, out, _ = run_setup(world, yes=True)
+    assert code == 1 and "✗ could not download the gate's model; until then the gate uses Ollama's" in out
+    assert "setup finished with 1 problem(s): gate model" in out
 
 
 def test_whisper_is_not_fetched_with_voice_off_and_a_failed_fetch_is_a_problem(world):

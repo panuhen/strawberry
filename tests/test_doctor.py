@@ -43,7 +43,7 @@ class Machine(doctor.Probes):
         self.unit_state = ("disabled", "inactive")
         self.hooks_path: str | None = None            # git config --global core.hooksPath; None: unset
         self.graph: list[dict] = []
-        self.modules = {"faster_whisper"}
+        self.modules = {"faster_whisper", "onnxruntime", "tokenizers"}
         self.cuda = 1
         self.posted: list[tuple[str, dict]] = []
         self.commands: list[list[str]] = []
@@ -116,6 +116,17 @@ def install_voice(name="en_GB-alba-medium"):
     (paths.voices_dir() / f"{name}.onnx.json").write_text("{}")
 
 
+def install_gate_model(directory=None):
+    """The gate's ONNX files at their published sizes, as sparse files: the checks read sizes only."""
+    from strawberry_crab import embedder
+
+    directory = directory or paths.gate_model_dir()
+    for name, (size, _) in embedder.FILES.items():
+        (directory / name).parent.mkdir(parents=True, exist_ok=True)
+        with (directory / name).open("wb") as f:
+            f.truncate(size)
+
+
 def install_widget(version=__version__):
     program(paths.widget_binary(), b"#!/bin/sh\n")
     paths.widget_version_file().write_text(version + "\n")
@@ -125,6 +136,7 @@ def test_a_healthy_machine_passes_and_exits_zero():
     write_config(TESTED)
     install_voice()
     install_widget()
+    install_gate_model()
     machine = Machine()
     machine.urls["http://127.0.0.1:8770/health"] = {"version": __version__, "widgets": 1, "widget_versions": [__version__],
                                                     "tempo": {"silent": True}, "tempo_age_s": 1.2}
@@ -133,6 +145,7 @@ def test_a_healthy_machine_passes_and_exits_zero():
     failed = [line for line in lines if line.startswith(FAIL)]
     assert failed == []
     assert any(line.startswith(f"{OK} model qwen3.8:27b") for line in lines)
+    assert any(line.startswith(f"{OK} gate model — embeddinggemma, ONNX on the CPU (4 threads)") for line in lines)
     assert any(line.startswith(f"{OK} daemon") for line in lines)
     for label in ("notification monitor", "MPRIS players — spotify", "systemd unit", "git hooks", "beat watcher"):
         assert any(line.startswith(f"{OK} {label}") for line in lines), label
@@ -168,6 +181,37 @@ def test_ollama_down_or_a_model_not_pulled():
     assert by_label(checks, "model gemma3:1b").fix == "ollama pull gemma3:1b (or strawberry setup)"
     config.thinker.enabled = False
     assert "model qwen3.8:27b" not in [c.label for c in doctor.check_ollama(config, machine)]
+
+
+def test_the_gate_model_in_process_or_through_ollama():
+    config = Config()
+    machine = Machine()
+    [check] = doctor.check_gate(config, machine)
+    assert check.status == WARN and "is not in" in check.detail and "falls back to embeddinggemma through Ollama" in check.detail
+    assert "strawberry setup" in check.fix
+    install_gate_model()
+    [check] = doctor.check_gate(config, machine)
+    assert check.status == OK and str(paths.gate_model_dir()) in check.detail
+    machine.modules.discard("onnxruntime")
+    [check] = doctor.check_gate(config, machine)
+    assert check.status == WARN and "onnxruntime is not importable" in check.detail
+    config.gate.embedder = "ollama"
+    [check] = doctor.check_gate(config, machine)
+    assert check.status == OK and "through Ollama" in check.detail
+    config.gate.enabled = False
+    assert doctor.check_gate(config, machine)[0].detail == "gate off in the config"
+
+
+def test_ollama_embeddinggemma_is_only_the_fallback_when_the_gate_runs_in_process():
+    config = Config()
+    machine = Machine()
+    machine.urls["http://127.0.0.1:11434/api/tags"] = {"models": [{"name": "gemma3:1b"}, {"name": "qwen3.8:27b"}]}
+    assert by_label(doctor.check_ollama(config, machine), "model embeddinggemma").status == FAIL
+    install_gate_model()
+    check = by_label(doctor.check_ollama(config, machine), "model embeddinggemma")
+    assert check.status == WARN and "gate fallback" in check.detail
+    config.gate.embedder = "ollama"
+    assert by_label(doctor.check_ollama(config, machine), "model embeddinggemma").status == FAIL
 
 
 def test_gpu_checks():
@@ -252,6 +296,12 @@ def test_daemon_check():
     assert by_label(checks, "connected widget").status == WARN
     assert by_label(checks, "daemon gate").detail == "not ready: could not embed"
     assert "daemon speech" not in [c.label for c in checks]            # off on purpose is not a problem
+    machine.urls["http://127.0.0.1:8770/health"]["gate"] = {
+        "model": "embeddinggemma", "ready": True,
+        "embedder": {"backend": "ollama", "configured": "onnx", "fallback": "tokenizer.json not in /somewhere"}}
+    checks, _ = doctor.check_daemon(config, machine)
+    fallback = by_label(checks, "daemon gate")
+    assert fallback.status == WARN and "on Ollama, not in-process: tokenizer.json not in" in fallback.detail
     machine.urls["http://127.0.0.1:8770/health"]["voice"] = {
         "enabled": True, "model": "medium", "ready": False, "phase": "loading", "load_s": 42.3,
         "reason": "loading whisper medium (first use: downloading ~1.5 GB from Hugging Face)"}

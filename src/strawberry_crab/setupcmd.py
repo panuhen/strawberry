@@ -4,15 +4,16 @@
     1. what fits: VRAM (nvidia-smi; AMD: rocm-smi or sysfs) picks a tier (the tested setup needs a
        24 GB card); every slot can be overridden; the choices go into config.toml, backed up first
     2. Ollama and the models: one licence line per model, then `ollama pull`
-    3. the Piper voice, into the voices dir
-    4. the whisper model, into the Hugging Face cache (when voice is on)
-    5. the widget binary, unless the installed one is this package's version
-    6. settings the file does not have yet, appended with their defaults
-    7. `strawberry install`, if asked (Linux: the systemd unit; Windows: the Startup shortcut)
+    3. the gate's embeddinggemma for ONNX Runtime, into the data dir (when [gate] embedder = "onnx")
+    4. the Piper voice, into the voices dir
+    5. the whisper model, into the Hugging Face cache (when voice is on)
+    6. the widget binary, unless the installed one is this package's version
+    7. settings the file does not have yet, appended with their defaults
+    8. `strawberry install`, if asked (Linux: the systemd unit; Windows: the Startup shortcut)
 
-Idempotent: a model that is there is not pulled again, a voice or a whisper model that is there
-is not downloaded, and a key already in the user's file is kept unless the user types a new value
-for it. Nothing here hosts or redistributes a model: each is downloaded by the user from its
+Idempotent: a model that is there is not pulled again, a voice, a whisper model or the gate's
+model that is there is not downloaded, and a key already in the user's file is kept unless the
+user types a new value for it. Nothing here hosts or redistributes a model: each is downloaded by the user from its
 publisher, under its own terms, and setup names them before it downloads anything.
 
 `--yes` takes every default without asking and does not run `install` unless `--install` is given.
@@ -352,6 +353,7 @@ class Setup:
         self.say("from its publisher, under its own licence, which is named before it is fetched.\n")
         values = self.step_models()
         self.step_ollama(values)
+        self.step_gate()
         self.step_voice(values)
         self.step_ears(values)
         self.step_widget()
@@ -530,8 +532,46 @@ class Setup:
             self.run(["sh", "-c", OLLAMA_INSTALL])
 
     # 3 ---------------------------------------------------------------------------
+    def step_gate(self) -> None:
+        """embeddinggemma as ONNX, for the gate in the daemon's own process (embedder.py). Without
+        it the gate runs on Ollama's embeddinggemma from step 2, ~150 ms slower a sentence."""
+        self.say("\n3. The gate's model (embeddinggemma on the CPU)")
+        from . import embedder
+        from .config import ConfigError, GateConfig, load
+
+        try:
+            gate = load(self.path).gate
+        except ConfigError:
+            gate = GateConfig()
+        if not gate.enabled:
+            self.say("  the gate is off in the config ([gate] enabled = false); nothing to fetch")
+            return
+        if gate.embedder != "onnx":
+            self.say(f'  the gate uses Ollama ([gate] embedder = "{gate.embedder}"); nothing to fetch')
+            return
+        directory = embedder.model_dir(gate.onnx_dir)
+        self.say(f"  {embedder.REPO}, fp32 — ~{embedder.SIZE}, {embedder.LICENCE}")
+        if not embedder.missing(directory):
+            self.say(f"  ✓ it is in {directory}")
+            return
+        later = "until then the gate uses Ollama's embeddinggemma, slower"
+        if not self.download:
+            self.say(f"  not downloaded (--no-download); {later}")
+            self.skipped.append("the gate's ONNX model")
+            return
+        if not self.confirm(f"  download it (~{embedder.SIZE}) into {directory}?"):
+            self.say(f"  skipped; {later}")
+            return
+        code = self.run([sys.executable, "-m", "strawberry_crab.embedder", "--fetch", "--dir", str(directory)]).returncode
+        if code == 0 and not embedder.missing(directory):
+            self.say("  ✓ the gate's model")
+        else:
+            self.say(f"  ✗ could not download the gate's model; {later}")
+            self.failures.append("gate model")
+
+    # 4 ---------------------------------------------------------------------------
     def step_voice(self, values: dict[str, Any]) -> None:
-        self.say("\n3. Her voice (Piper)")
+        self.say("\n4. Her voice (Piper)")
         from .config import ConfigError, load
         from .speech import resolve_voice
 
@@ -560,11 +600,11 @@ class Setup:
             self.say(f"  ✗ could not download {voice}")
             self.failures.append("voice")
 
-    # 4 ---------------------------------------------------------------------------
+    # 5 ---------------------------------------------------------------------------
     def step_ears(self, values: dict[str, Any]) -> None:
         """The whisper model, into the Hugging Face cache now, so that her first start is not the
         download (it happens in the background then, and she cannot listen until it is done)."""
-        self.say("\n4. Her ears (whisper)")
+        self.say("\n5. Her ears (whisper)")
         from .config import ConfigError, load
         from . import voice
 
@@ -601,9 +641,9 @@ class Setup:
             self.say(f"  ✗ could not download whisper {model}; {later}")
             self.failures.append("whisper")
 
-    # 5 ---------------------------------------------------------------------------
+    # 6 ---------------------------------------------------------------------------
     def step_widget(self) -> None:
-        self.say("\n5. The widget")
+        self.say("\n6. The widget")
         from . import __version__, widgetbin
 
         installed = widgetbin.installed_version()
@@ -625,9 +665,9 @@ class Setup:
                 self.say(f"  ✗ widget fetch failed: {exc}")
                 self.failures.append("widget")
 
-    # 6 ---------------------------------------------------------------------------
+    # 7 ---------------------------------------------------------------------------
     def step_missing(self) -> None:
-        self.say("\n6. Settings your file does not have")
+        self.say("\n7. Settings your file does not have")
         if not self.path.exists():
             return
         text = self.path.read_text(encoding="utf-8")
@@ -654,9 +694,9 @@ class Setup:
             return
         self.say(f"  ✓ appended {len(missing)} key(s)")
 
-    # 7 ---------------------------------------------------------------------------
+    # 8 ---------------------------------------------------------------------------
     def step_install(self) -> None:
-        self.say("\n7. Start on login")
+        self.say("\n8. Start on login")
         from . import cli
 
         if self.windows:
