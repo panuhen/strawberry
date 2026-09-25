@@ -21,6 +21,7 @@ def test_ledger_rolls_by_count_and_age():
     assert text.startswith("Recent exchanges (newest last):")
     assert '- 20 s ago the user said "skip this"; you did "skipped to the next track" and said "Skipped. Now X."' in text
     assert '- 0 s ago the user said "how are you"; you said "Splendid."' in text
+    assert ledger.lines() == text.split("\n")[1:]                    # what the thinker gets, oldest first
     for i in range(3):
         ledger.record(f"more {i}", "ok")
     assert [t.said for t in ledger.recent()] == ["more 0", "more 1", "more 2"]  # count cap

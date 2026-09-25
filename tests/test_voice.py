@@ -408,3 +408,151 @@ def test_windows_preloads_cublas_from_the_wheels_bin_by_path(monkeypatch, tmp_pa
     assert loaded[0] == ("dir", str(bin_dir)) and len(loaded) == 3
     assert voice.os.environ["PATH"].split(voice.os.pathsep)[:2] == [str(bin_dir), r"C:\elsewhere"]
     assert voice._preload_windows_dlls(tmp_path / "missing") == []
+
+
+# What CTranslate2 raises when the GPU is full (its CUDA_CHECK with cudaGetErrorString).
+OOM = RuntimeError("CUDA failed with error out of memory")
+
+
+class FakeSegment:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class FakeWhisperModel:
+    """A WhisperModel stand-in: `fail` is raised while the segments are read, as CTranslate2 does."""
+
+    def __init__(self, size: str, device: str, compute_type: str, fail: Exception | None = None) -> None:
+        self.size, self.device, self.compute_type, self.fail = size, device, compute_type, fail
+        self.calls = 0
+
+    def transcribe(self, audio, **kwargs):
+        self.calls += 1
+
+        def segments():
+            if self.fail is not None:
+                raise self.fail
+            yield FakeSegment(f" heard on {self.device} ")
+
+        return segments(), None
+
+
+def constructor(load_fails: Exception | None = None, transcribe_fails: Exception | None = None):
+    """(construct, built): CUDA loads raise `load_fails`, CUDA models raise `transcribe_fails`."""
+    built: list[FakeWhisperModel] = []
+
+    def construct(size, device, compute_type):
+        if device == "cuda" and load_fails is not None:
+            raise load_fails
+        model = FakeWhisperModel(size, device, compute_type, transcribe_fails if device == "cuda" else None)
+        built.append(model)
+        return model
+
+    return construct, built
+
+
+def test_cuda_out_of_memory_is_told_apart():
+    from strawberry_crab.voice import cuda_out_of_memory
+
+    assert cuda_out_of_memory(OOM)
+    assert cuda_out_of_memory(RuntimeError("cuBLAS failed with status CUBLAS_STATUS_ALLOC_FAILED"))
+    assert not cuda_out_of_memory(RuntimeError("Library libcublas.so.12 is not found or cannot be loaded"))
+    assert not cuda_out_of_memory(MemoryError("out of memory"))    # host RAM: the CPU would not help
+
+
+def test_out_of_memory_at_the_load_falls_back_to_the_cpu(caplog):
+    from strawberry_crab.voice import Whisper
+
+    construct, built = constructor(load_fails=OOM)
+    config = VoiceConfig(model="medium", device="cuda", compute_type="int8_float16", fallback_model="small")
+    with caplog.at_level("WARNING", logger="strawberryd.voice"):
+        whisper = Whisper(config, construct=construct, cached=lambda size: True)
+    assert [(m.size, m.device, m.compute_type) for m in built] == [("small", "cpu", "int8")]
+    assert (whisper.model_name, whisper.device, whisper.compute_type) == ("small", "cpu", "int8")
+    assert "while loading" in whisper.fallback and "until the daemon restarts" in whisper.fallback
+    assert whisper(np.zeros(16000, np.float32)) == "heard on cpu"
+    assert sum("CUDA out of memory" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_out_of_memory_mid_sentence_retries_it_on_the_cpu(caplog):
+    from strawberry_crab.voice import Whisper
+
+    construct, built = constructor(transcribe_fails=OOM)
+    whisper = Whisper(VoiceConfig(model="medium", device="cuda", compute_type="int8_float16"), construct=construct)
+    assert whisper.device == "cuda" and whisper.fallback is None
+    with caplog.at_level("WARNING", logger="strawberryd.voice"):
+        assert whisper(np.zeros(16000, np.float32), "Daft Punk") == "heard on cpu"   # the sentence is not lost
+        assert whisper(np.zeros(16000, np.float32)) == "heard on cpu"
+    assert [(m.size, m.device) for m in built] == [("medium", "cuda"), ("medium", "cpu")]   # same size by default
+    assert built[0].calls == 1 and built[1].calls == 2
+    assert "while transcribing" in whisper.fallback
+    assert sum("CUDA out of memory" in r.getMessage() for r in caplog.records) == 1    # logged once
+
+
+def test_other_cuda_errors_and_the_cpu_do_not_fall_back():
+    from strawberry_crab.voice import Whisper
+
+    missing = RuntimeError("Library libcublas.so.12 is not found or cannot be loaded")
+    with pytest.raises(RuntimeError, match="libcublas"):
+        Whisper(VoiceConfig(device="cuda"), construct=constructor(load_fails=missing)[0])
+    construct, built = constructor(transcribe_fails=missing)
+    whisper = Whisper(VoiceConfig(device="cuda"), construct=construct)
+    with pytest.raises(RuntimeError, match="libcublas"):
+        whisper(np.zeros(16000, np.float32))
+    assert len(built) == 1 and whisper.device == "cuda"
+
+    def cpu_fails(size, device, compute_type):
+        return FakeWhisperModel(size, device, compute_type, fail=OOM)
+
+    on_cpu = Whisper(VoiceConfig(device="cpu"), construct=cpu_fails)
+    with pytest.raises(RuntimeError):
+        on_cpu(np.zeros(16000, np.float32))
+
+
+def test_a_fallback_size_not_in_the_cache_is_not_downloaded_mid_sentence():
+    from strawberry_crab.voice import Whisper
+
+    construct, built = constructor(load_fails=OOM)
+    whisper = Whisper(VoiceConfig(model="medium", device="cuda", fallback_model="small"), construct=construct,
+                      cached=lambda size: size == "medium")
+    assert [(m.size, m.device) for m in built] == [("medium", "cpu")]
+    assert whisper.model_name == "medium"
+
+
+def test_an_out_of_memory_load_is_not_retried_as_a_download(monkeypatch):
+    faster_whisper = pytest.importorskip("faster_whisper")
+
+    from strawberry_crab.voice import load_whisper
+
+    tries = []
+
+    class Full:
+        def __init__(self, model, **kwargs):
+            tries.append(kwargs)
+            raise OOM
+
+    monkeypatch.setattr(faster_whisper, "WhisperModel", Full)
+    with pytest.raises(RuntimeError, match="out of memory"):
+        load_whisper("medium", "cuda", "int8_float16")
+    assert tries == [{"device": "cuda", "compute_type": "int8_float16", "local_files_only": True}]
+
+
+async def test_health_says_which_device_whisper_is_on_and_why(aiohttp_client):
+    from strawberry_crab.server import create_app
+    from strawberry_crab.voice import Whisper
+
+    construct, _built = constructor(transcribe_fails=OOM)
+    daemon, sink = make_daemon()
+    daemon.config.voice = VoiceConfig(enabled=True, model="medium", device="cuda", compute_type="int8_float16")
+    daemon.listener.config = daemon.config.voice
+    daemon.listener.transcriber_factory = lambda cfg: Whisper(cfg, construct=construct)
+    client = await aiohttp_client(create_app(daemon))
+    await daemon.listener.loaded()
+    health = await (await client.get("/health")).json()
+    assert health["voice"]["device"] == "cuda/int8_float16" and health["voice"]["fallback"] is None
+    await client.post("/listen")
+    await daemon.listen_task
+    assert sink.got[-1]["text"] == "You said: heard on cpu"
+    voice = (await (await client.get("/health")).json())["voice"]
+    assert voice["device"] == "cpu/int8" and voice["model"] == "medium" and voice["ready"] is True
+    assert voice["fallback"] == "CUDA out of memory while transcribing; on the CPU until the daemon restarts"

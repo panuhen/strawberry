@@ -14,6 +14,12 @@ gut-check tool choices, not puzzles. Every call is a fresh conversation bounded 
 tool rounds, truncated tool results (tools.result_chars), `num_ctx`, and one overall timeout;
 nothing accumulates across requests but the ledger.
 
+Ollama does not compress a prompt longer than `num_ctx`: it drops the oldest tokens, which are
+the system prompt, and says nothing. So every round's prompt is estimated first (`prompt_tokens`)
+and made to fit `num_ctx - num_predict` (`Thinker.fit_prompt`): the oldest ledger turns go first,
+then the tool results lose their tails; the system prompt, the tool schemas and the
+sentence are never cut, and when they alone do not fit the request fails instead.
+
 Measured on a 24 GB RTX 3090 (qwen3.8:27b Q4_K_M): cold load 7-17 s, a warm round ~2 s.
 """
 
@@ -31,6 +37,7 @@ import aiohttp
 from .actions import Outcome
 from .config import ThinkerConfig
 from .contract import EMOTIONS
+from .ledger import as_context
 from .tools import Toolbox, ToolResult, ToolSpec
 
 log = logging.getLogger("strawberryd.thinker")
@@ -107,8 +114,39 @@ def system_prompt(has_tools: bool) -> str:
     return f"{VOICE}\n\n{TOOLS_GUIDE if has_tools else NO_TOOLS}"
 
 
+def user_message(text: str, context: str, recent: list[str]) -> str:
+    """The situation, the ledger lines under their heading, then the sentence."""
+    situation = "\n".join(part for part in (context, as_context(recent)) if part)
+    return text if not situation else f"Situation: {situation}\n\nThe user says: {text}"
+
+
+# Ollama has no tokenize endpoint and no tokenizer is a dependency, so the prompt is measured in
+# characters of its JSON, which also counts the keys and quoting the chat template wraps around
+# each message. Three characters a token is on the safe side: measured on qwen3.8:27b the
+# messages are 4.1-4.5 and tool schemas ~3.7. Offering any tools at all also adds the template's
+# tool instructions, ~200 tokens whatever the schemas.
+CHARS_PER_TOKEN = 3.0
+TOOLS_TEMPLATE_TOKENS = 250
+MIN_RESULT_CHARS = 200     # a tool result is never shortened below this
+CUT = " …(cut to fit)"
+
+
+def prompt_tokens(messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> int:
+    """A conservative estimate of what Ollama will count for these messages and tool schemas."""
+    chars = len(json.dumps(messages, ensure_ascii=False))
+    extra = 0
+    if tools:
+        chars += len(json.dumps(tools, ensure_ascii=False))
+        extra = TOOLS_TEMPLATE_TOKENS
+    return int(chars / CHARS_PER_TOKEN) + extra + 1
+
+
 class ThinkerError(RuntimeError):
     pass
+
+
+class PromptTooLong(ThinkerError):
+    """Even with nothing left to trim the prompt does not fit num_ctx."""
 
 
 class Thinker:
@@ -183,19 +221,24 @@ class Thinker:
         return kept
 
     async def run(self, text: str, context: str = "", careful: bool = False, topic: str = "",
-                  tools: bool = True) -> Outcome:
+                  tools: bool = True, recent: list[str] | None = None) -> Outcome:
         """One sentence, start to finish: her reply, its mood, and whatever tools it took to get
         there. Never raises: a failure is an Outcome with ok=False and something to say about it.
-        `tools=False` offers none (the latency probe, which must not change anything)."""
+        `tools=False` offers none (the latency probe, which must not change anything). `recent`
+        is the ledger's lines, oldest first: the first thing to go when the prompt is too long."""
         self.calls += 1
         started = time.perf_counter()
         calls: list[ToolResult] = []
         try:
-            outcome = await asyncio.wait_for(self._run(text, context, calls, careful, topic, tools),
+            outcome = await asyncio.wait_for(self._run(text, context, calls, careful, topic, tools, list(recent or [])),
                                              self.config.timeout_s)
         except asyncio.TimeoutError:
             outcome = Outcome("thought about it too long", "I tried, but my thinking took too long. Sorry.", False,
                               tuple(calls), "alert")
+        except PromptTooLong as exc:
+            log.warning("thinker: %s", exc)
+            outcome = Outcome("had too much to think about", "That's more than I can hold in my head at once. Sorry.",
+                              False, tuple(calls), "alert")
         except ThinkerError as exc:
             log.warning("thinker: %s", exc)
             outcome = Outcome("tried to think", "I tried, but my thinking part is not answering.", False,
@@ -210,13 +253,53 @@ class Thinker:
         log.info("thinker: %r -> %s -> [%s] %r in %.1fs", text, outcome.did, outcome.emotion, outcome.fact, self.last_s)
         return outcome
 
+    def fit_prompt(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], text: str, context: str,
+                   recent: list[str]) -> None:
+        """Make this round's prompt fit `num_ctx`, leaving `num_predict` for the reply, in place:
+        drop the oldest ledger lines (from `recent`, so later rounds go without them too), then
+        shorten the tool results, oldest first, keeping each one's head. The system prompt, the
+        tool schemas and the sentence are never touched; if they alone are too long, PromptTooLong.
+        The log line has counts only: a tool result can carry a notification or a message."""
+        budget = self.config.num_ctx - self.config.num_predict
+        estimate = before = prompt_tokens(messages, tools)
+        if estimate <= budget:
+            return
+        turns = len(recent)
+        while estimate > budget and recent:
+            recent.pop(0)
+            messages[1]["content"] = user_message(text, context, recent)
+            estimate = prompt_tokens(messages, tools)
+        shortened = 0
+        for message in messages:
+            if estimate <= budget:
+                break
+            content = message.get("content") or ""
+            if message.get("role") != "tool" or len(content) <= MIN_RESULT_CHARS:
+                continue
+            over = int((estimate - budget) * CHARS_PER_TOKEN) + 1
+            keep = max(MIN_RESULT_CHARS, len(content) - over - len(CUT))
+            if keep >= len(content):
+                continue
+            message["content"] = content[:keep] + CUT
+            shortened += 1
+            estimate = prompt_tokens(messages, tools)
+        results = sum(1 for m in messages if m.get("role") == "tool")
+        log.info("thinker: prompt ~%d tokens is over the %d that fit (num_ctx %d - num_predict %d); dropped %d of %d "
+                 "ledger turns, shortened %d of %d tool results; now ~%d", before, budget, self.config.num_ctx,
+                 self.config.num_predict, turns - len(recent), turns, shortened, results, estimate)
+        if estimate > budget:
+            fixed = prompt_tokens(messages[:1], tools)
+            raise PromptTooLong(f"prompt does not fit: ~{estimate} tokens with nothing left to trim, {budget} fit "
+                                f"(the system prompt and {len(tools)} tool schemas alone ~{fixed}); not sent, since "
+                                "Ollama would silently drop its start")
+
     async def _run(self, text: str, context: str, calls: list[ToolResult], careful: bool, topic: str = "",
-                   use_tools: bool = True) -> Outcome:
+                   use_tools: bool = True, recent: list[str] | None = None) -> Outcome:
         specs = await self.tools(careful, topic) if use_tools else []
         tools = [s.for_ollama() for s in specs]
-        user = text if not context else f"Situation: {context}\n\nThe user says: {text}"
+        recent = recent if recent is not None else []
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt(bool(tools))},
-                                          {"role": "user", "content": user}]
+                                          {"role": "user", "content": user_message(text, context, recent)}]
         used: list[str] = []
         for round_no in range(self.config.max_rounds + 1):
             last_round = round_no == self.config.max_rounds or not tools
@@ -232,6 +315,8 @@ class Thinker:
                 payload["tools"] = tools
             elif tools:
                 messages.append({"role": "user", "content": HONEST})
+            # Every round: the last round's tool results made the prompt longer.
+            self.fit_prompt(messages, payload.get("tools") or [], text, context, recent)
             reply = await self.chat(payload)
             message = reply.get("message") or {}
             tool_calls = message.get("tool_calls") or []

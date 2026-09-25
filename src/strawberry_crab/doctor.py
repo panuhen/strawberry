@@ -721,6 +721,10 @@ def check_daemon(config, probes: Probes) -> tuple[list[Check], dict | None]:
             so_far = f", {stats['load_s']:.0f} s so far" if isinstance(stats.get("load_s"), (int, float)) else ""
             checks.append(Check(OK, "daemon voice", f"{reason or 'loading whisper'}{so_far}; she listens when it is done"))
             continue
+        if slot == "voice" and stats.get("fallback"):
+            # She still listens, slower: CUDA ran out of memory and whisper moved to the CPU.
+            checks.append(Check(WARN, "daemon voice", f"whisper {stats.get('model')} on {stats.get('device')}: "
+                                f"{stats['fallback']}", "free VRAM (or a smaller Qwen context), then strawberry restart"))
         if switched_on and stats.get("ready") is False and reason:
             checks.append(Check(WARN, f"daemon {slot}", f"not ready: {reason}", "see the journal, then strawberry restart"))
     return checks, health

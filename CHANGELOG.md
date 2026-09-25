@@ -11,6 +11,25 @@ package and the widget binary.
 
 - PROTOCOL.md: the bus protocol between the daemon and its bodies, as built (v1), and proposed
   additions (v2) for bodies other than the crab.
+- `[voice] fallback_model`: the whisper size to use on the CPU when CUDA runs out of memory (""
+  keeps the configured model; `small` is quicker on the CPU).
+
+### Fixed
+
+- Whisper on CUDA no longer stops working when the GPU is full. Ollama cannot free VRAM for
+  whisper, so when Qwen loads first a CUDA load or a transcription failed with "CUDA failed with
+  error out of memory". Whisper now moves to the CPU (`int8`) and the failed sentence is
+  transcribed again there, so it is not lost. It stays on the CPU until the daemon restarts;
+  `/health.voice` shows the device in use and `fallback` says why, the journal logs it once, and
+  `strawberry doctor` warns about it.
+- The thinker no longer sends Qwen a prompt longer than `num_ctx`. Ollama drops the oldest tokens
+  of such a prompt without an error, and those are the system prompt: her voice and the tool
+  rules. Each round's prompt is now estimated first (3 characters a token, on the safe side) and
+  trimmed to fit with `num_predict` left for the reply: the oldest ledger turns go first, then the
+  tool results are shortened, keeping their start. The system prompt, the tool schemas and the
+  sentence are never cut. When those alone do not fit, the request is not sent and she says it
+  was too much to hold in her head. The journal line has counts only.
+- `thinker.num_predict` is checked at start: between 1 and half of `num_ctx`.
 
 ## [0.2.0] - 2026-09-23
 
