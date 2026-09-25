@@ -13,7 +13,6 @@ package and the widget binary.
   additions (v2) for bodies other than the crab.
 - `[voice] fallback_model`: the whisper size to use on the CPU when CUDA runs out of memory (""
   keeps the configured model; `small` is quicker on the CPU).
-
 - An outcome log for the router's learning loop, off by default (`[learning] log_outcomes =
   true` turns it on). Each sentence you say or type is kept in `outcomes.jsonl` in the state
   directory with the gate's full reading, whether a reflex or the thinker handled it (for the
