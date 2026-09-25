@@ -57,6 +57,9 @@ package and the widget binary.
   sentence are never cut. When those alone do not fit, the request is not sent and she says it
   was too much to hold in her head. The journal line has counts only.
 - `thinker.num_predict` is checked at start: between 1 and half of `num_ctx`.
+- `GET /health` refuses browsers like every other route (403 on an `Origin` header). It holds
+  the ledger, the user's recent sentences and her replies, and was the one route without the
+  check. One middleware does it for every route now.
 
 ## [0.2.0] - 2026-09-23
 

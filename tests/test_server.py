@@ -77,6 +77,32 @@ async def test_browser_origins_are_refused_on_websocket(client):
     assert (await (await client.get("/health")).json())["widgets"] == 0
 
 
+@pytest.mark.parametrize("method, path, body", [
+    ("GET", "/health", None),         # holds the ledger: the user's recent sentences and her replies
+    ("GET", "/config", None),
+    ("POST", "/perform", {"state": "idle"}),
+    ("POST", "/event", {"source": "manual", "title": "hi"}),
+    ("POST", "/tempo", {"silent": True}),
+    ("POST", "/command", {"command": "show"}),
+    ("POST", "/listen", None),
+    ("POST", "/probe", None),
+    ("GET", "/ws", None),
+    ("GET", "/no-such-route", None),
+])
+async def test_every_route_refuses_browser_origins(client, daemon, method, path, body):
+    headers = {"Origin": "https://evil.example"}
+    if path == "/ws":
+        headers |= {"Connection": "Upgrade", "Upgrade": "websocket"}
+    response = await client.request(method, path, json=body, headers=headers)
+    assert response.status == 403
+    assert (await response.json()) == {"error": "browser origins are not accepted"}
+    assert "ledger" not in await response.text()
+    assert daemon.performed == 0 and daemon.hub.count == 0
+    # The same request without Origin gets past the check (/listen is 503 here: voice is off).
+    if path != "/ws":
+        assert (await client.request(method, path, json=body)).status in (200, 404, 503)
+
+
 async def test_perform_without_widget_is_accepted_but_reaches_nobody(client):
     response = await client.post("/perform", json={"state": "thinking"})
     assert response.status == 200

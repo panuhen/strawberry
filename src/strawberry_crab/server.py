@@ -8,7 +8,10 @@
   POST /listen   the hotkey: listen once (again = stop early)   (§7)
   POST /probe    time each model slot on fixed sentences         <- strawberry doctor --talk
   GET  /health
+  GET  /config   the effective settings
   GET  /ws       the Godot widget connects here and stays connected
+
+Every route refuses a request with a browser's Origin header (local_only).
 """
 
 from __future__ import annotations
@@ -73,7 +76,7 @@ class QuietAccessLogger(AccessLogger):
 
 
 def create_app(daemon: Daemon) -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[local_only])
     app[DAEMON] = daemon
     app.on_startup.append(_start_daemon)
     app.on_shutdown.append(_close_widgets)
@@ -118,18 +121,21 @@ def _error(message: str, status: int = 400) -> web.Response:
     return web.json_response({"error": message}, status=status)
 
 
-def _reject_browsers(request: web.Request) -> None:
-    """Local tools only. Browsers always send Origin; Godot, curl, and the doorways never do.
+@web.middleware
+async def local_only(request: web.Request, handler) -> web.StreamResponse:
+    """Local tools only, on every route. Browsers always send Origin; Godot, curl, and the
+    doorways never do.
 
-    Without this a web page could POST performances at her, or open /ws and read what
-    she is about to say, which will include notification text (WIRING.md §2).
+    Without this a web page could POST performances at her, open /ws and read what she is about
+    to say, which will include notification text, or read /health, which holds the ledger: the
+    user's recent sentences and her replies (WIRING.md §2).
     """
     if "Origin" in request.headers:
         raise web.HTTPForbidden(text=json.dumps({"error": "browser origins are not accepted"}), content_type="application/json")
+    return await handler(request)
 
 
 async def _body(request: web.Request) -> Any:
-    _reject_browsers(request)
     # Requiring the JSON content type also forces a CORS preflight, which nobody answers.
     if request.content_type != "application/json":
         raise web.HTTPUnsupportedMediaType(
@@ -172,7 +178,6 @@ async def health(request: web.Request) -> web.Response:
 
 async def config(request: web.Request) -> web.Response:
     """The effective settings: defaults merged with the file and env (WIRING.md §15)."""
-    _reject_browsers(request)
     return web.json_response(request.app[DAEMON].config.to_dict())
 
 
@@ -300,7 +305,6 @@ async def command(request: web.Request) -> web.Response:
 
 
 async def listen(request: web.Request) -> web.Response:
-    _reject_browsers(request)
     result = request.app[DAEMON].listen()
     status = 503 if "error" in result else 200
     return web.json_response(result, status=status)
@@ -315,7 +319,6 @@ async def probe(request: web.Request) -> web.Response:
     Takes no text (the sentences are Daemon.PROBE_LINES), performs nothing, and answers only a
     client on this machine even when [daemon] host is not loopback.
     """
-    _reject_browsers(request)
     if request.remote not in LOOPBACK:
         return _error("the probe is local only", 403)
     result = await request.app[DAEMON].probe()
@@ -345,7 +348,6 @@ async def event(request: web.Request) -> web.Response:
 
 
 async def websocket(request: web.Request) -> web.WebSocketResponse:
-    _reject_browsers(request)
     daemon = request.app[DAEMON]
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)

@@ -26,7 +26,7 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 |---|---|
 | Host | `[daemon] host`, default `127.0.0.1` (`config.py:34`); env `STRAWBERRYD_HOST` (`config.py:405`) |
 | Port | `[daemon] port`, default `8770` (`config.py:35`); env `STRAWBERRYD_PORT` (`config.py:407`) |
-| One port | HTTP and the websocket share it (`server.py:81-93`) |
+| One port | HTTP and the websocket share it (`server.py:84-96`) |
 | Websocket URL | `ws://127.0.0.1:8770/ws`. The widget's default is the same (`ws_client.gd:21`, `widget.gd:47`); `-- --ws=ws://host:port/ws` overrides it (`widget.gd:119-120`), and the tray passes it (`widgetbin.py:81`) |
 | Framing | one JSON object per websocket **text** frame, UTF-8, `ensure_ascii=False` (`hub.py:59`). The widget drops binary frames (`ws_client.gd:81-82`) and anything that is not a JSON object (`ws_client.gd:84-89`) |
 | Who is server | the brain. Bodies connect out and reconnect on their own |
@@ -35,46 +35,46 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 
 | Route | Body | Answer | Who calls it | Code |
 |---|---|---|---|---|
-| `POST /event` | `{source, app, title, body, urgency, category, icon}` | `{"sent": n, "performance": {…}}` | the doorways, git hooks | `server.py:336-343`, `events.py:35-58` |
-| `POST /perform` | a performance (§3) | `{"sent": n, "performance": {…}}` | the media doorways, `strawberry say`, curl, tests | `server.py:178-185` |
-| `POST /tempo` | a beat estimate (§4) | `{"sent": n}` | `doorways/beat_watch.py` | `server.py:326-333` |
-| `POST /command` | `{command, value}` (§5) | `{"sent": n, "command": {…}}` | the tray | `server.py:281-298` |
-| `POST /listen` | none | `{"listening": true}`, or `false` with `loading`/`error`/`busy`/`stopped`/`debounced`; 503 when `error` | the listen hotkey | `server.py:301-305`, `daemon.py:176-203` |
-| `POST /probe` | none | per-slot timings | `strawberry doctor --talk`; loopback clients only (403 otherwise) | `server.py:311-323` |
-| `GET /health` | – | status object (below) | the tray (every 2 s), `strawberry doctor` | `server.py:144-169` |
-| `GET /config` | – | the effective settings | inspection (curl) | `server.py:172-175` |
-| `GET /ws` | – | websocket upgrade | bodies | `server.py:346-368` |
+| `POST /event` | `{source, app, title, body, urgency, category, icon}` | `{"sent": n, "performance": {…}}` | the doorways, git hooks | `server.py:339-346`, `events.py:35-58` |
+| `POST /perform` | a performance (§3) | `{"sent": n, "performance": {…}}` | the media doorways, `strawberry say`, curl, tests | `server.py:183-190` |
+| `POST /tempo` | a beat estimate (§4) | `{"sent": n}` | `doorways/beat_watch.py` | `server.py:329-336` |
+| `POST /command` | `{command, value}` (§5) | `{"sent": n, "command": {…}}` | the tray | `server.py:286-303` |
+| `POST /listen` | none | `{"listening": true}`, or `false` with `loading`/`error`/`busy`/`stopped`/`debounced`; 503 when `error` | the listen hotkey | `server.py:306-309`, `daemon.py:176-203` |
+| `POST /probe` | none | per-slot timings | `strawberry doctor --talk`; loopback clients only (403 otherwise) | `server.py:315-326` |
+| `GET /health` | – | status object (below) | the tray (every 2 s), `strawberry doctor` | `server.py:150-175` |
+| `GET /config` | – | the effective settings | inspection (curl) | `server.py:179-181` |
+| `GET /ws` | – | websocket upgrade | bodies | `server.py:349-370` |
 
 `sent` is the number of open body sockets the message went to (`hub.py:57-71`). A 400 answer is
-`{"error": "<reason>"}` (`server.py:117-118`).
+`{"error": "<reason>"}` (`server.py:120-121`).
 
 `/health` fields: `ok`, `widgets` (open sockets), `widget_versions` (one per socket that said
 hello), `version` (the brain's), `performed`, `uptime_s`, `brain`, `speech`, `voice`, `gate`,
 `wake`, `tools`, `actions`, `thinker`, `ledger`, `state` (now; a transient older than 6 s reads as
 the resting state, `daemon.py:234-244`), `rest_state`, `tempo` (the fresh estimate or `null`),
-`tempo_age_s` (`server.py:146-168`). A body does not need `/health`; it is for the tray and
+`tempo_age_s` (`server.py:152-174`). A body does not need `/health`; it is for the tray and
 `doctor`.
 
 ### 1.2 Origin and content type
 
 - A request with an `Origin` header is refused with 403 `{"error": "browser origins are not
-  accepted"}` (`server.py:121-128`). Browsers always send `Origin`; Godot, curl and the doorways do
-  not. This applies to `/ws` (`server.py:347`), every POST that has a body (`server.py:132`),
-  `/listen`, `/probe` and `/config`. **A body must not send `Origin`** on the upgrade request.
+  accepted"}` on every route, `/ws` and `/health` included, by one middleware
+  (`server.py:124-134`, `:79`). Browsers always send `Origin`; Godot, curl and the doorways do
+  not. **A body must not send `Origin`** on the upgrade request.
 - POSTs with a body must be `Content-Type: application/json`, else 415
-  (`server.py:134-137`); a body that is not JSON is 400 (`server.py:140-141`).
+  (`server.py:140-143`); a body that is not JSON is 400 (`server.py:146-147`).
 
 ### 1.3 Liveness and reconnect
 
 | Side | Behaviour | Code |
 |---|---|---|
 | Body → brain | `{"type": "ping"}` every 5 s | `ws_client.gd:18`, `:92-94` |
-| Brain → body | `{"type": "pong"}` for each ping | `server.py:384-385` |
+| Brain → body | `{"type": "pong"}` for each ping | `server.py:386-387` |
 | Body | drops the socket and reconnects after 12 s with no frame received (any frame counts) | `ws_client.gd:19`, `:79`, `:95-96` |
 | Body | a connect attempt that stalls 12 s is dropped too | `ws_client.gd:97-100` |
-| Brain | websocket-level ping frames every 20 s (`heartbeat=20`); the socket is closed if no pong frame comes back. Godot answers them on its own; any standard websocket library does | `server.py:349` |
+| Brain | websocket-level ping frames every 20 s (`heartbeat=20`); the socket is closed if no pong frame comes back. Godot answers them on its own; any standard websocket library does | `server.py:351` |
 | Body | reconnect backoff 1 s, doubling to 8 s, reset to 1 s on a successful open | `ws_client.gd:14`, `:44-47`, `:72` |
-| Brain shutdown | every socket is closed with `1001 going away`, reason `strawberryd shutting down`, and the brain exits within 2 s | `hub.py:42-55`, `server.py:111-114`, `:460` |
+| Brain shutdown | every socket is closed with `1001 going away`, reason `strawberryd shutting down`, and the brain exits within 2 s | `hub.py:42-55`, `server.py:114-117`, `:462` |
 | Refused version | close code `4001`; the body backs off to 60 s between tries | `ws_client.gd:15-16`, `:105-110` |
 
 The widget swallows `pong` before handing messages on (`ws_client.gd:85-86`).
@@ -84,7 +84,7 @@ The widget swallows `pong` before handing messages on (`ws_client.gd:85-86`).
 In order, on one socket:
 
 1. The body opens `GET /ws` with no `Origin`.
-2. **The brain sends catch-up messages at once, before any hello arrives** (`server.py:353-358`):
+2. **The brain sends catch-up messages at once, before any hello arrives** (`server.py:355-360`):
    - `{"state": "<rest_state>"}` if the resting state is not `idle` (music is playing);
    - `{"tempo": {…}}` if a beat estimate arrived in the last 6 s (`daemon.py:246-251`).
 3. The body sends its hello (§2.1).
@@ -92,7 +92,7 @@ In order, on one socket:
    the body may send `ping` and `heard`.
 
 A socket that never says hello is still served: it gets every broadcast and may send `heard`
-(`server.py:371-395`, `hub.py:57-71`).
+(`server.py:373-397`, `hub.py:57-71`).
 
 ### 2.1 `hello` (body → brain)
 
@@ -103,12 +103,12 @@ A socket that never says hello is still served: it gets every broadcast and may 
 | Field | Type | Meaning |
 |---|---|---|
 | `type` | `"hello"` | |
-| `client` | string | the body's name. Logged only (`server.py:381`) |
+| `client` | string | the body's name. Logged only (`server.py:383`) |
 | `version` | string | the body's release version, `MAJOR.MINOR[.PATCH]` with an optional `v`, or `"dev"` for a source run (`paths.gd:140-142`) |
 | `godot` | string | engine version. Logged only |
 
 Sent by `ws_client.gd:75-76` on every open. The brain compares `version` with its own package
-version (`server.py:48-58`, `:413-427`):
+version (`server.py:51-61`, `:415-429`):
 
 | verdict | when | what the brain does |
 |---|---|---|
@@ -122,7 +122,7 @@ On `4001` the widget shows `My daemon and I don't match (<reason>). Update one o
 (`widget.gd:629-633`) and retries every 60 s.
 
 After a hello that is not refused, the brain may send the one-time privacy note as a performance
-(`server.py:382-383`, `:398-410`).
+(`server.py:384-385`, `:400-412`).
 
 ## 3. Performances (brain → body)
 
@@ -199,15 +199,15 @@ From `widget.gd:661-712`:
 | Thinker started | `{"state":"thinking","emotion":"neutral"}`, then after `ack_after_s` `{"state":"thinking","text":"On it.",…}`, then `"Still on it."` | `daemon.py:434-440` |
 | Whisper still loading | `{"state":"talking","text":"<ears loading line>",…}` | `daemon.py:185` |
 | Media doorways | `POST /perform {"state":"dancing"}` / `{"state":"idle"}` | `doorways/mpris_watch.py:189`, `doorways/smtc_watch.py:186` |
-| Catch-up on connect | `{"state":"dancing"}` | `server.py:353-355` |
-| First-run privacy note | `{"state":"talking","reaction":"wave","anim":"notify_perk","emotion":"happy","text":…}` | `server.py:408-410` |
+| Catch-up on connect | `{"state":"dancing"}` | `server.py:355-357` |
+| First-run privacy note | `{"state":"talking","reaction":"wave","anim":"notify_perk","emotion":"happy","text":…}` | `server.py:410-412` |
 
 ## 4. `tempo` (brain → body)
 
 The beat watcher posts an estimate to `POST /tempo` every 2 s; the brain validates it
-(`server.py:188-228`), keeps it, and forwards it to every body wrapped in a `tempo` key
+(`server.py:193-233`), keeps it, and forwards it to every body wrapped in a `tempo` key
 (`daemon.py:253-257`). A body that connects while an estimate is fresh (6 s) gets it at once
-(`server.py:356-358`).
+(`server.py:358-360`).
 
 ```json
 {"tempo": {"bpm": 128.4, "period_s": 0.467, "confidence": 0.71, "next_beat": 1789935826.592,
@@ -216,7 +216,7 @@ The beat watcher posts an estimate to `POST /tempo` every 2 s; the brain validat
 
 or `{"tempo": {"silent": true}}` when nothing plays.
 
-| Field | Type | Range (`server.py:188-197`) | Meaning |
+| Field | Type | Range (`server.py:193-202`) | Meaning |
 |---|---|---|---|
 | `bpm` | number | 30–300 | tempo |
 | `period_s` | number | 0.2–2.0 | seconds per beat |
@@ -226,7 +226,7 @@ or `{"tempo": {"silent": true}}` when nothing plays.
 | `low_ratio` | number | 0–1 | share of energy below 150 Hz |
 | `density` | number | 0–60 | onsets per second |
 | `loudness_db` | number | −120–10 | the player's stream level |
-| `steady` | boolean, optional | – | the tempo has held; missing means `true` (`server.py:202`, `dance_style.gd:92`) |
+| `steady` | boolean, optional | – | the tempo has held; missing means `true` (`server.py:207`, `dance_style.gd:92`) |
 | `silent` | `true` | – | alone: nothing plays; all other fields absent |
 
 The body computes the beat phase itself every frame from its own wall clock:
@@ -237,8 +237,8 @@ All fields are required except `steady`; unknown fields are refused at `/tempo`.
 ## 5. Commands (brain → body)
 
 The tray posts `POST /command {"command": …, "value": …}`; the brain checks the name and the
-value's type (`server.py:233-278`) and broadcasts `{"command": name[, "value": v]}`
-(`server.py:296`). **No `type` field**: a body recognises it by the `command` key, which is checked
+value's type (`server.py:238-283`) and broadcasts `{"command": name[, "value": v]}`
+(`server.py:301`). **No `type` field**: a body recognises it by the `command` key, which is checked
 first (`widget.gd:650-652`).
 
 ```json
@@ -262,18 +262,18 @@ first (`widget.gd:650-652`).
 | `sleep_after` | number ≥ 0 | minutes of quiet before sleep; 0 = never |
 
 `reload_notifications` (no value) is the brain's own and is never sent to a body
-(`server.py:250-252`, `:288-295`). An unknown command reaching the widget is logged and ignored
+(`server.py:255-257`, `:293-300`). An unknown command reaching the widget is logged and ignored
 (`widget.gd:762-763`).
 
 ## 6. Messages a body sends
 
 | Message | Fields | Brain's handling | Code |
 |---|---|---|---|
-| `{"type":"hello",…}` | §2.1 | version check, privacy note | `server.py:380-383` |
-| `{"type":"ping"}` | – | answers `{"type":"pong"}` | `server.py:384-385` |
-| `{"type":"heard","text":"…"}` | `text`: string, the sentence the user typed | trimmed; empty ignored; becomes `Event(source="voice", title=text)` and runs the same funnel as a spoken sentence, in the background | `server.py:386-393`, sent by `widget.gd:411-417` |
-| anything else | – | logged at DEBUG, ignored | `server.py:394-395` |
-| not JSON | – | logged at DEBUG, ignored | `server.py:376-378` |
+| `{"type":"hello",…}` | §2.1 | version check, privacy note | `server.py:382-385` |
+| `{"type":"ping"}` | – | answers `{"type":"pong"}` | `server.py:386-387` |
+| `{"type":"heard","text":"…"}` | `text`: string, the sentence the user typed | trimmed; empty ignored; becomes `Event(source="voice", title=text)` and runs the same funnel as a spoken sentence, in the background | `server.py:388-395`, sent by `widget.gd:411-417` |
+| anything else | – | logged at DEBUG, ignored | `server.py:396-397` |
+| not JSON | – | logged at DEBUG, ignored | `server.py:378-380` |
 
 `heard` text is cut to 2000 characters by `Event.from_dict` (`events.py:17`, `:45-51`). The answer
 to it comes back as ordinary performances; there is no reply addressed to the sender.
@@ -290,20 +290,19 @@ In this order (`widget.gd:649-659`, `ws_client.gd:85`):
 
 ## 8. Things found in the code that a body author should know
 
-These are v1 as it stands; some are gaps, noted for fixing.
+These are v1 as it stands; some are gaps, noted for fixing. The numbers stay when one is fixed.
 
-1. **`/health` does not check `Origin`** (`server.py:144-169`). WIRING §2 says every route refuses
-   browsers, and `/health` includes the ledger (the user's recent sentences and her replies). A
-   browser cannot read the answer cross-origin without CORS headers, which the brain never sends,
-   so nothing leaks today, but it is the one route without the check and no test covers it.
-2. `/listen` and `/probe` do not require the JSON content type (`server.py:301-323`); WIRING §2
-   says every POST does. They take no body, so this is harmless.
+1. *Fixed 2026-09-25.* `/health` did not check `Origin`, though it holds the ledger (the user's
+   recent sentences and her replies). Every route checks it now, in one middleware (§1.2), and
+   `tests/test_server.py` asks each route with an `Origin`.
+2. `/listen` and `/probe` do not require the JSON content type (`server.py:306-326`). They take no
+   body, so this is harmless; WIRING §2 now says the rule is for POSTs with a body.
 3. **No message from the brain has a `type` except `pong`.** Bodies dispatch on which key is
    present (§7). Any new message that carries a top-level `state`, `command` or `tempo` key would be
    misread by today's widget.
-4. **Catch-up messages go out before the hello** (`server.py:353-358`), so the brain cannot tailor
+4. **Catch-up messages go out before the hello** (`server.py:355-360`), so the brain cannot tailor
    them to the body; and every socket gets every broadcast whether it said hello or not.
-5. `hello.client` and `hello.godot` are logged and never used (`server.py:381`).
+5. `hello.client` and `hello.godot` are logged and never used (`server.py:383`).
 6. `emotion` is always on the wire (`contract.py:55`), though WIRING §1 lists it as optional; the
    catch-up `{"state": …}` has none. WIRING §1 says emotion "tints bubble / picks `anim`"; the widget
    only tints; the brain picks `anim` (`contract.py:28-33`, `reactions.py:68-72`).
@@ -317,7 +316,7 @@ These are v1 as it stands; some are gaps, noted for fixing.
 10. Any performance without `audio` stops the wav that is playing (`widget.gd:694-695`). A
     `{"state": "dancing"}` from the media doorway arriving mid-line cuts her voice off while the
     bubble carries on.
-11. The typed `heard` text is written to the journal in full at INFO (`server.py:391`). It is the
+11. The typed `heard` text is written to the journal in full at INFO (`server.py:393`). It is the
     user's own sentence, not notification text, so the no-body-in-logs rule is kept, but it is the
     only place user text is logged verbatim.
 
@@ -702,7 +701,7 @@ names of entities and tools.
   families they know (an unknown `state` falls back to `idle` as v1 does, an unknown `reaction` or
   `anim` is skipped). A body must never close the socket over an unknown message.
 - **The brain ignores what it does not know**: unknown body message types are logged at DEBUG and
-  dropped, as v1 does (`server.py:394-395`); unknown fields in known types are ignored.
+  dropped, as v1 does (`server.py:396-397`); unknown fields in known types are ignored.
 - **Adding** an optional field or an enum value is not a version change; bodies must already
   ignore it. **Adding** a message family is announced in capabilities, not by a version bump.
   **Changing or removing** a field's meaning, or anything a v1 body relies on (the keys of §7, the
