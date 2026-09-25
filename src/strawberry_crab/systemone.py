@@ -2,8 +2,9 @@
 
 The shape is TypeSafe AI's (docs.typesafe.ai): a piece of *state* and a handful of typed,
 atomic *questions* answered in one go, each with probabilities and a confidence that code
-can threshold. Theirs is a hosted model; ours is `embeddinggemma` in Ollama plus labelled
-examples, which scored 16/16 on the routing bake-off at 16 ms a sentence.
+can threshold. Theirs is a hosted model; ours is `embeddinggemma` plus labelled examples, which
+scored 16/16 on the routing bake-off at 16 ms a sentence. The model runs in this process on the
+CPU (embedder.py, `[gate] embedder = "onnx"`) or in Ollama (`OllamaEmbedder`, the fallback).
 
     Choice  options, each a one-line description and a few examples -> choice, probabilities, confidence
     Score   an ordered rubric of situations                          -> score (expected level), probabilities
@@ -13,11 +14,13 @@ How: every option's examples are embedded once (as "documents"). The state is em
 per `ask` (as a "query"); an option's score is the mean cosine similarity of its two nearest
 examples, and a softmax at a low temperature turns the scores into probabilities. Confidence
 is how peaked that distribution is, `(n·p_max − 1)/(n − 1)`: 0 for a coin toss, 1 for a spike.
-Everything is pure Python; no numpy in the daemon.
+The similarities are one numpy product of the sentence with every example at once (in float64:
+the same scores the pure-Python sums gave, tests/test_systemone.py); the rest is plain Python.
 
 Measured on scripts/gate_phrases.json (34 sentences, 2026-09-21): mean-pooled centroids 29/34,
 nearest examples 32/34, nearest examples with embeddinggemma's task prefixes 34/34. One Ollama
-embedding call costs ~165 ms whatever its size, so a sentence is routed in ~170 ms.
+embedding call costs ~165 ms whatever its size, so a sentence is routed in ~170 ms; in-process
+the route is ~20 ms.
 
 The routing questions for spoken sentences (`KIND`, `TOPIC`, `IS_URGENT`, `IS_ABOUT_HER`, and the
 chained `MUSIC_TOOL` / `HAS_ARGUMENT` / `WANTS_LIBRARY_CHANGE` / `NEEDS_CATALOGUE`) live at the bottom
@@ -36,15 +39,17 @@ import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Sequence
 
 import aiohttp
+import numpy as np
 
 from .config import GateConfig
 
 log = logging.getLogger("strawberryd.gate")
 
-Embedder = Callable[[list[str]], Awaitable[list[list[float]]]]
+# texts -> one vector per text: lists of floats (Ollama) or a numpy array (embedder.py)
+Embedder = Callable[[list[str]], Awaitable[Sequence[Sequence[float]]]]
 
 
 class GateError(RuntimeError):
@@ -145,11 +150,15 @@ class Answer:
 # ----------------------------------------------------------------------------- maths
 
 
-def normalise(vector: list[float]) -> list[float]:
-    norm = math.sqrt(math.sumprod(vector, vector))
-    if norm == 0.0:
+def normalise(vectors: Sequence[Sequence[float]]) -> np.ndarray:
+    """Unit rows, in float64: a float32 embedding is widened before any sum, as Python's were."""
+    matrix = np.asarray(vectors, dtype=np.float64)
+    if matrix.ndim != 2:
+        raise GateError("embedding response was not one vector per text")
+    norms = np.sqrt(np.einsum("ij,ij->i", matrix, matrix))[:, None]
+    if (norms == 0.0).any():
         raise GateError("zero embedding")
-    return [x / norm for x in vector]
+    return matrix / norms
 
 
 def softmax(scores: list[float], temperature: float) -> list[float]:
@@ -224,23 +233,29 @@ class SystemOne:
         self.neighbours = max(1, neighbours)
         self.query_prefix = query_prefix
         self.document_prefix = document_prefix
-        self.vectors: dict[tuple[str, ...], list[list[float]]] = {}
+        # Every example's unit vector, one row each, and each option's rows in it (by its texts).
+        self.matrix = np.empty((0, 0))
+        self.rows: dict[tuple[str, ...], slice] = {}
 
     async def prepare(self, *questions: Question) -> None:
         """Embed every option's examples once. Cheap to call again: only new texts are embedded."""
-        needed = [o.texts() for q in questions for o in _options(q) if o.texts() not in self.vectors]
+        needed = list(dict.fromkeys(o.texts() for q in questions for o in _options(q) if o.texts() not in self.rows))
         if not needed:
             return
         flat = [self.document_prefix + t for texts in needed for t in texts]
-        vectors = [normalise(v) for v in await self.embed(flat)]
-        i = 0
+        vectors = await self.embed(flat)
+        if len(vectors) != len(flat):
+            raise GateError("embedding response did not match the input")
+        vectors = normalise(vectors)
+        i = len(self.matrix)
+        self.matrix = np.vstack((self.matrix, vectors)) if len(self.matrix) else vectors
         for texts in needed:
-            self.vectors[texts] = vectors[i:i + len(texts)]
+            self.rows[texts] = slice(i, i + len(texts))
             i += len(texts)
 
     @property
     def examples(self) -> int:
-        return sum(len(v) for v in self.vectors.values())
+        return len(self.matrix)
 
     async def ask(self, state: str, *questions: Question) -> dict[str, Answer]:
         return (await self.read(state, *questions))[1]
@@ -248,18 +263,20 @@ class SystemOne:
     async def read(self, state: str, *questions: Question) -> tuple[list[float], dict[str, Answer]]:
         """`ask`, with the state's normalised embedding (the learning loop compares two, outcomes.py)."""
         await self.prepare(*questions)
-        vector = normalise((await self.embed([self.query_prefix + state]))[0])
-        return vector, {q.name: self._answer(vector, q) for q in questions}
+        vector = normalise((await self.embed([self.query_prefix + state]))[:1])[0]
+        similarities = self.matrix @ vector      # the sentence against every example at once
+        return vector.tolist(), {q.name: self._answer(similarities, q) for q in questions}
 
-    def _score(self, vector: list[float], option: Option) -> float:
+    def _score(self, similarities: np.ndarray, option: Option) -> float:
         """Mean similarity of the option's nearest examples: one odd example cannot carry it."""
-        nearest = sorted((math.sumprod(vector, v) for v in self.vectors[option.texts()]), reverse=True)[: self.neighbours]
-        return sum(nearest) / len(nearest)
+        mine = similarities[self.rows[option.texts()]]
+        nearest = np.sort(mine)[::-1][: self.neighbours]
+        return float(nearest.sum() / len(nearest))
 
-    def _answer(self, vector: list[float], question: Question) -> Answer:
+    def _answer(self, similarities: np.ndarray, question: Question) -> Answer:
         options = _options(question)
-        similarities = [self._score(vector, o) for o in options]
-        probabilities = softmax(similarities, self.temperature)
+        scores = [self._score(similarities, o) for o in options]
+        probabilities = softmax(scores, self.temperature)
         by_name = {o.name: p for o, p in zip(options, probabilities)}
         conf = confidence(probabilities)
         if isinstance(question, Choice):
@@ -548,10 +565,21 @@ class Gate:
     def __init__(self, config: GateConfig, ollama_url: str = "", embedder: Embedder | None = None,
                  examples: dict[str, list[str]] | None = None) -> None:
         self.config = config
+        self.ollama_url = ollama_url
         self.embedder = embedder
-        self.owned: OllamaEmbedder | None = None
+        self.owned: Any = None           # the embedder this gate made (and starts and closes), if any
+        self.backend = "injected" if embedder is not None else ""
+        self.fallback_reason = ""        # why the ONNX backend was asked for and Ollama is used instead
         if embedder is None and config.enabled:
-            self.owned = OllamaEmbedder(config.model, ollama_url, config.timeout_s)
+            if config.embedder == "onnx":
+                # Local import: onnxruntime is loaded by start, and only for this backend.
+                from .embedder import OnnxEmbedder, model_dir
+
+                self.owned = OnnxEmbedder(model_dir(config.onnx_dir), config.onnx_threads)
+                self.backend = "onnx"
+            else:
+                self.owned = OllamaEmbedder(config.model, ollama_url, config.timeout_s)
+                self.backend = "ollama"
             self.embedder = self.owned
         self.systemone = SystemOne(self.embedder, config.temperature, config.neighbours, config.query_prefix,
                                    config.document_prefix) if self.embedder else None
@@ -579,7 +607,11 @@ class Gate:
         if not self.config.enabled or not self.systemone:
             return
         if self.owned:
-            await self.owned.start()
+            try:
+                await self.owned.start()
+            except GateError as exc:     # only the ONNX backend fails here: its files, or ONNX Runtime
+                self._fall_back(str(exc))
+                await self.owned.start()
         started = time.perf_counter()
         for attempt in (1, 2):
             try:
@@ -600,8 +632,24 @@ class Gate:
                 log.warning("gate: %s; routing every sentence to chat", self.disabled_reason)
                 return
         self.ready = True
-        log.info("gate: %s ready in %.1fs (%d examples)", self.config.model, time.perf_counter() - started,
+        log.info("gate: %s ready in %.1fs (%d examples)", self.model_name, time.perf_counter() - started,
                  self.systemone.examples)
+
+    def _fall_back(self, reason: str) -> None:
+        """The ONNX model could not be loaded: Ollama's embeddinggemma instead, and /health says why."""
+        assert self.systemone
+        self.fallback_reason = reason
+        log.warning("gate: the in-process model is not usable (%s); using %s through Ollama instead "
+                    "(strawberry setup fetches the model)", reason, self.config.model)
+        self.owned = OllamaEmbedder(self.config.model, self.ollama_url, self.config.timeout_s)
+        self.embedder = self.owned
+        self.systemone.embed = self.owned
+        self.backend = "ollama"
+
+    @property
+    def model_name(self) -> str:
+        """For the log: which model, and where it runs."""
+        return "embeddinggemma (ONNX, in-process)" if self.backend == "onnx" else self.config.model
 
     async def close(self) -> None:
         if self.warming is not None and not self.warming.done():
@@ -673,7 +721,7 @@ class Gate:
         started = time.perf_counter()
         if self.warming is not None and not self.warming.done():
             log.info("gate: %s is loading; the notification waits for it (up to %.0fs) instead of a short call",
-                     self.config.model, self.config.retry_timeout_s)
+                     self.model_name, self.config.retry_timeout_s)
             answers = await self._sensitive_after_warm(text, started)
         else:
             try:
@@ -681,7 +729,7 @@ class Gate:
             except GateTimeout as exc:
                 log.info("gate: is_sensitive timed out after %.1fs (%s); waiting up to %.0fs for %s to load, "
                          "then asking once more", time.perf_counter() - started, exc, self.config.retry_timeout_s,
-                         self.config.model)
+                         self.model_name)
                 answers = await self._sensitive_after_warm(text, started)
             except GateError as exc:
                 self.failures += 1
@@ -713,7 +761,7 @@ class Gate:
             except asyncio.TimeoutError:
                 self.failures += 1
                 log.warning("gate: %s still loading after %.1fs; the notification body counts as sensitive",
-                            self.config.model, time.perf_counter() - waited_from)
+                            self.model_name, time.perf_counter() - waited_from)
                 return None
             if not loaded:
                 self.failures += 1
@@ -763,19 +811,32 @@ class Gate:
         if not self.ready:
             self.ready = True
             self.disabled_reason = ""
-            log.info("gate: %s ready %s in %.1fs (%d examples)", self.config.model, reason,
+            log.info("gate: %s ready %s in %.1fs (%d examples)", self.model_name, reason,
                      time.perf_counter() - started, self.systemone.examples)
         else:
-            log.info("gate: %s reloaded %s in %.1fs", self.config.model, reason, time.perf_counter() - started)
+            log.info("gate: %s reloaded %s in %.1fs", self.model_name, reason, time.perf_counter() - started)
         return True
 
     async def embed_one(self, text: str) -> None:
         assert self.embedder
         await self.embedder([text])
 
+    def embedder_stats(self) -> dict[str, Any] | None:
+        """Which backend embeds (onnx | ollama | injected), what was configured, and for ONNX the
+        load time; `fallback` says why Ollama runs when ONNX was asked for."""
+        if not self.config.enabled:
+            return None
+        out: dict[str, Any] = {"backend": self.backend, "configured": self.config.embedder}
+        stats = getattr(self.owned, "stats", None)
+        if self.backend == "onnx" and stats:
+            out |= stats()
+        out["fallback"] = self.fallback_reason or None
+        return out
+
     def stats(self) -> dict[str, Any]:
         return {
             "model": self.config.model if self.config.enabled else None,
+            "embedder": self.embedder_stats(),
             "ready": self.ready,
             "calls": self.calls,
             "sensitive_calls": self.sensitive_calls,

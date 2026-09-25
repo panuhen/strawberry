@@ -295,9 +295,41 @@ def check_ollama(config, probes: Probes) -> list[Check]:
     for slot, model in models:
         if has_model(available, model):
             checks.append(Check(OK, f"model {model}", slot))
+        elif slot == "gate" and gate_runs_in_process(config):
+            checks.append(Check(WARN, f"model {model}", "gate fallback: not pulled (the gate runs in-process)",
+                                f"ollama pull {model}, for when the ONNX model cannot load"))
         else:
             checks.append(Check(FAIL, f"model {model}", f"{slot}: not pulled", f"ollama pull {model} (or strawberry setup)"))
     return checks
+
+
+def gate_runs_in_process(config) -> bool:
+    """[gate] embedder = "onnx" with its files in place: Ollama's embeddinggemma is only the fallback."""
+    from .embedder import missing, model_dir
+
+    return config.gate.enabled and config.gate.embedder == "onnx" and not missing(model_dir(config.gate.onnx_dir))
+
+
+def check_gate(config, probes: Probes) -> list[Check]:
+    """Where the gate's embeddinggemma runs. In-process (ONNX) needs onnxruntime, tokenizers and the
+    model's files; without them the gate still works, on Ollama's embeddinggemma, ~150 ms slower."""
+    if not config.gate.enabled:
+        return [Check(OK, "gate model", "gate off in the config")]
+    if config.gate.embedder != "onnx":
+        return [Check(OK, "gate model", f'{config.gate.model} through Ollama ([gate] embedder = "{config.gate.embedder}")')]
+    from .embedder import missing, model_dir
+
+    fallback = f"the gate falls back to {config.gate.model} through Ollama"
+    for module in ("onnxruntime", "tokenizers"):
+        if not probes.find_module(module):
+            return [Check(WARN, "gate model", f"{module} is not importable; {fallback}",
+                          "reinstall strawberry-crab (it is a dependency)")]
+    directory = model_dir(config.gate.onnx_dir)
+    lacking = missing(directory)
+    if lacking:
+        return [Check(WARN, "gate model", f"embeddinggemma (ONNX) is not in {directory}; {fallback}",
+                      "strawberry setup fetches it (~1.2 GB)")]
+    return [Check(OK, "gate model", f"embeddinggemma, ONNX on the CPU ({config.gate.onnx_threads} threads), {directory}")]
 
 
 def check_gpu(config, probes: Probes) -> list[Check]:
@@ -727,6 +759,10 @@ def check_daemon(config, probes: Probes) -> tuple[list[Check], dict | None]:
                                 f"{stats['fallback']}", "free VRAM (or a smaller Qwen context), then strawberry restart"))
         if switched_on and stats.get("ready") is False and reason:
             checks.append(Check(WARN, f"daemon {slot}", f"not ready: {reason}", "see the journal, then strawberry restart"))
+    embedder = (health.get("gate") or {}).get("embedder") or {}
+    if embedder.get("fallback"):
+        checks.append(Check(WARN, "daemon gate", f"on Ollama, not in-process: {embedder['fallback']}",
+                            "strawberry setup fetches the model; then strawberry restart"))
     return checks, health
 
 
@@ -789,6 +825,7 @@ def run_checks(probes: Probes | None = None) -> tuple[list[Check], Any]:
     probes = probes or Probes()
     checks, config = check_config(probes)
     checks += check_ollama(config, probes)
+    checks += check_gate(config, probes)
     checks += check_gpu(config, probes)
     checks += check_whisper(config, probes)
     checks += check_voice(config, probes)

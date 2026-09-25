@@ -24,6 +24,23 @@ package and the widget binary.
   `strawberry outcomes` shows the counts and the last records, `--clear` deletes the file, and
   `/health` has a `learning` entry. WIRING.md §8c.
 
+### Changed
+
+- The gate's embeddinggemma runs in the daemon's own process, on the CPU, through ONNX Runtime
+  (`onnx-community/embeddinggemma-300m-ONNX`, fp32): a spoken sentence is routed in ~20 ms
+  instead of ~150 ms through Ollama, with the same readings (the gate's phrase set 87/87, the
+  notification filter's 38/38). It takes ~0.8 GB of RAM and no VRAM. `[gate] embedder = "onnx"`
+  is the default; `"ollama"` keeps the old path. `onnx_dir` and `onnx_threads` (4) go with it.
+- `strawberry setup` downloads the model (~1.2 GB, from Hugging Face) into
+  `~/.local/share/strawberry/models/` (`%LOCALAPPDATA%\strawberry\models\` on Windows) as a
+  new step 3. Until it is there the gate uses Ollama's `embeddinggemma`, logs why and says so in
+  `/health` (`gate.embedder`, with the backend and its load time); the daemon never fails to
+  start over it. `strawberry doctor` says where the gate runs and warns when it fell back.
+- The gate scores the sentence against every example in one numpy product (the same scores as
+  before, to 1e-9).
+- New dependencies: `onnxruntime` (the CPU build, Linux and Windows) and `tokenizers`; both
+  were already installed through faster-whisper.
+
 ### Fixed
 
 - Whisper on CUDA no longer stops working when the GPU is full. Ollama cannot free VRAM for

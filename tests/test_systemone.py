@@ -7,13 +7,14 @@ import math
 
 import pytest
 
+from strawberry_crab import systemone
 from strawberry_crab.config import Config, ConfigError, GateConfig, _validate
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor, Event
 from strawberry_crab.server import create_app
 from strawberry_crab.systemone import (
     IS_ABOUT_HER, KIND, NEEDS_CATALOGUE, ROUTING, TOPIC, Choice, Gate, GateError, Noul, Option, Score, SystemOne, confidence, decide,
-    softmax,
+    normalise, softmax,
 )
 
 DIMS = 64
@@ -114,6 +115,53 @@ async def test_noul_is_a_probability_of_yes():
     assert answer.type == "noul"
     assert answer.score == pytest.approx(answer.probabilities["yes"])
     assert answer.score > 0.5
+
+
+class RandomEmbedder:
+    """768-d float32 vectors, as embeddinggemma gives them, the same for the same text."""
+
+    async def __call__(self, texts: list[str]):
+        import numpy as np
+
+        rows = [np.random.default_rng(int.from_bytes(hashlib.sha256(t.encode()).digest()[:8])).standard_normal(768)
+                for t in texts]
+        return np.asarray(rows, dtype=np.float32)
+
+
+def pure_python_scores(vectors: dict[str, list[list[float]]], query: list[float], neighbours: int) -> dict[str, float]:
+    """The scoring as it was before numpy (math.sumprod over lists), kept as the reference."""
+    def unit(v):
+        norm = math.sqrt(math.sumprod(v, v))
+        return [x / norm for x in v]
+
+    q = unit(query)
+    out = {}
+    for name, rows in vectors.items():
+        nearest = sorted((math.sumprod(q, unit(r)) for r in rows), reverse=True)[:neighbours]
+        out[name] = sum(nearest) / len(nearest)
+    return out
+
+
+@pytest.mark.parametrize("neighbours", [1, 2, 3])
+async def test_the_numpy_scores_are_the_pure_python_ones(neighbours):
+    """The similarities are one numpy product now; the scores, and so every probability, must be
+    what the sums over Python floats gave (to 1e-9; the gate rounds to 4 places)."""
+    embed = RandomEmbedder()
+    one = SystemOne(embed, neighbours=neighbours)
+    state = "put on some jazz"
+    answers = await one.ask(state, *ROUTING)
+    query = [float(x) for x in (await embed([state]))[0]]
+    for question in ROUTING:
+        options = systemone._options(question)
+        rows = {o.name: [[float(x) for x in v] for v in await embed(list(o.texts()))] for o in options}
+        reference = pure_python_scores(rows, query, neighbours)
+        mine = {o.name: one._score(one.matrix @ normalise([query])[0], o) for o in options}
+        for name in reference:
+            assert mine[name] == pytest.approx(reference[name], abs=1e-9)
+        want = softmax([reference[o.name] for o in options], one.temperature)
+        got = answers[question.name].probabilities
+        for option, p in zip(options, want):
+            assert got[option.name] == pytest.approx(p, abs=1e-9)
 
 
 def test_decide_thresholds_per_consequence():

@@ -137,7 +137,13 @@ class GateConfig:
     """The System One gate on spoken sentences (WIRING.md §8a)."""
 
     enabled: bool = True
-    model: str = "embeddinggemma"  # Ollama embedding model; the examples are the classifier
+    # Where embeddinggemma runs. "onnx": in the daemon's process on the CPU (embedder.py, ~20 ms a
+    # sentence); "ollama": `model` through Ollama (~170 ms). Without the ONNX files the gate falls
+    # back to Ollama and says so in /health.
+    embedder: str = "onnx"
+    onnx_dir: str = ""             # default ~/.local/share/strawberry/models/embeddinggemma-300m-onnx
+    onnx_threads: int = 4          # ONNX Runtime's threads for one call; all the cores gave a worse p95
+    model: str = "embeddinggemma"  # Ollama embedding model (embedder = "ollama", and the fallback)
     query_prefix: str = "task: classification | query: "   # embeddinggemma's prompt conventions;
     document_prefix: str = "title: none | text: "           # empty both for a model without them
     neighbours: int = 2            # an option scores the mean of its N nearest examples
@@ -151,6 +157,9 @@ class GateConfig:
     # Extra phrases per option, keyed "kind.request", "topic.music", ...; a misread sentence
     # goes here and is fixed.
     examples: dict[str, list[str]] = field(default_factory=dict)
+
+
+EMBEDDERS = ("onnx", "ollama")
 
 
 @dataclass
@@ -335,6 +344,10 @@ def _validate(config: Config) -> None:
         windows_hotkey(config.voice.hotkey)
     except ValueError as exc:
         raise ConfigError(f"voice.hotkey: {exc}") from None
+    if config.gate.embedder not in EMBEDDERS:
+        raise ConfigError("gate.embedder must be onnx or ollama")
+    if not (1 <= config.gate.onnx_threads <= 64):
+        raise ConfigError("gate.onnx_threads must be 1-64")
     if config.gate.temperature <= 0:
         raise ConfigError("gate.temperature must be positive")
     if config.gate.timeout_s <= 0 or config.gate.retry_timeout_s < 0:
@@ -518,6 +531,10 @@ def default_toml() -> str:
         "",
         "[gate]",
         "enabled = true                 # sorts what you said: chat, or a request/question for the action path",
+        'embedder = "onnx"              # onnx: embeddinggemma in this process, CPU (strawberry setup fetches it);',
+        '                               # ollama: through Ollama, and the fallback when the ONNX files are missing',
+        '# onnx_dir = "~/.local/share/strawberry/models/embeddinggemma-300m-onnx"',
+        "onnx_threads = 4               # CPU threads for one embedding",
         'model = "embeddinggemma"       # Ollama embedding model (ollama pull embeddinggemma)',
         "act = 0.6                      # confidence at which a plain command may fire a reflex",
         "offer = 0.3                    # below act: a label in the journal; the sentence goes to the thinker",

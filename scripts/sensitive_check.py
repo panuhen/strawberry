@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the sensitive-body filter over scripts/sensitive_phrases.json against live Ollama (WIRING.md §4).
+"""Run the sensitive-body filter over scripts/sensitive_phrases.json on the configured embedder (WIRING.md §4).
 
 The filter is what the daemon runs before a notification body reaches the model: the patterns
 (src/strawberry_crab/privacy.py), then IS_SENSITIVE on the gate. Prints every miss, then the tally for the
@@ -71,7 +71,7 @@ async def main() -> int:
         await gate.close()
     n = len(cases)
     print(f"\nfilter {n - misses}/{n} right; gate alone {n - gate_misses}/{n} (p >= {privacy.SENSITIVE_P}); "
-          f"gate {statistics.median(latencies):.0f} ms median, {max(latencies):.0f} ms max per body ({config.gate.model})")
+          f"gate {statistics.median(latencies):.0f} ms median, {max(latencies):.0f} ms max per body ({gate.model_name})")
     return 1 if misses else 0
 
 

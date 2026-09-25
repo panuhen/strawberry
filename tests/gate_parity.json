@@ -1,0 +1,83 @@
+{
+ "source": "Ollama's embeddinggemma (/api/embed), 2026-09-25, with the gate's prefixes; rounded to 6 places",
+ "queries": [
+  "skip this song",
+  "what's on my calendar tomorrow",
+  "how are you doing today",
+  "put on some Nina Simone",
+  "Your verification code is 482913",
+  "turn it down a bit"
+ ],
+ "documents": [
+  "play the next one",
+  "pause the music",
+  "when is my next meeting",
+  "you're adorable",
+  "play some jazz",
+  "Use this code to sign in. Do not share it with anyone.",
+  "Build passed on main",
+  "quieter"
+ ],
+ "similarities": [
+  [
+   0.553759,
+   0.486456,
+   0.065641,
+   0.159767,
+   0.372484,
+   0.089366,
+   0.213715,
+   0.243706
+  ],
+  [
+   0.174593,
+   0.006822,
+   0.632404,
+   0.120338,
+   0.145861,
+   0.073259,
+   0.144637,
+   0.061361
+  ],
+  [
+   0.122754,
+   0.146237,
+   0.26508,
+   0.312298,
+   0.260076,
+   0.081783,
+   0.233064,
+   0.23538
+  ],
+  [
+   0.52149,
+   0.377677,
+   0.055427,
+   0.169065,
+   0.629255,
+   0.113004,
+   0.146124,
+   0.219222
+  ],
+  [
+   0.138229,
+   0.142122,
+   0.181959,
+   0.242314,
+   0.193739,
+   0.453822,
+   0.26617,
+   0.189367
+  ],
+  [
+   0.18407,
+   0.393722,
+   0.077281,
+   0.195264,
+   0.293092,
+   0.101531,
+   0.18788,
+   0.689206
+  ]
+ ]
+}

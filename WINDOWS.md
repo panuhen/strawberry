@@ -9,8 +9,9 @@ left. `WIRING.md` has the details of every part on both systems; `README.md` has
 Most of the system has nothing Linux-specific in it and is shared as it is:
 
 - the daemon (`strawberryd`): HTTP and websocket on 127.0.0.1, the event contract, the reactor;
-- the models through Ollama: the gate (`systemone.py`, embeddinggemma), the reaction voice
-  (gemma3:1b), the thinker and its MCP tools;
+- the models through Ollama: the reaction voice (gemma3:1b), the thinker and its MCP tools; and
+  the gate (`systemone.py`, embeddinggemma), in-process through onnxruntime's CPU wheel
+  (`embedder.py`; not yet run on Windows) or through Ollama;
 - the privacy rules (`privacy.py`), the ledger, persona, actions and adapters;
 - Piper for speech and faster-whisper for recognition (both have Windows wheels);
 - the widget's Godot project, and its protocol with the daemon;

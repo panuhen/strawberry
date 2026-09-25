@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the gate over scripts/gate_phrases.json against live Ollama (WIRING.md §8a).
+"""Run the gate over scripts/gate_phrases.json on the configured embedder (WIRING.md §8a).
 
 Prints every miss with its probabilities, then the tally and the per-sentence latency.
 Exit code 1 on any miss, so it can sit in the acceptance run once a model is present.
@@ -76,7 +76,7 @@ async def main() -> int:
         await gate.close()
     n = len(phrases)
     print(f"\n{n - misses}/{n} right; {statistics.median(latencies):.0f} ms median, {max(latencies):.0f} ms max per sentence "
-          f"({config.gate.model}, T={config.gate.temperature}, act>={config.gate.act}, offer>={config.gate.offer})")
+          f"({gate.model_name}, T={config.gate.temperature}, act>={config.gate.act}, offer>={config.gate.offer})")
     return 1 if misses else 0
 
 
