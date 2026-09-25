@@ -140,11 +140,11 @@ One JSON object per performance. **It has no `type` field**: a body recognises i
 |---|---|---|---|---|
 | `state` | always | string | `idle` `listening` `thinking` `talking` `dancing` (`contract.py:15-21`) | the looping state. `idle` and `dancing` are **resting** states the body returns to; the others are transients |
 | `emotion` | always from `to_dict`; absent in the catch-up message | string | `neutral` `happy` `alert` `angry` (`contract.py:25`) | the widget uses it only to tint the bubble (`widget.gd:669`, `bubble.gd:8-13`, `:50`). The brain has already picked `anim` from it (`contract.py:28-33`) |
-| `anim` | optional | string | `alert_snap` `notify_perk` (`contract.py:22`) | a one-shot clip over the state; the state's loop resumes when it ends (`widget.gd:672-677`, `:783-790`) |
+| `anim` | optional | string | `alert_snap` `notify_perk` (`contract.py:22`) | a one-shot clip over the state; the state's loop resumes when it ends (`widget.gd:672-677`, `:787-794`) |
 | `text` | optional | string, trimmed, never empty | – | the speech-bubble line. Omitted: no bubble (`contract.py:58-59`) |
 | `audio` | optional | string | an absolute path to a wav on the brain's disk | play it and time the bubble to it (§3.2). Omitted: silent |
 | `reaction` | optional | string | `wave` `peek` `shiver` `double_hop` `nod` (`contract.py:24`) | a procedural move layered over the clip (`widget/reactions.gd`). `double_hop` also plays `notify_perk` twice (`widget.gd:679-684`) |
-| `icon` | optional | string | an absolute path to a PNG, JPG or SVG | the notifying app's icon beside the bubble; shown only when `text` is present (`widget.gd:697-701`, `badge.gd:15`) |
+| `icon` | optional | string | an absolute path to a PNG, JPG or SVG | the notifying app's icon beside the bubble; shown only when `text` is present (`widget.gd:701-705`, `badge.gd:15`) |
 | `hop` | optional, only `true` | boolean | `true` | the window itself bounces (`widget.gd:685-686`, `:596-606`) |
 
 Optional fields are omitted, never `null`. `POST /perform` rejects unknown fields, unknown values,
@@ -155,17 +155,17 @@ never read.
 
 ### 3.1 What the widget does on receipt
 
-From `widget.gd:661-712`:
+From `widget.gd:661-716`:
 
 1. If she is asleep, the performance is held (only the newest one is kept), a resting `state` is
    remembered, and she wakes; it is performed when the wake clip ends (`sleep_controller.gd:111-121`,
    `:127-135`). Tempo and commands are never held.
-2. Apply `state` (`widget.gd:765-772`): crossfade to its loop; `idle`/`dancing` become the resting
+2. Apply `state` (`widget.gd:769-776`): crossfade to its loop; `idle`/`dancing` become the resting
    state.
 3. Fire `anim`, `reaction`, `hop`.
 4. Audio and bubble (§3.2).
 5. When the bubble finishes and the state is still `talking`, return to the resting state
-   (`widget.gd:792-797`). **The brain never sends a follow-up** to end a line.
+   (`widget.gd:796-801`). **The brain never sends a follow-up** to end a line.
 
 ### 3.2 How `audio` is delivered and how the bubble is timed
 
@@ -179,15 +179,18 @@ From `widget.gd:661-712`:
   synthesis (`speech.py:170-182`). The bubble still shows.
 - The widget plays the wav through its own analysed audio bus and drives the claws from its
   loudness (`speech_player.gd:50-60`, `:62-75`). It does not play it when the user has muted her
-  or set "quiet for a while" (`widget.gd:692`, `:419-420`).
+  or set "quiet for a while" (`widget.gd:693`, `:419-420`).
 - **Timing:** `play_file` returns the wav's length in seconds (`speech_player.gd:50-60`). The
   bubble reveals the line character by character over exactly that length, holds 0.9 s, fades over
   0.35 s, then reports finished (`bubble.gd:44-60`). With no audio (or a wav that fails to load,
   which returns 0), the reveal takes `clamp(0.6 + 0.055 × characters, 1.6, 9.0)` seconds
   (`bubble.gd:39-41`).
-- Audio with no text: the talking pose is held for the wav's length + 0.3 s (`widget.gd:705-708`).
-  `talking` with neither: 1 s (`widget.gd:709-712`).
-- A performance without `audio` stops any wav that is still playing (`widget.gd:694-695`).
+- Audio with no text: the talking pose is held for the wav's length + 0.3 s (`widget.gd:709-712`).
+  `talking` with neither: 1 s (`widget.gd:713-716`).
+- A wav that is still playing is stopped by a performance with a new line (`text` or `audio`) and
+  by `listening` (her voice would go into the microphone); a performance with neither, such as the
+  media doorway's `{"state": "dancing"}`, leaves it playing. Its `state` is taken at once: she
+  dances to the end of the sentence (`widget.gd:692-699`).
 
 ### 3.3 Where performances come from
 
@@ -245,7 +248,7 @@ first (`widget.gd:650-652`).
 {"command": "volume", "value": 0.6}
 ```
 
-| `command` | `value` | Widget behaviour (`widget.gd:714-763`) |
+| `command` | `value` | Widget behaviour (`widget.gd:718-767`) |
 |---|---|---|
 | `quit` | – | quit |
 | `show` | – | show the window |
@@ -263,7 +266,7 @@ first (`widget.gd:650-652`).
 
 `reload_notifications` (no value) is the brain's own and is never sent to a body
 (`server.py:255-257`, `:293-300`). An unknown command reaching the widget is logged and ignored
-(`widget.gd:762-763`).
+(`widget.gd:766-767`).
 
 ## 6. Messages a body sends
 
@@ -313,9 +316,10 @@ These are v1 as it stands; some are gaps, noted for fixing. The numbers stay whe
 9. `next_beat` is wall-clock time, which steps when the system clock is corrected; the only latency
    handled is a fixed 0.05 s capture latency in the watcher (`doorways/beat_watch.py:47`). The sound
    card's output latency is not reported.
-10. Any performance without `audio` stops the wav that is playing (`widget.gd:694-695`). A
-    `{"state": "dancing"}` from the media doorway arriving mid-line cuts her voice off while the
-    bubble carries on.
+10. *Fixed 2026-09-25.* Any performance without `audio` stopped the wav that was playing, so a
+    `{"state": "dancing"}` from the media doorway arriving mid-line cut her voice off while the
+    bubble carried on. Only a new line or `listening` stops it now (§3.2);
+    `widget/validate_widget.gd` checks it against a real daemon.
 11. The typed `heard` text is written to the journal in full at INFO (`server.py:393`). It is the
     user's own sentence, not notification text, so the no-body-in-logs rule is kept, but it is the
     only place user text is logged verbatim.
@@ -444,8 +448,9 @@ when silent, so every body times its bubble the same way.
 With several bodies, exactly one plays the wav: the most recent body that asked for
 `speech.primary`, else the oldest body with `speech.audio` other than `none`. The others get the
 performance without `audio`/`audio_url` but with `duration`, and must not stop anything because of
-it. This fixes points 8 and 10 of §8 for v2 bodies. When the voice body disconnects the next
-one takes over; `welcome.voice` and a `{"type": "voice", "body_id": "…"}` message say who has it.
+it. This fixes point 8 of §8 for v2 bodies (point 10 is fixed for v1 already). When the voice
+body disconnects the next one takes over; `welcome.voice` and a
+`{"type": "voice", "body_id": "…"}` message say who has it.
 
 ### 10.4 Entities and displays in performances
 

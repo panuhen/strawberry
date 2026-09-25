@@ -60,6 +60,10 @@ package and the widget binary.
 - `GET /health` refuses browsers like every other route (403 on an `Origin` header). It holds
   the ledger, the user's recent sentences and her replies, and was the one route without the
   check. One middleware does it for every route now.
+- A state change no longer cuts her voice. Any performance without audio stopped the line she
+  was saying, so the music starting mid-sentence (the media doorway's `dancing`) silenced her
+  while the bubble carried on. Now she dances to the end of the sentence; a new line, or the
+  listen hotkey, still stops it.
 
 ## [0.2.0] - 2026-09-23
 

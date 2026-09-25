@@ -265,6 +265,38 @@ func run() -> void:
 	var bad_audio := await post("/perform", {"state": "talking", "text": "x", "audio": "/nonexistent/line.wav"})
 	check(bad_audio[1] == 400, "missing audio file should be a 400")
 
+	# 11b. A state without a line does not cut her voice: the media doorway's dancing arrives
+	#      mid-sentence whenever the music starts. The state is taken at once, the wav and the
+	#      bubble carry on, and she is still dancing when the line ends. A new line, or listening,
+	#      does stop it.
+	await post("/perform", {"state": "talking", "text": "Hold that thought.", "audio": wav_path})
+	await wait(0.4)
+	check(widget.speech.playing, "mid-line: the wav should be playing")
+	await post("/perform", {"state": "dancing"})
+	await wait(0.3)
+	check(widget.state == "dancing" and widget.rest_state == "dancing", "a state mid-line should be taken at once, was " + widget.state)
+	check(widget.speech.playing, "a state without audio must not stop the line that is playing")
+	check(widget.bubble.speaking and widget.bubble.line == "Hold that thought.", "the bubble should carry on with the line")
+	report["state_mid_line_kept_audio"] = widget.speech.playing
+	await wait_speech_end()
+	check(not widget.speech.playing, "the wav should have played to its end")
+	check(widget.state == "dancing", "she should still be dancing after the line, was " + widget.state)
+	await post("/perform", {"state": "talking", "text": "First line.", "audio": wav_path})
+	await wait(0.3)
+	await post("/perform", {"state": "talking", "text": "Second line, silent."})
+	await wait(0.2)
+	check(not widget.speech.playing, "a new line should replace the one playing")
+	check(widget.bubble.line == "Second line, silent.", "the bubble should show the new line")
+	await wait_speech_end()
+	await post("/perform", {"state": "talking", "text": "Third line.", "audio": wav_path})
+	await wait(0.3)
+	await post("/perform", {"state": "listening"})
+	await wait(0.2)
+	check(not widget.speech.playing, "listening should stop her voice (it would go into the microphone)")
+	await wait_speech_end()
+	await post("/perform", {"state": "idle"})
+	await wait(0.2)
+
 	# 12. Right-click menu exists; mute keeps the bubble but drops the sound.
 	check(widget.menu != null and widget.menu.item_count >= 8, "menu should have its items")
 	report["menu_items"] = widget.menu.item_count if widget.menu else 0
