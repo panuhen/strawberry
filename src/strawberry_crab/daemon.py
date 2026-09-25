@@ -443,22 +443,21 @@ class Daemon:
         try:
             careful = route is not None and route.library_change >= 0.5
             return await self.thinker.run(text, await self.situation(), careful=careful,
-                                          topic=route.topic if route is not None else "")
+                                          topic=route.topic if route is not None else "", recent=self.ledger.lines())
         finally:
             reminder.cancel()
 
     async def situation(self) -> str:
-        """What Qwen is told before the sentence: the date, what the servers say is going on, the
-        names in the user's library (speech-to-text mishears them), and the recent exchanges."""
+        """What Qwen is told before the sentence: the date, what the servers say is going on and the
+        names in the user's library (speech-to-text mishears them). The recent exchanges go to it
+        as ledger lines of their own, so the thinker can drop the oldest when the prompt is long."""
         parts = [time.strftime("Today is %A %d %B %Y, %H:%M local time.")]
         here = await self.actor.situation()
         if here:
             parts.append(here)
         if self.vocabulary:
             parts.append(f"Names in the user's library: {self.hotwords()}.")
-        situation = " ".join(parts)
-        recent = self.ledger.context()
-        return f"{situation}\n{recent}" if recent else situation
+        return " ".join(parts)
 
     # `strawberry doctor --talk` (POST /probe): fixed sentences, so the only text this path ever
     # handles is ours, and nothing the user wrote can end up in a log line.

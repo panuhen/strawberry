@@ -42,23 +42,31 @@ class Ledger:
         cutoff = self.clock() - self.max_age_s
         return [t for t in self.turns if t.at >= cutoff]
 
-    def context(self, limit: int | None = None) -> str:
-        """The recent turns as lines for a prompt; '' when there is nothing fresh."""
+    def lines(self, limit: int | None = None) -> list[str]:
+        """One prompt line per recent turn, oldest first (the thinker drops from the front when
+        its prompt would not fit num_ctx)."""
         turns = self.recent()
         if limit is not None:
             turns = turns[-limit:]
-        if not turns:
-            return ""
         now = self.clock()
-        lines = ["Recent exchanges (newest last):"]
+        out = []
         for t in turns:
             what = f' you did "{t.did}" and said' if t.did else " you said"
-            lines.append(f'- {_ago(now - t.at)} the user said "{t.said}";{what} "{t.reply}"')
-        return "\n".join(lines)
+            out.append(f'- {_ago(now - t.at)} the user said "{t.said}";{what} "{t.reply}"')
+        return out
+
+    def context(self, limit: int | None = None) -> str:
+        """The recent turns as lines for a prompt; '' when there is nothing fresh."""
+        return as_context(self.lines(limit))
 
     def to_list(self) -> list[dict[str, Any]]:
         now = self.clock()
         return [t.to_dict(now) for t in self.recent()]
+
+
+def as_context(lines: list[str]) -> str:
+    """Ledger lines under their heading, for a prompt; '' for none."""
+    return "\n".join(["Recent exchanges (newest last):", *lines]) if lines else ""
 
 
 def _ago(seconds: float) -> str:

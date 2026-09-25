@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 
 from strawberry_crab.config import ActionsConfig, Config, GateConfig, ThinkerConfig, ToolsConfig
@@ -11,7 +12,8 @@ from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
 from strawberry_crab.server import create_app
 from strawberry_crab.systemone import Gate, Route
-from strawberry_crab.thinker import NO_TOOLS, TOOLS_GUIDE, VOICE, Thinker, ThinkerError, split_emotion, tidy_sentence
+from strawberry_crab.thinker import (CUT, MIN_RESULT_CHARS, NO_TOOLS, TOOLS_GUIDE, VOICE, Thinker, ThinkerError,
+                                     prompt_tokens, split_emotion, system_prompt, tidy_sentence)
 from strawberry_crab.tools import Toolbox
 from tests.fake_spotify import TOOLS, FakeSpotify, fake_gate
 from tests.test_systemone import FakeEmbedder
@@ -410,3 +412,102 @@ async def test_with_the_thinker_off_gemma_still_answers(aiohttp_client):
     assert qwen.payloads == [] and thinker.stats()["calls"] == 0
     assert daemon.ledger.to_list()[-1]["reply"] == "You said: how are you doing today"
     await daemon.close()
+
+
+# The token guard: Ollama drops the oldest tokens of a prompt over num_ctx (the system prompt),
+# so the thinker trims the ledger, then the tool results, and never the system prompt.
+
+class Snapshots(FakeQwen):
+    """FakeQwen keeping a copy of each payload: the thinker's message list grows in place."""
+
+    async def __call__(self, payload: dict) -> dict:
+        reply = await super().__call__(payload)
+        self.payloads[-1] = copy.deepcopy(payload)
+        return reply
+
+
+def ledger_lines(n: int, width: int = 300) -> list[str]:
+    return [f"- {n - i} min ago the user said \"turn {i}\"; you said \"{'x' * width}\"" for i in range(n)]
+
+
+def fits(payload: dict, config: ThinkerConfig) -> bool:
+    return prompt_tokens(payload["messages"], payload.get("tools") or []) <= config.num_ctx - config.num_predict
+
+
+async def test_the_oldest_ledger_turns_go_first_and_the_system_prompt_stays(caplog):
+    recent = ledger_lines(6)
+    toolbox, qwen, thinker = bare([])
+    thinker.chat = roomy = Snapshots(["[neutral] Fine."])
+    await thinker.run("how are you", "Today is Monday.", recent=recent)
+    full = prompt_tokens(roomy.payloads[0]["messages"], [])
+    per_turn = len(recent[0]) / 3
+    # Room for everything but about two and a half turns.
+    config = ThinkerConfig(num_ctx=full + 300 - int(per_turn * 2.5), num_predict=300)
+    thinker.config = config
+    thinker.chat = qwen = Snapshots(["[neutral] Fine."])
+    with caplog.at_level("INFO", logger="strawberryd.thinker"):
+        outcome = await thinker.run("how are you", "Today is Monday.", recent=recent)
+    assert outcome.ok
+    messages = qwen.payloads[0]["messages"]
+    assert messages[0]["content"] == system_prompt(False)                   # untouched
+    user = messages[1]["content"]
+    assert user.startswith("Situation: Today is Monday.\nRecent exchanges (newest last):")
+    assert user.endswith("The user says: how are you")
+    assert [line in user for line in recent] == [False, False, False, True, True, True]  # oldest first
+    assert fits(qwen.payloads[0], config)
+    assert recent == ledger_lines(6)                                        # the caller's list is not changed
+    logged = " ".join(r.getMessage() for r in caplog.records if "prompt ~" in r.getMessage())
+    assert "dropped 3 of 6 ledger turns, shortened 0 of 0 tool results" in logged
+    assert "xxxx" not in logged and "turn 0" not in logged                  # counts, never content
+    await toolbox.close()
+
+
+async def test_tool_results_are_shortened_after_the_ledger_keeping_their_head(caplog):
+    result = "HEAD " + "y" * 1800 + " TAIL"
+
+    async def handler(name, arguments):
+        return FakeResult([FakeContent(result)])
+
+    script = [[("search", {"query": "jazz"})], "[happy] Jazz it is."]
+    recent = ledger_lines(2, width=40)
+    spotify, toolbox, roomy, thinker = make(list(script), tools=[FakeTool("search")], handler=handler)
+    thinker.chat = roomy = Snapshots(list(script))
+    await thinker.run("play some jazz", recent=recent)
+    first, second = (prompt_tokens(p["messages"], p.get("tools") or []) for p in roomy.payloads)
+    assert second > first + 500                                             # the result made round two long
+    config = ThinkerConfig(num_ctx=first + 300 + 250, num_predict=300)      # round one fits whole, round two not
+    thinker.config = config
+    thinker.chat = qwen = Snapshots(list(script))
+    with caplog.at_level("INFO", logger="strawberryd.thinker"):
+        outcome = await thinker.run("play some jazz", recent=recent)
+    assert outcome.ok and outcome.fact == "Jazz it is."
+    one, two = qwen.payloads
+    assert one["messages"] == roomy.payloads[0]["messages"]                 # nothing trimmed in round one
+    assert "Recent exchanges" in one["messages"][1]["content"]
+    assert "Recent exchanges" not in two["messages"][1]["content"]          # the ledger went first
+    tool = next(m for m in two["messages"] if m["role"] == "tool")
+    assert tool["content"].startswith("HEAD ") and tool["content"].endswith(CUT) and "TAIL" not in tool["content"]
+    assert MIN_RESULT_CHARS < len(tool["content"]) < len(result)
+    assert two["messages"][0]["content"] == system_prompt(True) and two["tools"] == one["tools"]
+    assert fits(one, config) and fits(two, config)
+    logged = [r.getMessage() for r in caplog.records if "prompt ~" in r.getMessage()]
+    assert len(logged) == 1 and "dropped 2 of 2 ledger turns, shortened 1 of 1 tool results" in logged[0]
+    assert "HEAD" not in logged[0]
+    await toolbox.close()
+
+
+async def test_a_prompt_that_cannot_fit_is_not_sent(caplog):
+    toolbox, qwen, thinker = bare(["[neutral] never sent"])
+    base = prompt_tokens([{"role": "system", "content": system_prompt(False)},
+                          {"role": "user", "content": "how are you"}], [])
+    thinker.config = ThinkerConfig(num_ctx=base + 300 - 50, num_predict=300)
+    with caplog.at_level("INFO", logger="strawberryd.thinker"):
+        outcome = await thinker.run("how are you", recent=ledger_lines(3))
+    assert not outcome.ok and outcome.emotion == "alert" and outcome.did == "had too much to think about"
+    assert "more than I can hold" in outcome.fact
+    assert qwen.payloads == []                                              # Ollama never saw a clipped prompt
+    assert thinker.stats()["failures"] == 1
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "dropped 3 of 3 ledger turns" in logged and "prompt does not fit" in logged
+    assert "xxxx" not in logged
+    await toolbox.close()
