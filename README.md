@@ -139,6 +139,7 @@ The settings you are most likely to change:
 | `[speech]` | `enabled`, `voice`, `quiet_hours` | her voice (off by default; the bubble always shows) |
 | `[brain]`, `[thinker]` | `reaction_model`, `action_model` | which Ollama models she uses |
 | `[tools.servers.*]` | | MCP servers; see [ADAPTERS.md](ADAPTERS.md) |
+| `[learning]` | `log_outcomes` | keep what you say and how it was routed, locally, for tuning (off); see [Privacy](#privacy) |
 
 Files she keeps: settings in `~/.config/strawberry/`, the widget binary and voices in
 `~/.local/share/strawberry/`, logs and state in `~/.local/state/strawberry/`. The XDG variables
@@ -186,7 +187,14 @@ What she reads:
 No message text is written to any log. The first time she starts she says in her bubble that
 notification bodies are off and where to change it, and logs the same note.
 
-She remembers the last few exchanges of conversation in memory, for context, and nothing more.
+She remembers the last few exchanges of conversation in memory, for context, and nothing more,
+unless you turn on the learning log (`[learning] log_outcomes = true`, off by default). Then each
+sentence you say or type is kept in `outcomes.jsonl` in the state directory, with how she routed
+it and what came of it (an undo, a correction, a rephrase, or silence), for a future step that
+tunes her routing on your own sentences. The file is readable only by you and pruned to 30 days
+and 5000 records; sentences that read as private (codes, sign-ins, bank matters) and other
+voices in the room are never kept, and no sentence goes into a log. `strawberry outcomes` shows
+what is there, `strawberry outcomes --clear` deletes it.
 
 ## Spotify (optional)
 

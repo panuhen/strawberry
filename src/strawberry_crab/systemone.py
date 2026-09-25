@@ -243,9 +243,13 @@ class SystemOne:
         return sum(len(v) for v in self.vectors.values())
 
     async def ask(self, state: str, *questions: Question) -> dict[str, Answer]:
+        return (await self.read(state, *questions))[1]
+
+    async def read(self, state: str, *questions: Question) -> tuple[list[float], dict[str, Answer]]:
+        """`ask`, with the state's normalised embedding (the learning loop compares two, outcomes.py)."""
         await self.prepare(*questions)
         vector = normalise((await self.embed([self.query_prefix + state]))[0])
-        return {q.name: self._answer(vector, q) for q in questions}
+        return vector, {q.name: self._answer(vector, q) for q in questions}
 
     def _score(self, vector: list[float], option: Option) -> float:
         """Mean similarity of the option's nearest examples: one odd example cannot carry it."""
@@ -500,6 +504,7 @@ class Route:
     catalogue: float = 0.0     # p(yes): wants particular music found and played (needs a music server)
     answers: dict[str, Answer] = field(default_factory=dict, compare=False)
     ms: float = 0.0
+    vector: tuple[float, ...] = field(default=(), compare=False, repr=False)  # normalised; not in to_dict
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -614,7 +619,9 @@ class Gate:
         self.calls += 1
         started = time.perf_counter()
         try:
-            answers = await self.systemone.ask(text, *self.questions)
+            # IS_SENSITIVE rides along on the same vector for free: the learning loop never keeps a
+            # sentence that reads as private (outcomes.py).
+            vector, answers = await self.systemone.read(text, *self.questions, IS_SENSITIVE)
         except GateError as exc:
             self.failures += 1
             log.warning("gate: %s; treating %r as chat", exc, text)
@@ -642,6 +649,7 @@ class Gate:
             catalogue=answers["needs_catalogue"].score or 0.0,
             answers=answers,
             ms=ms,
+            vector=tuple(vector),
         )
         self.last_route = route
         self.last_ms = ms

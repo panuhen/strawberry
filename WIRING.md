@@ -401,6 +401,43 @@ Cover for the wait scales with it: `Daemon.think` puts her in the `thinking` pos
 
 **The ledger (built 2026-09-21).** `strawberry/ledger.py` is her only memory across turns: the last `[actions] ledger_turns` (6) exchanges no older than `ledger_age_s` (10 min), each "the user said …; you did … and said …". Qwen gets all of them in the situation, Gemma the last three when it is the fallback, so "the other one" and "skip this one too" resolve; nothing else accumulates. `/health` shows it. **Typed input:** `strawberry talk` posts each terminal line as a voice event, so a typed sentence and a spoken one take the same path and she answers in both places; the prompt prints the gate's reading and the reflex or the thinker's tool calls with its mood.
 
+### 8c. The learning loop, first half: outcomes (`strawberry/outcomes.py`)
+
+The gate's examples are the whole router (§8a), and today a misread sentence is fixed by hand. The plan is a trainer that learns from what happened after each route. This step only collects the data, so it accumulates from now on; nothing reads it back yet. **Off by default** (`[learning] log_outcomes = false`): on, the sentences the user says or types are kept on disk, and the project is open source.
+
+`Daemon.handle_voice` calls `OutcomeLog.heard(text, route, source)` right after the gate and `acted(record, path, ok, …)` once the sentence is handled (reflex, thinker, no_catalogue or chat); both are no-ops when it is off. A record is written to `<state>/outcomes.jsonl` (`paths.outcomes_file()`) once its outcome is known, from the next sentence or from nothing coming:
+
+| outcome | what the user did | strength |
+|---|---|---|
+| `correction` | within `rephrase_s` (10 s), a sentence the phrase check `CORRECTION` matches: "no, I meant…", "not that one", "I meant", "ei kun", "tarkoitin" | strong: the route was wrong |
+| `undo` | within `undo_s` (10 s) of a reflex, the opposite one (skip ↔ previous, pause ↔ resume, volume up ↔ down; the gate's tool at ≥ 0.5) | strong negative for that reflex |
+| `rephrase` | within `rephrase_s`, a sentence whose embedding has cosine ≥ `rephrase_similarity` (0.8) with this one | medium |
+| `repeat` | the same reflex again (skip, skip) | neutral: two were wanted |
+| `silence` | nothing for `silence_s` (30 s) | weak positive |
+| `moved_on` | another sentence, none of the above | none |
+| `none` | the daemon stopped first | none |
+
+A thinker record also gets `teacher`: the thinker called exactly one tool, it succeeded and had no arguments, and it is one a reflex covers (`REFLEX_TOOLS`: `pause`, `next`, `play`, `get_current_track`…) — System Two saying this sentence should have been a reflex. The new sentence's record says what it was to the one before (`follows: {"id", "as"}`). The correction check is small and conservative on purpose ("no more music" and "no worries" are not corrections); a false one mislabels a good route, and the trained router is meant to learn corrections from the rephrases. The 0.8 is from embeddinggemma with the gate's query prefix, 2026-09-25: paraphrases 0.79–0.98 ("skip this song" ~ "next track please" 0.82, "pause" ~ "stop the music" 0.79), unrelated sentences 0.24–0.57, "turn it up" ~ "turn it down" 0.77 (an undo, checked first), but "play the beatles" ~ "play radiohead" 0.92, which is why a rephrase is only medium.
+
+The vector is the gate's own: `SystemOne.read` returns it with the answers and `Route.vector` carries it (not in `to_dict`), so relating two sentences costs no embedding call. `IS_SENSITIVE` (§4) is asked on the same vector in `Gate.route`, also for free.
+
+**Guards.** Only outcomes are stored as labels; the route is kept as the gate read it, never as "the router was sure". A sentence the gate reads as `kind=other` (the TV, someone else) is ignored altogether: not kept, and it does not break a silence. A sentence that is private (`privacy.pattern`, or `IS_SENSITIVE` ≥ 0.5; a route without that answer counts as private) is not kept, though it still settles the one before. A sentence the gate could not route is not kept (there is no reading to learn from). Tool results, arguments and her replies are never stored: a call is `{server, name, arguments: bool, ok}`. The journal gets the path and the label (`outcomes: voice reflex -> undo`), never a sentence; `tests/test_outcomes.py` runs a canary sentence through the gate, the reflex tier and the thinker with every logger at DEBUG and fails if it is in any record of `strawberryd.outcomes`. (The gate, the actions and the thinker log the sentence themselves, as they always have; the canary is about this module.) The file is created 0600, rewritten 0600 when pruned, and pruned at start and every 200 records to `max_days` (30) and `max_records` (5000).
+
+A record, one line of JSON (shortened; `answers` has every routing question):
+
+```json
+{"v": 1, "id": "70cd40b63998", "ts": 1790316749.383, "at": "2026-09-25T09:12:29+0300", "source": "voice",
+ "text": "skip this song",
+ "route": {"kind": "request", "topic": "music", "confidence": 0.9956, "decision": "act", "tool": "skip",
+           "tool_confidence": 0.9715, "has_argument": 0.0108, "library_change": 0.2097, "catalogue": 0.011,
+           "is_urgent": 0.9472, "is_about_her": 0.0127,
+           "answers": {"kind": {"confidence": 0.9956, "probabilities": {"request": 0.9967, "question": 0.0017, "chat": 0.0015, "other": 0.0001}, "choice": "request"}, "…": {}}},
+ "path": "reflex", "reflex": "mpris.skip", "ok": true, "calls": [], "teacher": null, "follows": null,
+ "outcome": "undo", "after_s": 2.1, "by": "282bcd8300af"}
+```
+
+`strawberry outcomes [--last N] [--clear]` reads the file (the daemon need not run): counts per signal, path and source, the teacher count, and the last N records with their sentences, printed to the user's terminal. `/health.learning` has `enabled` and `records`, and when on `written`, `waiting`, `signals`, `skipped` (other, private, unrouted), `errors` and the path. The first-run privacy note (§15) says whether sentences are kept, and where.
+
 ---
 
 ## 9. Naming contract (must match the GLB — do not rename)
@@ -591,11 +628,20 @@ voice = "en_GB-alba-medium"      # a name in voices_dir, or a path to an .onnx
 speed = 1.0                      # 1.25 = a quarter faster
 volume = 1.0
 quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
+
+[learning]
+log_outcomes = false             # true: keep routed sentences and their outcomes in <state>/outcomes.jsonl (§8c)
+max_days = 30
+max_records = 5000
+undo_s = 10.0                    # the windows in which the next sentence says something about this one
+rephrase_s = 10.0
+silence_s = 30.0
+rephrase_similarity = 0.8
 ```
 
 `strawberry config` creates the file from a commented template (`strawberryd --init-config`) and opens it in `$EDITOR`; `strawberry restart` applies it; `strawberry config --init` only writes the template if missing and prints the path (the widget's *Settings file…* runs that). `STRAWBERRYD_PORT` still overrides the port for scripts. The widget's own preferences (skin, window position, …) are `~/.config/strawberry/widget.cfg` (§13).
 
-**The first-run privacy note** (`strawberry_crab/firstrun.py`). While `$XDG_STATE_HOME/strawberry/privacy-notice-shown` is missing, the daemon logs one `privacy:` line at start: what she reads from notifications under the current `body` / `body_apps`, the three modes, and the config file to change it in. The first widget whose hello is served (not refused for its version) gets a short version in her bubble (`talking`, happy, a wave) and the marker is written before it is sent, so it is said once per user. Deleting the marker brings it back. Tests start with the marker present (tests/conftest.py gives every test throwaway XDG dirs), and `scripts/check_phase1.sh` gives its daemon a state dir that has it, so the validators see only the performances they ask for.
+**The first-run privacy note** (`strawberry_crab/firstrun.py`). While `$XDG_STATE_HOME/strawberry/privacy-notice-shown` is missing, the daemon logs one `privacy:` line at start: what she reads from notifications under the current `body` / `body_apps`, the three modes, and the config file to change it in, then whether the sentences she hears are kept (`[learning] log_outcomes`, §8c) and in which file. The first widget whose hello is served (not refused for its version) gets a short version in her bubble (`talking`, happy, a wave) and the marker is written before it is sent, so it is said once per user. Deleting the marker brings it back. Tests start with the marker present (tests/conftest.py gives every test throwaway XDG dirs), and `scripts/check_phase1.sh` gives its daemon a state dir that has it, so the validators see only the performances they ask for.
 
 ## 16. Repository map
 
@@ -609,7 +655,7 @@ CHANGELOG.md             what changed per version (by hand; the release notes ar
 LICENSE, THIRD_PARTY.md  MIT; what we use from others, and the models and voices the user downloads
 .github/workflows/       ci.yml (tests + build on push/PR), release.yml (v* tag -> GitHub release + PyPI, PACKAGING.md)
 pyproject.toml, uv.lock  the one Python package, `strawberry` (hatchling; `uv build`, `uv tool install .`); groups dev (pytest, Pillow) and gpu (cuBLAS/cuDNN, also the `gpu` extra)
-src/strawberry_crab/          the package: contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), thinker (Qwen tool loop), ledger (short memory), hub, server
+src/strawberry_crab/          the package: contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), tools (MCP client), actions (reflexes), thinker (Qwen tool loop), ledger (short memory), outcomes (the learning loop's log, §8c), hub, server
                          + cli.py (`strawberry`), strawberryd.py (`strawberryd`), paths.py (XDG dirs, the checkout), firstrun.py (the one-time privacy note, §15), widgetbin.py (which widget runs; `widget --fetch`), bus.py (jeepney plumbing), wake.py (logind resume -> model warm-up, §4), winwake.py (the same on Windows: the suspend and resume notification), client.py (HTTP to the daemon), icons.py (PNG -> ARGB32, BGRA, .ico), tray.py (the StatusNotifierItem, §14), traymenu.py (the tray's menu and its rows' actions), supervisor.py (the tray's children), wintray.py (the Windows notification-area icon), wasapi.py (Windows audio through ctypes: process loopback, the audio sessions), winproc.py (Windows stop and restart events, the kill-on-close job, §2), winmic.py (the Windows microphone, §7), hotkey.py (the listen hotkey's syntax and its Windows setting, §7), startup.py (the Windows Startup shortcut, §13), media.py (which media controls this system has), mpris.py, smtc.py (Windows), adapters/,
                          setupcmd.py (`strawberry setup [--no-download]`: tiers by VRAM, config merge, pulls, voice, widget), configedit.py (config.toml edited as text: setup and the tray's Message bodies), doctor.py (`strawberry doctor [--talk]`; on Windows its own checks: notification access, media sessions, microphone, process loopback, the Startup shortcut, the tray)
 src/strawberry_crab/doorways/ notify_watch.py, mpris_watch.py, beat_watch.py + beat_track.py with its captures beat_pipewire.py (Linux) and beat_loopback.py (Windows), smtc_watch.py and toast_watch.py (Windows), notifications.py (what both notification doorways share) (`strawberry-doorway <name>`, or python -m strawberry_crab.doorways.<name>; `for_system()` says which run where)

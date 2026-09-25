@@ -30,6 +30,9 @@ class Event:
     # Set by the daemon, never read from HTTP: what she has already said about this event (a
     # notification's gist, WIRING.md §4). The reactor then adds a short quip after it.
     said: str = ""
+    # Set by the daemon's own listener, never read from HTTP: the sentence was spoken, not typed
+    # (the learning loop keeps which, outcomes.py).
+    spoken: bool = False
 
     @classmethod
     def from_dict(cls, data: Any) -> Event:
