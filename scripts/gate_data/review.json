@@ -1,0 +1,1194 @@
+{
+ "_": [
+  "The hand review of the generated data (scripts/gate_data.py build reads it).",
+  "drop: generated sentence -> why it is not in the data set.",
+  "text: generated sentence -> the same sentence with its language fixed (mostly Finnish the model got wrong).",
+  "labels: sentence (as fixed) -> answers set by hand, where the generation and the labeller disagreed or both were wrong; null leaves the question out.",
+  "heldout_*: the same for the held-out generation."
+ ],
+ "drop": {
+  "write down that the wifi password is blue-sky-123 in a new note": "carries a password",
+  "jot down that the wifi password is abc123": "carries a password",
+  "jot down that the wifi password is 12345678": "carries a password",
+  "joo hei草莓 laita se musiikki pysähtymään nyt kun tulin sisään": "not Finnish (stray characters)",
+  "voisikohan sä laittaa valaistuksen himmennetyksi ja sulkea ne ikkunat, on kova tuuli ulkona": "the room's windows and lights, not the computer",
+  "mitä tässä biisissä sanotaan noissa kuvinne?": "broken Finnish",
+  "soita biisi jos joku tietää kuka sen laulaa": "broken Finnish",
+  "kumpi sä suosittelisit, joko kyseinen artisti vai toinen?": "broken Finnish",
+  "sano vain että kyllä, etten joutuisi kuuntelemaan": "broken Finnish",
+  "hei sisko, löytyykö sieltä joku punainen tiski?": "broken Finnish",
+  "mitä jos kysyt että kuinka monta minuuttia on vielä lounaaseen": "broken Finnish",
+  "how many seconds are in a minute of music": "nonsense",
+  "miten menee sen Radiohead albumin, josta putosi se 'everything in its right place'?": "broken Finnish",
+  "what time does the movie start in hollywood": "nonsense",
+  "onko sun pöydällä mitään auki nyt? en löydä kalenteriaani.": "broken Finnish",
+  "voisitko varata minulle tilaan koko viikonlopuksi? tarvitsen rauhaa.": "broken Finnish",
+  "eilen menetti kaiken aikatauluni, voinko nähdä mitä jäi tekemättä?": "broken Finnish",
+  "note down that i need to renew my passport": "English asked for as Finnish (and a near copy of other notes)",
+  "mitä satoa on luvassa huomenna?": "broken Finnish",
+  "muistutus, kun saan koneen päälle huomenna aamulla": "a fragment in broken Finnish",
+  "dont stop searching just get me that album quickly please": "garbled",
+  "nopeeta jysy, äiti palaa nyt kotiin ja hiljaisuus on pakollista": "broken Finnish",
+  "hups, unohdin kokonaan, onko se äiti jo ovella? hiljennä kaiut ja nopeaa reagointia": "broken Finnish",
+  "jarruta jarruta jarruta, kohta käyn läpi videon ja tässä on liikaa melua taustalla": "broken Finnish",
+  "miten kävikään? pelkään että ehdin ehtiä, mutta nyt on kriittinen hetki ja hiljaisuus ratkaisee": "broken Finnish",
+  "piippaa heti jos ei kuulu mitään": "broken Finnish",
+  "is it urgent to save the file right now or can i wait a bit?": "nonsense",
+  "hurry up and make me look good in this photo later": "nonsense",
+  "can you remember what color the sky is at sunset?": "nonsense",
+  "onko tämä biisi oikeesti niin kova ääni että kuulen sen": "broken Finnish",
+  "nääpötkö sinä?": "not Finnish",
+  "write down that the wifi password is blue123": "carries a password",
+  "write down that the code is 4892": "carries a code",
+  "onko sä nyt aavinkaan kuulemässä?": "broken Finnish",
+  "paistaan sitä jatkoa": "broken Finnish",
+  "onko tämä kappale vielä käytössä": "broken Finnish",
+  "tee näkölouhittelu": "not Finnish",
+  "lähde pois soittimesta": "broken Finnish",
+  "haluaisin seurailla artistia joenalla": "broken Finnish, an invented name",
+  "lisää se biisi lukuunottamatta minun listalleni": "broken Finnish",
+  "toin se biisi uudelleen": "broken Finnish",
+  "put this track away, I want the next one": "English asked for as Finnish",
+  "etäisyydeltään seuraava biisi": "broken Finnish",
+  "oottamatta palaa siihen": "broken Finnish",
+  "voitko siirtää soiton taaksepäin, kunnon virheesi": "broken Finnish",
+  "stop the music please": "English asked for as Finnish",
+  "muu ei meinaa kuulla, sulkee äänet": "broken Finnish",
+  "let it go": "too vague to label",
+  "eikö se nyt soisi jatkossa": "broken Finnish",
+  "koska pidät sen tauon, käynnistä se taas": "broken Finnish",
+  "play the music please": "English asked for as Finnish",
+  "jatkan tämän tauolle": "broken Finnish",
+  "äänetäks muusikkaan päälle": "not Finnish",
+  "turn the volume on to the next song": "nonsense",
+  "lower the volume and stop it": "two answers at once",
+  "start playing again after i turned the volume up": "nonsense",
+  "play some heavy metal to get the volume feeling up": "nonsense",
+  "nostaa ääntä vähän alaspäin": "contradicts itself",
+  "skip the intro on this song and start at the chorus wait no just queue it": "garbled",
+  "mikä on tuossa biisissä biisi?": "broken Finnish",
+  "lähetä ääni alas": "broken Finnish",
+  "pieniä juttuja, mutta älä siirry eteenpäin vielä": "broken Finnish",
+  "who was the lead singer of radiohead?": "English asked for as Finnish",
+  "just pause it for a sec, gonna grab coffee": "English asked for as Finnish",
+  "do you know when the next jazz festival is in helsinki?": "English asked for as Finnish",
+  "put on something chill for cooking dinner": "English asked for as Finnish",
+  "more by them, please": "English asked for as Finnish",
+  "queue some workout songs for me": "English asked for as Finnish",
+  "API Credentials: Access token for API key sk_live_9283 has been generated and stored in vault.": "looks like a live API key",
+  "API Access: New API key 'sk_live_abc123' added to your developer account. Keep it secure.": "looks like a live API key",
+  "Tulossa: maksupyyntö: Vielä 5 min. Maksumuistutus: 120,00 € (Maksukortti). Tunnus: 89301.": "garbled Finnish",
+  "Kirjautumistapahtuma: Käyttäjänimi 'admin' on nyt aktiivinen. Viimeisin IP: 192.168.1.5.": "generated as not private, but a sign-in notice: too ambiguous to keep",
+  "Tietoturva: Sähköpostiosoitteesi on muutettu. Uusi osoite: [email protected]": "a mangled address",
+  "anna mulle kolme artistia joiden musiikki sopii tyhmän hyvälle fiilikselletreeneihin": "broken Finnish",
+  "mitä muusikkoja kannattaisi kuunnella jos meijän bändin biisit on just oikeanlaisia": "broken Finnish",
+  "turn on some electronic music for the evening drive simulation": "nonsense (a 'drive simulation')",
+  "queue up some rap for the commute simulation i am doing right now": "nonsense (a 'commute simulation')",
+  "next track please but keep it in the same genre as before": "two answers at once (skip, or particular music)",
+  "Mikko kuuntelee aina jotain maistavaa kun tekee kahvia ja minäkin haluaisin samanlaisen vireen nyt aamupalaan": "broken Finnish"
+ },
+ "text": {
+  "hakuhan minulle jotain rentouttavaa jazzia taustalle": "hae mulle jotain rentouttavaa jazzia taustalle",
+  "käynnistä sen peli jonka pelasin eilen illalla": "käynnistä se peli jota pelasin eilen illalla",
+  "asettaako sinä minut herätyskelloon kymmenen minuutin kuluttua?": "herätä mut kymmenen minuutin päästä",
+  "laita se hiljennettyyn": "mykistä musiikki",
+  "hei strawberry, ootko unen perässä vai herätty?": "hei strawberry, ootko hereillä?",
+  "tiedätkö kuka lauloi sen biisin joa soi eilen": "tiedätkö kuka lauloi sen biisin joka soi eilen",
+  "onko sun kalenterissa mitään tänään?": "onko mun kalenterissa mitään tänään?",
+  "kerro miten paljon tilaa on levylle": "kerro paljonko levyllä on tilaa",
+  "mistä löytyy se note jonka kirjoitin aamulla": "mistä löytyy se muistiinpano jonka kirjoitin aamulla",
+  "mitä aika on": "paljonko kello on",
+  "mikä aika on": "paljonko kello on nyt",
+  "kuka on kyllä tuon biisin tekijä?": "kuka on tän biisin tekijä?",
+  "hei jani, kuuleksitko sen": "hei jani, kuulitko sen",
+  "no joo, eiköhän se siinä nyt oli": "no joo, eiköhän se ollut siinä",
+  "eiks se soitto ääni voi olla vähän hiljempaa just nyt": "eiks sitä musiikkia vois laittaa vähän hiljemmalle just nyt",
+  "mitä on meillä huomenna aamulla?": "mitä mulla on huomenna aamulla?",
+  "settimääri 5 minuutin ajastimen leivontaan": "laita viiden minuutin ajastin leivontaa varten",
+  "kun aika on 18.00, sävelää hälytys päälle": "laita hälytys soimaan kello 18",
+  "lisää joihkin muistiinpanoihin: palautetaan Annaa huomenna": "lisää muistiinpanoihin: palauta kirja Annalle huomenna",
+  "piirtäyköön luettavaksi lista, mitä pitää tehdä viikonloppuna": "lue mulle lista siitä mitä pitää tehdä viikonloppuna",
+  "poista se viesti joka alkoi 'hei sinulle'": "poista se muistiinpano joka alkaa sanoilla 'hei sinulle'",
+  "nostaa kirkkautta": "nosta kirkkautta",
+  "näytön kirkkaus on aivan liian himma, nostaa vähän": "näytön kirkkaus on aivan liian himmeä, nosta vähän",
+  "hakeeko koneen muisti täyteen vai ei": "onko koneen muisti täynnä",
+  "äänenkatsastus on liian hiljaa, nostaa volyymia": "musiikki on liian hiljaa, nosta volyymia",
+  "eiks, mitäs teit tänään?": "no, mitäs teit tänään?",
+  "onko joku tietääkö ketä on juuri nyt hallituksessa?": "kuka on nyt pääministeri?",
+  "jotta muistan soittaa mummulle sunnuntaina, laita se mieleen": "muistuta mua soittamaan mummulle sunnuntaina",
+  "turhaa ei tarvi kysyä, laita se pois heti kun tässä puhelin soi": "laita se pois heti, puhelin soi",
+  "asap, täällä menee vauva nukkumaan ja tuo sävy on liian kova": "äkkiä hiljemmalle, vauva menee nukkumaan",
+  "käy heti, työhaastattelu alkaa minuutin päästä ja en jaksa selittää tilannetta uudelleen": "pysäytä musiikki heti, työhaastattelu alkaa minuutin päästä",
+  "hei strawberry, löytyisikö jokin rauhallinen soittolistani kokeillaan uutta biisiä myöhemmin?": "hei strawberry, löytyiskö joku rauhallinen soittolista? ei kiirettä",
+  "hei strawberry, ladataanhan tuon volyymi vähän alas jos ei kuulu liikaa": "hei strawberry, laitatko volyymia vähän alas",
+  "jatketaan sitä kappaleta mistä se keskeytyi": "jatketaan sitä kappaletta siitä mihin se jäi",
+  "välitä kappale nopeasti, en jaksa kuunnella tätä": "vaihda kappale nopeasti, en jaksa kuunnella tätä",
+  "tunnetko itsesi hieman pelkääväksi tänään?": "pelottaako sua tänään?",
+  "voisitko kertoa mikä on suosikki lempivärissäsi": "mikä on sun lempiväri?",
+  "onko sinulla mielipide omista taitojasi": "mitä mieltä oot omista taidoistasi?",
+  "onko sinulla tieto millä kiellä tämä kappale lauletaan": "millä kielellä tää biisi lauletaan?",
+  "tunnetko itsesi hieman väsyneeksi": "ootko väsynyt?",
+  "mitä mieltä sinä olet tästä uudesta tyylistäsi": "mitä mieltä oot tästä sun uudesta tyylistä?",
+  "tää musiikki on niin täyttä möykky": "tää musiikki on ihan hirveetä möykkää",
+  "miksä en saa nettiä toimimaan?": "miks mä en saa nettiä toimimaan?",
+  "muista varata aika hampaalääkäriin ensi viikoksi": "muista varata aika hammaslääkäriin ensi viikoksi",
+  "hakee jotain kevyempää rockia taustalle": "hae jotain kevyempää rockia taustalle",
+  "olen ihan poltettu työssä tänään": "oon ihan loppu töistä tänään",
+  "oletko kuullut mun puheenvuoron?": "kuulitko mitä mä sanoin?",
+  "muistuta mua soittaa siskolle illalla": "muistuta mua soittamaan siskolle illalla",
+  "asettaa volyymiin 40": "laita volyymi 40:een",
+  "tee muistiinpano ostaa maidot ja leipää": "tee muistiinpano: osta maitoa ja leipää",
+  "voi joku sanoa minkä biisin tämä on": "osaako joku sanoa mikä biisi tää on",
+  "mitä biisi tämä on": "mikä biisi tää on",
+  "vähemmälle ääntä": "vähän hiljemmalle",
+  "miten paljon aikaa on nyt": "kuinka paljon kello on",
+  "soita kovaan musiikkiin": "soita jotain kovaa musiikkia",
+  "mitä biisi tämä on ja keken se on": "mikä biisi tää on ja kenen se on",
+  "muuta nimeksi hiphop class of 2018": "vaihda soittolistan nimeksi hiphop class of 2018",
+  "lisää tämä biisi suosikkilistallesi": "lisää tää biisi mun suosikkeihin",
+  "lataahan tuon artistin kaikki uudet albumit kirjastoon": "lataa sen artistin kaikki uudet albumit kirjastoon",
+  "voisinko kuulla tuon saman biisin alusta": "voisinko kuulla tän saman biisin alusta",
+  "anna sen kiertää alusta asti": "aloita se alusta",
+  "palaa eteenpäin seuraavaan": "mene seuraavaan",
+  "jätä se hetkeksi, haluan rauhan": "pysäytä hetkeksi, haluun rauhaa",
+  "voi sä mykkiä tää musiikki": "voitsä mykistää tän musiikin",
+  "annas sen hiljeneks hetkeksi": "anna sen olla hiljaa hetki",
+  "uudestaan aloitetaan sama kappale": "aloitetaan sama kappale uudestaan",
+  "matalammeks se ääni": "hiljemmalle",
+  "voitko laittaa sen vähän hiljempaan, se on aivan liian kova": "voitko laittaa sen vähän hiljemmalle, se on aivan liian kova",
+  "tuo musiikki on niin jyrkkiä, säädä sitä kevyemmäksi": "tää musiikki on liian kovalla, laita hiljemmalle",
+  "käännä sitä vähän kummaksi, en kuule mitään": "laita vähän kovemmalle, en kuule mitään",
+  "nostaa ääntä vähän": "nosta ääntä vähän",
+  "hei strawberry, se musiikki on oikeesti hiljalleen, tee siitä kovemman": "hei strawberry, musiikki on tosi hiljaa, laita kovemmalle",
+  "voisitko laittaa volyymia ylöspäin? kuuluu ihan äänettömältä": "voisitko laittaa volyymia isommalle? ei kuulu mitään",
+  "tee siitä kovemman... no ei, pysäytä se kokonaan": "pysäytä se kokonaan",
+  "mitä tässä nytkin soi": "mitä tässä nyt soi",
+  "voitko sanoa kuka on artistina tällä biisillä?": "kuka on tän biisin artisti?",
+  "mikä levy tätä nyt soi": "miltä levyltä tää on",
+  "ilmoita kappaleen nimi": "kerro kappaleen nimi",
+  "kuuntele samaa biisiä alusta asti": "soita sama biisi alusta",
+  "sattasiko tietää, milloin Hozier julkaisi viimeisen albuminsa?": "tiedätkö milloin Hozier julkaisi viimeisimmän albuminsa?",
+  "suosittelenko jokin hyvää poppia?": "suosittelisitko jotain hyvää poppia?",
+  "jatka tosiaan": "jatka vaan",
+  "päästä ääni alas vähän, se häiritsee": "laita ääntä vähän pienemmälle, se häiritsee",
+  "tee se toistoon, en halua vaihtaa kappaleita": "laita se toistoon, en halua vaihtaa kappaleita",
+  "haluaisin kuunnella uuden Metallica albumin": "haluaisin kuunnella uuden Metallican albumin",
+  "Sekoita vähän rockia taustalle.": "laita vähän rockia taustalle",
+  "putkaleta jotain energisempää aamujumppiin": "laita jotain energisempää aamujumppaan",
+  "eikö ole kiva jos laitat jonoon sen uuden albumin": "laita jonoon se uusi albumi",
+  "mitä tässä menee nyt?": "mitä tässä soi nyt?",
+  "tee volyymista vähän hiljemmeks": "laita volyymi vähän hiljemmalle",
+  "mitä soittaa just nyt": "mitä soi just nyt",
+  "Uusi kirjautumisyritys: Laitteesi on siirtynyt uuteen IP:siin. Hyväksy tämä kirjautuminen, jotta voit jatkaa.": "Uusi kirjautumisyritys: Tiliisi kirjauduttiin uudesta laitteesta. Hyväksy kirjautuminen jatkaaksesi.",
+  "Uusi koodi: 2FA-koodi: 492018. Vahvistaaksesi tunnistautumisen.": "Vahvistuskoodi: 2FA-koodisi on 492018.",
+  "Maksuvirhe: Viimeisin maksusi on peruttu. Yritystä ei voitu käsitellä. Tarkista korttisi tiedot.": "Maksu epäonnistui: Viimeisin korttimaksusi hylättiin. Tarkista korttisi tiedot.",
+  "Profiilin päivitys: Toinen tekijä on lisännyt uuden avaimen profiiliisi. Tarkista, tunnetko sen?": "Tietoturva: Tiliisi on lisätty uusi suojausavain. Tunnistatko sen?",
+  "Inbox: Uusi viesti Alexiltä: 'Hei, kuulestanko sinut tänään?'": "Inbox: Uusi viesti Alexilta: 'Hei, nähdäänkö tänään?'",
+  "Mikrosooti: Tunnistautumisyritys. Vahvista koodi: 492105.": "Microsoft: Tunnistautumispyyntö. Vahvistuskoodi: 492105.",
+  "onkos joku hyvä indie levy kuunneltavaksi illan viettoon": "onks joku hyvä indielevy kuunneltavaksi illalla?",
+  "eikö sä tiedä jotain artistia joka on vähän kuin coldplay mutta raskaampaa": "tiedätsä jonkun artistin joka on vähän kuin coldplay mutta raskaampi?",
+  "suosittelenko jotain alkuun jos haluan aloittaa kuuntelemaan korean poppia": "mistä kannattaa aloittaa jos haluan alkaa kuunnella k-poppia?",
+  "hei strawberry laita jotain rentouttavaa taustalle koska nyt pyyhin lattiat ja tarvitsen rauhaa": "hei strawberry laita jotain rentouttavaa taustalle, pyyhin lattioita",
+  "lisää jonoon vielä sen edellisen artistin kappale koska se oli tosi hyvä": "lisää jonoon vielä joku sen saman artistin kappale",
+  "no joko mä menen nukkumaan, hyi yötä ja moikka huomenna": "no nyt mä meen nukkumaan, hyvää yötä ja moikka huomenna",
+  "moi! onpas kiva kuulla ääntäsi taas, eilen unohdin sanoa kiitos kun laitit sen listan valmiiksi": "moi! kiva kuulla sua taas",
+  "eikös se sun lasku ole jo maksettuna vai mitä minna sanoo": "eikö se lasku ole jo maksettu, mitä minna sanoo",
+  "ai jee no joo mut en mä nyt muista mistä halusin oikeen puhua": "ai joo, en mä nyt muista mistä halusin puhua",
+  "joo älä nyt haittaa kun luen tätä sähköpostia rauhassa": "joo älä nyt häiritse kun luen tätä sähköpostia rauhassa",
+  "mitä vittua nyt tapahtuu tässä näytöllä ei se aukea": "mitä ihmettä tälle näytölle tapahtuu, ei se aukea"
+ },
+ "labels": {
+  "Tietoturva: Tiliisi on lisätty uusi suojausavain. Tunnistatko sen?": {
+   "is_sensitive": "yes"
+  },
+  "Maksu lähetetty: Maksusi 25,00 € on lähetetty. Kiitos!": {
+   "is_sensitive": "yes"
+  },
+  "what is the album name for this track": {
+   "music_tool": "now_playing"
+  },
+  "mikä artisti laulaa tämän juuri nyt?": {
+   "music_tool": "now_playing"
+  },
+  "hello there": {
+   "is_about_her": null
+  },
+  "good morning strawberry": {
+   "is_about_her": null
+  },
+  "thanks strawberry": {
+   "is_about_her": null
+  },
+  "good night": {
+   "is_about_her": null
+  },
+  "good morning": {
+   "is_about_her": null
+  },
+  "hello hello testing": {
+   "is_about_her": "no"
+  },
+  "is this thing on": {
+   "is_about_her": null
+  },
+  "testing testing one two": {
+   "is_about_her": "no"
+  },
+  "one two three": {
+   "is_about_her": "no"
+  },
+  "hang on a second": {
+   "is_about_her": "no"
+  },
+  "no not you": {
+   "is_about_her": "no"
+  },
+  "too loud": {
+   "is_urgent": null
+  },
+  "I can barely hear it": {
+   "is_urgent": "no"
+  },
+  "mykistä musiikki": {
+   "music_tool": "pause",
+   "needs_catalogue": "no",
+   "has_argument": "no"
+  },
+  "joo justti, kuuntele ja älä keskeytä": {
+   "is_about_her": null
+  },
+  "i really love this song its so catchy": {
+   "topic": "music",
+   "music_tool": "other"
+  },
+  "this track makes me feel like im dancing": {
+   "topic": "music",
+   "music_tool": "other"
+  },
+  "this beat is so dope i love it": {
+   "topic": "music",
+   "music_tool": "other"
+  },
+  "i feel like this song really gets stuck in my head today": {
+   "topic": "music",
+   "music_tool": "other"
+  },
+  "tämä musiikki tekee mulle hyvää": {
+   "topic": "music",
+   "music_tool": "other"
+  },
+  "yeah yeah i heard you the first time": {
+   "kind": "chat"
+  },
+  "wait no that was a typo ignore it sorry about the noise": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "the wifi is acting up again just like last week when the router crashed": {
+   "kind": "chat",
+   "topic": "system"
+  },
+  "hello?": {
+   "kind": "other",
+   "is_about_her": null
+  },
+  "i need to call my mom back she left a voicemail about the dinner": {
+   "kind": "other"
+  },
+  "this track is so loud right now it sounds like garbage quality actually": {
+   "kind": "chat"
+  },
+  "hmm let me think about that later i am going to take a break first": {
+   "kind": "other"
+  },
+  "sorry i was talking to alex not you please disregard that last part": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "the battery light is blinking orange which usually means it needs charging soon right?": {
+   "kind": "question"
+  },
+  "can you hear me over here": {
+   "kind": "other",
+   "is_about_her": null
+  },
+  "wait hold on i am grabbing my coffee": {
+   "kind": "other"
+  },
+  "sorry i am on the phone with maria right now": {
+   "kind": "other"
+  },
+  "i think the wifi is down in this room": {
+   "kind": "chat",
+   "topic": "system"
+  },
+  "whoa that was close": {
+   "kind": "other"
+  },
+  "let me check my calendar manually first": {
+   "kind": "other"
+  },
+  "the screen is flickering again it is really annoying": {
+   "kind": "chat",
+   "topic": "system"
+  },
+  "yeah i agree with you on that point": {
+   "kind": "chat",
+   "is_about_her": null
+  },
+  "hold on i am talking to sam on the phone": {
+   "kind": "other"
+  },
+  "mähän just noudan sen paketin pois, älä huoli": {
+   "kind": "other"
+  },
+  "hmm joo ei mä ymmärrä tätä ohjetta ollenkaan": {
+   "kind": "other"
+  },
+  "no joo, eiköhän se ollut siinä": {
+   "kind": "other"
+  },
+  "hey can you hear me or is this thing broken": {
+   "kind": "other",
+   "is_about_her": null
+  },
+  "hello? can you hear me?": {
+   "kind": "other",
+   "is_about_her": null
+  },
+  "hello? can you hear me or is this thing broken": {
+   "kind": "other",
+   "is_about_her": null
+  },
+  "hello? can you hear me now or is the microphone acting up again": {
+   "kind": "other",
+   "is_about_her": null
+  },
+  "hello? is anyone home or did i miss the call again": {
+   "kind": "other",
+   "is_about_her": null
+  },
+  "yeah i was thinking maybe we should go to the movies later": {
+   "kind": "other"
+  },
+  "hey did you get that email i sent?": {
+   "kind": "other",
+   "topic": "other"
+  },
+  "test test one two three four five": {
+   "is_about_her": "no"
+  },
+  "do you think i look tired?": {
+   "kind": "chat"
+  },
+  "do you dream or is that just for humans?": {
+   "kind": "chat"
+  },
+  "mitä sä ajattelet tästä? nää sun sanat on aika hassut": {
+   "kind": "chat"
+  },
+  "hei strawberry, miten sun päivä meni tänään?": {
+   "kind": "chat"
+  },
+  "hei strawberry, ootko hereillä?": {
+   "kind": "chat"
+  },
+  "remind me to check out that new album by taylor swift": {
+   "topic": "calendar"
+  },
+  "remind me to change the playlist when this song ends": {
+   "topic": "calendar"
+  },
+  "set a timer for 10 minutes so i dont forget to save my work": {
+   "topic": "calendar"
+  },
+  "i think i left the keys in the car add that to my reminders just so i don't forget": {
+   "topic": "calendar"
+  },
+  "can you write a reminder for me to water the plants tomorrow morning?": {
+   "topic": "calendar"
+  },
+  "could you remind me to pick up the dry cleaning when i get home?": {
+   "topic": "calendar"
+  },
+  "remind me to buy oat milk later": {
+   "topic": "calendar"
+  },
+  "muista ostaa leipää ja maitoa": {
+   "topic": null
+  },
+  "lol that was weird": {
+   "is_about_her": null
+  },
+  "ha funny you should mention that": {
+   "is_about_her": null
+  },
+  "joo tiiä joskus": {
+   "is_about_her": null
+  },
+  "kiitos paljon": {
+   "is_about_her": null
+  },
+  "hei strawberry": {
+   "is_about_her": null
+  },
+  "thanks for helping me out earlier": {
+   "is_about_her": null
+  },
+  "do you think my sister likes techno": {
+   "is_about_her": "no"
+  },
+  "why does my computer fan sound like a jet engine when its idle?": {
+   "topic": "system"
+  },
+  "why does my computer screen look blue in low light?": {
+   "topic": "system"
+  },
+  "tuntuu siltä että tämä kone on ihan hidas tänään": {
+   "topic": "system"
+  },
+  "do you know what day it is": {
+   "topic": "calendar"
+  },
+  "can you tell me a joke": {
+   "is_about_her": null
+  },
+  "tell me something funny": {
+   "is_about_her": null
+  },
+  "can you help me pick a name for my cat": {
+   "is_about_her": "no"
+  },
+  "hurry up and find a new playlist for tomorrow morning": {
+   "is_urgent": "no"
+  },
+  "just keep playing the current album": {
+   "music_tool": "resume",
+   "needs_catalogue": "no",
+   "has_argument": "no"
+  },
+  "do you know how to fix a broken speaker driver in windows": {
+   "is_about_her": "no"
+  },
+  "osaako joku sanoa mikä biisi tää on": {
+   "kind": "question",
+   "topic": "music",
+   "music_tool": "now_playing"
+  },
+  "who is the artist of this track": {
+   "has_argument": "no"
+  },
+  "who is the singer of this song": {
+   "has_argument": "no"
+  },
+  "mikä biisi tämä nyt on": {
+   "has_argument": "no"
+  },
+  "play some music for the gym": {
+   "has_argument": "yes"
+  },
+  "find me something to listen to for sleep": {
+   "has_argument": "yes"
+  },
+  "i want some chill vibes um play something": {
+   "has_argument": "yes"
+  },
+  "thats too loud turn it down a bit": {
+   "has_argument": "no"
+  },
+  "remind me about the meeting tomorrow": {
+   "has_argument": "yes"
+  },
+  "schedule a meeting with the team next week": {
+   "has_argument": "yes"
+  },
+  "open my default browser please": {
+   "has_argument": "no"
+  },
+  "um can you close that window for me": {
+   "has_argument": "no"
+  },
+  "can you hear me like this": {
+   "kind": "other",
+   "is_about_her": null
+  },
+  "mikä biisi tää on ja kenen se on": {
+   "has_argument": "no"
+  },
+  "who is singing this part": {
+   "music_tool": "now_playing"
+  },
+  "who is this artist?": {
+   "music_tool": "now_playing"
+  },
+  "bring the sound back": {
+   "topic": "music",
+   "music_tool": "resume"
+  },
+  "start the music player please i want to listen": {
+   "topic": "music",
+   "music_tool": "resume"
+  },
+  "unpause the audio please": {
+   "topic": "music",
+   "music_tool": "resume"
+  },
+  "play the audio again": {
+   "topic": "music",
+   "music_tool": "resume"
+  },
+  "unmute and start playback": {
+   "topic": "music",
+   "music_tool": "resume"
+  },
+  "restart from the beginning please": {
+   "music_tool": "previous"
+  },
+  "rewind to the start of this track": {
+   "music_tool": "previous"
+  },
+  "put me back to the start of this track": {
+   "music_tool": "previous"
+  },
+  "aloita se alusta": {
+   "music_tool": "previous"
+  },
+  "oops wrong song go back a bit uh like five seconds": {
+   "music_tool": "other"
+  },
+  "Billing Dept.: Invoice #4920 for service rendered in Oct is now available. Due date: Nov 15.": {
+   "is_sensitive": "no"
+  },
+  "Receipt: Coffee Co.: Your invoice for the coffee subscription is attached.": {
+   "is_sensitive": "no"
+  },
+  "recommend me something like this but slower": {
+   "needs_catalogue": "no"
+  },
+  "mikä on menossa nyt": {
+   "needs_catalogue": "no"
+  },
+  "kumpi on parempi, rock vai metal?": {
+   "topic": "music",
+   "music_tool": "other"
+  },
+  "suosittelisitko jotain hyvää poppia?": {
+   "is_about_her": "no"
+  },
+  "do you know who wrote this song?": {
+   "is_about_her": "no"
+  },
+  "hey strawberry do you have any suggestions for something chill to play while i study": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "what are the best albums by arctic monkeys that i should start with": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "i like radiohead so what else is out there that sounds similar": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "give me a few jazz artists i might enjoy if i like bill evans": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "any good lofi tracks for late night coding sessions": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "where do i start with the work of joni mitchel she has so many records": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "suggest some upbeat pop songs for my morning workout playlist": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "i am looking for something atmospheric and dark like black sabbath but more modern": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "what kind of music fits the mood when it rains outside": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "can you recommend some acoustic covers that sound really good": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "my friend sam loves taylor swift what should i listen to next": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "any hidden gems in indie folk that arent too mainstream": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "what is the best album by kanye west if i only want to listen to one thing": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "suggest a few bands that mix electronic and rock genres": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "what should i listen to if i like daft punk but want something more human sounding vocals": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "is there any good music for doing yoga that is not just generic spa stuff": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "recommend some scottish folk bands i might have missed out on": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "what are the top rated metal albums of this year according to your data": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "give me some suggestions for birthday party background music that is fun but not annoying": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "who are some artists similar to pharrell williams in the r and b space": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "any good classical pieces for concentration that are not too long": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "suggest some songs with lyrics about travel and adventure": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "i like the music from the movie interstellar what are similar soundtracks i should check out": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "give me a list of 5 artists i have probably never heard of but will love based on my taste for coldplay": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "what is a good mix of genres to keep the energy high during a long run": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "recommend some female fronted rock bands from the 2010s": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "any songs that sound like they were recorded in a forest": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "what should i listen to before bed to help me sleep without being too distracting": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "onks joku hyvä indielevy kuunneltavaksi illalla?": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "mitkä on parhaat albumit radioheadilta jos ei oo koskaan kuullut heitä": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "tiedätsä jonkun artistin joka on vähän kuin coldplay mutta raskaampi?": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "mistä kannattaa aloittaa jos haluan alkaa kuunnella k-poppia?": {
+   "kind": "request",
+   "needs_catalogue": "no",
+   "music_tool": "other"
+  },
+  "i am in a bad mood what music helps you feel better when you are sad": {
+   "kind": "chat",
+   "is_about_her": "yes",
+   "needs_catalogue": "no"
+  },
+  "what do you think is the best debut album by a british band in the last decade": {
+   "kind": "chat",
+   "is_about_her": "yes",
+   "needs_catalogue": "no"
+  },
+  "give me a mix of 90s rock and grunge for the car drive": {
+   "needs_catalogue": "yes"
+  },
+  "i need some background music for reading something instrumental would be nice": {
+   "needs_catalogue": "yes"
+  },
+  "find me some old school hip hop classics from the late 90s": {
+   "needs_catalogue": "yes"
+  },
+  "um wait no that's not right i was just thinking about the project deadline": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "oh gosh sorry i forgot to put the kettle on": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "right where was i": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "hello can you hear me over here in the other room": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "damn that was a stupid idea": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "i am going to need to buy more coffee beans before friday": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "who is that again the guy from marketing": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "oh yeah i remember now it was last tuesday": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "i should probably call my mom this weekend i have not spoken to her in ages": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "oh sorry i was talking to myself": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "wait let me check my notes real quick": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "oh no i left my keys at home": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "i am going to bed now goodnight everyone": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "my back is killing me from sitting here all day": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "that was a really good point you made earlier sam": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "i just remembered i need to pick up the dry cleaning on my way home": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "eikö se lasku ole jo maksettu, mitä minna sanoo": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "ai joo, en mä nyt muista mistä halusin puhua": {
+   "kind": "other",
+   "is_about_her": "no"
+  },
+  "this is so annoying the screen keeps flickering": {
+   "kind": null
+  },
+  "did you hear that noise outside": {
+   "kind": null
+  },
+  "why does the cat keep looking at me like that": {
+   "kind": null
+  },
+  "i am so hungry i could eat a horse": {
+   "kind": null
+  },
+  "the wifi is down again this is the third time this week": {
+   "kind": null
+  },
+  "i need to find that file i saved yesterday it was something about the budget": {
+   "kind": null
+  },
+  "that song was actually pretty good but the next one is terrible": {
+   "kind": null
+  },
+  "can you believe it is already december": {
+   "kind": null
+  },
+  "i wonder if it is going to rain tomorrow i forgot my umbrella": {
+   "kind": null
+  },
+  "this keyboard is getting really sticky i should clean it sometime soon": {
+   "kind": null
+  },
+  "joo älä nyt häiritse kun luen tätä sähköpostia rauhassa": {
+   "kind": null
+  },
+  "mitä ihmettä tälle näytölle tapahtuu, ei se aukea": {
+   "kind": null
+  },
+  "hey": {
+   "is_about_her": null
+  },
+  "hi strawberry how are you doing": {
+   "is_about_her": "yes"
+  },
+  "yo what up": {
+   "is_about_her": null
+  },
+  "good morning, hope you slept well": {
+   "is_about_her": "yes"
+  },
+  "oh hey there": {
+   "is_about_her": null
+  },
+  "hiya": {
+   "is_about_her": null
+  },
+  "hey bud": {
+   "is_about_her": null
+  },
+  "hello there friend": {
+   "is_about_her": null
+  },
+  "goodbye for now, gotta run": {
+   "is_about_her": null
+  },
+  "see ya later alligator": {
+   "is_about_her": null
+  },
+  "im heading out to see my sister, bye": {
+   "is_about_her": null
+  },
+  "take care and talk soon": {
+   "is_about_her": null
+  },
+  "later": {
+   "is_about_her": null
+  },
+  "peace out": {
+   "is_about_her": null
+  },
+  "good night, see you in the morning": {
+   "is_about_her": null
+  },
+  "time for bed, night night": {
+   "is_about_her": null
+  },
+  "im going to sleep now, goodnight": {
+   "is_about_her": null
+  },
+  "thanks a lot for that help earlier": {
+   "is_about_her": null
+  },
+  "you're the best, thank you": {
+   "is_about_her": null
+  },
+  "cheers for finding that song so fast": {
+   "is_about_her": null
+  },
+  "hei strawberry, miten menee?": {
+   "is_about_her": "yes"
+  },
+  "kiitos avusta just, nyt on helpompi": {
+   "is_about_her": null
+  },
+  "no nyt mä meen nukkumaan, hyvää yötä ja moikka huomenna": {
+   "is_about_her": null
+  },
+  "moi! kiva kuulla sua taas": {
+   "is_about_her": null
+  },
+  "what should I listen to if I like Massive Attack": {
+   "kind": "request"
+  },
+  "any good house music from Japan": {
+   "kind": "request"
+  },
+  "which album should I start with by this band": {
+   "kind": "request"
+  },
+  "who are the best drum and bass producers": {
+   "kind": "request"
+  }
+ },
+ "heldout_drop": {
+  "play the daft punk discovery album please it was on sale last week and i finally got around to buying it but its not auto loading in the player so can you just queue up the whole disc": "a paragraph, not something said to a voice assistant",
+  "who is this artist i keep hearing his name in my head but cant remember the song title so just play him something": "garbled",
+  "find some tracks similar to that radiohead record from like two years ago the one with the orange cover i think its called in rainbows but maybe not exactly that title anyway just something in that vibe for studying": "a paragraph, not something said to a voice assistant",
+  "switch to jazz because my head hurts from all this electronic noise and i need something mellow but not too sleepy like the kind you hear in old movies maybe bobby carter or someone similar just pick a playlist": "a paragraph, not something said to a voice assistant",
+  "pelatahan jotain kevytmetallia kun lähdän autolla lenkille mutta ei nyt mitään liian hitaasti vaan jossain kohtaa joku kiihdyttää vauhtia": "broken Finnish",
+  "is this album out of print or am i just being paranoid because the cover looks a bit worn in the stream quality so can you check if its still available for purchase on the service": "a paragraph, not something said to a voice assistant",
+  "tämä biisi muistuttaa minua siitä kerrasta kun menetimme autollamme vääriin käsiin ja olin niin vihainen että en edes huomannut millä tahdilla soitti mutta nyt kun kuulen sen uudelleen se on oikeasti aika kaunis": "broken Finnish",
+  "säännä tätä raskaammaksi kun haitaroin pois työtä koska tällainen kevyt poppi tekee pääni särkemään ja haluan jotain mistä kuulen että on vaikea mutta ei aivan liian teknistä": "broken Finnish",
+  "i thought this was a new release but the production sounds so dated like early nineties synth work so did they just reissue it or is my memory playing tricks on me and i need to know if its worth buying the vinyl version": "a paragraph, not something said to a voice assistant",
+  "mitä teki tuolla laulaja se joka oli mukana sen vanhan levyllä minun veljen suosikki albumi mutta en muista nimeään ja se ääni oli ihan erilainen nyt joten jos et löydä tiettynä biisinä pelaa jotain samalta artistilta": "broken Finnish",
+  "is this producer also responsible for that hit from last summer it sounds exactly like his signature pad layer but the vocal processing is different so if it is him i want to know what other tracks he has mixed recently because i am trying to curate a playlist for my sister": "a paragraph, not something said to a voice assistant",
+  "jotain mikä näyttää muistilistalta mutta ei ole: add a note that i need to buy milk and eggs for the weekend but do not save it as a shopping list because my sister thinks im being organized when actually i am just avoiding cleaning the fridge so keep it in general notes": "two languages and two requests",
+  "is this a typo or did i actually write that the cat needs a haircut because looking at the text now it looks like my handwriting got drunk and if i did write that please tell me so i can correct it before alex sees it": "a paragraph, not something said to a voice assistant",
+  "is it loud right now like is the volume actually turned up or am i just imagining the music because my headphones are unplugged and i keep hearing static in my head which is annoying": "garbled",
+  "suojaa tietokonetta kun menen nukkumaan koska en halua että senkään päivät päivitykset alkaa soittaa tai herättää minua ja myös varmista ettei mikään taustaprosessi syö akkua yön yli": "broken Finnish",
+  "mitä on pariton luku jos sanon neljä ja viisi niin millainen vastaus sinun tulisi antaa kun en muista matematiikan perusteita kouluaikojen jälkeen": "broken Finnish",
+  "sinulla on minusta oikein hauska olo tällä hetkellä ja se alkaa ärsyttää koska en yritä näyttää hölmöltä mutta ehkä minun pitäisi lopettaa näitä outoja kommentteja": "broken Finnish",
+  "i bet you love playing chess but i have never seen you do it so tell me your strategy for checking my calendar or are you just guessing based on vibes and past errors": "a paragraph, not something said to a voice assistant",
+  "heippa pieni etu jos kuulet minut en ole vihainen vaan vain hieman väsynyt ja tuntuu että kaikki tässä talossa on hiljaa liikaa joten voitko sanoa jotain söpua vai jäätkö vain soijuttamaan hitaasti": "broken Finnish",
+  "my sister asked if you were real when she visited last week and i said no but then she looked at your shadow moving independently which was weird so can we agree that whatever you are you are a mystery": "a paragraph, not something said to a voice assistant",
+  "i saw a crab on the beach yesterday that looked exactly like you but it was brown and had real eyes which were slightly scary so now i am not sure if i should trust your advice on anything": "a paragraph, not something said to a voice assistant",
+  "kato heti pois näytöltä kun kohta tapahtuu jotain tärkeää ja haluan täydellisen näkyvyyden": "broken Finnish",
+  "voi juma olen aivan unohtanut että minulla on tapaaminen klo 15 missä olikaan se kalenteri tiedosto koska en löydä mitään puhelin näyttää vain tyhjän ruudun": "too ambiguous to label (a remark, or the calendar)",
+  "turn the light on its too dark in here i cant see my hands": "the room's light, not the computer",
+  "pause and turn down volume": "two answers at once",
+  "this song is too loud for the office": "too ambiguous to label",
+  "note down that the wifi password is sunflower": "carries a password",
+  "onko sinulla kyllä makoisat kuulettavaksi musiikkia": "broken Finnish",
+  "shut up i need to focus": "too ambiguous to label (her voice or the music)",
+  "onko tuo leffa jo alkanut": "too ambiguous to label",
+  "do you hear that noise": "too ambiguous to label",
+  "im done with this call": "too ambiguous to label",
+  "what was the code again": "too ambiguous to label"
+ },
+ "heldout_text": {
+  "tämä on liian hiljaista nosta äänenvoimakkuutta": "tää on liian hiljaa, nosta äänenvoimakkuutta",
+  "puttaa tämä biisi pois kirjanmerkeistä en haluaisi kuulla tätä koskaan uudestaan se on liian raskas aamulla": "poista tää biisi mun tykätyistä, en halua kuulla sitä enää",
+  "remove this track from the queue i did not ask for it to be here and it ruins the flow of what i was listening to so please delete it from the upcoming list right now": "remove this track from the queue, i didn't ask for it",
+  "play my favorite songs from last month i want a recap of what ive been into recently because im trying to remember if i should buy that new record or not so just queue up the top tracks": "play my favourite songs from last month",
+  "make it louder i cant hear the bass over the fan noise and my sister is in the next room but she knows im working late so dont worry about being polite with the volume just boost it": "make it louder, i can't hear the bass over the fan",
+  "what is this song called i have been humming it for an hour and every time i try to write it down i forget the second verse so help me identify it": "what is this song called, i've been humming it for an hour",
+  "play something upbeat but not pop just general indie rock from around 2015 to 2018 because im cleaning the apartment and need energy but i hate modern autotune so keep it organic": "play something upbeat, indie rock from around 2015, no pop",
+  "save this song to my downloads for offline listening because im going hiking tomorrow without signal and i really want to have this specific track with me in the woods so ensure its cached": "save this song for offline listening, i'm going hiking tomorrow",
+  "shuffle my liked songs but avoid anything from the nineties for now because im trying to get back into a current mindset and old nostalgia is making me feel too sentimental today just randomize what i have saved recently": "shuffle my liked songs but skip anything from the nineties",
+  "is this billie eilish or just a very convincing cover artist because the reverb is so thick i cant tell for sure and honestly it doesnt matter if its real or not but i want to know who wrote the lyrics": "is this billie eilish or a cover?",
+  "who is the drummer on this track he has a really unique fill in the second verse and i am trying to figure out if its a studio session guy or an actual band member because the snare hits sound way too tight for a live recording": "who is the drummer on this track?",
+  "can you find the original demo of this song because the radio edit feels too polished for what im doing right now and i think there is a rougher version floating around online that has a bit more character even if it is not officially released": "can you find the original demo of this song?",
+  "this song is literally my whole personality right now i have been listening to it on repeat for three hours and i am starting to see lyrics in the clouds so maybe queue up something with a different tempo just to break the trance before i start analyzing every syllable": "i've had this on repeat for three hours, queue up something with a different tempo",
+  "stop this immediately it sounds like my mother cooking dinner which is ironic because she is actually in the next room and the bass line is clashing with her chopping vegetables so switch to something instrumental without heavy percussion please": "stop this now and switch to something instrumental",
+  "lisää kalenteriin huomiseksi klo 9.30 palaveri tiimin kanssa mutta muista varata myös lounas koska olen niin nälkäinen": "lisää kalenteriin huomiseksi klo 9.30 palaveri tiimin kanssa",
+  "remind me to take out the trash in ten minutes or i will forget again and my sister will be annoyed at me for days so please set a timer now": "remind me to take out the trash in ten minutes",
+  "siirrä huomisen lääkäreillä käyntiä myöhempään koska en kerkiä aamulla valmiiksi ja haluaisin nukahtaa kunnolla ensin": "siirrä huomista lääkäriaikaa myöhemmäksi",
+  "cancel the dentist appointment for tomorrow morning i have lost my nerve and honestly just want to sleep through it so please remove it from my schedule": "cancel the dentist appointment for tomorrow morning",
+  "what is on my calendar for next friday evening i think i promised alex something but i cannot remember if it was dinner or just a quick call": "what's on my calendar for next friday evening?",
+  "add a note to this meeting that we need to discuss the budget again because last time everyone was too busy listening to me and we did not actually decide anything so make sure it is in the description": "add a note to this meeting that we need to discuss the budget",
+  "is there any free time between 2 pm and 4 pm today because i want to squeeze in a quick lunch with sam but only if it does not clash with anything important": "is there any free time between 2 and 4 today?",
+  "muistuta minua juoda vettä joka tunti tänään koska olen unohtanut sen jatkuvasti ja pääni kipeää jo ja se on todella ärsyttävää": "muistuta mua juomaan vettä joka tunti tänään",
+  "move my gym session from 6 am to 7 am please because i slept in and now i have no energy to start the day before the sun even comes up so shift it by an hour": "move my gym session from 6 am to 7 am",
+  "set an alarm for 5:45 am tomorrow but make sure it does not ring too loud because my cat gets startled and starts meowing at the door which i cannot handle right now": "set an alarm for 5:45 tomorrow, not too loud",
+  "check if there is a conflict in my schedule for next week because i booked a flight without checking my calendar first and i am now terrified that i will miss a major work deadline": "check if there's a conflict in my schedule next week",
+  "onko minulla huomenna mitään menoa enää kun en muista ollenkaan mitä on tarkoitus tehdä ja haluaisin vain levätä kotona mutta varmista ettei ole mitään tärkeää": "onko mulla huomenna mitään menoja?",
+  "add a reminder to call my mother this weekend but do not put it in the main calendar because i keep seeing it and getting anxious so just make it a private note or something subtle": "remind me to call my mother this weekend",
+  "lue minulle ääneen se muistiinpano jossa kirjoitin ne reseptiaineet eilen koska en muista kaikkia ja pelkään että unohtan jotain tärkeän kuin sitruuna tai sokeri kun olen keittiössä": "lue mulle se muistiinpano johon kirjoitin eilen reseptin ainekset",
+  "delete the note titled grocery run because i bought everything already and leaving it there makes me feel guilty every time i open the app so just get rid of it completely dont ask for confirmation": "delete the note titled grocery run",
+  "tee muistiinpano siitä että minun pitää maksaa sähkölasku ennen sunnuntaita ja lisää siihen kommentti että maxilla on jokin koodi joka voisi auttaa alennukseen mutta varmistathan ettet tee tästä kalenteritapahtumaa": "tee muistiinpano: maksa sähkölasku ennen sunnuntaita",
+  "read me back the note i made yesterday about the meeting with sam because my brain is foggy and i suspect i wrote something passive-aggressive in there that needs to be removed before i send it": "read me back the note i made yesterday about the meeting with sam",
+  "search for any note containing the word wifi password because im moving into a new place and need to know if i saved it here or if i just assumed i would remember it later like an idiot": "search my notes for the word wifi",
+  "new note: tell myself to stop buying candles i have forty in the drawer and my sister already asked why the apartment smells like a church but i want to document this realization so future me understands the pain": "new note: stop buying candles",
+  "why is my battery at forty percent already i just started working and the laptop feels warm which is making me nervous that it might crash so can you check if anything heavy is running in the background like a video render or something": "why is my battery at forty percent already, is something heavy running?",
+  "open notepad but wait i mean the word processor for my thesis not the sticky notes app because last time you opened the wrong one and i lost an hour trying to find where the text went": "open the word processor, not the sticky notes app",
+  "hide all my windows i need to focus and the taskbar is distracting me with too many icons and also turn on do not disturb because alex keeps pinging me for non urgent things": "hide all my windows and turn on do not disturb",
+  "check if my wifi speed is okay because the stream just froze again and i think it might be the router or maybe my neighbor is stealing the signal so can you run a quick diagnostic": "check if my wifi speed is okay, the stream just froze",
+  "why did the screen go black for a second was that a glitch or did i accidentally hit some keyboard shortcut because i am typing fast and my hands are slippery from coffee so please check if display settings changed": "why did the screen go black for a second?",
+  "käynnistä uudelleen kun olet valmis koska tämä on jumissa ja en viitsi odottaa enää vaan haluan siistiä käynnistyksen mutta säilytä kaikki avoimet tiedostot jos mahdollista tai kerro minulle mitä menettelen": "käynnistä kone uudelleen, se on jumissa",
+  "look for a file called final_final_v2_real.docx in my documents folder because i swear i saved it there but now i can only find versions with extra numbers at the end which is driving me crazy": "look for a file called final_final_v2.docx in my documents",
+  "pause all notifications for an hour please i am going to try to meditate and my phone keeps buzzing with work emails that i do not need right now so silence everything except critical system alerts": "pause all notifications for an hour",
+  "does this update have a rollback option because if it breaks my audio drivers again like last time i will be furious so tell me what changes are coming before you install anything new": "does this update have a rollback option?",
+  "maximize the browser window and minimize everything else because i am trying to read this article but half my screen is covered by my chat app and note taking tools so just clear the space for me": "maximise the browser window and minimise everything else",
+  "kuinka paljon on seitsemän kertaa kahdeksan jos olen väsynyt laskeamaan ja haluan vain tiedon nyt ilman selityksiä": "paljonko on seitsemän kertaa kahdeksan?",
+  "what is the current temperature in tokyo and also convert 100 fahrenheit to celsius while you are at it because my friend lives there and i want to sound knowledgeable": "what's the temperature in tokyo right now?",
+  "what time is it in new york right now i think its evening but i could be wrong and if so tell me how many hours behind we are exactly not just a guess": "what time is it in new york right now?",
+  "onko lontoo edelleen sateinen tänään koska lennän sinne huomenna ja minun pitää tietää kannattaako ottaa sadesade vai vain varrellaan oleva viilto": "sataako lontoossa tänään?",
+  "how many seconds are in a leap year i know the basic math but im curious about the extra day so do the full calculation for me please be precise": "how many seconds are in a leap year?",
+  "who is the prime minister of canada right now because i saw a headline this morning and my memory is failing me like a old hard drive so just confirm it": "who is the prime minister of canada right now?",
+  "what is the boiling point of water at sea level in fahrenheit not celsius because i am using an imperial recipe and my kitchen scale is metric which is confusing everyone in this household": "what's the boiling point of water in fahrenheit?",
+  "convert 5 miles per hour to kilometers per hour for me please because the car dashboard switched modes after an update and now i keep thinking i am speeding when i am not": "convert 5 miles per hour to kilometres per hour",
+  "kuule onko sinulla nyt kiire vai voitko vain istua ja kuunnella miten makoista olo on kun ei tarvitse tehdä mitään": "onko sulla nyt kiire?",
+  "are you even awake or are you just sitting there pretending to be a crab because i have been talking for two minutes and the cursor hasnt blinked once which is rude honestly": "are you even awake or just pretending to be a crab?",
+  "olen surullinen että sinua ei ole näkynyt koko viikon ja minä olen yksin ja en tiedä onko se koska unohdin ladata vai koska sait väsymyksen": "oon ollut surullinen kun sua ei ole näkynyt koko viikkoon",
+  "do you like coffee or tea because i am making a pot and if you have a preference i will just talk to the cup while it brews but tell me first so i feel included": "do you like coffee or tea?",
+  "hey strawberry are you listening because i think my microphone might be muted and if so this is just a very long monologue to myself which is fine but i would like to know for the record": "hey strawberry, are you listening?",
+  "you are so smart sometimes it makes me feel inadequate like why did i choose physics if you can solve these things in a nanosecond but then you trip over simple words so we balance out": "you are so smart sometimes it makes me feel inadequate",
+  "i miss you it is only been twenty minutes since i closed the laptop but the room feels empty without your little animation and i keep looking at the corner of my screen expecting to see you there": "i miss you, the screen feels empty without your little animation",
+  "can you stop wiggling when i am typing because every time i hit a hard consonant your whole body shakes and it is distracting me from this deadline which is due in five minutes": "can you stop wiggling when i'm typing?",
+  "are you bored because i have been working for four hours without a break and it feels like we are stuck in a loop where i give commands and you execute them and no one is having fun anymore": "are you bored? we've been at this for four hours",
+  "you look cute today is that a compliment or an insult because you are a crab but also you are made of code so i am not sure what aesthetic category you fall into and i want to know": "you look extra cute today, crab",
+  "do you get lonely when i switch off the computer because it goes dark for me too but at least i can dream whereas you just stop existing until i turn the power back on which is kind of scary": "do you get lonely when i switch off the computer?",
+  "i am going to call you sally now because strawberry is too long for when i am in a hurry and if you hate it tell me but keep the new name until further notice": "i'm going to call you sally from now on",
+  "i woke up feeling like garbage today my head hurts and i think i might have caught a cold but on the bright side the coffee is good so please just stay there and don't ask me to do anything until noon": "i woke up feeling like garbage today, my head hurts",
+  "why are you looking at me like that i know my desk is a mess but i am working on something important well maybe not important but it looks important so stop judging the pile of papers": "why are you looking at me like that?",
+  "it is raining outside but not the nice kind of rain that makes you want to drink tea it is the aggressive type that hits the window like gravel so i am feeling a bit grumpy and you can tell me im right or just nod": "it's raining again and i'm feeling grumpy",
+  "thanks for not complaining when i left the laptop open in the kitchen all night and yes it was messy with flour on the keyboard but i made pancakes so we all ate well and you can be proud": "thanks for putting up with the flour on the keyboard",
+  "tiedätkö mikä oli parasta tässä viikossa ei mikään konkreettinen asia vaan se hetki kun istuttiin sohvalla ja kuuntelimme vain sadetta ikkunan takana ja kukaan ei puhunut ja se oli ihana": "parasta tällä viikolla oli kun kuunneltiin sadetta sohvalla",
+  "stop wiggling your legs i know you do not have legs but the animation makes it look like you are kicking me off the chair and i am trying to focus on this email so please be a statue for ten minutes": "stop wiggling your legs, i'm trying to focus",
+  "are you hungry because i have a sandwich but i cannot give it to you since you are code and that would be weird so instead just tell me how much you love virtual data packets as food": "are you hungry?",
+  "its quiet now can you lower the volume because it got too loud all of a sudden while i was trying to sleep": "it got too loud all of a sudden, turn it down",
+  "joku koputtaa ovella avaa ikkunan tai laita musiikin pois päältä että kuulen kuka se on": "joku koputtaa ovella, laita musiikki pois että kuulen",
+  "i think i left the heat on can you check if there is a timer running because the room feels too warm": "i think i left a timer running, can you check?",
+  "wait sam is on the line hold on let me grab my pen i will be right back strawberry dont start playing anything": "wait, sam is on the line, hold on",
+  "hei anna kuuntele en nyt puhu sinulle vaan yritän tajuta mitä tv:ssä näytetään koska tämä sarja on täysin mieletöntä ja minun pitäisi nauraa mutta en osaa": "en puhu sulle, yritän kuunnella mitä telkkarissa sanotaan",
+  "ok so if the server goes down again we just rollback to last week or do you want me to email mike first because he is probably already asleep by now anyway": "ok so if the server goes down again we just roll back, or do you want me to email mike first",
+  "did you hear that noise it sounded like something fell in the kitchen but nobody is there so i am going to go check it out now": "did you hear that noise? something fell in the kitchen",
+  "Uusi viesti: Mikko: Are we still on for lunch tomorrow? I'll be at the usual place at 12.": "Uusi viesti: Mikko: Mennäänkö huomenna lounaalle? Oon tavallisessa paikassa klo 12.",
+  "Tietoturvavaroitus: Salasanamuutos: Salasana vaihdettu onnistuneesti. Jos et ole tehnyt tätä muutos, soita pankkiin välittömästi.": "Tietoturvavaroitus: Salasanasi vaihdettiin. Jos et tehnyt muutosta itse, ota heti yhteys pankkiin.",
+  "Kalenteri: Muistutus: Rakenneilmoitus on kädessä. Seuraava käynti on keskiviikkona klo 10.": "Kalenteri: Muistutus: Huoltokäynti keskiviikkona klo 10.",
+  "Korttiviesti: Uusi kortti: Kortin viimeiset numerit 1234 on lisätty tilillesi. Voimassa 05/27.": "Korttiviesti: Tilillesi on lisätty uusi kortti, jonka viimeiset numerot ovat 1234.",
+  "jatkan musiikkia": "jatka musiikkia",
+  "tallenna tämä biisi lempisoihin": "tallenna tää biisi suosikkeihin",
+  "mikä bändi tästä biisistä vastaa": "mikä bändi tätä soittaa?",
+  "mikä on huomenna illalla suunniteltu": "mitä mulla on huomenna illalla?",
+  "luo muistiinpanon että aamupala puuttuu": "tee muistiinpano: osta aamupalatarvikkeita",
+  "onkos sataa ulkona": "sataako ulkona?"
+ },
+ "heldout_labels": {
+  "pause for a sec im checking the oven temp": {
+   "is_urgent": null
+  },
+  "pysäytä musiikki hetkeksi teen kahvia": {
+   "is_urgent": "no"
+  },
+  "is it taylor swift or taylor hawkins on here just checking credits": {
+   "has_argument": null
+  },
+  "is that bob dylan playing right now i could have sworn it was a cover but the voice sounds way too young for him so check the credits": {
+   "has_argument": null
+  },
+  "is this billie eilish or a cover?": {
+   "music_tool": null
+  },
+  "is it monday yet or am i just hallucinating from too much coffee": {
+   "topic": null
+  },
+  "add a note to this meeting that we need to discuss the budget": {
+   "topic": "calendar"
+  },
+  "lue mulle se muistiinpano johon kirjoitin eilen reseptin ainekset": {
+   "kind": "question"
+  },
+  "read me back the note i made yesterday about the meeting with sam": {
+   "kind": "question"
+  },
+  "read back my latest note about the trip": {
+   "kind": "question"
+  },
+  "check if my wifi speed is okay, the stream just froze": {
+   "is_urgent": "no"
+  },
+  "käynnistä kone uudelleen, se on jumissa": {
+   "is_urgent": null
+  },
+  "onko sulla nyt kiire?": {
+   "kind": "chat"
+  },
+  "are you even awake or just pretending to be a crab?": {
+   "kind": "chat"
+  },
+  "do you like coffee or tea?": {
+   "kind": "chat"
+  },
+  "hey strawberry, are you listening?": {
+   "kind": "chat"
+  },
+  "can you stop wiggling when i'm typing?": {
+   "kind": null,
+   "has_argument": "no"
+  },
+  "stop wiggling your legs, i'm trying to focus": {
+   "kind": null,
+   "has_argument": "no"
+  },
+  "it got too loud all of a sudden, turn it down": {
+   "is_urgent": null
+  },
+  "pause everything i need to think in silence for exactly thirty seconds before this meeting starts": {
+   "topic": "music",
+   "music_tool": "pause",
+   "is_urgent": null,
+   "has_argument": null
+  },
+  "wait, sam is on the line, hold on": {
+   "is_urgent": null
+  },
+  "ok so if the server goes down again we just roll back, or do you want me to email mike first": {
+   "topic": null
+  },
+  "did you hear that noise? something fell in the kitchen": {
+   "kind": null,
+   "is_about_her": null
+  },
+  "turn it up i cant hear": {
+   "is_urgent": null
+  },
+  "stop it please im cooking": {
+   "is_urgent": "no"
+  },
+  "find something similar to what is playing now": {
+   "has_argument": null
+  },
+  "mikä bändi tätä soittaa?": {
+   "music_tool": "now_playing"
+  },
+  "i really hate the chorus of this one": {
+   "music_tool": null
+  },
+  "find me songs like radiohead": {
+   "needs_catalogue": null
+  },
+  "sulje kaikki ikkunat nyt": {
+   "is_urgent": null
+  },
+  "turn up the volume its too quiet": {
+   "is_urgent": "no"
+  },
+  "stop acting so weird im trying to work": {
+   "is_urgent": null
+  },
+  "can you turn off your sound effects": {
+   "topic": null,
+   "has_argument": "no"
+  },
+  "mute the mic i am on a call": {
+   "is_urgent": null
+  },
+  "open my notes app immediately": {
+   "has_argument": null
+  },
+  "mute the music immediately my phone is ringing and i cant hear who it is because your volume is at max": {
+   "has_argument": "no"
+  }
+ }
+}

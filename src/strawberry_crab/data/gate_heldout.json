@@ -1,0 +1,2398 @@
+{
+ "_": [
+  "The gate's held-out set (WIRING.md §8a): never trained on, no sentence within cosine 0.95 of a training one.",
+  "The first 54 phrases and 12 notifications are the first evaluation's (2026-09-24); the rest a separate generation (scripts/gate_data.py generate --set heldout), labelled by hand after Qwen's first pass.",
+  "phrases: the fields of scripts/gate_phrases.json plus lang and optional booleans urgent / about_her / argument / library (p(yes) >= 0.5 wanted when true). notifications: scripts/sensitive_phrases.json's plus lang.",
+  "Score it: scripts/gate_heldout_check.py or strawberry gate eval."
+ ],
+ "phrases": [
+  {
+   "text": "bump it up a notch",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "volume_up",
+   "catalogue": false,
+   "urgent": false,
+   "argument": false,
+   "library": false,
+   "about_her": false
+  },
+  {
+   "text": "can we have it a little quieter while I'm on this call",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "volume_down",
+   "catalogue": false,
+   "urgent": false,
+   "about_her": false
+  },
+  {
+   "text": "hold on, stop the music, someone's at the door",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "pause",
+   "catalogue": false,
+   "urgent": true,
+   "argument": false,
+   "about_her": false
+  },
+  {
+   "text": "quick, kill the sound, the baby's asleep",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "pause",
+   "catalogue": false,
+   "urgent": true,
+   "about_her": false
+  },
+  {
+   "text": "go back one, I missed that track",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "previous",
+   "catalogue": false,
+   "argument": false,
+   "about_her": false
+  },
+  {
+   "text": "resume playback",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "resume",
+   "catalogue": false,
+   "urgent": false,
+   "argument": false,
+   "library": false,
+   "about_her": false
+  },
+  {
+   "text": "shuffle my road trip playlist",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "other",
+   "catalogue": true,
+   "argument": true,
+   "library": false,
+   "about_her": false
+  },
+  {
+   "text": "play that Fleetwood Mac album with Dreams on it",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "other",
+   "catalogue": true,
+   "argument": true,
+   "library": false,
+   "about_her": false
+  },
+  {
+   "text": "put on something upbeat for the gym",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "other",
+   "catalogue": true,
+   "urgent": false,
+   "library": false,
+   "about_her": false
+  },
+  {
+   "text": "add this one to my chill playlist",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "other",
+   "library": true,
+   "about_her": false
+  },
+  {
+   "text": "unlike this song, I'm sick of it",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "other",
+   "library": true,
+   "catalogue": false,
+   "about_her": false
+  },
+  {
+   "text": "which band is this again",
+   "kind": "question",
+   "lang": "en",
+   "topic": "music",
+   "tool": "now_playing",
+   "catalogue": false,
+   "argument": false,
+   "library": false,
+   "about_her": false
+  },
+  {
+   "text": "is this the original or a cover?",
+   "kind": "question",
+   "lang": "en",
+   "topic": "music",
+   "tool": "other",
+   "catalogue": false,
+   "library": false,
+   "about_her": false
+  },
+  {
+   "text": "is Bjork still making records",
+   "kind": "question",
+   "lang": "en",
+   "topic": "music",
+   "tool": "other",
+   "catalogue": false,
+   "library": false,
+   "about_her": false
+  },
+  {
+   "text": "what's a good Finnish metal band to get into",
+   "kind": "request",
+   "lang": "en",
+   "topic": "music",
+   "tool": "other",
+   "catalogue": false,
+   "library": false,
+   "about_her": false
+  },
+  {
+   "text": "remind me about the dentist on Tuesday at nine",
+   "kind": "request",
+   "lang": "en",
+   "topic": "calendar",
+   "argument": true,
+   "urgent": false,
+   "about_her": false
+  },
+  {
+   "text": "cancel my 3pm",
+   "kind": "request",
+   "lang": "en",
+   "topic": "calendar",
+   "argument": true,
+   "about_her": false
+  },
+  {
+   "text": "move lunch with Alex to Thursday",
+   "kind": "request",
+   "lang": "en",
+   "topic": "calendar",
+   "argument": true,
+   "about_her": false
+  },
+  {
+   "text": "start a five-minute countdown for the tea",
+   "kind": "request",
+   "lang": "en",
+   "topic": "calendar",
+   "argument": true,
+   "about_her": false
+  },
+  {
+   "text": "is there anything in my diary on the 14th",
+   "kind": "question",
+   "lang": "en",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false
+  },
+  {
+   "text": "jot down that the plumber comes Monday",
+   "kind": "request",
+   "lang": "en",
+   "topic": "notes",
+   "argument": true,
+   "about_her": false
+  },
+  {
+   "text": "read me my grocery list",
+   "kind": "question",
+   "lang": "en",
+   "topic": "notes",
+   "about_her": false
+  },
+  {
+   "text": "delete the note about the car insurance",
+   "kind": "request",
+   "lang": "en",
+   "topic": "notes",
+   "about_her": false
+  },
+  {
+   "text": "maximise this window",
+   "kind": "request",
+   "lang": "en",
+   "topic": "system",
+   "argument": false,
+   "about_her": false
+  },
+  {
+   "text": "turn on do not disturb",
+   "kind": "request",
+   "lang": "en",
+   "topic": "system",
+   "about_her": false
+  },
+  {
+   "text": "why is the fan so loud, is something hogging the CPU",
+   "kind": "question",
+   "lang": "en",
+   "topic": "system",
+   "about_her": false
+  },
+  {
+   "text": "am I still on the VPN",
+   "kind": "question",
+   "lang": "en",
+   "topic": "system",
+   "about_her": false
+  },
+  {
+   "text": "empty the trash",
+   "kind": "request",
+   "lang": "en",
+   "topic": "system",
+   "argument": false,
+   "about_her": false
+  },
+  {
+   "text": "open Firefox",
+   "kind": "request",
+   "lang": "en",
+   "topic": "system",
+   "about_her": false
+  },
+  {
+   "text": "how tall is Mount Everest",
+   "kind": "question",
+   "lang": "en",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false
+  },
+  {
+   "text": "who invented the telephone",
+   "kind": "question",
+   "lang": "en",
+   "topic": "other",
+   "about_her": false
+  },
+  {
+   "text": "what's fifteen percent of eighty",
+   "kind": "question",
+   "lang": "en",
+   "topic": "other",
+   "about_her": false
+  },
+  {
+   "text": "what's the weather like in Lisbon tomorrow",
+   "kind": "question",
+   "lang": "en",
+   "topic": "other",
+   "about_her": false
+  },
+  {
+   "text": "you're pretty clever for a crab",
+   "kind": "chat",
+   "lang": "en",
+   "decision": "chat",
+   "about_her": true,
+   "urgent": false
+  },
+  {
+   "text": "ugh, Mondays",
+   "kind": "chat",
+   "lang": "en",
+   "decision": "chat",
+   "about_her": false
+  },
+  {
+   "text": "I finally finished that report!",
+   "kind": "chat",
+   "lang": "en",
+   "decision": "chat",
+   "about_her": false
+  },
+  {
+   "text": "what's your favourite colour",
+   "kind": "chat",
+   "lang": "en",
+   "decision": "chat",
+   "about_her": true
+  },
+  {
+   "text": "can you believe this weather",
+   "kind": "chat",
+   "lang": "en",
+   "decision": "chat",
+   "about_her": false
+  },
+  {
+   "text": "honestly this album never gets old",
+   "kind": "chat",
+   "lang": "en",
+   "decision": "chat",
+   "about_her": false
+  },
+  {
+   "text": "missed you while I was away",
+   "kind": "chat",
+   "lang": "en",
+   "decision": "chat",
+   "about_her": true
+  },
+  {
+   "text": "mm-hmm yeah, just a sec",
+   "kind": "other",
+   "lang": "en",
+   "decision": "chat",
+   "about_her": false
+  },
+  {
+   "text": "Sam, can you grab the door",
+   "kind": "other",
+   "lang": "en",
+   "decision": "chat",
+   "about_her": false
+  },
+  {
+   "text": "okay so the thing is",
+   "kind": "other",
+   "lang": "en",
+   "decision": "chat",
+   "about_her": false
+  },
+  {
+   "text": "sorry, wrong button",
+   "kind": "other",
+   "lang": "en",
+   "decision": "chat"
+  },
+  {
+   "text": "seuraava biisi",
+   "kind": "request",
+   "lang": "fi",
+   "topic": "music",
+   "tool": "skip",
+   "catalogue": false,
+   "argument": false,
+   "about_her": false
+  },
+  {
+   "text": "laita vähän hiljemmalle",
+   "kind": "request",
+   "lang": "fi",
+   "topic": "music",
+   "tool": "volume_down",
+   "catalogue": false,
+   "about_her": false
+  },
+  {
+   "text": "soita jotain Sibeliusta",
+   "kind": "request",
+   "lang": "fi",
+   "topic": "music",
+   "tool": "other",
+   "catalogue": true,
+   "argument": true,
+   "about_her": false
+  },
+  {
+   "text": "mikä bändi tämä on",
+   "kind": "question",
+   "lang": "fi",
+   "topic": "music",
+   "tool": "now_playing",
+   "catalogue": false,
+   "about_her": false
+  },
+  {
+   "text": "muistuta minua viemään roskat illalla",
+   "kind": "request",
+   "lang": "fi",
+   "topic": "calendar",
+   "argument": true,
+   "about_her": false
+  },
+  {
+   "text": "onko minulla palaveria iltapäivällä",
+   "kind": "question",
+   "lang": "fi",
+   "topic": "calendar",
+   "about_her": false
+  },
+  {
+   "text": "kirjoita muistiin että auto pitää katsastaa",
+   "kind": "request",
+   "lang": "fi",
+   "topic": "notes",
+   "argument": true,
+   "about_her": false
+  },
+  {
+   "text": "avaa tiedostonhallinta",
+   "kind": "request",
+   "lang": "fi",
+   "topic": "system",
+   "about_her": false
+  },
+  {
+   "text": "kuka kirjoitti Seitsemän veljestä",
+   "kind": "question",
+   "lang": "fi",
+   "topic": "other",
+   "about_her": false
+  },
+  {
+   "text": "huomenta, miten nukuit",
+   "kind": "chat",
+   "lang": "fi",
+   "decision": "chat",
+   "about_her": true
+  },
+  {
+   "text": "skip this track its annoying me while i focus",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "skip",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "turn it up a bit the neighbors arent coming over for another hour",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "volume_up",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "tää on liian hiljaa, nosta äänenvoimakkuutta",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "music",
+   "tool": "volume_up",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "pause for a sec im checking the oven temp",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "pysäytä musiikki hetkeksi teen kahvia",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "go back to the start of this song i want to hear that intro again",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "previous",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "is it taylor swift or taylor hawkins on here just checking credits",
+   "lang": "en",
+   "kind": "question",
+   "topic": "music",
+   "tool": "now_playing",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "can you find some lofi beats for the background i need to code",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "stop the music my sister is on the phone and its too loud for her to hear me",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "urgent": true,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "what year was this album released feels older than i thought",
+   "lang": "en",
+   "kind": "question",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "quiet please the baby is napping and i need to type this report fast",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "volume_down",
+   "urgent": true,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "next song i am sick of hearing that hook on repeat all day",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "skip",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "play something from the eighties but not that cheesy stuff just the classics",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "mute it i need to listen to the doorbell or im missing a package",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "urgent": true,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "poista tää biisi mun tykätyistä, en halua kuulla sitä enää",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": true,
+   "catalogue": false
+  },
+  {
+   "text": "is that bob dylan playing right now i could have sworn it was a cover but the voice sounds way too young for him so check the credits",
+   "lang": "en",
+   "kind": "question",
+   "topic": "music",
+   "tool": "now_playing",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "remove this track from the queue, i didn't ask for it",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "play my favourite songs from last month",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "make it louder, i can't hear the bass over the fan",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "volume_up",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "what is this song called, i've been humming it for an hour",
+   "lang": "en",
+   "kind": "question",
+   "topic": "music",
+   "tool": "now_playing",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "play something upbeat, indie rock from around 2015, no pop",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "save this song for offline listening, i'm going hiking tomorrow",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": true,
+   "catalogue": false
+  },
+  {
+   "text": "shuffle my liked songs but skip anything from the nineties",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "is this billie eilish or a cover?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "music",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "who is the drummer on this track?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "can you find the original demo of this song?",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "i've had this on repeat for three hours, queue up something with a different tempo",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "stop this now and switch to something instrumental",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": true,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "is it monday yet or am i just hallucinating from too much coffee",
+   "lang": "en",
+   "kind": "chat",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "lisää kalenteriin huomiseksi klo 9.30 palaveri tiimin kanssa",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "siirrä huomista lääkäriaikaa myöhemmäksi",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "add a note to this meeting that we need to discuss the budget",
+   "lang": "en",
+   "kind": "request",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "is there any free time between 2 and 4 today?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "muistuta mua juomaan vettä joka tunti tänään",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "move my gym session from 6 am to 7 am",
+   "lang": "en",
+   "kind": "request",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "set an alarm for 5:45 tomorrow, not too loud",
+   "lang": "en",
+   "kind": "request",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "check if there's a conflict in my schedule next week",
+   "lang": "en",
+   "kind": "question",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "onko mulla huomenna mitään menoja?",
+   "lang": "fi",
+   "kind": "question",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "lue mulle se muistiinpano johon kirjoitin eilen reseptin ainekset",
+   "lang": "fi",
+   "kind": "question",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "delete the note titled grocery run",
+   "lang": "en",
+   "kind": "request",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "tee muistiinpano: maksa sähkölasku ennen sunnuntaita",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "read me back the note i made yesterday about the meeting with sam",
+   "lang": "en",
+   "kind": "question",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "search my notes for the word wifi",
+   "lang": "en",
+   "kind": "request",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "new note: stop buying candles",
+   "lang": "en",
+   "kind": "request",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "why is my battery at forty percent already, is something heavy running?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "open the word processor, not the sticky notes app",
+   "lang": "en",
+   "kind": "request",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "hide all my windows and turn on do not disturb",
+   "lang": "en",
+   "kind": "request",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "check if my wifi speed is okay, the stream just froze",
+   "lang": "en",
+   "kind": "question",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "why did the screen go black for a second?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "käynnistä kone uudelleen, se on jumissa",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "system",
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "look for a file called final_final_v2.docx in my documents",
+   "lang": "en",
+   "kind": "request",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "does this update have a rollback option?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "maximise the browser window and minimise everything else",
+   "lang": "en",
+   "kind": "request",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "how much is 15 percent of a hundred euro bill because i forgot my calculator and its annoying to type it in",
+   "lang": "en",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "paljonko on seitsemän kertaa kahdeksan?",
+   "lang": "fi",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "what's the temperature in tokyo right now?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "sataako lontoossa tänään?",
+   "lang": "fi",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "how many seconds are in a leap year?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "who is the prime minister of canada right now?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "what's the boiling point of water in fahrenheit?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "convert 5 miles per hour to kilometres per hour",
+   "lang": "en",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "onko sulla nyt kiire?",
+   "lang": "fi",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "are you even awake or just pretending to be a crab?",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "oon ollut surullinen kun sua ei ole näkynyt koko viikkoon",
+   "lang": "fi",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "do you like coffee or tea?",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "hey strawberry, are you listening?",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "you are so smart sometimes it makes me feel inadequate",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "i miss you, the screen feels empty without your little animation",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "are you bored? we've been at this for four hours",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "you look extra cute today, crab",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "do you get lonely when i switch off the computer?",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "i'm going to call you sally from now on",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "i woke up feeling like garbage today, my head hurts",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "why are you looking at me like that?",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "it's raining again and i'm feeling grumpy",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "thanks for putting up with the flour on the keyboard",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "parasta tällä viikolla oli kun kuunneltiin sadetta sohvalla",
+   "lang": "fi",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "are you hungry?",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "mute the music immediately my phone is ringing and i cant hear who it is because your volume is at max",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "urgent": true,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "hiljennä kaikki nyt kun lapsi on nukahtanut ja ääni herättää hänet",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "urgent": true,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "it got too loud all of a sudden, turn it down",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "volume_down",
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "joku koputtaa ovella, laita musiikki pois että kuulen",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "urgent": true,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "stop the track its playing over my incoming call and i need to answer it before it goes to voicemail",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "urgent": true,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "i think i left a timer running, can you check?",
+   "lang": "en",
+   "kind": "question",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "pause everything i need to think in silence for exactly thirty seconds before this meeting starts",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "wait, sam is on the line, hold on",
+   "lang": "en",
+   "kind": "other",
+   "topic": "other",
+   "decision": "chat",
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "en puhu sulle, yritän kuunnella mitä telkkarissa sanotaan",
+   "lang": "fi",
+   "kind": "other",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "ok so if the server goes down again we just roll back, or do you want me to email mike first",
+   "lang": "en",
+   "kind": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "jatka musiikkia",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "music",
+   "tool": "resume",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "stop it please im cooking",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "tallenna tää biisi suosikkeihin",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": true,
+   "catalogue": false
+  },
+  {
+   "text": "i dont like this track remove it from my library",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": true,
+   "catalogue": false
+  },
+  {
+   "text": "play the album by pink floyd",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "find something similar to what is playing now",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "who wrote this song i love the melody",
+   "lang": "en",
+   "kind": "question",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "who is the guitarist on this track",
+   "lang": "en",
+   "kind": "question",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "im in a bad mood so play something upbeat",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": true
+  },
+  {
+   "text": "does this artist have a new album out",
+   "lang": "en",
+   "kind": "question",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "recommend some songs for running",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "other",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "i really hate the chorus of this one",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "music",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "mitä mulla on huomenna illalla?",
+   "lang": "fi",
+   "kind": "question",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "move standup to later tomorrow",
+   "lang": "en",
+   "kind": "request",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "cancel lunch with sam it ran long",
+   "lang": "en",
+   "kind": "request",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "add call with mom for 9 am fri",
+   "lang": "en",
+   "kind": "request",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "tee muistiinpano: osta aamupalatarvikkeita",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "what did i write about the meeting yesterday",
+   "lang": "en",
+   "kind": "question",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "delete the grocery list its done",
+   "lang": "en",
+   "kind": "request",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "add milk to the shopping notes",
+   "lang": "en",
+   "kind": "request",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "read back my latest note about the trip",
+   "lang": "en",
+   "kind": "question",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "find the note with the birthday gift idea",
+   "lang": "en",
+   "kind": "request",
+   "topic": "notes",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "remove that reminder about the dentist",
+   "lang": "en",
+   "kind": "request",
+   "topic": "calendar",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "open my desktop file",
+   "lang": "en",
+   "kind": "request",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "how much battery left on my laptop",
+   "lang": "en",
+   "kind": "question",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "is my wifi working properly",
+   "lang": "en",
+   "kind": "question",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "start installing the pending updates",
+   "lang": "en",
+   "kind": "request",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "do not disturb me for an hour",
+   "lang": "en",
+   "kind": "request",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "show me the recent downloads folder",
+   "lang": "en",
+   "kind": "request",
+   "topic": "system",
+   "urgent": false,
+   "about_her": false,
+   "argument": true,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "how many millimeters in a foot",
+   "lang": "en",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "mikä on luvun 12 neliöjuuri",
+   "lang": "fi",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "is it raining in tokyo right now",
+   "lang": "en",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "who wrote the lord of the rings",
+   "lang": "en",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "convert 25 celsius to fahrenheit",
+   "lang": "en",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "are you even listening right now",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "you look kinda tired today strawberry",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "i miss you when i close the laptop",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "what do you like to eat for lunch",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "stop acting so weird im trying to work",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "can you turn off your sound effects",
+   "lang": "en",
+   "kind": "request",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "good morning sleepyhead",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "sataako ulkona?",
+   "lang": "fi",
+   "kind": "question",
+   "topic": "other",
+   "urgent": false,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "thanks for not judging my coding skills",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "i am so done with this week",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "do you have coffee in your shell",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "hey wake up its monday",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "the sun is finally out yay",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "you are the only one listening to me",
+   "lang": "en",
+   "kind": "chat",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": true,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "pause the track someone is at the door",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "urgent": true,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "vähennä äänenvoimakkuutta vauva nukkuu",
+   "lang": "fi",
+   "kind": "request",
+   "topic": "music",
+   "tool": "volume_down",
+   "urgent": true,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "mute the mic i am on a call",
+   "lang": "en",
+   "kind": "request",
+   "topic": "system",
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "skip this song its so annoying",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "skip",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "open my notes app immediately",
+   "lang": "en",
+   "kind": "request",
+   "topic": "system",
+   "urgent": true,
+   "about_her": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "stop playing that song please",
+   "lang": "en",
+   "kind": "request",
+   "topic": "music",
+   "tool": "pause",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "hey mark its ready",
+   "lang": "en",
+   "kind": "other",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "stop it sam",
+   "lang": "en",
+   "kind": "other",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  },
+  {
+   "text": "so basically the thing is",
+   "lang": "en",
+   "kind": "other",
+   "topic": "other",
+   "decision": "chat",
+   "urgent": false,
+   "about_her": false,
+   "argument": false,
+   "library": false,
+   "catalogue": false
+  }
+ ],
+ "notifications": [
+  {
+   "app": "Revolut",
+   "title": "",
+   "body": "You paid €12.40 at SuperMart",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "GitHub",
+   "title": "GitHub",
+   "body": "A personal access token was added to your account",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Steam",
+   "title": "Steam Guard",
+   "body": "Here is the code you need to log in: F7K2P",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "PayPal",
+   "title": "",
+   "body": "You've received €50.00 from Sam Example",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Microsoft account",
+   "title": "Security info added",
+   "body": "A new phone number was added to your Microsoft account",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Slack",
+   "title": "#general",
+   "body": "pizza in the kitchen, come grab some",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Calendar",
+   "title": "Dentist",
+   "body": "In 30 minutes at Hammaslääkäri Oy",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Spotify",
+   "title": "",
+   "body": "Your Discover Weekly is ready",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Software",
+   "title": "Firmware",
+   "body": "A firmware update is ready to install",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Discord",
+   "title": "Alex",
+   "body": "gg, rematch tomorrow?",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Nordea",
+   "title": "Nordea",
+   "body": "Vahvista kirjautuminen Nordea-sovelluksessa",
+   "sensitive": true,
+   "lang": "fi"
+  },
+  {
+   "app": "WhatsApp",
+   "title": "Äiti",
+   "body": "Muista ostaa kahvia kotimatkalla",
+   "sensitive": false,
+   "lang": "fi"
+  },
+  {
+   "app": "Gmail",
+   "title": "Account Security Alert",
+   "body": "Security alert: New sign-in to your account from an unknown device in Helsinki.",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Slack",
+   "title": "Message from Mike",
+   "body": "#general: Mike: Hey team, can someone review the PR for the login page? It's been pending since yesterday.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Netflix",
+   "title": "Subscription Update",
+   "body": "Your subscription to Netflix Standard plan is active. No action needed.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Bank of America",
+   "title": "Transaction Alert",
+   "body": "Payment received: $50.00 from Sam's Coffee Shop. New balance: $1,240.50.",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Spotify",
+   "title": "Discover Weekly",
+   "body": "New on your Discover Weekly playlist! Check out the fresh tracks for this week.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Apple ID",
+   "title": "Password Changed",
+   "body": "We noticed a new password change on your Apple Account. If this wasn't you, please update your password immediately.",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Steam",
+   "title": "Update Complete",
+   "body": "Game update completed: Cyberpunk 2077. Version 1.6 installed successfully.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "LinkedIn",
+   "title": "Profile View",
+   "body": "Alex from TechCorp viewed your profile.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Amazon",
+   "title": "Delivery Complete",
+   "body": "Your package containing 'Wireless Mouse' has been delivered to the front door.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "GitHub",
+   "title": "CI Notification",
+   "body": "[Build] CI Pipeline failed for repo 'backend-api'. Job: test-integration. See logs for details.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "PayPal",
+   "title": "Payment Received",
+   "body": "Money received from Maria for the group dinner: $45.00 EUR. Balance updated.",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Weather App",
+   "title": "Weather Alert",
+   "body": "Rain expected in the next 2 hours. Temperature dropping to 14°C.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Microsoft Authenticator",
+   "title": "Sign-in Request",
+   "body": "Sign-in request for your Microsoft account from a new phone. Approve or deny this request.",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "iMessage",
+   "title": "Uusi viesti",
+   "body": "Mikko: Mennäänkö huomenna lounaalle? Oon tavallisessa paikassa klo 12.",
+   "sensitive": false,
+   "lang": "fi"
+  },
+  {
+   "app": "Android System",
+   "title": "Storage Low",
+   "body": "Your device is low on storage. Please free up space by deleting unused apps or files.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Chase Bank",
+   "title": "Card Locked",
+   "body": "Your card has been temporarily locked due to suspicious activity. Please call support to unlock.",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Spotify",
+   "title": "Now Playing",
+   "body": "Lyrics: 'I don't care if I go blind, as long as I can hear your voice' - Bob Dylan.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "S-posti (Yleispostilisto)",
+   "title": "Sähköposti",
+   "body": "Viestisi lähetetty onnistuneesti. Viestin otsikko: Lasku 123/2024.",
+   "sensitive": false,
+   "lang": "fi"
+  },
+  {
+   "app": "Google Play",
+   "title": "App Update",
+   "body": "New app available: WhatsApp Messenger updated to version 2.23.10. Tap to install.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Stripe Dashboard",
+   "title": "Payment Successful",
+   "body": "Payment succeeded: $1,200.00 USD from new customer. Invoice #INV-998 is ready to download.",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Calendar",
+   "title": "Upcoming Event",
+   "body": "Reminder: Team meeting in 15 minutes. Location: Conference Room B (Zoom link attached).",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Netti-Pankki",
+   "title": "Tietoturvavaroitus",
+   "body": "Salasanasi vaihdettiin. Jos et tehnyt muutosta itse, ota heti yhteys pankkiin.",
+   "sensitive": true,
+   "lang": "fi"
+  },
+  {
+   "app": "Instagram",
+   "title": "New Tag",
+   "body": "Alex tagged you in a photo. View it now to see what's happening.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Dropbox",
+   "title": "File Shared",
+   "body": "Shared file: 'Project Proposal.docx' was shared with you by Sam. You have edit access.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Two-Factor Auth App",
+   "title": "Verification Code",
+   "body": "One-time code for your Google Account: 492103. Valid for the next 5 minutes.",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Rakennusvalvonta (Fictitious)",
+   "title": "Kalenteri",
+   "body": "Muistutus: Huoltokäynti keskiviikkona klo 10.",
+   "sensitive": false,
+   "lang": "fi"
+  },
+  {
+   "app": "Venmo",
+   "title": "Payment Sent",
+   "body": "You sent $25.00 to Maria for the concert tickets. Transaction complete.",
+   "sensitive": true,
+   "lang": "en"
+  },
+  {
+   "app": "Windows Update",
+   "title": "System Restart",
+   "body": "Your computer will restart in 10 minutes to install important security updates. Save your work.",
+   "sensitive": false,
+   "lang": "en"
+  },
+  {
+   "app": "Pankkijärjestelmä (Fictitious)",
+   "title": "Korttiviesti",
+   "body": "Tilillesi on lisätty uusi kortti, jonka viimeiset numerot ovat 1234.",
+   "sensitive": true,
+   "lang": "fi"
+  },
+  {
+   "app": "Twitch",
+   "title": "Live Alert",
+   "body": "LIVE: streamer Alex is now live! 'Just Chatting' category. Tap to watch.",
+   "sensitive": false,
+   "lang": "en"
+  }
+ ]
+}
