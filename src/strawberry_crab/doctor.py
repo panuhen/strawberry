@@ -763,6 +763,11 @@ def check_daemon(config, probes: Probes) -> tuple[list[Check], dict | None]:
     if embedder.get("fallback"):
         checks.append(Check(WARN, "daemon gate", f"on Ollama, not in-process: {embedder['fallback']}",
                             "strawberry setup fetches the model; then strawberry restart"))
+    scorer = (health.get("gate") or {}).get("scorer") or {}
+    if scorer.get("fallback"):
+        # It still routes, on the nearest examples: the trained head is missing or does not fit.
+        checks.append(Check(WARN, "daemon gate scorer", f"the nearest examples, not the trained head: {scorer['fallback']}",
+                            "strawberry gate use shipped (or [gate] scorer = \"nearest\"); then strawberry restart"))
     return checks, health
 
 

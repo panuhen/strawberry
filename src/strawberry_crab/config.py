@@ -149,10 +149,15 @@ class GateConfig:
     model: str = "embeddinggemma"  # Ollama embedding model (embedder = "ollama", and the fallback)
     query_prefix: str = "task: classification | query: "   # embeddinggemma's prompt conventions;
     document_prefix: str = "title: none | text: "           # empty both for a model without them
-    neighbours: int = 2            # an option scores the mean of its N nearest examples
-    temperature: float = 0.05      # softmax over those scores; lower = more decisive
-    act: float = 0.6               # kind confidence at which a plain command may fire a reflex
-    offer: float = 0.3             # below act: a label in the journal; the sentence goes to the thinker anyway
+    # What turns the sentence's embedding into answers. "head": the trained head (gatehead.py), which
+    # carries its own act/offer; "nearest": the mean similarity of each option's nearest examples. A
+    # head that is missing or does not fit the embedder or the questions falls back to "nearest".
+    scorer: str = "head"
+    head: str = ""                 # a head file; "" = the data dir's current head, else the shipped one
+    neighbours: int = 2            # nearest: an option scores the mean of its N nearest examples
+    temperature: float = 0.05      # nearest: softmax over those scores; lower = more decisive
+    act: float = 0.6               # nearest: kind confidence at which a plain command may fire a reflex
+    offer: float = 0.3             # nearest: below act, a label in the journal; the sentence goes to the thinker anyway
     topic_min: float = 0.2         # below this the topic is "other" and no tools are loaded
     timeout_s: float = 2.0         # one embedding call is ~165 ms on a GPU
     retry_timeout_s: float = 15.0  # a notification body's check that timed out waits this long for the
@@ -163,6 +168,7 @@ class GateConfig:
 
 
 EMBEDDERS = ("onnx", "ollama")
+SCORERS = ("head", "nearest")
 
 
 @dataclass
@@ -349,6 +355,8 @@ def _validate(config: Config) -> None:
         raise ConfigError(f"voice.hotkey: {exc}") from None
     if config.gate.embedder not in EMBEDDERS:
         raise ConfigError("gate.embedder must be onnx or ollama")
+    if config.gate.scorer not in SCORERS:
+        raise ConfigError("gate.scorer must be head or nearest")
     if not (1 <= config.gate.onnx_threads <= 64):
         raise ConfigError("gate.onnx_threads must be 1-64")
     if config.gate.temperature <= 0:
@@ -461,6 +469,7 @@ def default_toml() -> str:
     d = DaemonConfig()
     n = NotificationsConfig()
     s = SpeechConfig()
+    g = GateConfig()
     lr = LearningConfig()
     lines = [
         "# Strawberry settings. Every key is optional; these are the defaults.",
@@ -541,8 +550,11 @@ def default_toml() -> str:
         '# onnx_dir = "~/.local/share/strawberry/models/embeddinggemma-300m-onnx"',
         "onnx_threads = 4               # CPU threads for one embedding",
         'model = "embeddinggemma"       # Ollama embedding model (ollama pull embeddinggemma)',
-        "act = 0.6                      # confidence at which a plain command may fire a reflex",
-        "offer = 0.3                    # below act: a label in the journal; the sentence goes to the thinker",
+        f'scorer = "{g.scorer}"                # head: the trained head, with its own thresholds (strawberry gate eval);',
+        "                               # nearest: each option's nearest examples; a head that does not fit falls back",
+        '# head = ""                    # a head file; empty: the data dir\'s current head, else the shipped one',
+        "act = 0.6                      # nearest: confidence at which a plain command may fire a reflex",
+        "offer = 0.3                    # nearest: below act, a label in the journal; the sentence goes to the thinker",
         "retry_timeout_s = 15.0         # a notification check that timed out waits this long for the model, once",
         "# [gate.examples]              # a sentence she misreads goes under the option it belongs to",
         '# \"kind.request\" = ["put the kettle on"]',
