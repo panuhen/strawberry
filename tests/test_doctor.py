@@ -302,6 +302,12 @@ def test_daemon_check():
     checks, _ = doctor.check_daemon(config, machine)
     fallback = by_label(checks, "daemon gate")
     assert fallback.status == WARN and "on Ollama, not in-process: tokenizer.json not in" in fallback.detail
+    assert "daemon gate scorer" not in [c.label for c in checks]
+    machine.urls["http://127.0.0.1:8770/health"]["gate"]["scorer"] = {
+        "configured": "head", "in_use": "nearest", "fallback": "trained on all-minilm, the gate embeds with embeddinggemma"}
+    checks, _ = doctor.check_daemon(config, machine)
+    scorer = by_label(checks, "daemon gate scorer")
+    assert scorer.status == WARN and "not the trained head: trained on all-minilm" in scorer.detail
     machine.urls["http://127.0.0.1:8770/health"]["voice"] = {
         "enabled": True, "model": "medium", "ready": False, "phase": "loading", "load_s": 42.3,
         "reason": "loading whisper medium (first use: downloading ~1.5 GB from Hugging Face)"}

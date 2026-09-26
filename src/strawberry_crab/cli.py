@@ -1172,6 +1172,18 @@ def cmd_outcomes(last: int, clear: bool) -> int:
     return 0
 
 
+def cmd_gate(args: argparse.Namespace) -> int:
+    """`strawberry gate train | eval | use` (gatecmd.py): the daemon need not run."""
+    from . import gatecmd
+    from .config import ConfigError, load
+
+    try:
+        config = load()
+    except ConfigError as exc:
+        raise CliError(f"config error: {exc}", 2) from None
+    return gatecmd.main(args, config)
+
+
 # --- the command line -----------------------------------------------------------
 
 def parser() -> argparse.ArgumentParser:
@@ -1220,6 +1232,21 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--remove", action="store_true", help="remove the shortcut")
     p = add("route", "what the gate makes of a sentence (kind, topic, confidence, decision); for tuning")
     p.add_argument("text", nargs="+")
+    p = add("gate", "the gate's trained head: train a new one, score the gate on the held-out set, switch heads")
+    gate = p.add_subparsers(dest="gate_command", metavar="ACTION", required=True)
+    g = gate.add_parser("train", help="fit a head on the data set and compare it with the current one on the held-out set")
+    g.add_argument("--data", type=Path, default=None, metavar="FILE", help="the data set (default: the shipped one)")
+    g.add_argument("--activate", action="store_true", help="make the new head the one in use")
+    g.add_argument("--output", type=Path, default=None, metavar="FILE",
+                   help="write the head here instead of the heads dir (never in use by itself)")
+    g = gate.add_parser("eval", help="score the gate on the held-out set (or --set FILE), nearest and head side by side")
+    g.add_argument("--scorer", choices=("both", "head", "nearest"), default="both")
+    g.add_argument("--head", default=None, metavar="FILE", help="this head file instead of the one in use")
+    g.add_argument("--set", type=Path, default=None, metavar="FILE",
+                   help="a labelled set: the held-out file's shape, or scripts/gate_phrases.json")
+    g.add_argument("--misses", action="store_true", help="list every sentence with a wrong field")
+    g = gate.add_parser("use", help="put a head from the heads dir in use (a version, or `shipped`); restart after")
+    g.add_argument("version")
     p = add("tools", "list the MCP tools she can reach")
     p.add_argument("topic", nargs="?", default=None)
     p = add("tool", "call one MCP tool by hand, e.g. strawberry tool spotify next")
@@ -1298,6 +1325,8 @@ def dispatch(command: str, args: argparse.Namespace, extra: list[str]) -> int:
         return cmd_doctor(args.talk)
     if command == "outcomes":
         return cmd_outcomes(args.last, args.clear)
+    if command == "gate":
+        return cmd_gate(args)
     if command == "config":
         return cmd_config(init_only=args.init)
     if command == "widget" and (args.fetch or args.widget_version):

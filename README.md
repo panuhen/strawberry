@@ -141,6 +141,7 @@ The settings you are most likely to change:
 | `[tools.servers.*]` | | MCP servers; see [ADAPTERS.md](ADAPTERS.md) |
 | `[daemon]` | `log_sentences` | write what you say or type to the log (off: only its length); see [Privacy](#privacy) |
 | `[learning]` | `log_outcomes` | keep what you say and how it was routed, locally, for tuning (off); see [Privacy](#privacy) |
+| `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
 Files she keeps: settings in `~/.config/strawberry/`, the widget binary and voices in
 `~/.local/share/strawberry/`, logs and state in `~/.local/state/strawberry/`. The XDG variables

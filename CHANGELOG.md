@@ -29,8 +29,27 @@ package and the widget binary.
   lines in the log leave out the sentence she is answering. `true` logs the sentences as before,
   for tuning the gate from the journal. `GET /config` shows it. WIRING.md §15.
 
+- `strawberry gate train | eval | use`: fit a new head for the gate on its data set and compare it with
+  the one in use on the held-out set, score the gate on the held-out set (or another labelled set),
+  and switch heads (`use shipped` goes back to the one in the package). Heads are versioned files in
+  `~/.local/share/strawberry/gate/heads/` with a `current` pointer. `scripts/gate_heldout_check.py`
+  prints the same comparison from a checkout.
+
 ### Changed
 
+- The gate reads what you say with a trained head instead of each option's nearest examples
+  (`[gate] scorer = "head"`, the default; `"nearest"` keeps the old way). The head is a small
+  logistic regression per question on the same embedding, trained on ~1800 sentences (the gate's
+  own examples and sentences the local Qwen wrote, reviewed by hand; about an eighth Finnish),
+  calibrated, and with its own thresholds (act 0.65, offer 0.05). On a held-out set of 199
+  sentences and 42 notifications it never trained on: 95% of the fields right instead of 78%, 168
+  of 199 sentences fully right instead of 123, the Finnish ones 26 of 35 instead of 18, and its
+  confidence separates right from wrong far better (AUROC 0.93 against 0.71). It adds nothing you
+  would notice to a route (~0.1 ms). Privacy still fails closed: a notification body counts as
+  private when either the head or the nearest examples say so. Phrases under `[gate.examples]`
+  still fix the sentences they are close to. A head that is missing or does not fit the embedder
+  falls back to the nearest examples, says why in `/health` (`gate.scorer`) and in `strawberry
+  doctor`. WIRING.md §8a.
 - The gate's embeddinggemma runs in the daemon's own process, on the CPU, through ONNX Runtime
   (`onnx-community/embeddinggemma-300m-ONNX`, fp32): a spoken sentence is routed in ~20 ms
   instead of ~150 ms through Ollama, with the same readings (the gate's phrase set 87/87, the

@@ -77,6 +77,20 @@ def call_timeout(seconds: float):
         _call_timeout.reset(token)
 
 
+# Under the trained head: a sentence whose embedding is at least this close to an extra example's
+# (both embedded as queries) is answered for that question by the nearest examples (SystemOne.anchors).
+# Measured 2026-09-25: "save this song" ~ "save this track" 0.97, "like this track" ~ "i like this
+# track" 0.96, but "play the beatles" ~ "play radiohead" 0.92 and "like this track" ~ "i love this
+# track" 0.90: the same phrase in other words, not the same kind of phrase.
+ANCHOR_SIMILARITY = 0.93
+
+# Under the trained head, the questions whose cautious answer is taken from whichever scorer gives it
+# more: a notification body is private when either the head or the nearest examples say so. Measured
+# 2026-09-26: the head alone read "Signal: Your Signal registration code: 552-019" as clear (0.05;
+# the nearest examples 0.57), and together they miss no private body on either set (§8a).
+FAIL_CLOSED = {"is_sensitive": "yes"}
+
+
 # ----------------------------------------------------------------------------- questions
 
 
@@ -237,6 +251,13 @@ class SystemOne:
         # Every example's unit vector, one row each, and each option's rows in it (by its texts).
         self.matrix = np.empty((0, 0))
         self.rows: dict[tuple[str, ...], slice] = {}
+        # The trained scorer (gatehead.py), when the gate uses one: it answers the questions it has a
+        # head for. `anchors` are extra examples (an adapter's, the config's) embedded as queries, per
+        # question: a sentence this close to one is answered by the nearest examples instead, so a
+        # phrase added under [gate.examples] still fixes that phrase (Gate.use_head).
+        self.head: Any = None
+        self.anchors: dict[str, np.ndarray] = {}
+        self.anchored = 0
 
     async def prepare(self, *questions: Question) -> None:
         """Embed every option's examples once. Cheap to call again: only new texts are embedded."""
@@ -266,7 +287,7 @@ class SystemOne:
         await self.prepare(*questions)
         vector = normalise((await self.embed([self.query_prefix + state]))[:1])[0]
         similarities = self.matrix @ vector      # the sentence against every example at once
-        return vector.tolist(), {q.name: self._answer(similarities, q) for q in questions}
+        return vector.tolist(), {q.name: self._answer(similarities, q, vector) for q in questions}
 
     def _score(self, similarities: np.ndarray, option: Option) -> float:
         """Mean similarity of the option's nearest examples: one odd example cannot carry it."""
@@ -274,10 +295,29 @@ class SystemOne:
         nearest = np.sort(mine)[::-1][: self.neighbours]
         return float(nearest.sum() / len(nearest))
 
-    def _answer(self, similarities: np.ndarray, question: Question) -> Answer:
+    def _by_head(self, question: Question, vector: np.ndarray) -> bool:
+        if self.head is None or question.name not in self.head.questions:
+            return False
+        anchors = self.anchors.get(question.name)
+        if anchors is not None and len(anchors) and float((anchors @ vector).max()) >= ANCHOR_SIMILARITY:
+            self.anchored += 1
+            return False
+        return True
+
+    def _answer(self, similarities: np.ndarray, question: Question, vector: np.ndarray | None = None) -> Answer:
         options = _options(question)
-        scores = [self._score(similarities, o) for o in options]
-        probabilities = softmax(scores, self.temperature)
+        if vector is not None and self._by_head(question, vector):
+            probabilities = self.head.questions[question.name].probabilities(vector)
+            closed = FAIL_CLOSED.get(question.name)
+            if closed is not None:
+                # Privacy fails closed: whichever scorer gives the cautious answer more weight is the reading.
+                near = softmax([self._score(similarities, o) for o in options], self.temperature)
+                i = [o.name for o in options].index(closed)
+                if near[i] > probabilities[i]:
+                    probabilities = near
+        else:
+            scores = [self._score(similarities, o) for o in options]
+            probabilities = softmax(scores, self.temperature)
         by_name = {o.name: p for o, p in zip(options, probabilities)}
         conf = confidence(probabilities)
         if isinstance(question, Choice):
@@ -605,6 +645,13 @@ class Gate:
         self.warmups = 0                 # background reloads that finished
         self.warming: asyncio.Task | None = None
         self.starting: asyncio.Task | None = None   # begin(): start() in the background
+        # What scores (WIRING.md §8a): "head" once a trained head that fits this embedder and these
+        # questions is loaded (use_head), else the nearest examples. A head brings its own thresholds.
+        self.scorer = "nearest"
+        self.head: Any = None
+        self.head_source = ""            # config | user | shipped
+        self.head_fallback = ""          # why `[gate] scorer = "head"` scores with the nearest examples
+        self.act, self.offer = config.act, config.offer
 
     def begin(self) -> asyncio.Task | None:
         """start() in the background (Daemon.start): the port opens without waiting for the model
@@ -672,10 +719,60 @@ class Gate:
                 self.disabled_reason = f"could not embed the examples: {exc}"
                 log.warning("gate: %s; routing every sentence to chat", self.disabled_reason)
                 return False
+        await self.use_head()
         self.ready = True
-        log.info("gate: %s ready in %.1fs (%d examples)", self.model_name, time.perf_counter() - started,
-                 self.systemone.examples)
+        log.info("gate: %s ready in %.1fs (%d examples, %s)", self.model_name, time.perf_counter() - started,
+                 self.systemone.examples, self.scorer_name)
         return True
+
+    async def use_head(self) -> bool:
+        """`[gate] scorer = "head"`: load the trained head (gatehead.resolve: the config's file, the
+        user's current one, the shipped one) and score with it when it fits this embedder and these
+        questions. Anything else keeps the nearest examples, and /health.gate.scorer says why."""
+        if self.config.scorer != "head" or not self.systemone or self.systemone.head is not None:
+            return self.systemone is not None and self.systemone.head is not None
+        from . import gatehead
+
+        head, source, tried = gatehead.resolve(self.config.head)
+        if head is None:
+            reason = "; ".join(tried) or "no head file"
+        else:
+            for failure in tried:        # the user's current head is broken: the shipped one instead
+                log.warning("gate: %s; using the %s head", failure, source)
+            questions = {q.name: [o.name for o in _options(q)] for q in (*self.questions, IS_SENSITIVE)}
+            dims = self.systemone.matrix.shape[1] if len(self.systemone.matrix) else None
+            reason = head.mismatch(self.embedder_id, self.config.query_prefix, dims, questions)
+        if reason:
+            self.head_fallback = reason
+            log.warning("gate: the trained head is not used (%s); scoring with the nearest examples", reason)
+            return False
+        # The extra examples (an adapter's, the config's) as anchors: the head never saw them.
+        anchors: dict[str, np.ndarray] = {}
+        extra = [(key.split(".")[0], phrase) for key, phrases in self.extra_examples.items() for phrase in phrases]
+        if extra:
+            try:
+                vectors = normalise(await self.embedder([self.config.query_prefix + p for _, p in extra]))
+            except GateError as exc:
+                log.warning("gate: could not embed the extra examples as anchors (%s); the head answers them", exc)
+            else:
+                for name in dict.fromkeys(q for q, _ in extra):
+                    anchors[name] = vectors[[i for i, (q, _) in enumerate(extra) if q == name]]
+        self.systemone.head = head
+        self.systemone.anchors = anchors
+        self.head, self.head_source, self.scorer = head, source, "head"
+        self.act, self.offer = head.act, head.offer
+        log.info("gate: scoring with the trained head %s (%s; act %.2f, offer %.2f; %d anchors)", head.version,
+                 source, head.act, head.offer, sum(len(a) for a in anchors.values()))
+        return True
+
+    @property
+    def embedder_id(self) -> str:
+        """The embedding model, as a head names what it was trained on."""
+        return "embeddinggemma" if self.backend == "onnx" else self.config.model
+
+    @property
+    def scorer_name(self) -> str:
+        return f"head {self.head.version}" if self.scorer == "head" and self.head else "nearest examples"
 
     def _fall_back(self, reason: str) -> None:
         """The ONNX model could not be loaded: Ollama's embeddinggemma instead, and /health says why."""
@@ -739,7 +836,7 @@ class Gate:
             confidence=kind.confidence,
             is_urgent=answers["is_urgent"].score or 0.0,
             is_about_her=answers["is_about_her"].score or 0.0,
-            decision=decide(kind.choice or "other", kind.confidence, self.config.act, self.config.offer),
+            decision=decide(kind.choice or "other", kind.confidence, self.act, self.offer),
             tool=(tool.choice or "") if tool else "",
             tool_confidence=tool.confidence if tool else 0.0,
             has_argument=answers["has_argument"].score or 0.0,
@@ -866,10 +963,11 @@ class Gate:
             return False
         self.warmups += 1
         if not self.ready:
+            await self.use_head()
             self.ready = True
             self.disabled_reason = ""
-            log.info("gate: %s ready %s in %.1fs (%d examples)", self.model_name, reason,
-                     time.perf_counter() - started, self.systemone.examples)
+            log.info("gate: %s ready %s in %.1fs (%d examples, %s)", self.model_name, reason,
+                     time.perf_counter() - started, self.systemone.examples, self.scorer_name)
         else:
             log.info("gate: %s reloaded %s in %.1fs", self.model_name, reason, time.perf_counter() - started)
         return True
@@ -890,10 +988,29 @@ class Gate:
         out["fallback"] = self.fallback_reason or None
         return out
 
+    def scorer_stats(self) -> dict[str, Any] | None:
+        """What scores (head | nearest), what was configured, the head in use and its thresholds, and
+        `fallback`: why a configured head is not in use. Before start() has run, in_use is nearest."""
+        if not self.config.enabled:
+            return None
+        head = self.head
+        return {
+            "configured": self.config.scorer,
+            "in_use": self.scorer,
+            "head": {"version": head.version, "source": self.head_source, "path": str(head.path) if head.path else None,
+                     "dataset": head.dataset, "embedder": head.embedder} if head is not None else None,
+            "act": self.act,
+            "offer": self.offer,
+            "anchors": sum(len(a) for a in self.systemone.anchors.values()) if self.systemone else 0,
+            "anchored": self.systemone.anchored if self.systemone else 0,
+            "fallback": self.head_fallback or None,
+        }
+
     def stats(self) -> dict[str, Any]:
         return {
             "model": self.config.model if self.config.enabled else None,
             "embedder": self.embedder_stats(),
+            "scorer": self.scorer_stats(),
             "ready": self.ready,
             "starting": self.is_starting,
             "calls": self.calls,

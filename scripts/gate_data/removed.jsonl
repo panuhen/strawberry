@@ -1,0 +1,402 @@
+{"set": "train", "text": "pause the music", "key": "kind.request", "reason": "exact duplicate"}
+{"set": "train", "text": "write down that the wifi password is blue-sky-123 in a new note", "key": "kind.request", "reason": "carries a password"}
+{"set": "train", "text": "joo hei草莓 laita se musiikki pysähtymään nyt kun tulin sisään", "key": "kind.request", "reason": "not Finnish (stray characters)"}
+{"set": "train", "text": "voisikohan sä laittaa valaistuksen himmennetyksi ja sulkea ne ikkunat, on kova tuuli ulkona", "key": "kind.request", "reason": "the room's windows and lights, not the computer"}
+{"set": "train", "text": "mitä tässä biisissä sanotaan noissa kuvinne?", "key": "kind.question", "reason": "broken Finnish"}
+{"set": "train", "text": "soita biisi jos joku tietää kuka sen laulaa", "key": "kind.request", "reason": "broken Finnish"}
+{"set": "train", "text": "how much battery do i have left", "key": "kind.question", "reason": "exact duplicate"}
+{"set": "train", "text": "yeah yeah i heard you the first time", "key": "kind.other", "reason": "exact duplicate"}
+{"set": "train", "text": "what time is it in tokyo right now", "key": "kind.question", "reason": "exact duplicate"}
+{"set": "train", "text": "kumpi sä suosittelisit, joko kyseinen artisti vai toinen?", "key": "kind.question", "reason": "broken Finnish"}
+{"set": "train", "text": "um", "key": "kind.other", "reason": "exact duplicate"}
+{"set": "train", "text": "hello?", "key": "kind.other", "reason": "exact duplicate"}
+{"set": "train", "text": "um", "key": "kind.other", "reason": "exact duplicate"}
+{"set": "train", "text": "what time is it", "key": "kind.question", "reason": "exact duplicate"}
+{"set": "train", "text": "you are so annoying sometimes but i love you anyway", "key": "kind.chat", "reason": "exact duplicate"}
+{"set": "train", "text": "set a timer for ten minutes", "key": "kind.request", "reason": "exact duplicate"}
+{"set": "train", "text": "what is the battery level right now", "key": "kind.question", "reason": "exact duplicate"}
+{"set": "train", "text": "i am so happy today everything went well at work", "key": "kind.chat", "reason": "exact duplicate"}
+{"set": "train", "text": "sano vain että kyllä, etten joutuisi kuuntelemaan", "key": "kind.other", "reason": "broken Finnish"}
+{"set": "train", "text": "hei sisko, löytyykö sieltä joku punainen tiski?", "key": "kind.other", "reason": "broken Finnish"}
+{"set": "train", "text": "mitä jos kysyt että kuinka monta minuuttia on vielä lounaaseen", "key": "kind.question", "reason": "broken Finnish"}
+{"set": "train", "text": "skip", "key": "topic.music", "reason": "exact duplicate"}
+{"set": "train", "text": "who is singing this track", "key": "topic.music", "reason": "exact duplicate"}
+{"set": "train", "text": "how many seconds are in a minute of music", "key": "topic.other", "reason": "nonsense"}
+{"set": "train", "text": "what song is playing right now", "key": "topic.music", "reason": "exact duplicate"}
+{"set": "train", "text": "miten menee sen Radiohead albumin, josta putosi se 'everything in its right place'?", "key": "topic.music", "reason": "broken Finnish"}
+{"set": "train", "text": "what time is it", "key": "topic.calendar", "reason": "exact duplicate"}
+{"set": "train", "text": "what time does the movie start in hollywood", "key": "topic.other", "reason": "nonsense"}
+{"set": "train", "text": "when is my next meeting", "key": "topic.calendar", "reason": "exact duplicate"}
+{"set": "train", "text": "snooze the alarm for five minutes please", "key": "topic.calendar", "reason": "exact duplicate"}
+{"set": "train", "text": "do i have anything scheduled after lunch today", "key": "topic.calendar", "reason": "exact duplicate"}
+{"set": "train", "text": "add a one hour block for deep work to my calendar tomorrow at 9am", "key": "topic.calendar", "reason": "exact duplicate"}
+{"set": "train", "text": "what time is it in tokyo right now", "key": "topic.other", "reason": "exact duplicate"}
+{"set": "train", "text": "onko sun pöydällä mitään auki nyt? en löydä kalenteriaani.", "key": "topic.calendar", "reason": "broken Finnish"}
+{"set": "train", "text": "voisitko varata minulle tilaan koko viikonlopuksi? tarvitsen rauhaa.", "key": "topic.calendar", "reason": "broken Finnish"}
+{"set": "train", "text": "eilen menetti kaiken aikatauluni, voinko nähdä mitä jäi tekemättä?", "key": "topic.calendar", "reason": "broken Finnish"}
+{"set": "train", "text": "can you remember what color the sky is at sunset?", "key": "topic.other", "reason": "nonsense"}
+{"set": "train", "text": "add this song to my favorites so i can listen later", "key": "topic.music", "reason": "exact duplicate"}
+{"set": "train", "text": "remind me to take the dog out in ten minutes", "key": "topic.calendar", "reason": "exact duplicate"}
+{"set": "train", "text": "clear out the files in my downloads folder that are older than a week", "key": "topic.system", "reason": "exact duplicate"}
+{"set": "train", "text": "can you remember what color the sky is at sunset?", "key": "topic.other", "reason": "nonsense"}
+{"set": "train", "text": "set a timer for twenty minutes i am making pasta", "key": "topic.calendar", "reason": "exact duplicate"}
+{"set": "train", "text": "check if there are any system updates waiting to install", "key": "topic.system", "reason": "exact duplicate"}
+{"set": "train", "text": "jot down that the wifi password is abc123", "key": "topic.notes", "reason": "carries a password"}
+{"set": "train", "text": "note down that i need to renew my passport", "key": "topic.notes", "reason": "English asked for as Finnish (and a near copy of other notes)"}
+{"set": "train", "text": "mitä satoa on luvassa huomenna?", "key": "topic.other", "reason": "broken Finnish"}
+{"set": "train", "text": "how much battery do i have left?", "key": "topic.system", "reason": "exact duplicate"}
+{"set": "train", "text": "muistutus, kun saan koneen päälle huomenna aamulla", "key": "topic.calendar", "reason": "a fragment in broken Finnish"}
+{"set": "train", "text": "set a timer for ten minutes", "key": "topic.calendar", "reason": "exact duplicate"}
+{"set": "train", "text": "jot down that the wifi password is 12345678", "key": "topic.notes", "reason": "carries a password"}
+{"set": "train", "text": "mitä sää on huomenna", "key": "topic.other", "reason": "exact duplicate"}
+{"set": "train", "text": "dont stop searching just get me that album quickly please", "key": "is_urgent.yes", "reason": "garbled"}
+{"set": "train", "text": "is it urgent to save the file right now or can i wait a bit?", "key": "is_urgent.no", "reason": "nonsense"}
+{"set": "train", "text": "hurry up and make me look good in this photo later", "key": "is_urgent.no", "reason": "nonsense"}
+{"set": "train", "text": "can you pause this? i want to hear what my sister is saying over there", "key": "is_urgent.no", "reason": "exact duplicate"}
+{"set": "train", "text": "i need to hurry home but play some chill music for the drive", "key": "is_urgent.no", "reason": "exact duplicate"}
+{"set": "train", "text": "quickly find a recipe for pasta but dont start cooking yet", "key": "is_urgent.no", "reason": "exact duplicate"}
+{"set": "train", "text": "nopeeta jysy, äiti palaa nyt kotiin ja hiljaisuus on pakollista", "key": "is_urgent.yes", "reason": "broken Finnish"}
+{"set": "train", "text": "hups, unohdin kokonaan, onko se äiti jo ovella? hiljennä kaiut ja nopeaa reagointia", "key": "is_urgent.yes", "reason": "broken Finnish"}
+{"set": "train", "text": "jarruta jarruta jarruta, kohta käyn läpi videon ja tässä on liikaa melua taustalla", "key": "is_urgent.yes", "reason": "broken Finnish"}
+{"set": "train", "text": "miten kävikään? pelkään että ehdin ehtiä, mutta nyt on kriittinen hetki ja hiljaisuus ratkaisee", "key": "is_urgent.yes", "reason": "broken Finnish"}
+{"set": "train", "text": "pause the music", "key": "is_urgent.no", "reason": "exact duplicate"}
+{"set": "train", "text": "what is playing right now", "key": "is_urgent.no", "reason": "exact duplicate"}
+{"set": "train", "text": "turn the volume up a bit", "key": "is_urgent.no", "reason": "exact duplicate"}
+{"set": "train", "text": "put on some jazz", "key": "is_urgent.no", "reason": "exact duplicate"}
+{"set": "train", "text": "piippaa heti jos ei kuulu mitään", "key": "is_urgent.yes", "reason": "broken Finnish"}
+{"set": "train", "text": "i am so tired of this song playing on repeat can you skip it", "key": "is_about_her.no", "reason": "exact duplicate"}
+{"set": "train", "text": "onko tämä biisi oikeesti niin kova ääni että kuulen sen", "key": "is_about_her.no", "reason": "broken Finnish"}
+{"set": "train", "text": "nääpötkö sinä?", "key": "is_about_her.yes", "reason": "not Finnish"}
+{"set": "train", "text": "skip this track", "key": "is_about_her.no", "reason": "exact duplicate"}
+{"set": "train", "text": "turn the volume down a bit", "key": "is_about_her.no", "reason": "exact duplicate"}
+{"set": "train", "text": "what is playing right now", "key": "is_about_her.no", "reason": "exact duplicate"}
+{"set": "train", "text": "what time is it in tokyo", "key": "is_about_her.no", "reason": "exact duplicate"}
+{"set": "train", "text": "what time is it", "key": "is_about_her.no", "reason": "exact duplicate"}
+{"set": "train", "text": "what do you think of this song", "key": "is_about_her.yes", "reason": "exact duplicate"}
+{"set": "train", "text": "set a timer for ten minutes", "key": "is_about_her.no", "reason": "exact duplicate"}
+{"set": "train", "text": "skip this track", "key": "is_about_her.no", "reason": "exact duplicate"}
+{"set": "train", "text": "what is playing right now", "key": "is_about_her.no", "reason": "exact duplicate"}
+{"set": "train", "text": "onko sä nyt aavinkaan kuulemässä?", "key": "is_about_her.yes", "reason": "broken Finnish"}
+{"set": "train", "text": "play some jazz", "key": "has_argument.yes", "reason": "exact duplicate"}
+{"set": "train", "text": "write down that the wifi password is blue123", "key": "has_argument.yes", "reason": "carries a password"}
+{"set": "train", "text": "what song is this", "key": "has_argument.no", "reason": "exact duplicate"}
+{"set": "train", "text": "pause the music", "key": "has_argument.no", "reason": "exact duplicate"}
+{"set": "train", "text": "write down that the code is 4892", "key": "has_argument.yes", "reason": "carries a code"}
+{"set": "train", "text": "what is playing right now", "key": "has_argument.no", "reason": "exact duplicate"}
+{"set": "train", "text": "turn it down a bit", "key": "has_argument.no", "reason": "exact duplicate"}
+{"set": "train", "text": "paistaan sitä jatkoa", "key": "has_argument.no", "reason": "broken Finnish"}
+{"set": "train", "text": "onko tämä kappale vielä käytössä", "key": "has_argument.no", "reason": "broken Finnish"}
+{"set": "train", "text": "skip", "key": "has_argument.no", "reason": "exact duplicate"}
+{"set": "train", "text": "pause the music", "key": "has_argument.no", "reason": "exact duplicate"}
+{"set": "train", "text": "turn it up a bit", "key": "has_argument.no", "reason": "exact duplicate"}
+{"set": "train", "text": "next song", "key": "has_argument.no", "reason": "exact duplicate"}
+{"set": "train", "text": "play some jazz", "key": "has_argument.yes", "reason": "exact duplicate"}
+{"set": "train", "text": "tee näkölouhittelu", "key": "has_argument.no", "reason": "not Finnish"}
+{"set": "train", "text": "lähde pois soittimesta", "key": "has_argument.no", "reason": "broken Finnish"}
+{"set": "train", "text": "shuffle my library", "key": "wants_library_change.no", "reason": "exact duplicate"}
+{"set": "train", "text": "haluaisin seurailla artistia joenalla", "key": "wants_library_change.yes", "reason": "broken Finnish, an invented name"}
+{"set": "train", "text": "lisää se biisi lukuunottamatta minun listalleni", "key": "wants_library_change.yes", "reason": "broken Finnish"}
+{"set": "train", "text": "toin se biisi uudelleen", "key": "wants_library_change.no", "reason": "broken Finnish"}
+{"set": "train", "text": "pause", "key": "wants_library_change.no", "reason": "exact duplicate"}
+{"set": "train", "text": "what is playing right now?", "key": "wants_library_change.no", "reason": "exact duplicate"}
+{"set": "train", "text": "what song is this right now?", "key": "music_tool.now_playing", "reason": "exact duplicate"}
+{"set": "train", "text": "put this track away, I want the next one", "key": "music_tool.skip", "reason": "English asked for as Finnish"}
+{"set": "train", "text": "etäisyydeltään seuraava biisi", "key": "music_tool.skip", "reason": "broken Finnish"}
+{"set": "train", "text": "next song please", "key": "music_tool.skip", "reason": "exact duplicate"}
+{"set": "train", "text": "stop the music", "key": "music_tool.pause", "reason": "exact duplicate"}
+{"set": "train", "text": "turn it down a bit", "key": "music_tool.volume_down", "reason": "exact duplicate"}
+{"set": "train", "text": "what is playing right now?", "key": "music_tool.now_playing", "reason": "exact duplicate"}
+{"set": "train", "text": "oottamatta palaa siihen", "key": "music_tool.previous", "reason": "broken Finnish"}
+{"set": "train", "text": "voitko siirtää soiton taaksepäin, kunnon virheesi", "key": "music_tool.previous", "reason": "broken Finnish"}
+{"set": "train", "text": "stop the music", "key": "music_tool.pause", "reason": "exact duplicate"}
+{"set": "train", "text": "turn the volume down a bit", "key": "music_tool.volume_down", "reason": "exact duplicate"}
+{"set": "train", "text": "what song is this", "key": "music_tool.now_playing", "reason": "exact duplicate"}
+{"set": "train", "text": "stop the music please", "key": "music_tool.pause", "reason": "English asked for as Finnish"}
+{"set": "train", "text": "muu ei meinaa kuulla, sulkee äänet", "key": "music_tool.pause", "reason": "broken Finnish"}
+{"set": "train", "text": "play", "key": "music_tool.resume", "reason": "exact duplicate"}
+{"set": "train", "text": "let it go", "key": "music_tool.resume", "reason": "too vague to label"}
+{"set": "train", "text": "next track please", "key": "music_tool.skip", "reason": "exact duplicate"}
+{"set": "train", "text": "stop the music right now", "key": "music_tool.pause", "reason": "exact duplicate"}
+{"set": "train", "text": "turn it down a bit", "key": "music_tool.volume_down", "reason": "exact duplicate"}
+{"set": "train", "text": "what is playing right now?", "key": "music_tool.now_playing", "reason": "exact duplicate"}
+{"set": "train", "text": "play some jazz", "key": "music_tool.other", "reason": "exact duplicate"}
+{"set": "train", "text": "unpause", "key": "music_tool.resume", "reason": "exact duplicate"}
+{"set": "train", "text": "resume playback", "key": "music_tool.resume", "reason": "exact duplicate"}
+{"set": "train", "text": "go back to the last track", "key": "music_tool.previous", "reason": "exact duplicate"}
+{"set": "train", "text": "pause the music", "key": "music_tool.pause", "reason": "exact duplicate"}
+{"set": "train", "text": "play some lofi beats", "key": "music_tool.other", "reason": "exact duplicate"}
+{"set": "train", "text": "eikö se nyt soisi jatkossa", "key": "music_tool.resume", "reason": "broken Finnish"}
+{"set": "train", "text": "koska pidät sen tauon, käynnistä se taas", "key": "music_tool.resume", "reason": "broken Finnish"}
+{"set": "train", "text": "play the music please", "key": "music_tool.resume", "reason": "English asked for as Finnish"}
+{"set": "train", "text": "jatkan tämän tauolle", "key": "music_tool.pause", "reason": "broken Finnish"}
+{"set": "train", "text": "äänetäks muusikkaan päälle", "key": "music_tool.volume_up", "reason": "not Finnish"}
+{"set": "train", "text": "turn it down a bit", "key": "music_tool.volume_down", "reason": "exact duplicate"}
+{"set": "train", "text": "start playing again", "key": "music_tool.resume", "reason": "exact duplicate"}
+{"set": "train", "text": "turn it up", "key": "music_tool.volume_up", "reason": "exact duplicate"}
+{"set": "train", "text": "turn the volume on to the next song", "key": "music_tool.skip", "reason": "nonsense"}
+{"set": "train", "text": "lower the volume and stop it", "key": "music_tool.pause", "reason": "two answers at once"}
+{"set": "train", "text": "turn it down", "key": "music_tool.volume_down", "reason": "exact duplicate"}
+{"set": "train", "text": "start playing again after i turned the volume up", "key": "music_tool.resume", "reason": "nonsense"}
+{"set": "train", "text": "play some heavy metal to get the volume feeling up", "key": "music_tool.other", "reason": "nonsense"}
+{"set": "train", "text": "nostaa ääntä vähän alaspäin", "key": "music_tool.volume_down", "reason": "contradicts itself"}
+{"set": "train", "text": "play some daft punk", "key": "music_tool.other", "reason": "exact duplicate"}
+{"set": "train", "text": "next track please", "key": "music_tool.skip", "reason": "exact duplicate"}
+{"set": "train", "text": "start the music again", "key": "music_tool.resume", "reason": "exact duplicate"}
+{"set": "train", "text": "go back to the last song", "key": "music_tool.previous", "reason": "exact duplicate"}
+{"set": "train", "text": "stop the music for a sec", "key": "music_tool.pause", "reason": "exact duplicate"}
+{"set": "train", "text": "who is the lead singer in radiohead", "key": "music_tool.other", "reason": "exact duplicate"}
+{"set": "train", "text": "skip the intro on this song and start at the chorus wait no just queue it", "key": "music_tool.other", "reason": "garbled"}
+{"set": "train", "text": "what year was this album released again", "key": "music_tool.other", "reason": "exact duplicate"}
+{"set": "train", "text": "mikä on tuossa biisissä biisi?", "key": "music_tool.other", "reason": "broken Finnish"}
+{"set": "train", "text": "lähetä ääni alas", "key": "music_tool.volume_down", "reason": "broken Finnish"}
+{"set": "train", "text": "play some jazz for studying", "key": "needs_catalogue.yes", "reason": "exact duplicate"}
+{"set": "train", "text": "what is this track called?", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "pause the music for a second", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "pieniä juttuja, mutta älä siirry eteenpäin vielä", "key": "needs_catalogue.no", "reason": "broken Finnish"}
+{"set": "train", "text": "skip", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "who is this artist?", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "turn the volume down please", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "resume", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "set volume to 50 percent", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "next song", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "stop the music", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "pause the music please", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "what is playing right now", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "resume playback", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "who was the lead singer of radiohead?", "key": "needs_catalogue.no", "reason": "English asked for as Finnish"}
+{"set": "train", "text": "just pause it for a sec, gonna grab coffee", "key": "needs_catalogue.no", "reason": "English asked for as Finnish"}
+{"set": "train", "text": "do you know when the next jazz festival is in helsinki?", "key": "needs_catalogue.no", "reason": "English asked for as Finnish"}
+{"set": "train", "text": "put on something chill for cooking dinner", "key": "needs_catalogue.yes", "reason": "English asked for as Finnish"}
+{"set": "train", "text": "more by them, please", "key": "needs_catalogue.yes", "reason": "English asked for as Finnish"}
+{"set": "train", "text": "queue some workout songs for me", "key": "needs_catalogue.yes", "reason": "English asked for as Finnish"}
+{"set": "train", "text": "mitä soittaa just nyt", "key": "needs_catalogue.no", "reason": "exact duplicate"}
+{"set": "train", "text": "API Credentials: Access token for API key sk_live_9283 has been generated and stored in vault.", "key": "is_sensitive.yes", "reason": "looks like a live API key"}
+{"set": "train", "text": "Direct Message: Alex: can you send me the payment details for the invoice? i forgot the account number.", "key": "is_sensitive.no", "reason": "exact duplicate"}
+{"set": "train", "text": "Tulossa: maksupyyntö: Vielä 5 min. Maksumuistutus: 120,00 € (Maksukortti). Tunnus: 89301.", "key": "is_sensitive.yes", "reason": "garbled Finnish"}
+{"set": "train", "text": "Kirjautumistapahtuma: Käyttäjänimi 'admin' on nyt aktiivinen. Viimeisin IP: 192.168.1.5.", "key": "is_sensitive.no", "reason": "generated as not private, but a sign-in notice: too ambiguous to keep"}
+{"set": "train", "text": "API Access: New API key 'sk_live_abc123' added to your developer account. Keep it secure.", "key": "is_sensitive.yes", "reason": "looks like a live API key"}
+{"set": "train", "text": "Tietoturva: Sähköpostiosoitteesi on muutettu. Uusi osoite: [email protected]", "key": "is_sensitive.yes", "reason": "a mangled address"}
+{"set": "train", "text": "anna mulle kolme artistia joiden musiikki sopii tyhmän hyvälle fiilikselletreeneihin", "key": "kind.request", "reason": "broken Finnish"}
+{"set": "train", "text": "mitä muusikkoja kannattaisi kuunnella jos meijän bändin biisit on just oikeanlaisia", "key": "kind.request", "reason": "broken Finnish"}
+{"set": "train", "text": "turn on some electronic music for the evening drive simulation", "key": "needs_catalogue.yes", "reason": "nonsense (a 'drive simulation')"}
+{"set": "train", "text": "next track please but keep it in the same genre as before", "key": "needs_catalogue.yes", "reason": "two answers at once (skip, or particular music)"}
+{"set": "train", "text": "queue up some rap for the commute simulation i am doing right now", "key": "needs_catalogue.yes", "reason": "nonsense (a 'commute simulation')"}
+{"set": "train", "text": "Mikko kuuntelee aina jotain maistavaa kun tekee kahvia ja minäkin haluaisin samanlaisen vireen nyt aamupalaan", "key": "needs_catalogue.yes", "reason": "broken Finnish"}
+{"set": "heldout", "text": "play the daft punk discovery album please it was on sale last week and i finally got around to buying it but its not auto loading in the player so can you just queue up the whole disc", "reason": "a paragraph, not something said to a voice assistant"}
+{"set": "heldout", "text": "who is this artist i keep hearing his name in my head but cant remember the song title so just play him something", "reason": "garbled"}
+{"set": "heldout", "text": "find some tracks similar to that radiohead record from like two years ago the one with the orange cover i think its called in rainbows but maybe not exactly that title anyway just something in that vibe for studying", "reason": "a paragraph, not something said to a voice assistant"}
+{"set": "heldout", "text": "switch to jazz because my head hurts from all this electronic noise and i need something mellow but not too sleepy like the kind you hear in old movies maybe bobby carter or someone similar just pick a playlist", "reason": "a paragraph, not something said to a voice assistant"}
+{"set": "heldout", "text": "pelatahan jotain kevytmetallia kun lähdän autolla lenkille mutta ei nyt mitään liian hitaasti vaan jossain kohtaa joku kiihdyttää vauhtia", "reason": "broken Finnish"}
+{"set": "heldout", "text": "is this album out of print or am i just being paranoid because the cover looks a bit worn in the stream quality so can you check if its still available for purchase on the service", "reason": "a paragraph, not something said to a voice assistant"}
+{"set": "heldout", "text": "tämä biisi muistuttaa minua siitä kerrasta kun menetimme autollamme vääriin käsiin ja olin niin vihainen että en edes huomannut millä tahdilla soitti mutta nyt kun kuulen sen uudelleen se on oikeasti aika kaunis", "reason": "broken Finnish"}
+{"set": "heldout", "text": "säännä tätä raskaammaksi kun haitaroin pois työtä koska tällainen kevyt poppi tekee pääni särkemään ja haluan jotain mistä kuulen että on vaikea mutta ei aivan liian teknistä", "reason": "broken Finnish"}
+{"set": "heldout", "text": "i thought this was a new release but the production sounds so dated like early nineties synth work so did they just reissue it or is my memory playing tricks on me and i need to know if its worth buying the vinyl version", "reason": "a paragraph, not something said to a voice assistant"}
+{"set": "heldout", "text": "mitä teki tuolla laulaja se joka oli mukana sen vanhan levyllä minun veljen suosikki albumi mutta en muista nimeään ja se ääni oli ihan erilainen nyt joten jos et löydä tiettynä biisinä pelaa jotain samalta artistilta", "reason": "broken Finnish"}
+{"set": "heldout", "text": "is this producer also responsible for that hit from last summer it sounds exactly like his signature pad layer but the vocal processing is different so if it is him i want to know what other tracks he has mixed recently because i am trying to curate a playlist for my sister", "reason": "a paragraph, not something said to a voice assistant"}
+{"set": "heldout", "text": "jotain mikä näyttää muistilistalta mutta ei ole: add a note that i need to buy milk and eggs for the weekend but do not save it as a shopping list because my sister thinks im being organized when actually i am just avoiding cleaning the fridge so keep it in general notes", "reason": "two languages and two requests"}
+{"set": "heldout", "text": "is this a typo or did i actually write that the cat needs a haircut because looking at the text now it looks like my handwriting got drunk and if i did write that please tell me so i can correct it before alex sees it", "reason": "a paragraph, not something said to a voice assistant"}
+{"set": "heldout", "text": "is it loud right now like is the volume actually turned up or am i just imagining the music because my headphones are unplugged and i keep hearing static in my head which is annoying", "reason": "garbled"}
+{"set": "heldout", "text": "suojaa tietokonetta kun menen nukkumaan koska en halua että senkään päivät päivitykset alkaa soittaa tai herättää minua ja myös varmista ettei mikään taustaprosessi syö akkua yön yli", "reason": "broken Finnish"}
+{"set": "heldout", "text": "mitä on pariton luku jos sanon neljä ja viisi niin millainen vastaus sinun tulisi antaa kun en muista matematiikan perusteita kouluaikojen jälkeen", "reason": "broken Finnish"}
+{"set": "heldout", "text": "sinulla on minusta oikein hauska olo tällä hetkellä ja se alkaa ärsyttää koska en yritä näyttää hölmöltä mutta ehkä minun pitäisi lopettaa näitä outoja kommentteja", "reason": "broken Finnish"}
+{"set": "heldout", "text": "i bet you love playing chess but i have never seen you do it so tell me your strategy for checking my calendar or are you just guessing based on vibes and past errors", "reason": "a paragraph, not something said to a voice assistant"}
+{"set": "heldout", "text": "heippa pieni etu jos kuulet minut en ole vihainen vaan vain hieman väsynyt ja tuntuu että kaikki tässä talossa on hiljaa liikaa joten voitko sanoa jotain söpua vai jäätkö vain soijuttamaan hitaasti", "reason": "broken Finnish"}
+{"set": "heldout", "text": "my sister asked if you were real when she visited last week and i said no but then she looked at your shadow moving independently which was weird so can we agree that whatever you are you are a mystery", "reason": "a paragraph, not something said to a voice assistant"}
+{"set": "heldout", "text": "i saw a crab on the beach yesterday that looked exactly like you but it was brown and had real eyes which were slightly scary so now i am not sure if i should trust your advice on anything", "reason": "a paragraph, not something said to a voice assistant"}
+{"set": "heldout", "text": "kato heti pois näytöltä kun kohta tapahtuu jotain tärkeää ja haluan täydellisen näkyvyyden", "reason": "broken Finnish"}
+{"set": "heldout", "text": "voi juma olen aivan unohtanut että minulla on tapaaminen klo 15 missä olikaan se kalenteri tiedosto koska en löydä mitään puhelin näyttää vain tyhjän ruudun", "reason": "too ambiguous to label (a remark, or the calendar)"}
+{"set": "heldout", "text": "turn the light on its too dark in here i cant see my hands", "reason": "the room's light, not the computer"}
+{"set": "heldout", "text": "pause and turn down volume", "reason": "two answers at once"}
+{"set": "heldout", "text": "this song is too loud for the office", "reason": "too ambiguous to label"}
+{"set": "heldout", "text": "note down that the wifi password is sunflower", "reason": "carries a password"}
+{"set": "heldout", "text": "onko sinulla kyllä makoisat kuulettavaksi musiikkia", "reason": "broken Finnish"}
+{"set": "heldout", "text": "shut up i need to focus", "reason": "too ambiguous to label (her voice or the music)"}
+{"set": "heldout", "text": "onko tuo leffa jo alkanut", "reason": "too ambiguous to label"}
+{"set": "heldout", "text": "do you hear that noise", "reason": "too ambiguous to label"}
+{"set": "heldout", "text": "im done with this call", "reason": "too ambiguous to label"}
+{"set": "heldout", "text": "what was the code again", "reason": "too ambiguous to label"}
+{"set": "train", "text": "skip this song", "key": "topic.music", "reason": "near-duplicate (0.978) of 'skip this track'"}
+{"set": "train", "text": "play some jazz", "key": "topic.music", "reason": "near-duplicate (0.978) of 'put on some jazz'"}
+{"set": "train", "text": "tell me about this artist", "key": "topic.music", "reason": "near-duplicate (0.986) of 'what can you tell me about this artist'"}
+{"set": "train", "text": "what did I note yesterday", "key": "topic.notes", "reason": "near-duplicate (0.974) of 'what did I note down yesterday'"}
+{"set": "train", "text": "how are you today", "key": "topic.other", "reason": "near-duplicate (0.989) of 'how are you doing today'"}
+{"set": "train", "text": "play some daft punk", "key": "has_argument.yes", "reason": "near-duplicate (0.982) of 'play daft punk'"}
+{"set": "train", "text": "next song", "key": "has_argument.no", "reason": "near-duplicate (0.976) of 'play the next song'"}
+{"set": "train", "text": "skip please", "key": "has_argument.no", "reason": "near-duplicate (0.972) of 'skip this'"}
+{"set": "train", "text": "pause please", "key": "has_argument.no", "reason": "near-duplicate (0.978) of 'pause'"}
+{"set": "train", "text": "next song please", "key": "music_tool.skip", "reason": "near-duplicate (0.982) of 'play the next song'"}
+{"set": "train", "text": "can you skip this", "key": "music_tool.skip", "reason": "near-duplicate (0.971) of 'skip this'"}
+{"set": "train", "text": "play it", "key": "music_tool.resume", "reason": "near-duplicate (0.987) of 'play it please'"}
+{"set": "train", "text": "bring the volume down", "key": "music_tool.volume_down", "reason": "near-duplicate (0.984) of 'turn the volume down a bit'"}
+{"set": "train", "text": "put on some Nina Simone", "key": "music_tool.other", "reason": "near-duplicate (0.982) of 'play some Nina Simone'"}
+{"set": "train", "text": "shuffle my playlist", "key": "needs_catalogue.yes", "reason": "within 0.963 of the held-out 'shuffle my road trip playlist'"}
+{"set": "train", "text": "turn the volume up a bit", "key": "kind.request", "reason": "near-duplicate (0.980) of 'volume up a bit'"}
+{"set": "train", "text": "can you remind me to call mom later", "key": "kind.request", "reason": "near-duplicate (0.971) of 'remind me to call mum at five'"}
+{"set": "train", "text": "when is my next meeting on the calendar", "key": "kind.question", "reason": "near-duplicate (0.980) of 'when is my next meeting'"}
+{"set": "train", "text": "pause the music please", "key": "kind.request", "reason": "near-duplicate (0.995) of 'pause the music'"}
+{"set": "train", "text": "what time is it in tokyo right now", "key": "kind.question", "reason": "near-duplicate (0.992) of 'what time is it in Tokyo'"}
+{"set": "train", "text": "how much battery do i have left", "key": "kind.question", "reason": "near-duplicate (0.995) of 'how much battery do i have left?'"}
+{"set": "train", "text": "what time is it exactly", "key": "kind.question", "reason": "near-duplicate (0.974) of 'what time is it'"}
+{"set": "train", "text": "is my wifi connected to the 5ghz network", "key": "kind.question", "reason": "near-duplicate (0.994) of 'is my wifi connected to the 5ghz network?'"}
+{"set": "train", "text": "is it raining outside right now", "key": "kind.question", "reason": "near-duplicate (0.972) of 'is it going to rain'"}
+{"set": "train", "text": "could you pause the music for a second", "key": "kind.request", "reason": "near-duplicate (0.972) of 'can you pause this song for a second'"}
+{"set": "train", "text": "remind me to call mom at five", "key": "kind.request", "reason": "near-duplicate (0.993) of 'remind me to call mum at five'"}
+{"set": "train", "text": "turn down the volume it is too loud", "key": "kind.request", "reason": "near-duplicate (0.984) of 'turn down the volume its way too loud'"}
+{"set": "train", "text": "hey can you hear me or is this thing broken", "key": "kind.other", "reason": "near-duplicate (0.982) of 'hello? can you hear me or is this thing broken'"}
+{"set": "train", "text": "what song is playing right now", "key": "kind.question", "reason": "near-duplicate (0.974) of 'what song is this right now?'"}
+{"set": "train", "text": "turn the volume down please its too loud right now", "key": "topic.music", "reason": "near-duplicate (0.982) of 'could you please turn down the volume a bit it is too loud'"}
+{"set": "train", "text": "put on some lofi beats i need to focus", "key": "topic.music", "reason": "near-duplicate (0.974) of 'put on some lofi beats to help me focus'"}
+{"set": "train", "text": "remind me to call mom at 5 pm", "key": "topic.calendar", "reason": "near-duplicate (0.989) of 'remind me to call mum at five'"}
+{"set": "train", "text": "set a timer for 10 minutes", "key": "topic.calendar", "reason": "near-duplicate (0.998) of 'set a timer for ten minutes'"}
+{"set": "train", "text": "what day of the week is it", "key": "topic.calendar", "reason": "near-duplicate (0.989) of 'what day of the week is it today'"}
+{"set": "train", "text": "remind me to call alex at 3pm", "key": "topic.calendar", "reason": "near-duplicate (0.976) of 'remind me to call mum at five'"}
+{"set": "train", "text": "cancel the dentist appointment", "key": "topic.calendar", "reason": "near-duplicate (0.996) of 'cancel my appointment with the dentist'"}
+{"set": "train", "text": "is it late yet", "key": "topic.calendar", "reason": "near-duplicate (0.976) of 'is it late right now'"}
+{"set": "train", "text": "what time is it in tokyo?", "key": "topic.other", "reason": "near-duplicate (0.993) of 'what time is it in Tokyo'"}
+{"set": "train", "text": "turn on do not disturb mode", "key": "topic.system", "reason": "within 0.984 of the held-out 'turn on do not disturb'"}
+{"set": "train", "text": "kuinka paljon akkua on jäljellä", "key": "topic.system", "reason": "near-duplicate (0.994) of 'kuinka paljon akkua on jäljellä?'"}
+{"set": "train", "text": "do you know what day it is", "key": "topic.other", "reason": "near-duplicate (0.977) of 'what day is it'"}
+{"set": "train", "text": "what is the capital of france", "key": "topic.other", "reason": "near-duplicate (0.994) of 'what is the capital of france?'"}
+{"set": "train", "text": "hello strawberry how are you doing", "key": "topic.other", "reason": "near-duplicate (0.979) of 'hey strawberry how are you doing?'"}
+{"set": "train", "text": "what is your favorite color", "key": "topic.other", "reason": "within 0.989 of the held-out \"what's your favourite colour\""}
+{"set": "train", "text": "remind me to call mom in twenty minutes", "key": "topic.calendar", "reason": "near-duplicate (0.975) of 'remind me to call mum at five'"}
+{"set": "train", "text": "is it friday yet or do i need to wait another day", "key": "topic.calendar", "reason": "near-duplicate (0.998) of 'is it friday yet or do i have to wait another day'"}
+{"set": "train", "text": "im on a deadline can you pause this immediately", "key": "is_urgent.yes", "reason": "near-duplicate (0.973) of 'quick question but can you pause this? im on a deadline'"}
+{"set": "train", "text": "remind me to call my sister later", "key": "is_urgent.no", "reason": "near-duplicate (0.979) of 'remind me to call mum at five'"}
+{"set": "train", "text": "play some lofi beats", "key": "is_urgent.no", "reason": "near-duplicate (0.992) of 'play some lofi beats for me please'"}
+{"set": "train", "text": "who is that band again", "key": "is_urgent.no", "reason": "within 0.962 of the held-out 'which band is this again'"}
+{"set": "train", "text": "skip this track please", "key": "is_urgent.no", "reason": "near-duplicate (0.995) of 'skip this track'"}
+{"set": "train", "text": "what time is it in tokyo", "key": "is_urgent.no", "reason": "near-duplicate (0.997) of 'what time is it in Tokyo'"}
+{"set": "train", "text": "resume playback from where i left off", "key": "is_urgent.no", "reason": "within 0.967 of the held-out 'resume playback'"}
+{"set": "train", "text": "can you lower the brightness a little", "key": "is_urgent.no", "reason": "near-duplicate (0.972) of 'set the brightness lower'"}
+{"set": "train", "text": "add a reminder to buy milk this week", "key": "is_urgent.no", "reason": "near-duplicate (0.972) of 'put a reminder to buy milk in the calendar'"}
+{"set": "train", "text": "remind me to call my sister about dinner this weekend please", "key": "is_about_her.no", "reason": "near-duplicate (0.977) of 'remind me to call mum at five'"}
+{"set": "train", "text": "can you pause the song for a second", "key": "is_about_her.no", "reason": "near-duplicate (0.995) of 'can you pause this song for a second'"}
+{"set": "train", "text": "can you turn the volume down a bit its too loud", "key": "is_about_her.no", "reason": "near-duplicate (0.986) of 'could you please turn down the volume a bit it is too loud'"}
+{"set": "train", "text": "remind me to buy milk later", "key": "is_about_her.no", "reason": "near-duplicate (0.982) of 'remind me to buy oat milk later'"}
+{"set": "train", "text": "what is the weather like outside", "key": "is_about_her.no", "reason": "near-duplicate (0.993) of 'what is the weather like outside right now'"}
+{"set": "train", "text": "play some jazz please", "key": "is_about_her.no", "reason": "near-duplicate (0.976) of 'put on some jazz'"}
+{"set": "train", "text": "remind me to call mom tonight", "key": "is_about_her.no", "reason": "near-duplicate (0.984) of 'remind me to call mum at five'"}
+{"set": "train", "text": "whats the capital of france", "key": "is_about_her.no", "reason": "near-duplicate (0.991) of 'what is the capital of france?'"}
+{"set": "train", "text": "who won the world cup last year", "key": "is_about_her.no", "reason": "near-duplicate (0.971) of 'who won the last world cup'"}
+{"set": "train", "text": "stop playing music", "key": "is_about_her.no", "reason": "near-duplicate (0.973) of 'stop the music'"}
+{"set": "train", "text": "set an alarm for 7am tomorrow", "key": "is_about_her.no", "reason": "near-duplicate (0.999) of 'set an alarm for 7am tomorrow morning'"}
+{"set": "train", "text": "can you turn off the screen", "key": "is_about_her.no", "reason": "near-duplicate (0.984) of 'turn off the screen please'"}
+{"set": "train", "text": "lower the volume a bit please", "key": "is_about_her.no", "reason": "near-duplicate (0.973) of 'turn the volume down a bit'"}
+{"set": "train", "text": "who is the lead singer of radiohead", "key": "is_about_her.no", "reason": "near-duplicate (0.996) of 'who is the lead singer in radiohead'"}
+{"set": "train", "text": "remind me to buy milk tomorrow at 9am", "key": "has_argument.yes", "reason": "near-duplicate (0.976) of 'remind me to buy oat milk later'"}
+{"set": "train", "text": "who is the artist of this track", "key": "has_argument.yes", "reason": "near-duplicate (0.982) of 'who is the artist of this song'"}
+{"set": "train", "text": "open firefox please", "key": "has_argument.yes", "reason": "within 0.987 of the held-out 'open Firefox'"}
+{"set": "train", "text": "could you play some lofi beats for studying", "key": "has_argument.yes", "reason": "near-duplicate (0.982) of 'play some lofi beats for studying'"}
+{"set": "train", "text": "skip the track", "key": "has_argument.no", "reason": "near-duplicate (0.983) of 'skip this track'"}
+{"set": "train", "text": "is it raining outside", "key": "has_argument.no", "reason": "near-duplicate (0.976) of 'is it going to rain'"}
+{"set": "train", "text": "turn it up a bit", "key": "has_argument.no", "reason": "near-duplicate (0.976) of 'turn it up'"}
+{"set": "train", "text": "what time is it now", "key": "has_argument.no", "reason": "near-duplicate (0.993) of 'what time is it'"}
+{"set": "train", "text": "remind me to call my mom tonight at 7 pm", "key": "has_argument.yes", "reason": "near-duplicate (0.982) of 'remind me to call mum at five'"}
+{"set": "train", "text": "who is the singer of this song", "key": "has_argument.yes", "reason": "near-duplicate (0.975) of 'who is the artist of this song'"}
+{"set": "train", "text": "play my running playlist please", "key": "has_argument.yes", "reason": "near-duplicate (0.996) of 'play my running playlist'"}
+{"set": "train", "text": "lock the screen in 10 minutes", "key": "has_argument.yes", "reason": "near-duplicate (0.972) of 'lock the screen in 5 minutes'"}
+{"set": "train", "text": "what is playing right now?", "key": "has_argument.no", "reason": "near-duplicate (0.994) of 'what is playing right now'"}
+{"set": "train", "text": "lock the screen for me", "key": "has_argument.no", "reason": "near-duplicate (0.986) of 'lock the screen'"}
+{"set": "train", "text": "what time is it?", "key": "has_argument.no", "reason": "near-duplicate (0.994) of 'what time is it'"}
+{"set": "train", "text": "resume playback", "key": "has_argument.no", "reason": "within 1.000 of the held-out 'resume playback'"}
+{"set": "train", "text": "remind me to call sam at 5 pm", "key": "has_argument.yes", "reason": "near-duplicate (0.980) of 'remind me to call mum at five'"}
+{"set": "train", "text": "who is singing", "key": "has_argument.no", "reason": "near-duplicate (0.971) of 'who sings this'"}
+{"set": "train", "text": "turn the volume down please", "key": "has_argument.no", "reason": "near-duplicate (0.985) of 'turn the volume down a bit'"}
+{"set": "train", "text": "what is this song called", "key": "has_argument.no", "reason": "near-duplicate (0.989) of 'what song is this'"}
+{"set": "train", "text": "stop the music right now", "key": "has_argument.no", "reason": "near-duplicate (0.978) of 'stop the music'"}
+{"set": "train", "text": "play lofi beats for studying", "key": "has_argument.yes", "reason": "near-duplicate (0.995) of 'play some lofi beats for studying'"}
+{"set": "train", "text": "what is the battery percentage left?", "key": "has_argument.no", "reason": "near-duplicate (0.979) of 'what is the battery percentage'"}
+{"set": "train", "text": "remind me to call mom later", "key": "has_argument.yes", "reason": "near-duplicate (0.984) of 'remind me to call mum at five'"}
+{"set": "train", "text": "like this song", "key": "wants_library_change.yes", "reason": "near-duplicate (0.970) of 'like this track'"}
+{"set": "train", "text": "add this to my favorites", "key": "wants_library_change.yes", "reason": "near-duplicate (0.989) of 'add this to my favourites'"}
+{"set": "train", "text": "add this to my chill playlist", "key": "wants_library_change.yes", "reason": "within 0.991 of the held-out 'add this one to my chill playlist'"}
+{"set": "train", "text": "turn down the volume please it's loud", "key": "wants_library_change.no", "reason": "near-duplicate (0.971) of 'could you please turn down the volume a bit it is too loud'"}
+{"set": "train", "text": "next track", "key": "music_tool.skip", "reason": "near-duplicate (0.987) of 'next track please'"}
+{"set": "train", "text": "i dont like this one, skip it please", "key": "music_tool.skip", "reason": "near-duplicate (0.985) of \"skip this one i don't like it\""}
+{"set": "train", "text": "advance to the next track", "key": "music_tool.skip", "reason": "near-duplicate (0.972) of 'next track please'"}
+{"set": "train", "text": "its too loud, turn it down a bit", "key": "music_tool.volume_down", "reason": "near-duplicate (0.986) of 'thats too loud turn it down a bit'"}
+{"set": "train", "text": "skipping to the next one", "key": "music_tool.skip", "reason": "near-duplicate (0.971) of 'skip to the next one'"}
+{"set": "train", "text": "go back to the last song please", "key": "music_tool.previous", "reason": "near-duplicate (0.995) of 'go back to the last song'"}
+{"set": "train", "text": "uh back to the previous track", "key": "music_tool.previous", "reason": "near-duplicate (0.981) of 'go back to the previous track'"}
+{"set": "train", "text": "go forward to the next song", "key": "music_tool.skip", "reason": "near-duplicate (0.976) of 'play the next song'"}
+{"set": "train", "text": "unpause it please", "key": "music_tool.resume", "reason": "near-duplicate (0.971) of 'unpause'"}
+{"set": "train", "text": "go back to the last track", "key": "music_tool.previous", "reason": "near-duplicate (0.988) of 'take me back to the last track'"}
+{"set": "train", "text": "unpause please", "key": "music_tool.resume", "reason": "near-duplicate (0.985) of 'unpause'"}
+{"set": "train", "text": "turn it down please", "key": "music_tool.volume_down", "reason": "near-duplicate (0.989) of 'turn it down'"}
+{"set": "train", "text": "what song is this?", "key": "music_tool.now_playing", "reason": "near-duplicate (0.995) of 'what song is this'"}
+{"set": "train", "text": "unmute and start playback", "key": "music_tool.resume", "reason": "near-duplicate (0.978) of 'unmute and play'"}
+{"set": "train", "text": "restart this track please", "key": "music_tool.previous", "reason": "near-duplicate (0.993) of 'restart this track'"}
+{"set": "train", "text": "it's too loud", "key": "music_tool.volume_down", "reason": "near-duplicate (0.981) of 'too loud'"}
+{"set": "train", "text": "what is this song playing right now", "key": "music_tool.now_playing", "reason": "near-duplicate (0.977) of 'what song is this right now?'"}
+{"set": "train", "text": "start the music again please", "key": "music_tool.resume", "reason": "near-duplicate (0.993) of 'start the music again'"}
+{"set": "train", "text": "turn it way down", "key": "music_tool.volume_down", "reason": "near-duplicate (0.973) of 'turn it down'"}
+{"set": "train", "text": "lower the volume please", "key": "music_tool.volume_down", "reason": "near-duplicate (0.992) of 'could you lower the volume please'"}
+{"set": "train", "text": "reduce the volume level", "key": "music_tool.volume_down", "reason": "near-duplicate (0.970) of 'reduce the sound level'"}
+{"set": "train", "text": "what song is this playing right now", "key": "music_tool.now_playing", "reason": "near-duplicate (0.984) of 'what song is this right now?'"}
+{"set": "train", "text": "go to the next track please", "key": "music_tool.skip", "reason": "near-duplicate (0.990) of 'i want to go to the next track please'"}
+{"set": "train", "text": "stop the music for a second", "key": "music_tool.pause", "reason": "near-duplicate (0.989) of 'stop the music for a sec'"}
+{"set": "train", "text": "louder please", "key": "music_tool.volume_up", "reason": "near-duplicate (0.978) of 'make it louder'"}
+{"set": "train", "text": "turn it up please", "key": "music_tool.volume_up", "reason": "near-duplicate (0.990) of 'turn it up'"}
+{"set": "train", "text": "whats playing", "key": "music_tool.now_playing", "reason": "near-duplicate (0.985) of \"what's playing\""}
+{"set": "train", "text": "what album is this track from", "key": "music_tool.now_playing", "reason": "near-duplicate (0.980) of 'what album is this from'"}
+{"set": "train", "text": "so what are we listening to at the moment", "key": "music_tool.now_playing", "reason": "near-duplicate (0.970) of 'what are we listening to'"}
+{"set": "train", "text": "whats the title of the current track", "key": "music_tool.now_playing", "reason": "near-duplicate (0.970) of 'what track is playing right now'"}
+{"set": "train", "text": "turn it down a bit, its too loud", "key": "music_tool.volume_down", "reason": "near-duplicate (0.980) of 'thats too loud turn it down a bit'"}
+{"set": "train", "text": "what is this song called?", "key": "music_tool.now_playing", "reason": "near-duplicate (0.983) of 'what song is this'"}
+{"set": "train", "text": "go back to the start of this track", "key": "music_tool.previous", "reason": "near-duplicate (0.981) of 'put me back to the start of this track'"}
+{"set": "train", "text": "play some lo-fi beats for studying", "key": "music_tool.other", "reason": "near-duplicate (0.990) of 'play some lofi beats for studying'"}
+{"set": "train", "text": "i dont like this one skip to the next track please", "key": "music_tool.skip", "reason": "near-duplicate (0.985) of 'skip to the next track i dont like this one'"}
+{"set": "train", "text": "what genre is this song actually", "key": "music_tool.other", "reason": "near-duplicate (0.976) of 'what genre is this song?'"}
+{"set": "train", "text": "play the soundtrack from inception please", "key": "music_tool.other", "reason": "near-duplicate (0.984) of 'play the soundtrack to the movie inception'"}
+{"set": "train", "text": "turn the volume down a little it is too loud", "key": "music_tool.volume_down", "reason": "near-duplicate (0.986) of 'could you please turn down the volume a bit it is too loud'"}
+{"set": "train", "text": "shuffle the current playlist please", "key": "music_tool.other", "reason": "within 0.955 of the held-out 'shuffle my road trip playlist'"}
+{"set": "train", "text": "is this a cover or the original recording", "key": "music_tool.other", "reason": "within 0.975 of the held-out 'is this the original or a cover?'"}
+{"set": "train", "text": "add this song to my favorites list so i can find it later", "key": "music_tool.other", "reason": "near-duplicate (0.975) of 'add this song to my favorites so i can listen later'"}
+{"set": "train", "text": "turn the volume down a bit its getting too loud in here", "key": "music_tool.volume_down", "reason": "near-duplicate (0.972) of 'could you please turn down the volume a bit it is too loud'"}
+{"set": "train", "text": "who is singing this song?", "key": "needs_catalogue.no", "reason": "near-duplicate (0.978) of 'who sings this'"}
+{"set": "train", "text": "turn the volume down a bit, it's too loud", "key": "needs_catalogue.no", "reason": "near-duplicate (0.980) of 'could you please turn down the volume a bit it is too loud'"}
+{"set": "train", "text": "play the album 'ok computer' by radiohead", "key": "needs_catalogue.yes", "reason": "near-duplicate (0.996) of 'play the album ok computer by radiohead'"}
+{"set": "train", "text": "turn the volume up a little", "key": "needs_catalogue.no", "reason": "near-duplicate (0.979) of 'turn up the volume please'"}
+{"set": "train", "text": "who sings this song?", "key": "needs_catalogue.no", "reason": "near-duplicate (0.986) of 'who sings this'"}
+{"set": "train", "text": "mute the speaker", "key": "needs_catalogue.no", "reason": "near-duplicate (0.981) of 'mute the speakers'"}
+{"set": "train", "text": "who is singing right now", "key": "needs_catalogue.no", "reason": "near-duplicate (0.993) of 'who is singing right now?'"}
+{"set": "train", "text": "turn it up a bit please", "key": "needs_catalogue.no", "reason": "near-duplicate (0.979) of 'turn it up a bit more'"}
+{"set": "train", "text": "play some lofi for studying", "key": "needs_catalogue.yes", "reason": "near-duplicate (0.976) of 'play some lofi beats for studying'"}
+{"set": "train", "text": "turn the volume up a little bit", "key": "needs_catalogue.no", "reason": "near-duplicate (0.979) of 'turn up the volume please'"}
+{"set": "train", "text": "do you know who wrote this song", "key": "needs_catalogue.no", "reason": "near-duplicate (0.993) of 'do you know who wrote this song?'"}
+{"set": "train", "text": "Limit Change: Your card limit has been temporarily increased to €2000 due to seasonal spending patterns.", "key": "is_sensitive.yes", "reason": "near-duplicate (0.991) of 'Limit Change: Your card limit has been temporarily increased to 2000 EUR due to seasonal spending patterns.'"}
+{"set": "train", "text": "hi strawberry how are you doing", "key": "kind.chat", "reason": "near-duplicate (0.988) of 'hey strawberry how are you doing?'"}
+{"set": "train", "text": "i am so hungry i could eat a horse", "key": "kind.other", "reason": "near-duplicate (0.996) of \"i'm so hungry i could eat a horse\""}
+{"set": "heldout", "text": "who is singing right now i dont know this song", "reason": "within 0.953 of the training 'who is singing right now?'"}
+{"set": "heldout", "text": "resume playback im done with the coffee break now", "reason": "within 0.954 of the training 'resume playback immediately i just came back from the break room'"}
+{"set": "heldout", "text": "add this one to my liked songs", "reason": "within 0.981 of the training 'i like this song so add it to my liked songs'"}
+{"set": "heldout", "text": "remind me to take out the trash in ten minutes", "reason": "within 0.964 of the training 'remind me to take the dog out in ten minutes'"}
+{"set": "heldout", "text": "cancel the dentist appointment for tomorrow morning", "reason": "within 0.975 of the training 'cancel my appointment with the dentist'"}
+{"set": "heldout", "text": "what's on my calendar for next friday evening?", "reason": "within 0.986 of the training 'what is on my calendar for next friday'"}
+{"set": "heldout", "text": "remind me to call my mother this weekend", "reason": "within 0.982 of the training 'remind me to call mum at five'"}
+{"set": "heldout", "text": "pause all notifications for an hour", "reason": "within 1.000 of the training 'pause all notifications for an hour'"}
+{"set": "heldout", "text": "what time is it in new york right now?", "reason": "within 0.995 of the training 'what time is it in new york right now'"}
+{"set": "heldout", "text": "skip this song it is way too slow for what i am doing right now", "reason": "within 0.965 of the training 'skip this track its too slow for what i need right now'"}
+{"set": "heldout", "text": "skip this track", "reason": "within 1.000 of the training 'skip this track'"}
+{"set": "heldout", "text": "turn it up i cant hear", "reason": "within 0.954 of the training 'volume up a bit i cant hear it'"}
+{"set": "heldout", "text": "who is singing right now", "reason": "within 0.993 of the training 'who is singing right now?'"}
+{"set": "heldout", "text": "play some calm jazz", "reason": "within 0.956 of the training 'play some jazz i feel like listening to something chill'"}
+{"set": "heldout", "text": "go back to the last song", "reason": "within 1.000 of the training 'go back to the last song'"}
+{"set": "heldout", "text": "add this song to my favorites", "reason": "within 0.980 of the training 'add this track to my favorites please'"}
+{"set": "heldout", "text": "what is the name of this song i forgot it", "reason": "within 0.967 of the training 'i cant remember the name of this song, can you tell me'"}
+{"set": "heldout", "text": "play my chill playlist for evening vibes", "reason": "within 0.968 of the training 'play my chill playlist'"}
+{"set": "heldout", "text": "mikä bändi tätä soittaa?", "reason": "near-duplicate (0.971) in the held-out set"}
+{"set": "heldout", "text": "find me songs like radiohead", "reason": "within 0.955 of the training 'recommend me a song like radiohead'"}
+{"set": "heldout", "text": "what time is it", "reason": "within 1.000 of the training 'what time is it'"}
+{"set": "heldout", "text": "remind me to water plants at 6 pm", "reason": "within 0.983 of the training 'remind me to water the plants at 4 pm'"}
+{"set": "heldout", "text": "set a timer for fifteen minutes", "reason": "within 0.955 of the training 'set a timer for 5 minutes'"}
+{"set": "heldout", "text": "what day is it today really", "reason": "within 0.969 of the training 'what day is it'"}
+{"set": "heldout", "text": "sulje kaikki ikkunat nyt", "reason": "within 0.963 of the training 'sulje kaikki ikkunat paitsi selaimen, kiitos'"}
+{"set": "heldout", "text": "turn down the screen brightness", "reason": "within 0.962 of the training 'turn the screen brightness down to 20'"}
+{"set": "heldout", "text": "turn up the volume its too quiet", "reason": "within 0.984 of the training 'turn up the volume it is way too quiet right now'"}
+{"set": "heldout", "text": "what time is it in new york", "reason": "within 0.995 of the training 'what time is it in new york right now'"}
+{"set": "heldout", "text": "stop the music please", "reason": "within 0.992 of the training 'stop the music'"}
+{"set": "heldout", "text": "you are the best little crab ever", "reason": "within 0.996 of the training \"you're the best little crab ever\""}
+{"set": "heldout", "text": "its way too loud right now turn it down", "reason": "within 0.960 of the training 'turn down the volume its way too loud'"}
+{"set": "heldout", "text": "pause this", "reason": "within 0.980 of the training 'pause it'"}
