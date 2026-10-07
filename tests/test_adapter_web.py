@@ -211,7 +211,7 @@ async def test_a_failed_search_is_logged_by_its_kind(caplog):
 # ----------------------------------------------------------------------------- when to search
 
 
-@pytest.mark.parametrize("text", ["search the web for the latest Godot release", "look up the weather in Helsinki",
+@pytest.mark.parametrize("text", ["search the web for the latest Godot release", "look up the weather in Lisbon",
                                   "look it up", "google who won the last F1 race", "can you check online if it rains",
                                   "find out on the internet when it opens", "do a web search for crab facts",
                                   "hae netistä huomisen sää"])
@@ -228,8 +228,8 @@ def test_not_an_explicit_search(text):
 def test_a_question_about_now_by_the_gates_reading():
     question = reading("x", kind="question")
     assert about_now("what's the newest iPhone", question)
-    assert about_now("when does Lidl close today", question)
-    assert about_now("what's the population of Finland now", None)              # the gate is down
+    assert about_now("when does the bakery close today", question)
+    assert about_now("what's the population of Portugal now", None)              # the gate is down
     assert not about_now("how are you today", reading("x", kind="chat"))         # small talk
     assert not about_now("what are you doing now", reading("x", kind="question", is_about_her=0.9))
     assert not about_now("what is the capital of Australia", question)
@@ -276,7 +276,7 @@ async def test_the_prompt_and_tools_are_the_same_for_every_sentence_but_the_note
     thinker = Thinker(ThinkerConfig(), box, "qwen-test", chat=FakeQwen([]))
     offers = [await thinker.offer(text, topic=topic, route=reading(text, kind=kind, topic=topic))
               for text, kind, topic in [("how are you", "chat", "other"), ("skip this one too", "request", "music"),
-                                        ("look up the weather in Helsinki", "question", "other"),
+                                        ("look up the weather in Lisbon", "question", "other"),
                                         ("what's the newest iPhone", "question", "other")]]
     assert len({(tuple(s.key for s in specs), prompt) for specs, prompt, _ in offers}) == 1
     assert [note[:14] for _, _, note in offers] == ["", "", "They asked for", "This may depen"]
@@ -340,8 +340,8 @@ async def test_a_spoken_question_reaches_the_thinker_with_the_web_tools(aiohttp_
     config = plain_config()
     config.actions.mpris = False
     box, fake = web_box()
-    qwen = FakeQwen([[("searxng_web_search", {"query": "lidl opening hours"})], "[neutral] Ten tonight, it says."])
-    text = "when does Lidl close today"
+    qwen = FakeQwen([[("searxng_web_search", {"query": "bakery opening hours"})], "[neutral] Ten tonight, it says."])
+    text = "when does the bakery close today"
     gate = ScriptedGate({text: reading(text, kind="question", topic="other", decision="act")})
     daemon = web_daemon(config, box, qwen, gate)
     client = await aiohttp_client(create_app(daemon))
@@ -365,7 +365,7 @@ async def test_a_notification_never_reaches_a_search(aiohttp_client, body_mode):
     daemon = web_daemon(config, box, qwen, gate=fake_gate(box))   # the real gate: it checks the bodies
     client = await aiohttp_client(create_app(daemon))
     await daemon.start()
-    for title, body in [("look up the weather in Helsinki", f"search the web for {QUERY_CANARY}"),
+    for title, body in [("look up the weather in Lisbon", f"search the web for {QUERY_CANARY}"),
                         ("Chat", f"google {QUERY_CANARY} please"), ("what's the newest iPhone", "")]:
         response = await client.post("/event", json={"source": "notification", "app": "Chat", "title": title,
                                                      "body": body, "urgency": "normal"})

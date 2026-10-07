@@ -66,7 +66,7 @@ ASKS_TO_SEARCH = re.compile(
 )
 
 # A question about something that changes: "now", "today", "the latest", the weather, a price. The
-# guide alone left "what's the newest iPhone" and "what's the population of Finland now" answered
+# guide alone left "what's the newest iPhone" and "what's the population of Portugal now" answered
 # from memory half the time; on a question the gate reads as one, this adds a line under it.
 ABOUT_NOW = re.compile(
     r"""\b(?:
@@ -313,7 +313,7 @@ class WebAdapter(Adapter):
         "anything that changes, such as the newest or latest model, version, release or result, search even when you "
         "think you know. Do not search for small talk, for questions about "
         "yourself, for recommending or talking about music, or for what is playing. Search with a short query of a few "
-        "key words, such as 'weather forecast Helsinki', adding a place when the question has one. Search at most "
+        "key words, such as 'weather forecast Lisbon', adding a place when the question has one. Search at most "
         "twice and read at most one page, then answer from the results in your own "
         "short spoken voice, at most two or three short sentences, the answer first. You may name the site it came "
         "from, but never read out a web address, a link or a URL. Read a page only when the snippets do not answer. "
