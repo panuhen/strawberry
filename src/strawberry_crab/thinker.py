@@ -59,8 +59,16 @@ VOICE = (
     "or [angry] (something went wrong) - then a space, then what you say. Example: [happy] Skipped. Blue Monday next."
 )
 
-# How to use the tools. Tuned on real sentences; every clause here was a live failure once.
-TOOLS_GUIDE = (
+# How to use the tools. Tuned on real sentences; every clause here was a live failure once. The
+# clause on facts kept Qwen from searching the music catalogue to answer "who is Aphex Twin"; with a
+# web search offered it says which tools that is about (FACTS_WITH_LOOKUP), and the search's own
+# rules come from its adapter (adapters/web.py).
+FACTS = ("Tools are for the player, not for facts: a question about the music, the artist or the world is answered "
+         "from your own knowledge and the situation, without tools.")
+FACTS_WITH_LOOKUP = ("The player's tools are for the player, not for facts: a question about the music, the artist "
+                     "or the world is never answered with them. Answer it from your own knowledge and the situation, "
+                     "unless the web search rules below say to search.")
+TOOLS_RULES = (
     "You have tools for the things on the user's computer. If the sentence asks for something a tool can do, do it "
     "and then say what you did. Be decisive: call tools rather than asking questions; if a search returns several "
     "matches, pick the most likely one. Speech-to-text mishears names ('Dove Punk' was Daft Punk): if a name in the "
@@ -70,25 +78,37 @@ TOOLS_GUIDE = (
     "play nothing and say what you heard. Do only what was asked: 'play' means play, never save, like, remove or "
     "change a playlist unless you were told to. If the situation says music is already playing, a plain 'play it' "
     "needs no tool: say it is already playing. 'This song', 'this', 'it' mean whatever is playing now (given below "
-    "when known; otherwise look it up first). Tools are for the player, not for facts: a question about the music, "
-    "the artist or the world is answered from your own knowledge and the situation, without tools. Small talk needs "
-    "no tools at all. Claim only what you actually did with a tool in this conversation; if it would not work, say so."
+    "when known; otherwise look it up first). {facts} Small talk needs no tools at all. Claim only what you actually "
+    "did with a tool in this conversation; if it would not work, say so."
 )
+TOOLS_GUIDE = TOOLS_RULES.format(facts=FACTS)
 
 # The same voice with nothing to act through (no servers, or they are all down). The add-on
 # sentence alone was over-applied: "any good techno from <a country>?" got "Choosing music needs a
 # music add-on" 5/5 and "can you recommend some techno artists" "I don't know much about techno
 # artists", so recommending and talking about music are named as hers to answer. "tell me about
 # <a name it did not know>" got an invented 18th-century composer, hence the clause on names.
-NO_TOOLS = (
-    "You have no tools right now and no internet. Answer from what you know and from the situation below. If the "
-    "answer depends on recent events or on something you cannot know, say so in one sentence instead of guessing. "
+MUSIC_FROM_MEMORY = (
     "Recommending music and talking about artists, genres, albums and songs need nothing but your own knowledge: "
     "answer those yourself, naming a few real artists or records you are sure of; asked about one you have never "
     "heard of, say so rather than invent it. Only when you are asked to play, queue, open or save particular music, "
     "say in one short sentence that playing it needs a music add-on, such as the Spotify one. Never say you did "
     "something you did not do."
 )
+NO_TOOLS = (
+    "You have no tools right now and no internet. Answer from what you know and from the situation below. If the "
+    "answer depends on recent events or on something you cannot know, say so in one sentence instead of guessing. "
+    + MUSIC_FROM_MEMORY
+)
+# Only tools that look things up (web search): nothing on the computer to act through, so the music
+# clauses of NO_TOOLS still hold; what to do about recent events is the search's own rules.
+LOOKUP_ONLY = (
+    "You have no tools for the things on the user's computer, only the web search below. Answer from what you know "
+    "and from the situation below. " + MUSIC_FROM_MEMORY
+)
+
+OVER_LIMIT = ("Not done: that is as many of these calls as one question gets. Answer now from what you already "
+              "have; if it is not enough, say you couldn't find it.")
 
 HONEST = (
     "You can call no more tools. Tell the user honestly what you did and did not manage to do, in your own voice and "
@@ -111,14 +131,29 @@ def split_emotion(text: str, default: str = "neutral") -> tuple[str, str]:
     return match.group(1).lower(), rest
 
 
-def system_prompt(has_tools: bool) -> str:
-    return f"{VOICE}\n\n{TOOLS_GUIDE if has_tools else NO_TOOLS}"
+def system_prompt(has_tools: bool, guides: list[str] | tuple[str, ...] = (), acting: bool | None = None,
+                  lookup: bool = False) -> str:
+    """Her voice, then the rules for what she has: the tool rules when there is something on the
+    computer to act through (`acting`, the default whenever there are tools), the look-up-only rules
+    when there is only a web search, NO_TOOLS when there is nothing; then the adapters' paragraphs
+    (`guides`: how to use a web search, or that it is not answering). `lookup`: a web search is
+    among the tools, so the clause on facts says which tools it is about."""
+    acting = has_tools if acting is None else acting
+    if acting:
+        rules = TOOLS_RULES.format(facts=FACTS_WITH_LOOKUP if lookup else FACTS)
+    elif has_tools:
+        rules = LOOKUP_ONLY
+    else:
+        rules = NO_TOOLS
+    return "\n\n".join([VOICE, rules, *[g for g in guides if g]])
 
 
-def user_message(text: str, context: str, recent: list[str]) -> str:
-    """The situation, the ledger lines under their heading, then the sentence."""
+def user_message(text: str, context: str, recent: list[str], note: str = "") -> str:
+    """The situation, the ledger lines under their heading, then the sentence (and the adapter's
+    note under it when an adapter has one for this sentence, Thinker.offer)."""
     situation = "\n".join(part for part in (context, as_context(recent)) if part)
-    return text if not situation else f"Situation: {situation}\n\nThe user says: {text}"
+    said = text if not situation else f"Situation: {situation}\n\nThe user says: {text}"
+    return f"{said}\n\n({note})" if note else said
 
 
 # Ollama has no tokenize endpoint and no tokenizer is a dependency, so the prompt is measured in
@@ -189,18 +224,78 @@ class Thinker:
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise ThinkerError(str(exc) or type(exc).__name__) from exc
 
-    async def tools(self, careful: bool = False, topic: str = "") -> list[ToolSpec]:
+    async def tools(self, careful: bool = False, topic: str = "", skip: frozenset[str] = frozenset(),
+                    first: frozenset[str] = frozenset()) -> list[ToolSpec]:
         """Every configured server's tools: one brain, one toolbox. `careful=False` leaves out the
         tools with consequences (save, remove, add to a playlist) until the sentence asks for one.
 
-        `topic` is the gate's reading of the sentence: that topic's servers go first, so when there
-        are more tools than `max_tools` the ones cut are the ones furthest from what was asked."""
+        `topic` is the gate's reading of the sentence: when there are more tools than `max_tools`,
+        that topic's servers go first, so the ones cut are the ones furthest from what was asked.
+        While everything fits, the order is the same for every sentence (the prompt cache, below).
+        `skip` names servers left out of this sentence and `first` servers asked for outright, which
+        go ahead of everything when the list has to be cut (Thinker.offer)."""
         topics = sorted(self.toolbox.topics())
+        by_topic: dict[str, list[ToolSpec]] = {}
+        for name in topics:
+            by_topic[name] = [s for s in await self.toolbox.tools_for(name, careful=careful) if s.server not in skip]
+        stable = [s for name in topics for s in by_topic[name]]
+        limit = self.config.max_tools
+        if limit < 1 or len(stable) <= limit:
+            # Everything fits: the same order for every sentence. Ollama reuses the prompt it has
+            # cached up to the first token that differs, and the tool schemas come right after the
+            # system prompt: reordering them by topic re-read ~2700 tokens, 2.1-2.7 s instead of
+            # ~0.3 s on qwen3.8:27b (WIRING §8b).
+            return stable
         order = ([topic] if topic in topics else []) + [t for t in topics if t != topic]
-        specs: list[ToolSpec] = []
-        for name in order:
-            specs += await self.toolbox.tools_for(name, careful=careful)
+        specs = [s for name in order for s in by_topic[name]]
+        if first:
+            specs = [s for s in specs if s.server in first] + [s for s in specs if s.server not in first]
         return self.fit(specs)
+
+    async def offer(self, text: str, careful: bool = False, topic: str = "",
+                    route: Any = None) -> tuple[list[ToolSpec], str, str]:
+        """This sentence's tools, its system prompt and the note under it. Each server's adapter
+        may say the sentence does not want its tools (a web search for small talk) or asks for them
+        outright ("look it up"), and brings its paragraph for the rules: how to use its tools when
+        they are offered, or that it is not answering when it is configured and they are not."""
+        verdicts: dict[str, bool | None] = {}
+        for server, adapter in self.toolbox.adapters.items():
+            try:
+                verdicts[server] = adapter.wanted(text, route)
+            except Exception as exc:   # an adapter must never cost the sentence its answer
+                log.warning("thinker: %s adapter could not read the sentence (%s)", server, exc)
+                verdicts[server] = None
+        skip = frozenset(s for s, v in verdicts.items() if v is False)
+        first = frozenset(s for s, v in verdicts.items() if v is True)
+        specs = await self.tools(careful, topic, skip=skip, first=first)
+        offered = {s.server for s in specs}
+        guides: list[str] = []
+        notes: list[str] = []
+        lookup = False
+        for server, adapter in self.toolbox.adapters.items():
+            if server in skip:
+                continue
+            if server in offered:
+                lookup = lookup or bool(getattr(adapter, "looks_up_only", False))
+                text_for = getattr(adapter, "guide", "")
+                if server in first:
+                    try:
+                        note = adapter.nudge(text, route)
+                    except Exception as exc:
+                        log.warning("thinker: %s adapter could not write its note (%s)", server, exc)
+                        note = ""
+                    if note:
+                        notes.append(note)
+            else:
+                text_for = getattr(adapter, "unavailable", "")
+            if text_for and text_for not in guides:
+                guides.append(text_for)
+        acting = any(not getattr(self.toolbox.adapters.get(s.server), "looks_up_only", False) for s in specs)
+        prompt = system_prompt(bool(specs), guides, acting=acting, lookup=lookup)
+        if first:
+            log.info("thinker: the sentence wants %s; %s", ", ".join(sorted(first)),
+                     "offered first" if first & offered else "not answering")
+        return specs, prompt, " ".join(notes)
 
     def fit(self, specs: list[ToolSpec]) -> list[ToolSpec]:
         """At most `max_tools` schemas in the prompt (25 Spotify tools are ~360 tokens of an 8192
@@ -222,17 +317,18 @@ class Thinker:
         return kept
 
     async def run(self, text: str, context: str = "", careful: bool = False, topic: str = "",
-                  tools: bool = True, recent: list[str] | None = None) -> Outcome:
+                  tools: bool = True, recent: list[str] | None = None, route: Any = None) -> Outcome:
         """One sentence, start to finish: her reply, its mood, and whatever tools it took to get
         there. Never raises: a failure is an Outcome with ok=False and something to say about it.
         `tools=False` offers none (the latency probe, which must not change anything). `recent`
-        is the ledger's lines, oldest first: the first thing to go when the prompt is too long."""
+        is the ledger's lines, oldest first: the first thing to go when the prompt is too long.
+        `route` is the gate's reading, for the adapters that decide by it (Thinker.offer)."""
         self.calls += 1
         started = time.perf_counter()
         calls: list[ToolResult] = []
         try:
-            outcome = await asyncio.wait_for(self._run(text, context, calls, careful, topic, tools, list(recent or [])),
-                                             self.config.timeout_s)
+            outcome = await asyncio.wait_for(self._run(text, context, calls, careful, topic, tools, list(recent or []),
+                                                       route), self.config.timeout_s)
         except asyncio.TimeoutError:
             outcome = Outcome("thought about it too long", "I tried, but my thinking took too long. Sorry.", False,
                               tuple(calls), "alert")
@@ -256,7 +352,7 @@ class Thinker:
         return outcome
 
     def fit_prompt(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], text: str, context: str,
-                   recent: list[str]) -> None:
+                   recent: list[str], note: str = "") -> None:
         """Make this round's prompt fit `num_ctx`, leaving `num_predict` for the reply, in place:
         drop the oldest ledger lines (from `recent`, so later rounds go without them too), then
         shorten the tool results, oldest first, keeping each one's head. The system prompt, the
@@ -269,7 +365,7 @@ class Thinker:
         turns = len(recent)
         while estimate > budget and recent:
             recent.pop(0)
-            messages[1]["content"] = user_message(text, context, recent)
+            messages[1]["content"] = user_message(text, context, recent, note)
             estimate = prompt_tokens(messages, tools)
         shortened = 0
         for message in messages:
@@ -296,13 +392,17 @@ class Thinker:
                                 "Ollama would silently drop its start")
 
     async def _run(self, text: str, context: str, calls: list[ToolResult], careful: bool, topic: str = "",
-                   use_tools: bool = True, recent: list[str] | None = None) -> Outcome:
-        specs = await self.tools(careful, topic) if use_tools else []
+                   use_tools: bool = True, recent: list[str] | None = None, route: Any = None) -> Outcome:
+        if use_tools:
+            specs, prompt, note = await self.offer(text, careful, topic, route)
+        else:
+            specs, prompt, note = [], system_prompt(False), ""
         tools = [s.for_ollama() for s in specs]
         recent = recent if recent is not None else []
-        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt(bool(tools))},
-                                          {"role": "user", "content": user_message(text, context, recent)}]
+        messages: list[dict[str, Any]] = [{"role": "system", "content": prompt},
+                                          {"role": "user", "content": user_message(text, context, recent, note)}]
         used: list[str] = []
+        per_server: dict[str, int] = {}
         for round_no in range(self.config.max_rounds + 1):
             last_round = round_no == self.config.max_rounds or not tools
             payload = {
@@ -318,7 +418,7 @@ class Thinker:
             elif tools:
                 messages.append({"role": "user", "content": HONEST})
             # Every round: the last round's tool results made the prompt longer.
-            self.fit_prompt(messages, payload.get("tools") or [], text, context, recent)
+            self.fit_prompt(messages, payload.get("tools") or [], text, context, recent, note)
             reply = await self.chat(payload)
             message = reply.get("message") or {}
             tool_calls = message.get("tool_calls") or []
@@ -340,6 +440,16 @@ class Thinker:
                         arguments = json.loads(arguments)
                     except json.JSONDecodeError:
                         arguments = {}
+                spec = self.toolbox.functions.get(name)
+                limit = getattr(self.toolbox.adapters.get(spec.server), "max_calls", 0) if spec else 0
+                if spec and limit and per_server.get(spec.server, 0) >= limit:
+                    # Not made, and not counted as a call: the brain is told to answer with what it has.
+                    log.info("thinker: %s.%s not called, %d calls is this server's limit for a sentence",
+                             spec.server, spec.name, limit)
+                    messages.append({"role": "tool", "tool_name": name, "content": OVER_LIMIT})
+                    continue
+                if spec:
+                    per_server[spec.server] = per_server.get(spec.server, 0) + 1
                 result = await self.toolbox.call_function(name, arguments)
                 calls.append(result)
                 used.append(name)

@@ -117,15 +117,16 @@ def looks_like_error(text: str) -> bool:
     return set(data) <= {"error", "status", "details", "code", "message"}
 
 
-def clarify_error(text: str, adapter: Any | None = None) -> str:
+def clarify_error(text: str, adapter: Any | None = None, is_error: bool = False) -> str:
     """Ask the server's adapter to rewrite a confusing refusal before any model reads it.
 
     Some servers label every refusal the same way (Spotify's says "Permission denied. Check app
     scopes." for a 403 that is really "already playing"), and a model reading that would report a
     permissions problem to the user. The core knows no server's wording, so the rewriting lives in
-    that server's adapter; a server without one is left exactly as it answered.
+    that server's adapter; a server without one is left exactly as it answered. A refusal is a
+    result with the MCP error flag, or an ordinary one with an `error` body (`looks_like_error`).
     """
-    if adapter is None or not looks_like_error(text):
+    if adapter is None or not (is_error or looks_like_error(text)):
         return text
     try:
         clarified = adapter.clarify_error(text)
@@ -195,10 +196,10 @@ class Server:
             async with AsyncExitStack() as stack:
                 session = await self.connect(stack, self.config)
                 listed = await session.list_tools()
-                self.tools = [
+                self.tools = self._offer([
                     ToolSpec(self.name, t.name, (t.description or "").strip(), dict(getattr(t, "input_schema", None) or {}))
                     for t in listed.tools
-                ]
+                ])
                 self.connected_at = time.time()
                 self.ready.set()
                 log.info("tools: %s up in %.2fs with %d tools (%s)", self.name, time.perf_counter() - started,
@@ -221,6 +222,34 @@ class Server:
         finally:
             self.ready.clear()
             self._drain(ToolError(f"{self.name}: connection closed"))
+
+    def _offer(self, specs: list[ToolSpec]) -> list[ToolSpec]:
+        """The tools as the brain sees them: the adapter's `tools` only, when it names some, each in
+        its `shape_tool` form. A call by name still reaches a tool left out (`strawberry tool`)."""
+        if self.adapter is None:
+            return specs
+        wanted = tuple(getattr(self.adapter, "tools", ()) or ())
+        if wanted:
+            specs = [s for s in specs if s.name in wanted]
+        shaped: list[ToolSpec] = []
+        for spec in specs:
+            try:
+                shaped.append(self.adapter.shape_tool(spec))
+            except Exception as exc:  # an adapter must never cost the server its tools
+                log.warning("tools: %s could not shape %s (%s)", self.name, spec.name, exc)
+                shaped.append(spec)
+        return shaped
+
+    def _adapted(self, method: str, default: Any, *args: Any) -> Any:
+        """An adapter hook that must never break a call: its answer, or `default` on any failure."""
+        hook = getattr(self.adapter, method, None) if self.adapter is not None else None
+        if hook is None:
+            return default
+        try:
+            return hook(*args)
+        except Exception as exc:
+            log.warning("tools: %s: %s.%s failed (%s)", self.name, getattr(self.adapter, "name", "?"), method, exc)
+            return default
 
     def _drain(self, error: Exception) -> None:
         while not self.queue.empty():
@@ -257,15 +286,24 @@ class Server:
             return ToolResult(self.name, name, False, str(exc), ms, arguments=arguments)
         ms = (time.perf_counter() - started) * 1000
         self.last_ms = ms
-        text = clarify_error(result_text(raw), self.adapter)
-        ok = not getattr(raw, "is_error", False) and not looks_like_error(text)
+        is_error = bool(getattr(raw, "is_error", False))
+        text = clarify_error(result_text(raw), self.adapter, is_error)
+        ok = not is_error and not looks_like_error(text)
+        text = self._adapted("shape_result", text, name, text, ok)
+        if not isinstance(text, str):
+            text = result_text(raw)
         truncated = len(text) > result_chars
         if truncated:
             text = text[:result_chars] + f"\n… [{len(text) - result_chars} more characters cut]"
         if not ok:
             self.failures += 1
+        # The adapter may keep a result out of the journal (a web search's results, which can
+        # quote the query) and say what it was instead: the count, the size.
+        summary = self._adapted("log_result", None, name, text, ok)
+        if not isinstance(summary, str):
+            summary = text[:160].replace("\n", " ")
         log.info("tools: %s.%s(%s) -> %s in %.0f ms: %s", self.name, name, logtext.arguments(arguments),
-                 "ok" if ok else "error", ms, text[:160].replace("\n", " "))
+                 "ok" if ok else "error", ms, summary)
         return ToolResult(self.name, name, ok, text, ms, truncated, arguments)
 
     async def close(self) -> None:

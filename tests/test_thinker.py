@@ -222,13 +222,16 @@ def two_servers(max_tools: int = 30):
     return toolbox, Thinker(ThinkerConfig(max_tools=max_tools), toolbox, "qwen-test", chat=FakeQwen([]))
 
 
-async def test_every_tool_is_offered_while_they_fit():
+async def test_every_tool_is_offered_while_they_fit_in_one_order_for_every_sentence():
+    """The same order whatever the gate's topic: Ollama reuses its cached prompt up to the first
+    token that differs, and a reordered tool list cost 2.1-2.7 s of re-reading (WIRING §8b)."""
     toolbox, thinker = two_servers()
     specs = await thinker.tools(topic="music")
     assert len(specs) == 18
-    assert [s.server for s in specs[:10]] == ["spotify"] * 10   # the gate's topic first
+    assert [s.server for s in specs[:10]] == ["spotify"] * 10   # music before notes: the topics' order
     assert [s.server for s in specs[10:]] == ["notes"] * 8
-    assert [s.server for s in await thinker.tools(topic="notes")][:8] == ["notes"] * 8
+    assert [s.key for s in await thinker.tools(topic="notes")] == [s.key for s in specs]
+    assert [s.key for s in await thinker.tools(topic="")] == [s.key for s in specs]
     await toolbox.close()
 
 
@@ -258,9 +261,9 @@ async def test_the_gates_topic_reaches_the_thinker(aiohttp_client):
     seen: list[str] = []
     real = thinker.tools
 
-    async def watched(careful=False, topic=""):
+    async def watched(careful=False, topic="", **kw):
         seen.append(topic)
-        return await real(careful, topic)
+        return await real(careful, topic, **kw)
 
     thinker.tools = watched  # type: ignore[assignment]
     await client.post("/event", json={"source": "voice", "title": "what is playing"})

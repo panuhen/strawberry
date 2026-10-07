@@ -472,7 +472,8 @@ class Daemon:
         try:
             careful = route is not None and route.library_change >= 0.5
             return await self.thinker.run(text, await self.situation(), careful=careful,
-                                          topic=route.topic if route is not None else "", recent=self.ledger.lines())
+                                          topic=route.topic if route is not None else "", recent=self.ledger.lines(),
+                                          route=route)
         finally:
             reminder.cancel()
 
