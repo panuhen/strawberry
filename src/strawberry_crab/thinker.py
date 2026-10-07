@@ -546,6 +546,13 @@ class Thinker:
                     refusal = PRIVATE_IN_CALL
                 else:
                     refusal = self._refusal(spec, adapter, untrusted, tainted, per_server, states, arguments)
+                if refusal is None and adapter is not None:
+                    try:
+                        arguments = adapter.forward(states.setdefault(spec.server, {}), spec.name, arguments)
+                    except Exception as exc:   # a guard that let it through and a forward that cannot: no call
+                        log.warning("thinker: %s adapter could not prepare a call (%s); not made", spec.server,
+                                    type(exc).__name__)
+                        refusal = AFTER_WEB if untrusted else NOT_OFFERED
                 if refusal is not None:
                     # Not made, and not counted as a call: the brain is told why and to answer.
                     messages.append({"role": "tool", "tool_name": name, "content": refusal})

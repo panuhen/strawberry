@@ -41,7 +41,7 @@ import json
 import re
 from typing import Any
 import ipaddress
-from urllib.parse import unquote, unquote_plus, urlparse
+from urllib.parse import quote, urlparse
 
 from ..tools import ToolSpec
 from .base import Adapter
@@ -215,47 +215,76 @@ ALLOWED_ARGUMENTS = {**{t: {"query", "max_results"} for t in SEARCH_TOOLS},
 INTERNAL_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home", ".arpa", ".corp", ".intranet")
 
 
-def _same(url: str) -> str:
-    """A URL in the one form pinning compares: scheme and host in lower case, no default port, no
-    fragment, no trailing slash or trailing punctuation, percent-encoding decoded. '' for a URL that
-    cannot be read that way."""
-    try:
-        parsed = urlparse(url.strip().rstrip(".,;:!?)]}"))
-        port = parsed.port
-    except ValueError:
-        return ""
-    scheme, host = parsed.scheme.lower(), (parsed.hostname or "").lower().rstrip(".")
-    if port and (scheme, port) not in (("http", 80), ("https", 443)):
-        host = f"{host}:{port}"
-    path = unquote(parsed.path).rstrip("/")
-    query = unquote_plus(parsed.query)
-    return f"{scheme}://{host}{path}" + (f"?{query}" if query else "")
+class BadUrl(ValueError):
+    """A URL that is never read: the message says why, in a few words."""
 
 
-def _bad_url(url: str) -> str:
-    """Why this URL is never read, whatever the search said: "" when it may be."""
-    if len(url) > MAX_URL_CHARS or CONTROL.search(url) or any(c.isspace() for c in url):
-        return "too long or not one plain address"
+UNRESERVED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+PATH_SAFE = "/%:@!$&'()*+,;=-._~"
+QUERY_SAFE = PATH_SAFE + "?"
+DEFAULT_PORTS = {"http": 80, "https": 443}
+HOST_LABEL = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
+
+
+def _pct(part: str, safe: str) -> str:
+    """Percent-encoding in one form: unreserved characters decoded, the rest as upper-case escapes,
+    anything not ASCII (or not allowed in the part) escaped."""
+    part = re.sub(r"%([0-9A-Fa-f]{2})",
+                  lambda m: chr(int(m.group(1), 16)) if chr(int(m.group(1), 16)) in UNRESERVED else "%" + m.group(1).upper(),
+                  part)
+    return quote(part, safe=safe)
+
+
+def canonical(url: str) -> tuple[str, str]:
+    """The one reading of a URL that is checked and then sent: (the URL to forward, the key pinning
+    compares). Built from parsed parts: scheme, IDNA host in lower case, the port only when not the
+    default, path and query in one percent-encoding, no fragment. Anything two URL parsers could
+    read differently is refused outright (BadUrl): a login part (`good.com@evil`), backslashes,
+    whitespace or control characters (WHATWG parsers drop tabs and newlines, Python's does not), a
+    percent sign or an odd character in the host, a trailing dot or an empty label, an IP address
+    in any notation, a single-label or internal host, another scheme, more than 2048 characters."""
+    if not isinstance(url, str) or not url:
+        raise BadUrl("no address")
+    if len(url) > MAX_URL_CHARS:
+        raise BadUrl("too long")
+    if "\\" in url or CONTROL.search(url) or any(c.isspace() for c in url) or any(ord(c) < 0x20 for c in url):
+        raise BadUrl("not one plain address")
+    match = re.match(r"^(https?)://([^/?#]*)([^?#]*)(?:\?([^#]*))?(?:#.*)?$", url, re.IGNORECASE)
+    if not match:
+        raise BadUrl("not a web page address")
+    scheme, authority, path, query = match.group(1).lower(), match.group(2), match.group(3), match.group(4) or ""
+    if "@" in authority or "%" in authority:
+        raise BadUrl("a login or an encoded host")
+    if authority.startswith("["):
+        raise BadUrl("a bare IP address")
+    host, _, port_text = authority.partition(":")
+    port = None
+    if port_text or authority.endswith(":"):
+        if not port_text.isdigit() or not (0 < int(port_text) < 65536):
+            raise BadUrl("not a port")
+        port = int(port_text)
     try:
-        parsed = urlparse(url)
-        parsed.port
-    except ValueError:
-        return "not an address"
-    if parsed.scheme.lower() not in ("http", "https"):
-        return "not a web page"
-    if parsed.username or parsed.password:
-        return "carries a login"
-    host = (parsed.hostname or "").lower().rstrip(".")
-    if not host or "." not in host or host == "localhost" or host.endswith(INTERNAL_SUFFIXES):
-        return "not a public site"
+        host = host.encode("idna").decode("ascii").lower() if not host.isascii() else host.lower()
+    except UnicodeError:
+        raise BadUrl("not a host name") from None
+    labels = host.split(".")
+    if not host or host.endswith(".") or len(labels) < 2 or not all(HOST_LABEL.match(label) for label in labels):
+        raise BadUrl("not a public site")
+    if host == "localhost" or ("." + host).endswith(INTERNAL_SUFFIXES):
+        raise BadUrl("not a public site")
+    if labels[-1].isdigit() or all(re.fullmatch(r"(0x[0-9a-f]*|[0-9]+)", label) for label in labels):
+        raise BadUrl("a bare IP address")
     try:
         ipaddress.ip_address(host)
-        return "a bare IP address"
-    except ValueError:
-        pass
-    if re.fullmatch(r"[0-9x.]+", host):    # 0x7f.1, 2130706433.0 and other spellings of an address
-        return "a bare IP address"
-    return ""
+        raise BadUrl("a bare IP address")
+    except ValueError as exc:
+        if isinstance(exc, BadUrl):
+            raise
+    netloc = host if port in (None, DEFAULT_PORTS[scheme]) else f"{host}:{port}"
+    path, query = _pct(path, PATH_SAFE), _pct(query, QUERY_SAFE)
+    forward = f"{scheme}://{netloc}{path or '/'}" + (f"?{query}" if query else "")
+    key = f"{scheme}://{netloc}{path.rstrip('/')}" + (f"?{query}" if query else "")
+    return forward, key
 
 
 NOT_FROM_RESULTS = ("Not done: only a URL from this question's search results can be read. Answer from the results "
@@ -338,20 +367,31 @@ class WebAdapter(Adapter):
             if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_CHARS or CONTROL.search(query):
                 return BAD_QUERY
             return None
-        url = arguments.get("url")
-        if not isinstance(url, str):
-            return BAD_URL.format(why="no address")
-        why = _bad_url(url)
-        if why:
-            return BAD_URL.format(why=why)
-        if _same(url) not in state.get("urls", set()):
+        try:
+            _, key = canonical(arguments.get("url"))
+        except BadUrl as exc:
+            return BAD_URL.format(why=exc)
+        if key not in state.get("urls", {}):
             return NOT_FROM_RESULTS     # made up, taken from a page, or carrying something of the user's
         return None
+
+    def forward(self, state: dict[str, Any], name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        # What was checked is what is sent: the result's own canonical URL, never the model's string.
+        if name in READ_TOOLS:
+            _, key = canonical(arguments["url"])
+            return {**arguments, "url": state["urls"][key]}
+        return dict(arguments)
 
     def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool) -> None:
         if name in SEARCH_TOOLS and ok:
             # Only the results' own URL fields: a URL a snippet mentions is the page author's choice.
-            state.setdefault("urls", set()).update(_same(u) for u in result_urls(text) if not _bad_url(u))
+            pinned = state.setdefault("urls", {})
+            for url in result_urls(text):
+                try:
+                    forward, key = canonical(url)
+                except BadUrl:
+                    continue
+                pinned.setdefault(key, forward)
         elif name in READ_TOOLS:
             state["read"] = True
 

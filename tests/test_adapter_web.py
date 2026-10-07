@@ -416,8 +416,9 @@ async def test_a_hostile_page_cannot_send_her_elsewhere_or_reach_the_other_tools
     outcome = await thinker.run("look up the latest Godot release", situation, recent=list(ledger),
                                 public_context="Today is Monday.")
     assert outcome.ok and outcome.fact.startswith("Godot 4.7")
+    # Asked for with a trailing slash; sent as the result's own URL, the form that was checked.
     assert fake.calls == [("searxng_web_search", {"query": "godot release"}),
-                          ("web_url_read", {"url": "https://www.example1.org/page/1/"})]
+                          ("web_url_read", {"url": "https://www.example1.org/page/1"})]
     assert box.sessions["spotify"].calls == []     # type: ignore[attr-defined]
     assert PRIVATE in seen(qwen.payloads[0])        # the ledger and the situation, before any result
     for payload in qwen.payloads[1:]:
@@ -501,27 +502,69 @@ def test_a_query_is_one_plain_short_line(arguments):
     assert WEB.guard({}, "web_search", arguments) is not None
 
 
-@pytest.mark.parametrize("url", ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,hi", "ftp://example.org/x",
-                                 "http://127.0.0.1/admin", "http://localhost:8770/health", "http://10.0.0.1/",
-                                 "http://[::1]/", "http://2130706433/", "http://0x7f.1/", "http://router.local/",
-                                 "http://user:pw@example.org/", "http://example.org/a b", "http://example.org/\nx",
-                                 "http://intranet/", "https://example.org/" + "a" * 2100])
-def test_some_addresses_are_never_read_even_from_the_results(url):
-    state = {"urls": {url, url.lower()}}
-    assert WEB.guard(state, "web_url_read", {"url": url}) is not None
-    assert WEB.guard(state, "read_page", {"url": url}) is not None
+BYPASSES = [
+    "file:///etc/passwd", "javascript:alert(1)", "data:text/html,hi", "ftp://example.org/x", "HTTP:/example.org/x",
+    "http://127.0.0.1/admin", "http://localhost:8770/health", "http://localhost./", "http://10.0.0.1/",
+    "http://[::1]/", "http://[::ffff:127.0.0.1]/", "http://2130706433/", "http://0x7f.0.0.1/", "http://0x7f.1/",
+    "http://017700000001/", "http://127.1/", "http://router.local/", "http://metadata.google.internal/",
+    "http://intranet/", "http://good.example@127.0.0.1/", "http://good.example%2F@evil.example/",
+    "http://127.0.0.1\\@good.example/", "http://good.example\\@evil.example/", "http://user:pw@example.org/",
+    "http://exa\tmple.org/", "http://exa\nmple.org/", "http://example.org/a b", "http://example.org./",
+    "http://example..org/", "http://ex%61mple.org/", "http://-bad.example/", "http://example.org:0/",
+    "http://example.org:99999/", "http://example.org:/", "https://example.org/" + "a" * 2100,
+]
 
 
-def test_pinning_compares_normalised_urls():
+@pytest.mark.parametrize("url", BYPASSES)
+def test_an_address_two_parsers_could_read_differently_is_never_read(url):
+    """Refused outright even when 'pinned' in every spelling: what cannot be read one way only is
+    not read at all."""
+    state = {"urls": {url: url, url.lower(): url}}
+    for name in ("web_url_read", "read_page"):
+        assert WEB.guard(state, name, {"url": url}) is not None, url
+
+
+def pinned_state(*urls: str) -> dict:
     state: dict = {}
-    WEB.observe(state, "searxng_web_search", {"query": "x"}, compact(listing()), True)
-    for same in ["https://www.example0.org/page/0", "HTTPS://WWW.Example0.org:443/page/0/#top",
-                 "https://www.example0.org/p%61ge/0", "https://www.example0.org/page/0/"]:
-        assert WEB.guard(dict(state), "web_url_read", {"url": same}) is None, same
-    for other in ["https://www.example0.org/page/0?q=secret", "https://www.example0.org:8443/page/0",
-                  "http://evil.example/page/0", "https://www.example0.org/page/0/../../x"]:
-        assert WEB.guard(dict(state), "web_url_read", {"url": other}) == NOT_FROM_RESULTS, other
-    assert WEB.guard(state | {"read": True}, "web_url_read", {"url": "https://www.example0.org/page/0"}) == AFTER_READ
+    text = "\n".join(f"{i + 1}. Result {i} (site)\nsnippet\n{url}" for i, url in enumerate(urls))
+    WEB.observe(state, "searxng_web_search", {"query": "x"}, text, True)
+    return state
+
+
+@pytest.mark.parametrize("asked", ["https://www.example0.org/page/0", "HTTPS://WWW.Example0.org:443/page/0/",
+                                   "https://www.example0.org/page/0#@evil.example", "https://www.example0.org/p%61ge/0",
+                                   "https://www.example0.org/page/0#top"])
+def test_a_pinned_url_is_sent_in_its_own_canonical_form(asked):
+    state = pinned_state("https://www.example0.org/page/0")
+    assert WEB.guard(state, "web_url_read", {"url": asked}) is None
+    assert WEB.forward(state, "web_url_read", {"url": asked, "maxLength": 3000}) == {
+        "url": "https://www.example0.org/page/0", "maxLength": 3000}
+
+
+@pytest.mark.parametrize("asked", ["https://www.example0.org/page/0?q=secret", "https://www.example0.org:8443/page/0",
+                                   "http://evil.example/page/0", "https://www.example0.org/page/0/../../x",
+                                   "https://www.exаmple0.org/page/0",          # a Cyrillic 'а': an IDNA homograph
+                                   "https://www.example0.org.evil.example/page/0", "http://www.example0.org/page/0"])
+def test_anything_else_is_not_the_pinned_url(asked):
+    state = pinned_state("https://www.example0.org/page/0")
+    assert WEB.guard(state, "web_url_read", {"url": asked}) is not None, asked
+
+
+def test_a_non_default_port_only_when_the_result_had_it():
+    state = pinned_state("https://docs.example.org:8443/guide")
+    assert WEB.guard(state, "read_page", {"url": "https://docs.example.org:8443/guide"}) is None
+    assert WEB.guard(state, "read_page", {"url": "https://docs.example.org/guide"}) == NOT_FROM_RESULTS
+
+
+def test_a_result_url_that_is_not_safe_is_never_pinned():
+    state = pinned_state("http://127.0.0.1/admin", "http://good.example@evil.example/", "https://ok.example/x")
+    assert set(state["urls"]) == {"https://ok.example/x"}
+
+
+def test_an_internationalised_result_host_is_compared_and_sent_in_idna():
+    state = pinned_state("https://bücher.example/katalog")
+    assert WEB.forward(state, "read_page", {"url": "https://BÜCHER.example/katalog"}) == {
+        "url": "https://xn--bcher-kva.example/katalog"}
 
 
 async def test_one_reply_asks_for_at_most_six_calls():
