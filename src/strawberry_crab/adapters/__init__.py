@@ -24,11 +24,12 @@ from typing import Any
 
 from .base import Adapter
 from .spotify import SPOTIFY
+from .web import WEB
 
 log = logging.getLogger("strawberryd.adapters")
 
 #: every adapter that ships. One line per adapter; nothing else registers them.
-REGISTRY: tuple[Adapter, ...] = (SPOTIFY,)
+REGISTRY: tuple[Adapter, ...] = (SPOTIFY, WEB)
 
 
 def adapter_for(server_name: str, server_config: dict[str, Any]) -> Adapter | None:
