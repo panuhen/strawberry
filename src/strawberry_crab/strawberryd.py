@@ -258,12 +258,13 @@ def think(config, text: str) -> int:
         try:
             import time as _time
 
-            situation = f"{_time.strftime('Today is %A %d %B %Y, %H:%M local time.')} {await actor.situation()}".strip()
+            today = _time.strftime('Today is %A %d %B %Y, %H:%M local time.')
+            situation = f"{today} {await actor.situation()}".strip()
             names = await actor.vocabulary()
             if names:
                 situation = f"{situation} Names in the user's library: {', '.join(names[: config.voice.max_hotwords])}.".strip()
             print(f"situation: {situation or '(none)'}", file=sys.stderr)
-            outcome = await thinker.run(text, situation)
+            outcome = await thinker.run(text, situation, public_context=today)
             print(json.dumps(thinker.last, indent=2, ensure_ascii=False))
             return 0 if outcome.ok else 1
         finally:

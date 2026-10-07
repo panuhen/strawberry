@@ -23,7 +23,7 @@ from .outcomes import OutcomeLog
 from .reactions import decorate, is_burst
 from .speech import Speaker
 from .systemone import Gate, Route
-from .thinker import Thinker
+from .thinker import WEB_REPLY, Thinker
 from .tools import Toolbox
 from .voice import EARS_LOADING, Listener
 from . import wake
@@ -430,7 +430,10 @@ class Daemon:
         performance = decorate(event, Performance(state="talking", text=outcome.fact,
                                                   emotion=outcome.emotion or "neutral"))
         sent = await self.perform(performance)
-        self.ledger.record(text, performance.text or "", did=outcome.did)
+        # An answer from web results is not kept in her words: the ledger goes into the next
+        # sentence's prompt before anything marks it as strangers' text (Thinker._run).
+        web = self.thinker.used_untrusted(outcome) if hasattr(self.thinker, "used_untrusted") else False
+        self.ledger.record(text, WEB_REPLY if web else performance.text or "", did=outcome.did)
         return performance, sent
 
     async def no_catalogue(self, event: Event, route: Route) -> tuple[Performance, int]:
@@ -471,16 +474,24 @@ class Daemon:
         reminder = asyncio.get_running_loop().create_task(cover())
         try:
             careful = route is not None and route.library_change >= 0.5
-            return await self.thinker.run(text, await self.situation(), careful=careful,
-                                          topic=route.topic if route is not None else "", recent=self.ledger.lines())
+            today = self.today()
+            return await self.thinker.run(text, await self.situation(today), careful=careful,
+                                          topic=route.topic if route is not None else "", recent=self.ledger.lines(),
+                                          route=route, public_context=today)
         finally:
             reminder.cancel()
 
-    async def situation(self) -> str:
+    @staticmethod
+    def today() -> str:
+        """The date and time: the one part of the situation with nothing private in it, and all of it
+        that stays once a web result is in the thinker's conversation (Thinker._run)."""
+        return time.strftime("Today is %A %d %B %Y, %H:%M local time.")
+
+    async def situation(self, today: str = "") -> str:
         """What Qwen is told before the sentence: the date, what the servers say is going on and the
         names in the user's library (speech-to-text mishears them). The recent exchanges go to it
         as ledger lines of their own, so the thinker can drop the oldest when the prompt is long."""
-        parts = [time.strftime("Today is %A %d %B %Y, %H:%M local time.")]
+        parts = [today or self.today()]
         here = await self.actor.situation()
         if here:
             parts.append(here)

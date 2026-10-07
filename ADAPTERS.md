@@ -53,6 +53,14 @@ An adapter is for a server you use every day, where the generic path is not good
 | `clarify_error` | this server's confusing refusals, reworded before a model reads them |
 | `gate_examples` | phrases that only make sense with this server behind them |
 | `common_tools` | which of its tools to keep first when the brain's context is tight |
+| `tools`, `shape_tool` | the only tools of the server the brain sees, and shorter schemas for them |
+| `shape_result` | a result made compact before it is cut to `result_chars` |
+| `log_result` | what the journal says of a call when the result must stay out of it |
+| `guide`, `unavailable` | a paragraph for the brain's rules when its tools are offered, or when the server is down |
+| `wanted`, `nudge` | whether a sentence asks for this server outright, and the line added under it |
+| `max_calls` | how many calls to its tools one sentence may make |
+| `untrusted`, `guard`, `forward`, `observe` | its results are strangers' text: what may follow one, in what form a call is sent |
+| `claims_tools` | tool names that give a server this adapter whatever it is called |
 
 Every one is optional. An adapter is loaded **only** when a configured server matches it, so an
 adapter nobody uses shapes nothing she says, and no adapter means the core's own plain behaviour.
@@ -114,7 +122,16 @@ Rules the core relies on:
   something with this server configured; a phrase that is true of any player belongs in
   `systemone.py`, which ships for everyone.
 - **`common_tools` is an order, not a filter.** The full list is offered while it fits; the order
-  only decides what survives `[thinker] max_tools`.
+  only decides what survives `[thinker] max_tools`. `tools` is the filter: a tool left out of it
+  never reaches the brain, and a call to it is refused.
+- **Keep the prompt the same from sentence to sentence.** Ollama reuses its cached prompt up to the
+  first token that differs, and the tool schemas come right after the system prompt: a tool list
+  or a `guide` that changed with the sentence re-read ~2700 tokens, 2.1-2.7 s on the 27B model.
+  Say per-sentence things in a `nudge`, which goes under the sentence.
+- **An `untrusted` server's results are never trusted.** Once one is in a conversation, the
+  thinker takes the ledger, the situation (but the date) and the other servers' results out of
+  it, refuses every other server's tool, and leaves three rounds; the adapter's `guard` decides
+  each further call and `forward` sends it in the form that was checked.
 
 Tests: `tests/test_adapters.py` covers matching and the routing above it, and
 `tests/test_adapter_spotify.py` covers one adapter's own behaviour against a fake server. A new
@@ -149,3 +166,49 @@ Its 25 tools are 2382 prompt tokens of Qwen's 8192 context (measured with `promp
 
 With no Spotify server configured, nothing of that is loaded: music control is MPRIS, the gate never
 learns "save this song", and no error is described in Spotify's words.
+
+## The web adapter
+
+`strawberry/adapters/web.py`, for a SearXNG instance behind an MCP server: `[tools.servers.web]`,
+or any name with `adapter = "web"`, or any server that lists one of its tools. It binds to
+[mcp-searxng](https://www.npmjs.com/package/mcp-searxng)'s `searxng_web_search` and
+`web_url_read`, and to `web_search` and `read_page` for a server exposing those instead; any other
+tool of the server (mcp-searxng's suggestions and instance info) is never offered and refused if
+called. The setup is in the README (*Web search*):
+
+```toml
+[tools.servers.web]
+topic = "other"
+command = "/full/path/to/npx"
+args = ["-y", "mcp-searxng@2.5.1"]
+env = { SEARXNG_URL = "http://127.0.0.1:8888", NODE_OPTIONS = "--dns-result-order=ipv4first", PATH = "/dir/of/node:/usr/bin:/bin" }
+```
+
+What it adds:
+
+- **Two tools, short.** mcp-searxng's own schemas for the two are ~6000 characters; these, with
+  `query` (and `max_results`) and `url` (and a length), ~1000. A listing is compacted to numbered
+  results (title and site, snippet, URL), so ~8 fit the 2000 characters a result is cut to
+  instead of ~2 with the server's scores, engine names and thumbnail URLs.
+- **When to search** is its `guide` (asked to; current or specific facts: weather, news,
+  results, prices, opening hours, the newest or latest of anything; never small talk, questions
+  about her, or recommending music) plus a `nudge` under the sentence for an explicit request
+  ("look up…", "search the web for…", "google…", "hae netistä…") and for a question, as the gate
+  reads it, about something that changes ("now", "today", "latest", "weather", "price"…). She
+  answers in two or three spoken sentences, may name the site and never reads out an address;
+  the thinker also turns any address in her line into its site.
+- **Failures in short.** "fetch failed" is "web search is not reachable right now"; "No results
+  for <the query>" is "the search found nothing", without the query; a timeout, a refused site
+  and a blocked address each get one line.
+- **The journal** gets the result count and size of a search (`3 results, 1834 chars (not
+  logged)`) or the kind of failure, never a result.
+- **At most three calls a sentence**, and once a result is in, the thinker's untrusted rules.
+  The `guard`: a query is one plain line of at most 200 characters; a page is read only by a URL
+  that, in one strict canonical form, equals a URL field of this question's own results (never
+  one a snippet mentions), and `forward` sends that result's canonical URL, not the model's
+  string; anything two URL parsers could read differently is refused (a login part,
+  backslashes, whitespace, an encoded host, a trailing dot, any IP notation, internal or
+  single-label hosts, other schemes); one page a question and no search after it.
+
+Tests: `tests/test_adapter_web.py`, against a fake mcp-searxng, including one whose results and
+page carry injection text and a scripted model that obeys it.

@@ -21,6 +21,11 @@ model runs on your own computer through [Ollama](https://ollama.com); nothing is
   command is done in well under a second; anything else goes to the larger local model.
 - **Tools.** You can give her MCP servers (a calendar, notes, Spotify) in the config. None is
   configured out of the box. See [ADAPTERS.md](ADAPTERS.md).
+- **Web search (optional).** With a local SearXNG and its MCP server configured, she searches
+  when you ask her to ("look up…", "search the web for…", "google…") and when a question
+  depends on something current (the weather, news, results, prices, opening hours, the latest
+  version of something), and answers in a sentence or two, naming the site, never reading a
+  link out. See [Web search](#web-search-optional).
 - **A tray icon.** The 🍓 in the top bar (on Windows, the notification area) shows her state
   (idle, listening, thinking, talking) and has the same menu as right-clicking her: show/hide, chat, mute, quiet hour, volume, skin,
   top hat, settings file, restart, quit.
@@ -138,7 +143,7 @@ The settings you are most likely to change:
 | `[voice]` | `enabled`, `model`, `device` | speech recognition: whisper size, `cpu` or `cuda` |
 | `[speech]` | `enabled`, `voice`, `quiet_hours` | her voice (off by default; the bubble always shows) |
 | `[brain]`, `[thinker]` | `reaction_model`, `action_model` | which Ollama models she uses |
-| `[tools.servers.*]` | | MCP servers; see [ADAPTERS.md](ADAPTERS.md) |
+| `[tools.servers.*]` | | MCP servers; see [ADAPTERS.md](ADAPTERS.md) and [Web search](#web-search-optional) |
 | `[daemon]` | `log_sentences` | write what you say or type to the log (off: only its length); see [Privacy](#privacy) |
 | `[learning]` | `log_outcomes` | keep what you say and how it was routed, locally, for tuning (off); see [Privacy](#privacy) |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
@@ -155,6 +160,19 @@ her voice run locally, and the daemon listens only on `127.0.0.1`. Strawberry ma
 requests of its own except to download what you ask for: the widget binary from this project's
 GitHub releases, and models and voices from Ollama and Hugging Face during setup. An MCP server
 you add is its own program and may use the network (the Spotify one talks to Spotify).
+
+**Web search is where your words leave the machine.** With a web server configured (below), a
+search query she writes from what you said goes to your SearXNG, which passes it on to the
+search engines it is set up to ask, and a page she reads is fetched from its site. It is on
+whenever the server is configured; remove the `[tools.servers.web]` table to turn it off. Only
+your own spoken or typed sentences can lead to a search: notifications, media, git events and
+her reactions never reach the search tools. The log says that a search ran, how long the query
+was, how many results came back and how long it took, never the query (unless
+`log_sentences` is on, like any tool argument) and never a result; her answer from web results
+is logged as its length, and her short-term memory keeps a placeholder instead of it. Text
+from the web is treated as untrusted: while it is in her conversation, your recent exchanges
+and what is playing are taken out of it, your other tools (Spotify) are refused, a page can only
+be read from the results of that same search, and nothing a page says can send her elsewhere.
 
 What she reads:
 
@@ -207,6 +225,29 @@ a playlist, save a track), install the separate Spotify MCP server
 [panuhen/spotify-mcp](https://github.com/panuhen/spotify-mcp), authorise it with your Spotify
 account, and add it to the config as shown in [ADAPTERS.md](ADAPTERS.md). Strawberry's Spotify
 adapter then recognises it and adds its reflexes and your artist and playlist names.
+
+## Web search (optional)
+
+She searches through a [SearXNG](https://docs.searxng.org/) instance you run yourself, with its
+JSON output on (`search.formats` includes `json`), and the
+[mcp-searxng](https://www.npmjs.com/package/mcp-searxng) MCP server in front of it (Node.js 20 or
+newer). Add to the config:
+
+```toml
+[tools.servers.web]
+topic = "other"
+command = "/full/path/to/npx"          # `command -v npx`; the tray's service may not have it on PATH
+args = ["-y", "mcp-searxng@2.5.1"]
+env = { SEARXNG_URL = "http://127.0.0.1:8888", NODE_OPTIONS = "--dns-result-order=ipv4first", PATH = "/dir/of/node:/usr/bin:/bin" }
+```
+
+`PATH` is needed when Node.js is not on the service's own PATH (a Node from nvm is not): `npx`
+starts `node` by name. `NODE_OPTIONS` makes the page reader use IPv4 first; without it, on a
+machine with no IPv6 route, every page read timed out after 10 s. The name `web` picks her web
+adapter (ADAPTERS.md); a server listing the same tools gets it under any name. Then
+`strawberry restart`, and `strawberry tools` should list `searxng_web_search` and
+`web_url_read`. If `npx` is missing or SearXNG is down, the daemon logs a warning and carries
+on, and she says search isn't available.
 
 ## Developers
 

@@ -235,7 +235,7 @@ async def test_real_stdio_server_round_trip():
                          preconnect=False, result_chars=120)
     box = Toolbox(config)
     specs = await box.tools_for("test")
-    assert {s.name for s in specs} == {"echo", "add", "long", "soft_error", "hard_error"}
+    assert {s.name for s in specs} == {"echo", "add", "long", "env", "soft_error", "hard_error"}
     add = next(s for s in specs if s.name == "add")
     assert add.schema["properties"]["a"]["type"] == "integer" and add.description == "Add two integers."
     assert (await box.call("echo", "echo", {"text": "hello"})).text == "hello"
@@ -250,6 +250,18 @@ async def test_real_stdio_server_round_trip():
     assert box.servers["echo"].stats()["failures"] == 2
     await box.close()
     assert box.servers["echo"].state == "idle"
+
+
+async def test_a_servers_env_reaches_its_process():
+    """`env` in [tools.servers.<name>] is set in the server's process, over the SDK's own short list
+    (PATH, HOME…): the web server is told where SearXNG is this way (SEARXNG_URL)."""
+    config = ToolsConfig(servers={"echo": {"topic": "test", "command": sys.executable, "args": [str(ECHO_SERVER)],
+                                           "env": {"STRAWBERRY_TEST_URL": "http://127.0.0.1:8888"}}},
+                         preconnect=False)
+    box = Toolbox(config)
+    assert (await box.call("echo", "env", {"name": "STRAWBERRY_TEST_URL"})).text == "http://127.0.0.1:8888"
+    assert (await box.call("echo", "env", {"name": "PATH"})).text    # the inherited ones are still there
+    await box.close()
 
 
 async def test_real_server_that_exits_is_reported():

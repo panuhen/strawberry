@@ -1,6 +1,7 @@
 """A tiny MCP server for tests/test_tools.py: spawned over stdio like the real ones."""
 
 import json
+import os
 import sys
 
 from mcp.server.mcpserver import MCPServer
@@ -24,6 +25,12 @@ def add(a: int, b: int) -> int:
 def long(n: int) -> str:
     """Return n characters."""
     return "x" * n
+
+
+@server.tool()
+def env(name: str) -> str:
+    """The value of an environment variable in the server's process ("" when unset)."""
+    return os.environ.get(name, "")
 
 
 @server.tool()

@@ -9,6 +9,21 @@ package and the widget binary.
 
 ### Added
 
+- Web search, with a SearXNG instance of your own and the `mcp-searxng` MCP server in
+  `[tools.servers.web]` (README: *Web search*). She searches when you ask ("look up…", "search
+  the web for…", "google…") and when a question depends on something current (weather, news,
+  results, prices, opening hours, the latest of anything), and answers in a sentence or two,
+  naming the site, never reading a link. Small talk, questions about her and music
+  recommendations stay hers. This is the first feature that sends your words off the machine:
+  the query goes to the engines SearXNG asks. The log says only that a search ran, the query's
+  length, the result count and the time. Text from the web is treated as untrusted: while it is
+  in her conversation your recent exchanges and what is playing are out of it, your other tools
+  are refused, and a page can only be read from that search's own results. If SearXNG is down
+  or `npx` is missing she says search isn't available. WIRING.md §8b, ADAPTERS.md.
+- Adapters can now filter and shorten a server's tools, compact its results, keep its results
+  out of the log, add a paragraph to the brain's rules or a line under the sentence, cap its calls
+  per sentence, and mark its results as untrusted (ADAPTERS.md).
+
 - PROTOCOL.md: the bus protocol between the daemon and its bodies, as built (v1), and proposed
   additions (v2) for bodies other than the crab.
 - `[voice] fallback_model`: the whisper size to use on the CPU when CUDA runs out of memory (""
@@ -37,6 +52,12 @@ package and the widget binary.
 
 ### Changed
 
+- The thinker offers the tools in the same order for every sentence while they fit
+  `max_tools`, so Ollama reuses its cached prompt: putting the gate's topic first re-read the
+  whole prompt whenever the topic changed (2.1-2.7 s instead of ~0.3 s). Over the cap the topic
+  still decides what is cut.
+- The thinker refuses a call to a tool that was not offered for that sentence (a careful tool
+  offered for an earlier one, a made-up name), and makes at most six calls a reply.
 - The gate reads what you say with a trained head instead of each option's nearest examples
   (`[gate] scorer = "head"`, the default; `"nearest"` keeps the old way). The head is a small
   logistic regression per question on the same embedding, trained on ~1800 sentences (the gate's

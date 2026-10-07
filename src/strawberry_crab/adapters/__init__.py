@@ -24,11 +24,12 @@ from typing import Any
 
 from .base import Adapter
 from .spotify import SPOTIFY
+from .web import WEB
 
 log = logging.getLogger("strawberryd.adapters")
 
 #: every adapter that ships. One line per adapter; nothing else registers them.
-REGISTRY: tuple[Adapter, ...] = (SPOTIFY,)
+REGISTRY: tuple[Adapter, ...] = (SPOTIFY, WEB)
 
 
 def adapter_for(server_name: str, server_config: dict[str, Any]) -> Adapter | None:
@@ -40,6 +41,15 @@ def adapter_for(server_name: str, server_config: dict[str, Any]) -> Adapter | No
     if wanted:
         log.warning("adapters: %s asks for adapter %r, which does not exist (known: %s)",
                     server_name, wanted, ", ".join(a.name for a in REGISTRY))
+    return None
+
+
+def adapter_for_tools(names: list[str] | set[str]) -> Adapter | None:
+    """The adapter that claims one of these tool names (`Adapter.claims_tools`), or None."""
+    names = set(names)
+    for adapter in REGISTRY:
+        if names & set(adapter.claims_tools):
+            return adapter
     return None
 
 

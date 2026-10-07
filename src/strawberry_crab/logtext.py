@@ -6,7 +6,8 @@ lines carry a placeholder with the sentence's length; on, the sentence as it was
 goes through `sentence()` (and a tool call's arguments through `arguments()`), so the switch is
 in one place. Her own lines are logged as they always were, except that the sentence she is
 answering is taken out of them (`line()`): the canned fallback for a voice event is "You said: …",
-and a model may quote the user too. Notification bodies are never logged, whatever this says (§4).
+and a model may quote the user too. A line written from web results is logged as its length only
+while log_sentences is off (`from_web`). Notification bodies are never logged, whatever this says (§4).
 """
 
 from __future__ import annotations
@@ -22,6 +23,9 @@ LOG_SENTENCES = False
 # The sentence being answered, for line(): set around one sentence's handling (Daemon.handle_voice),
 # so it follows that handling's awaits and the tasks it starts, and no other.
 _hearing: ContextVar[str] = ContextVar("hearing", default="")
+# Set once her answer to that sentence carries text from web results (Thinker.run): her line is
+# then logged as its length only, as the results are (adapters/web.py).
+_from_web: ContextVar[bool] = ContextVar("from_web", default=False)
 
 
 def configure(log_sentences: bool) -> None:
@@ -53,16 +57,25 @@ def arguments(values: dict[str, Any]) -> str:
 def hearing(text: str) -> Iterator[None]:
     """Mark `text` as the sentence being answered while the block runs."""
     token = _hearing.set(text)
+    web = _from_web.set(False)
     try:
         yield
     finally:
+        _from_web.reset(web)
         _hearing.reset(token)
+
+
+def from_web() -> None:
+    """Her line for the sentence being answered carries text from web results (see line())."""
+    _from_web.set(True)
 
 
 def line(text: str) -> str:
     """Her line for a log line: as it is, with the sentence she is answering replaced by its
     placeholder when log_sentences is off."""
     heard = _hearing.get()
+    if not LOG_SENTENCES and text and _from_web.get():
+        return f"<her line from web results, {len(text)} chars>"
     if LOG_SENTENCES or not heard or not text:
         return text
     return re.sub(re.escape(heard), lambda _: sentence(heard), text, flags=re.IGNORECASE)
