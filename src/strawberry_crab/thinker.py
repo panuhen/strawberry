@@ -31,6 +31,7 @@ import logging
 import re
 import time
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -38,6 +39,7 @@ from .actions import Outcome
 from .config import ThinkerConfig
 from .contract import EMOTIONS
 from .ledger import as_context
+from . import logtext
 from .logtext import line, sentence
 from .tools import Toolbox, ToolResult, ToolSpec
 
@@ -115,6 +117,58 @@ AFTER_WEB = ("Not done: no other tools once web results are in this conversation
 WITHHELD = "(withheld: web results are in this conversation now)"
 # Rounds left once a web result is in: a read, one more look, the answer.
 UNTRUSTED_ROUNDS = 3
+# Tool calls one reply may ask for; the rest are not made (a reply can list any number at once).
+MAX_CALLS_A_ROUND = 6
+NOT_OFFERED = "Not done: no tool by that name was offered for this sentence."
+TOO_MANY = "Not done: too many tools at once. Answer from what you have."
+PRIVATE_IN_CALL = ("Not done: that would send something private of the user's out to the web. Answer from what you "
+                   "have.")
+# What the ledger keeps of her answer from web results: the next sentence's prompt carries the ledger
+# with no taint, so text from a page must not reach it in her words.
+WEB_REPLY = "(an answer from web results, not kept)"
+LINK = re.compile(r"\b(?:https?://|www\.)[^\s<>\"')\]]+", re.IGNORECASE)
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
+
+
+def private_phrases(context: str, public_context: str, recent: list[str], text: str) -> list[str]:
+    """The private context as phrases to keep out of a web call once a result is in: the ledger's
+    quoted sentences and replies, and the situation's parts but the public one, each 5 characters
+    or more and not in what the user just said. A second layer only: rewording slips past it; the
+    first is that this context is out of the prompt by then (_run)."""
+    said = _plain(text)
+    private = context.replace(public_context, " ") if public_context else context
+    pieces = re.split(r"[.;:()\n\[\]]|, ", private)
+    for line in recent:
+        pieces += re.findall(r'"([^"]+)"', line)
+    out = []
+    for piece in pieces:
+        plain = _plain(piece)
+        if len(plain) >= 5 and plain not in said and plain not in out:
+            out.append(plain)
+    return out
+
+
+def _plain(text: str) -> str:
+    """Lower case, percent-encoding and '+' decoded, punctuation as spaces, spaces collapsed."""
+    from urllib.parse import unquote_plus
+
+    decoded = unquote_plus(unquote_plus(str(text)))
+    return " ".join(re.sub(r"[^\w]+", " ", decoded.lower()).split())
+
+
+def carries_private(arguments: dict[str, Any], phrases: list[str]) -> bool:
+    flat = _plain(" ".join(str(v) for v in arguments.values()))
+    squashed = flat.replace(" ", "")
+    return any(p in flat or p.replace(" ", "") in squashed for p in phrases)
+
+
+def without_links(line: str) -> str:
+    """Her line with any web address said as its site ("godotengine.org"), never the address."""
+    def site(match: re.Match) -> str:
+        url = match.group(0)
+        host = urlparse(url if "://" in url else "http://" + url).hostname or ""
+        return host.removeprefix("www.")
+    return " ".join(LINK.sub(site, line).split())
 
 HONEST = (
     "You can call no more tools. Tell the user honestly what you did and did not manage to do, in your own voice and "
@@ -356,9 +410,13 @@ class Thinker:
         self.last_s = time.perf_counter() - started
         if not outcome.ok:
             self.failures += 1
+        if self.used_untrusted(outcome):
+            logtext.from_web()   # her line carries text from the web: the journal gets its length only
         self.last = {
             "asked": text, "did": outcome.did, "said": outcome.fact, "emotion": outcome.emotion, "ok": outcome.ok,
-            "s": round(self.last_s, 2), "calls": [c.to_dict() | {"text": c.text[:200]} for c in outcome.calls],
+            "s": round(self.last_s, 2),
+            "calls": [c.to_dict() | {"text": f"<{len(c.text)} chars from the web>" if self._untrusted(c.server)
+                                     else c.text[:200]} for c in outcome.calls],
         }
         log.info("thinker: %s -> %s -> [%s] %r in %.1fs", sentence(text), outcome.did, outcome.emotion, line(outcome.fact),
                  self.last_s)
@@ -418,7 +476,9 @@ class Thinker:
         else:
             specs, prompt, note = [], system_prompt(False), ""
         tools = [s.for_ollama() for s in specs]
+        offered = {s.function or s.name for s in specs}
         recent = recent if recent is not None else []
+        phrases: list[str] = []      # the private context, kept out of web calls once a result is in
         messages: list[dict[str, Any]] = [{"role": "system", "content": prompt},
                                           {"role": "user", "content": user_message(text, context, recent, note)}]
         used: list[str] = []
@@ -453,9 +513,11 @@ class Thinker:
                 emotion, line = split_emotion(content)
                 if any(not c.ok for c in calls) and emotion not in ("alert", "angry"):
                     emotion = "alert"   # a tool said no; the face should not be cheerful about it
+                if tainted:
+                    line = without_links(line)   # she names the site; an address is never read out
                 return Outcome(_did(used), tidy_sentence(line), True, tuple(calls), emotion)
             messages.append(message)
-            for call in tool_calls:
+            for index, call in enumerate(tool_calls):
                 function = call.get("function") or {}
                 name = function.get("name", "")
                 arguments = function.get("arguments") or {}
@@ -464,10 +526,26 @@ class Thinker:
                         arguments = json.loads(arguments)
                     except json.JSONDecodeError:
                         arguments = {}
-                spec = self.toolbox.functions.get(name)
+                if not isinstance(arguments, dict):
+                    arguments = {}
+                spec = self.toolbox.functions.get(name) if name in offered else None
                 adapter = self.toolbox.adapters.get(spec.server) if spec else None
                 untrusted = bool(getattr(adapter, "untrusted", False))
-                refusal = self._refusal(spec, adapter, untrusted, tainted, per_server, states, arguments)
+                if name not in offered:
+                    # Not offered this sentence (a careful tool from an earlier one, a tool the
+                    # adapter keeps back, a made-up name): never called, from any server.
+                    log.info("thinker: a call to a tool not offered for this sentence was not made")
+                    refusal = NOT_OFFERED
+                elif index >= MAX_CALLS_A_ROUND:
+                    log.info("thinker: %s.%s not called: more than %d calls in one reply", spec.server, spec.name,
+                             MAX_CALLS_A_ROUND)
+                    refusal = TOO_MANY
+                elif tainted and untrusted and isinstance(arguments, dict) and carries_private(arguments, phrases):
+                    log.info("thinker: %s.%s not called: it carried a part of the private context", spec.server,
+                             spec.name)
+                    refusal = PRIVATE_IN_CALL
+                else:
+                    refusal = self._refusal(spec, adapter, untrusted, tainted, per_server, states, arguments)
                 if refusal is not None:
                     # Not made, and not counted as a call: the brain is told why and to answer.
                     messages.append({"role": "tool", "tool_name": name, "content": refusal})
@@ -489,6 +567,7 @@ class Thinker:
                 elif not tainted:
                     tainted = True
                     until = min(until, round_no + UNTRUSTED_ROUNDS)
+                    phrases = private_phrases(context, public_context, recent, text)
                     context, recent[:] = public_context, []
                     messages[1]["content"] = user_message(text, context, recent, note)
                     for earlier in private_results:
@@ -500,6 +579,13 @@ class Thinker:
                     tool_message["content"] = WITHHELD   # a result of this round, after the web one
                 messages.append(tool_message)
         return Outcome(_did(used), "I got lost doing that, sorry.", False, tuple(calls), "alert")  # unreachable
+
+    def _untrusted(self, server: str) -> bool:
+        return bool(getattr(self.toolbox.adapters.get(server), "untrusted", False))
+
+    def used_untrusted(self, outcome: Outcome) -> bool:
+        """Did this answer come with results from an `untrusted` server (a web search, a page)?"""
+        return any(self._untrusted(c.server) for c in outcome.calls)
 
     def _refusal(self, spec: ToolSpec | None, adapter: Any, untrusted: bool, tainted: bool,
                  per_server: dict[str, int], states: dict[str, dict[str, Any]],
@@ -542,7 +628,7 @@ def _did(used: list[str]) -> str:
 
 def tidy_sentence(text: str, limit: int = 380) -> str:
     """Her reply as spoken text: first paragraph, no markdown, capped (speech.max_chars is 400)."""
-    line = re.sub(r"[*_`#>]+", "", text.strip().split("\n")[0])
+    line = re.sub(r"[*_`#>]+", "", CONTROL.sub(" ", text.strip().split("\n")[0]))
     line = " ".join(line.split())
     if len(line) > limit:
         # Cut at the last sentence end that fits; only when there is none, at a word.

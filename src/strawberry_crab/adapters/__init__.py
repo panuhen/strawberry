@@ -44,6 +44,15 @@ def adapter_for(server_name: str, server_config: dict[str, Any]) -> Adapter | No
     return None
 
 
+def adapter_for_tools(names: list[str] | set[str]) -> Adapter | None:
+    """The adapter that claims one of these tool names (`Adapter.claims_tools`), or None."""
+    names = set(names)
+    for adapter in REGISTRY:
+        if names & set(adapter.claims_tools):
+            return adapter
+    return None
+
+
 def load(servers: dict[str, dict[str, Any]]) -> dict[str, Adapter]:
     """Server name -> its adapter, for the configured servers that have one."""
     found: dict[str, Adapter] = {}

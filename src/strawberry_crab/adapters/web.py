@@ -17,8 +17,9 @@ What it adds over the plain tool list:
                     query>" becomes "the search found nothing", without the query.
     log_result      the journal gets the result count and size, never a result: the listing
                     quotes the query, and the query is the user's sentence.
-    guard           a page is read only by a URL from this question's search results, one page
-                    a question, and no search follows it: a page cannot send her to an address of its
+    guard           default deny: only the search and the reader, with their own arguments; a
+                    query of one plain line; a page read only by a public http(s) URL from this
+                    question's search results, one page a question, and no search after it: a page cannot send her to an address of its
                     choosing with something of the user's in it (with Thinker._run's half,
                     which takes the private context out once a result is in, and refuses the
                     other servers' tools).
@@ -39,7 +40,8 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
-from urllib.parse import urlparse
+import ipaddress
+from urllib.parse import unquote, unquote_plus, urlparse
 
 from ..tools import ToolSpec
 from .base import Adapter
@@ -160,8 +162,18 @@ def compact(text: str) -> str:
         snippet = " ".join(entry["snippet"].split())
         if len(snippet) > SNIPPET_CHARS:
             snippet = snippet[:SNIPPET_CHARS].rsplit(" ", 1)[0] + "…"
-        lines.append(f"{i}. {entry['title']} ({_site(entry['url'])})\n{snippet}\n{entry['url']}")
+        title = " ".join(entry["title"].split())
+        url = "".join(entry["url"].split())
+        lines.append(f"{i}. {title} ({_site(url)})\n{snippet}\n{url}")
     return "\n".join(lines)
+
+
+def result_urls(text: str) -> list[str]:
+    """The results' own URLs, never one written inside a title or a snippet: in a compacted listing
+    the third line of each numbered result; in anything else, what `_entries` reads as a URL field."""
+    lines = text.splitlines()
+    urls = [lines[i + 2].strip() for i, line in enumerate(lines[:-2]) if re.match(r"^\d+\. ", line)]
+    return urls or [entry["url"] for entry in _entries(text)]
 
 
 def count(text: str) -> int:
@@ -195,25 +207,73 @@ def failure(text: str) -> str:
     return "failed"
 
 
-URL = re.compile(r"https?://[^\s<>()\"']+")
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+MAX_QUERY_CHARS = 200
+MAX_URL_CHARS = 2048
+ALLOWED_ARGUMENTS = {**{t: {"query", "max_results"} for t in SEARCH_TOOLS},
+                     **{t: {"url", "max_chars", "maxLength"} for t in READ_TOOLS}}
+INTERNAL_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home", ".arpa", ".corp", ".intranet")
 
 
 def _same(url: str) -> str:
-    """A URL as compared for pinning: no fragment, no trailing slash or punctuation, host in lower case."""
-    url = url.strip().rstrip(".,;:!?)]}").split("#", 1)[0].rstrip("/")
-    parsed = urlparse(url)
-    return parsed._replace(scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower()).geturl()
+    """A URL in the one form pinning compares: scheme and host in lower case, no default port, no
+    fragment, no trailing slash or trailing punctuation, percent-encoding decoded. '' for a URL that
+    cannot be read that way."""
+    try:
+        parsed = urlparse(url.strip().rstrip(".,;:!?)]}"))
+        port = parsed.port
+    except ValueError:
+        return ""
+    scheme, host = parsed.scheme.lower(), (parsed.hostname or "").lower().rstrip(".")
+    if port and (scheme, port) not in (("http", 80), ("https", 443)):
+        host = f"{host}:{port}"
+    path = unquote(parsed.path).rstrip("/")
+    query = unquote_plus(parsed.query)
+    return f"{scheme}://{host}{path}" + (f"?{query}" if query else "")
+
+
+def _bad_url(url: str) -> str:
+    """Why this URL is never read, whatever the search said: "" when it may be."""
+    if len(url) > MAX_URL_CHARS or CONTROL.search(url) or any(c.isspace() for c in url):
+        return "too long or not one plain address"
+    try:
+        parsed = urlparse(url)
+        parsed.port
+    except ValueError:
+        return "not an address"
+    if parsed.scheme.lower() not in ("http", "https"):
+        return "not a web page"
+    if parsed.username or parsed.password:
+        return "carries a login"
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host or "." not in host or host == "localhost" or host.endswith(INTERNAL_SUFFIXES):
+        return "not a public site"
+    try:
+        ipaddress.ip_address(host)
+        return "a bare IP address"
+    except ValueError:
+        pass
+    if re.fullmatch(r"[0-9x.]+", host):    # 0x7f.1, 2130706433.0 and other spellings of an address
+        return "a bare IP address"
+    return ""
 
 
 NOT_FROM_RESULTS = ("Not done: only a URL from this question's search results can be read. Answer from the results "
                     "you have.")
 AFTER_READ = "Not done: one page a question, and no searching after it. Answer now from what you have."
+NOT_OFFERED = "Not done: that tool is not one of the web tools offered."
+BAD_QUERY = ("Not done: a search query is a few plain words on one line, at most 200 characters, and nothing but the "
+             "query and the number of results.")
+BAD_URL = "Not done: that address cannot be read ({why})."
 
 
 class WebAdapter(Adapter):
     name = "web"
     server_names = ("web", "websearch", "web-search", "searxng")
     tools = SEARCH_TOOLS + READ_TOOLS
+    # A server under any other name that lists one of these is given this adapter all the same
+    # (Server._run): the guards must not depend on what the user called it.
+    claims_tools = SEARCH_TOOLS + READ_TOOLS
     common_tools = SEARCH_TOOLS + READ_TOOLS
     looks_up_only = True
     guide = (
@@ -261,15 +321,37 @@ class WebAdapter(Adapter):
         return "This may depend on current facts: unless the situation above answers it, search before answering."
 
     def guard(self, state: dict[str, Any], name: str, arguments: dict[str, Any]) -> str | None:
-        if (name in SEARCH_TOOLS or name in READ_TOOLS) and state.get("read"):
+        # Default deny: the search and the reader, in either server's names, and nothing else.
+        if name not in SEARCH_TOOLS and name not in READ_TOOLS:
+            return NOT_OFFERED
+        if state.get("read"):
             return AFTER_READ           # what a page says can steer no further call
-        if name in READ_TOOLS and _same(str(arguments.get("url", ""))) not in state.get("urls", set()):
+        if not isinstance(arguments, dict) or set(arguments) - ALLOWED_ARGUMENTS[name]:
+            return BAD_QUERY if name in SEARCH_TOOLS else BAD_URL.format(why="only the address and a length")
+        for key in ("max_results", "max_chars", "maxLength"):
+            value = arguments.get(key)
+            if value is not None and not (isinstance(value, (int, float)) and not isinstance(value, bool)
+                                          and 0 < value <= 20000):
+                return BAD_QUERY if name in SEARCH_TOOLS else BAD_URL.format(why="the length is not a number")
+        if name in SEARCH_TOOLS:
+            query = arguments.get("query")
+            if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_CHARS or CONTROL.search(query):
+                return BAD_QUERY
+            return None
+        url = arguments.get("url")
+        if not isinstance(url, str):
+            return BAD_URL.format(why="no address")
+        why = _bad_url(url)
+        if why:
+            return BAD_URL.format(why=why)
+        if _same(url) not in state.get("urls", set()):
             return NOT_FROM_RESULTS     # made up, taken from a page, or carrying something of the user's
         return None
 
     def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool) -> None:
         if name in SEARCH_TOOLS and ok:
-            state.setdefault("urls", set()).update(_same(u) for u in URL.findall(text))
+            # Only the results' own URL fields: a URL a snippet mentions is the page author's choice.
+            state.setdefault("urls", set()).update(_same(u) for u in result_urls(text) if not _bad_url(u))
         elif name in READ_TOOLS:
             state["read"] = True
 

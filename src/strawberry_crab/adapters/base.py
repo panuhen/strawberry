@@ -63,6 +63,9 @@ class Adapter:
     #: the thinker takes the user's private context out of it and refuses every other server's
     #: tools for the rest of that sentence (Thinker._run), and `guard` checks each further call
     untrusted: bool = False
+    #: tool names that mark a server as this adapter's whatever its name: listed by a server with
+    #: no adapter (or with one that is not `untrusted`), they give it this adapter (Server._run)
+    claims_tools: tuple[str, ...] = ()
 
     def matches(self, server_name: str, server_config: dict[str, Any]) -> bool:
         """Is this adapter for that configured server? An explicit `adapter` key decides alone."""

@@ -12,7 +12,7 @@ from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
 from strawberry_crab.server import create_app
 from strawberry_crab.systemone import Gate, Route
-from strawberry_crab.thinker import (CUT, MIN_RESULT_CHARS, NO_TOOLS, TOOLS_GUIDE, VOICE, Thinker, ThinkerError,
+from strawberry_crab.thinker import (CUT, MIN_RESULT_CHARS, NO_TOOLS, NOT_OFFERED, TOOLS_GUIDE, VOICE, Thinker, ThinkerError,
                                      prompt_tokens, split_emotion, system_prompt, tidy_sentence)
 from strawberry_crab.tools import Toolbox
 from tests.fake_spotify import TOOLS, FakeSpotify, fake_gate
@@ -161,9 +161,9 @@ async def test_unknown_tool_and_string_arguments_are_survivable():
     outcome = await thinker.run("volume to thirty")
     assert outcome.ok and spotify.volume == 30
     tool_messages = [m for m in qwen.payloads[-1]["messages"] if m["role"] == "tool"]
-    assert "no tool named 'teleport'" in tool_messages[0]["content"]
-    # One tool said no, so the face is not cheerful about it whatever the tag said.
-    assert outcome.emotion == "alert"
+    # A tool that was not offered for this sentence is never called, from any server: refused in place.
+    assert tool_messages[0]["content"] == NOT_OFFERED
+    assert [c.name for c in outcome.calls] == ["set_volume"] and outcome.emotion == "neutral"
     await toolbox.close()
 
 

@@ -146,6 +146,7 @@ class Server:
         self.topic: str = config.get("topic", "other")
         # This server's adapter (strawberry/adapters/), or None for a plain server of tools.
         self.adapter = adapter
+        self.on_adapter: Callable[[str, Any], None] | None = None   # told when a tool list claims one
         # Tools with consequences (saving, removing, changing playlists): withheld from the thinker
         # unless the sentence asks for such a change (systemone.WANTS_LIBRARY_CHANGE).
         self.careful: frozenset[str] = frozenset(config.get("careful", []))
@@ -196,6 +197,7 @@ class Server:
             async with AsyncExitStack() as stack:
                 session = await self.connect(stack, self.config)
                 listed = await session.list_tools()
+                self._claim([t.name for t in listed.tools])
                 self.tools = self._offer([
                     ToolSpec(self.name, t.name, (t.description or "").strip(), dict(getattr(t, "input_schema", None) or {}))
                     for t in listed.tools
@@ -222,6 +224,20 @@ class Server:
         finally:
             self.ready.clear()
             self._drain(ToolError(f"{self.name}: connection closed"))
+
+    def _claim(self, names: list[str]) -> None:
+        """A server that lists web tools gets the web adapter, with its guards, whatever it is called
+        in the config: guards that depended on the name would be off under any other one."""
+        from .adapters import adapter_for_tools   # local: the adapters import this module
+
+        claimed = adapter_for_tools(names)
+        if claimed is None or claimed is self.adapter or getattr(self.adapter, "untrusted", False):
+            return
+        log.warning("tools: %s lists %s tools; using the %s adapter for it (name it [tools.servers.%s] or set "
+                    "adapter = \"%s\" to say so)", self.name, claimed.name, claimed.name, claimed.name, claimed.name)
+        self.adapter = claimed
+        if self.on_adapter is not None:
+            self.on_adapter(self.name, claimed)
 
     def _offer(self, specs: list[ToolSpec]) -> list[ToolSpec]:
         """The tools as the brain sees them: the adapter's `tools` only, when it names some, each in
@@ -282,7 +298,11 @@ class Server:
             self.failures += 1
             ms = (time.perf_counter() - started) * 1000
             self.last_ms = ms
-            log.warning("tools: %s", exc)
+            if getattr(self.adapter, "log_result", None) and self.adapter.log_result(name, "", False) is not None:
+                # This server's results stay out of the journal; an SDK error can quote its arguments.
+                log.warning("tools: %s.%s failed (%s; not logged)", self.name, name, type(exc).__name__)
+            else:
+                log.warning("tools: %s", exc)
             return ToolResult(self.name, name, False, str(exc), ms, arguments=arguments)
         ms = (time.perf_counter() - started) * 1000
         self.last_ms = ms
@@ -353,6 +373,8 @@ class Toolbox:
             for name, server in (config.servers.items() if config.enabled else ())
         }
         self.functions: dict[str, ToolSpec] = {}   # model-facing function name -> spec, per last tools_for
+        for server in self.servers.values():
+            server.on_adapter = self.adapters.__setitem__
 
     def common_tools(self, server: str) -> tuple[str, ...]:
         """The tools this server's adapter keeps first when the brain's context is tight (§8b)."""

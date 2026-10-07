@@ -23,7 +23,7 @@ from .outcomes import OutcomeLog
 from .reactions import decorate, is_burst
 from .speech import Speaker
 from .systemone import Gate, Route
-from .thinker import Thinker
+from .thinker import WEB_REPLY, Thinker
 from .tools import Toolbox
 from .voice import EARS_LOADING, Listener
 from . import wake
@@ -430,7 +430,10 @@ class Daemon:
         performance = decorate(event, Performance(state="talking", text=outcome.fact,
                                                   emotion=outcome.emotion or "neutral"))
         sent = await self.perform(performance)
-        self.ledger.record(text, performance.text or "", did=outcome.did)
+        # An answer from web results is not kept in her words: the ledger goes into the next
+        # sentence's prompt before anything marks it as strangers' text (Thinker._run).
+        web = self.thinker.used_untrusted(outcome) if hasattr(self.thinker, "used_untrusted") else False
+        self.ledger.record(text, WEB_REPLY if web else performance.text or "", did=outcome.did)
         return performance, sent
 
     async def no_catalogue(self, event: Event, route: Route) -> tuple[Performance, int]:
