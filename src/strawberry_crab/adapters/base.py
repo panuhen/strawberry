@@ -17,6 +17,7 @@ earns once you use it every day:
                     `unavailable`, when the server is configured but not answering)
     wanted          whether a sentence wants this server's tools at all, or asks for them outright
     max_calls       how many calls to its tools one sentence may make
+    untrusted       its results are outside text; with `guard` and `observe`, what may follow one
 
 Every one of them is optional; the base class answers "nothing to add" to all of them. An
 adapter is loaded only when a configured server matches it, by name or by an explicit
@@ -58,6 +59,10 @@ class Adapter:
     #: at most this many calls to this server's tools for one sentence (0: no limit beyond the
     #: thinker's max_rounds); a call over it is not made and the brain is told to answer
     max_calls: int = 0
+    #: True when its results are text from strangers (web pages): once one is in a conversation,
+    #: the thinker takes the user's private context out of it and refuses every other server's
+    #: tools for the rest of that sentence (Thinker._run), and `guard` checks each further call
+    untrusted: bool = False
 
     def matches(self, server_name: str, server_config: dict[str, Any]) -> bool:
         """Is this adapter for that configured server? An explicit `adapter` key decides alone."""
@@ -98,6 +103,14 @@ class Adapter:
         with `nudge`); False: left out of this sentence's offer; None: no opinion, offered as usual.
         `route` is the gate's reading, None when the gate could not read it."""
         return None
+
+    def guard(self, state: dict[str, Any], name: str, arguments: dict[str, Any]) -> str | None:
+        """Before a call: None to let it run, or what the brain is told instead of running it.
+        `state` is this sentence's own, kept for this server across its calls (see `observe`)."""
+        return None
+
+    def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool) -> None:
+        """After a call: note what `guard` needs to know later in the same sentence."""
 
     def nudge(self, text: str, route: Any) -> str:
         """A line added under the sentence when `wanted` said True ("search first"), or ""."""

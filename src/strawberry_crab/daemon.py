@@ -471,17 +471,24 @@ class Daemon:
         reminder = asyncio.get_running_loop().create_task(cover())
         try:
             careful = route is not None and route.library_change >= 0.5
-            return await self.thinker.run(text, await self.situation(), careful=careful,
+            today = self.today()
+            return await self.thinker.run(text, await self.situation(today), careful=careful,
                                           topic=route.topic if route is not None else "", recent=self.ledger.lines(),
-                                          route=route)
+                                          route=route, public_context=today)
         finally:
             reminder.cancel()
 
-    async def situation(self) -> str:
+    @staticmethod
+    def today() -> str:
+        """The date and time: the one part of the situation with nothing private in it, and all of it
+        that stays once a web result is in the thinker's conversation (Thinker._run)."""
+        return time.strftime("Today is %A %d %B %Y, %H:%M local time.")
+
+    async def situation(self, today: str = "") -> str:
         """What Qwen is told before the sentence: the date, what the servers say is going on and the
         names in the user's library (speech-to-text mishears them). The recent exchanges go to it
         as ledger lines of their own, so the thinker can drop the oldest when the prompt is long."""
-        parts = [time.strftime("Today is %A %d %B %Y, %H:%M local time.")]
+        parts = [today or self.today()]
         here = await self.actor.situation()
         if here:
             parts.append(here)
