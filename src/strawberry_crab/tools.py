@@ -96,12 +96,29 @@ async def stdio_connect(stack: AsyncExitStack, server: dict[str, Any]) -> Any:
     return session
 
 
+def _field(item: Any, *names: str) -> Any:
+    """The first of these fields an MCP object has, as an attribute or a dict key. The SDK has
+    spelt them both ways: `isError`/`structuredContent` in 1.x (and on the wire), `is_error`/
+    `structured_content` in 2.x; a dict is the result as it came over the wire."""
+    for name in names:
+        value = item.get(name) if isinstance(item, dict) else getattr(item, name, None)
+        if value is not None:
+            return value
+    return None
+
+
 def result_text(result: Any) -> str:
-    parts = [getattr(c, "text", "") for c in getattr(result, "content", []) or []]
-    text = "\n".join(p for p in parts if p).strip()
-    if not text and getattr(result, "structured_content", None) is not None:
-        text = json.dumps(result.structured_content, ensure_ascii=False)
+    parts = [_field(c, "text") or "" for c in _field(result, "content") or []]
+    text = "\n".join(p for p in parts if isinstance(p, str) and p).strip()
+    structured = _field(result, "structured_content", "structuredContent")
+    if not text and structured is not None:
+        text = json.dumps(structured, ensure_ascii=False)
     return text
+
+
+def flagged_error(result: Any) -> bool:
+    """The MCP error flag, however the SDK (or a dict) spells it."""
+    return bool(_field(result, "is_error", "isError"))
 
 
 def looks_like_error(text: str) -> bool:
@@ -306,7 +323,7 @@ class Server:
             return ToolResult(self.name, name, False, str(exc), ms, arguments=arguments)
         ms = (time.perf_counter() - started) * 1000
         self.last_ms = ms
-        is_error = bool(getattr(raw, "is_error", False))
+        is_error = flagged_error(raw)
         text = clarify_error(result_text(raw), self.adapter, is_error)
         ok = not is_error and not looks_like_error(text)
         text = self._adapted("shape_result", text, name, text, ok)

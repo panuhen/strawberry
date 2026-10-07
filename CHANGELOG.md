@@ -101,6 +101,11 @@ package and the widget binary.
   loopback, private, link-local, CGNAT, multicast or reserved, or if the name does not resolve.
   The search server's own address filter stays as a second layer, against DNS answers that change
   between the check and the fetch.
+- A tool result with the MCP error flag set is read as a failure under either spelling of the
+  flag: `is_error` (the `mcp` 2.x SDK) and `isError` (1.x, which the dependency range allows, and
+  a result as a dict). Under 1.x only an `{"error": …}` body was caught, so a server that flagged
+  an error with a plain sentence was taken as a success. The structured content is read under
+  both spellings too.
 - Whisper on CUDA no longer stops working when the GPU is full. Ollama cannot free VRAM for
   whisper, so when Qwen loads first a CUDA load or a transcription failed with "CUDA failed with
   error out of memory". Whisper now moves to the CPU (`int8`) and the failed sentence is
