@@ -59,7 +59,7 @@ An adapter is for a server you use every day, where the generic path is not good
 | `guide`, `unavailable` | a paragraph for the brain's rules when its tools are offered, or when the server is down |
 | `wanted`, `nudge` | whether a sentence asks for this server outright, and the line added under it |
 | `max_calls` | how many calls to its tools one sentence may make |
-| `untrusted`, `guard`, `forward`, `observe` | its results are strangers' text: what may follow one, in what form a call is sent |
+| `untrusted`, `guard`, `forward`, `screen`, `observe` | its results are strangers' text: what may follow one, in what form a call is sent, and a last check that may wait on the network |
 | `claims_tools` | tool names that give a server this adapter whatever it is called |
 
 Every one is optional. An adapter is loaded **only** when a configured server matches it, so an
@@ -131,7 +131,8 @@ Rules the core relies on:
 - **An `untrusted` server's results are never trusted.** Once one is in a conversation, the
   thinker takes the ledger, the situation (but the date) and the other servers' results out of
   it, refuses every other server's tool, and leaves three rounds; the adapter's `guard` decides
-  each further call and `forward` sends it in the form that was checked.
+  each further call, `forward` sends it in the form that was checked, and `screen` may still refuse
+  it on a check that waits on the network (a DNS lookup).
 
 Tests: `tests/test_adapters.py` covers matching and the routing above it, and
 `tests/test_adapter_spotify.py` covers one adapter's own behaviour against a fake server. A new
@@ -208,7 +209,11 @@ What it adds:
   one a snippet mentions), and `forward` sends that result's canonical URL, not the model's
   string; anything two URL parsers could read differently is refused (a login part,
   backslashes, whitespace, an encoded host, a trailing dot, any IP notation, internal or
-  single-label hosts, other schemes); one page a question and no search after it.
+  single-label hosts, other schemes); one page a question and no search after it. Then `screen`
+  looks the host up (1.5 s, the event loop's resolver) and refuses the read when the name does not
+  resolve or any address it gives is not public: a public-looking name can point at 127.0.0.1.
+  A rebinding answer that changes before the fetch is left to the server, which filters its own
+  connections.
 
 Tests: `tests/test_adapter_web.py`, against a fake mcp-searxng, including one whose results and
 page carry injection text and a scripted model that obeys it.

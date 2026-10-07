@@ -553,6 +553,8 @@ class Thinker:
                         log.warning("thinker: %s adapter could not prepare a call (%s); not made", spec.server,
                                     type(exc).__name__)
                         refusal = AFTER_WEB if untrusted else NOT_OFFERED
+                if refusal is None and adapter is not None:
+                    refusal = await self._screen(spec, adapter, untrusted, states, arguments)
                 if refusal is not None:
                     # Not made, and not counted as a call: the brain is told why and to answer.
                     messages.append({"role": "tool", "tool_name": name, "content": refusal})
@@ -618,6 +620,23 @@ class Thinker:
                 why = "its adapter's guard"
         if reason is not None:
             log.info("thinker: %s.%s not called: %s", spec.server, spec.name, why)
+        return reason
+
+    async def _screen(self, spec: ToolSpec, adapter: Any, untrusted: bool, states: dict[str, dict[str, Any]],
+                      arguments: dict[str, Any]) -> str | None:
+        """The adapter's last check, on the arguments about to be sent (`Adapter.screen`: a page's
+        host looked up). Like `_refusal`, the journal gets the tool and never the arguments."""
+        screen = getattr(adapter, "screen", None)
+        if screen is None:
+            return None
+        try:
+            reason = await screen(states.setdefault(spec.server, {}), spec.name, arguments)
+        except Exception as exc:   # a check that cannot run lets nothing through from an untrusted server
+            log.warning("thinker: %s adapter could not check a call (%s); %s", spec.server, type(exc).__name__,
+                        "not made" if untrusted else "made")
+            reason = AFTER_WEB if untrusted else None
+        if reason is not None:
+            log.info("thinker: %s.%s not called: its adapter's check before the call", spec.server, spec.name)
         return reason
 
     def stats(self) -> dict[str, Any]:

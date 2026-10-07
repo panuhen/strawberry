@@ -17,8 +17,8 @@ earns once you use it every day:
                     `unavailable`, when the server is configured but not answering)
     wanted          whether a sentence wants this server's tools at all, or asks for them outright
     max_calls       how many calls to its tools one sentence may make
-    untrusted       its results are outside text; with `guard`, `forward` and `observe`, what may
-                    follow one, and in what form it is sent
+    untrusted       its results are outside text; with `guard`, `forward`, `screen` and `observe`,
+                    what may follow one, and in what form it is sent
 
 Every one of them is optional; the base class answers "nothing to add" to all of them. An
 adapter is loaded only when a configured server matches it, by name or by an explicit
@@ -117,6 +117,12 @@ class Adapter:
         """After `guard` let a call through: the arguments to send, in the form that was checked
         (a URL in its canonical form, so what is fetched is what was compared). As they came by default."""
         return arguments
+
+    async def screen(self, state: dict[str, Any], name: str, arguments: dict[str, Any]) -> str | None:
+        """Just before the call, on the arguments `forward` returned: a check that has to wait on
+        something (a DNS lookup of a page's host). None to let it run, or what the brain is told
+        instead. Keep it short: the sentence is waiting."""
+        return None
 
     def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool) -> None:
         """After a call: note what `guard` needs to know later in the same sentence."""

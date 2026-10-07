@@ -94,6 +94,13 @@ package and the widget binary.
 
 ### Fixed
 
+- Web search no longer reads a page whose site name points at a private address. The page
+  address was checked as written (no IP addresses, no internal names), but a public-looking name
+  can resolve to the machine itself or the home network (`localtest.me` is 127.0.0.1). The name
+  is now looked up first, with 1.5 seconds to answer, and the page is not read if any address is
+  loopback, private, link-local, CGNAT, multicast or reserved, or if the name does not resolve.
+  The search server's own address filter stays as a second layer, against DNS answers that change
+  between the check and the fetch.
 - Whisper on CUDA no longer stops working when the GPU is full. Ollama cannot free VRAM for
   whisper, so when Qwen loads first a CUDA load or a transcription failed with "CUDA failed with
   error out of memory". Whisper now moves to the CPU (`int8`) and the failed sentence is
