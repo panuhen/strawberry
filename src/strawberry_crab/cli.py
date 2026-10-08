@@ -6,6 +6,7 @@
     strawberry install         start on login (a systemd user unit for the tray; on Windows a
                                shortcut in the Startup folder)
     strawberry setup | doctor  models, voice and widget; then check it all (setupcmd.py, doctor.py)
+    strawberry ui              the Brain UI: what the router decides and what it learns, in the browser
     strawberry status | stop | restart | config | say | listen | route | talk | outcomes | learning | ...
 
 The daemon itself is `strawberryd` (strawberryd.py); the by-hand tools that share its config
@@ -848,6 +849,47 @@ def cmd_say(here: Here, text: str) -> int:
     return 0
 
 
+def cmd_ui(here: Here, open_browser: bool = True) -> int:
+    """The Brain UI (brainui.py): a one-time login link from the running daemon, opened in the
+    browser. The link works once, for a minute; the page then runs on a session cookie."""
+    if not daemon_up(here):
+        raise CliError("strawberryd is down; start it with: strawberry daemon")
+    reply = http(here, "POST", "/ui-token", {})
+    try:
+        token = json.loads(reply or b"{}")["path"]
+    except (ValueError, KeyError, TypeError):
+        raise CliError("strawberryd did not give a login link (an older daemon? strawberry restart)") from None
+    url = here.base + token
+    if open_browser and launch_browser(url):
+        print("Opened the Brain UI in your browser. (Nothing opened? strawberry ui --no-browser prints the link.)")
+        return 0
+    print(f"Open this link in your browser (it works once, within a minute):\n{url}")
+    return 0
+
+
+def launch_browser(url: str) -> bool:
+    """The desktop's browser, detached: xdg-open on Linux with a display, the default elsewhere.
+    False where nothing could be started (no display: a console browser would take the terminal)."""
+    if paths.windows() or sys.platform == "darwin":
+        import webbrowser
+
+        try:
+            return webbrowser.open(url)
+        except webbrowser.Error:
+            return False
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return False
+    opener = shutil.which("xdg-open")
+    if opener is None:
+        return False
+    try:
+        subprocess.Popen([opener, url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return False
+    return True
+
+
 def installed_voices() -> list[str]:
     return sorted(p.name[:-len(".onnx")] for p in paths.voices_dir().glob("*.onnx"))
 
@@ -1286,6 +1328,8 @@ def parser() -> argparse.ArgumentParser:
     p = add("think", "run TEXT through the thinker (Qwen + the tools) by hand")
     p.add_argument("text")
     add("talk", "type to her: each line goes through the daemon as if spoken, routing shown")
+    p = add("ui", "the Brain UI in the browser: the router live, what it learned, accept, roll back, forget")
+    p.add_argument("--no-browser", action="store_true", help="only print the one-time link")
     p = add("say", "make her say TEXT now (through the running daemon and widget)")
     p.add_argument("text", nargs="+")
     p = add("voices", "list installed Piper voices, or download the named ones")
@@ -1397,6 +1441,7 @@ def dispatch(command: str, args: argparse.Namespace, extra: list[str]) -> int:
         "uninstall": lambda: cmd_uninstall(here),
         "listen": lambda: cmd_listen(here),
         "say": lambda: cmd_say(here, " ".join(args.text)),
+        "ui": lambda: cmd_ui(here, open_browser=not args.no_browser),
     }
     return handlers[command]()
 

@@ -10,8 +10,11 @@
   GET  /health
   GET  /config   the effective settings
   GET  /ws       the Godot widget connects here and stays connected
+  POST /ui-token a one-time login token for the Brain UI      <- strawberry ui
+  /ui, /ui/...   the Brain UI (brainui.py)
 
-Every route refuses a request with a browser's Origin header (local_only).
+Every route refuses a request with a browser's Origin header (local_only), except the Brain UI's
+under /ui, which make their own, stricter checks (brainui.checked).
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ from typing import Any
 from aiohttp import WSMsgType, web
 from aiohttp.web_log import AccessLogger
 
-from . import __version__, firstrun, paths
+from . import __version__, brainui, firstrun, paths
 from .client import listen_for_stop_request, plain_signal_handler
 from .config import Config, ConfigError
 from .contract import ContractError, Performance, anim_for
@@ -73,12 +76,20 @@ class QuietAccessLogger(AccessLogger):
     def log(self, request: web.BaseRequest, response: web.StreamResponse, time: float) -> None:
         if (request.method, request.path) in QUIET_ROUTES and response.status < 400:
             return
+        if request.path == "/ui" or request.path.startswith("/ui/"):
+            # The Brain UI: the page polls and streams, and /ui/login carries the one-time token in
+            # its query. A successful API read is not logged; nothing is logged with its query.
+            if request.method == "GET" and request.path.startswith("/ui/api/") and response.status < 400:
+                return
+            self.logger.info('%s "%s %s" %s', request.remote, request.method, request.path, response.status)
+            return
         super().log(request, response, time)
 
 
 def create_app(daemon: Daemon) -> web.Application:
     app = web.Application(middlewares=[local_only])
     app[DAEMON] = daemon
+    brainui.setup(app, daemon)
     app.on_startup.append(_start_daemon)
     app.on_shutdown.append(_close_widgets)
     app.on_cleanup.append(_close_daemon)
@@ -124,14 +135,16 @@ def _error(message: str, status: int = 400) -> web.Response:
 
 @web.middleware
 async def local_only(request: web.Request, handler) -> web.StreamResponse:
-    """Local tools only, on every route. Browsers always send Origin; Godot, curl, and the
-    doorways never do.
+    """Local tools only, on every route but the Brain UI's. Browsers always send Origin; Godot,
+    curl, and the doorways never do.
 
     Without this a web page could POST performances at her, open /ws and read what she is about
     to say, which will include notification text, or read /health, which holds the ledger: the
     user's recent sentences and her replies (WIRING.md §2).
     """
-    if "Origin" in request.headers:
+    if "Origin" in request.headers and not getattr(request.match_info.handler, "browser_ok", False):
+        # The Brain UI's routes (brainui.checked) let a browser in on their own terms: this host,
+        # this origin, a session and its CSRF header. Nothing else does.
         raise web.HTTPForbidden(text=json.dumps({"error": "browser origins are not accepted"}), content_type="application/json")
     return await handler(request)
 

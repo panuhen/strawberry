@@ -44,6 +44,7 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 | `GET /health` | – | status object (below) | the tray (every 2 s), `strawberry doctor` | `server.py:151-176` |
 | `GET /config` | – | the effective settings | inspection (curl) | `server.py:180-182` |
 | `GET /ws` | – | websocket upgrade | bodies | `server.py:350-371` |
+| `POST /ui-token`, `/ui/...` | – | the Brain UI: a one-time login token, then a page and its own API under a session (WIRING.md §17) | `strawberry ui`, the user's browser | `brainui.py` |
 
 `sent` is the number of open body sockets the message went to (`hub.py:57-71`). A 400 answer is
 `{"error": "<reason>"}` (`server.py:121-122`).
@@ -60,7 +61,10 @@ the resting state, `daemon.py:245-255`), `rest_state`, `tempo` (the fresh estima
 - A request with an `Origin` header is refused with 403 `{"error": "browser origins are not
   accepted"}` on every route, `/ws` and `/health` included, by one middleware
   (`server.py:125-135`, `:80`). Browsers always send `Origin`; Godot, curl and the doorways do
-  not. **A body must not send `Origin`** on the upgrade request.
+  not. **A body must not send `Origin`** on the upgrade request. The one exception is the Brain UI under
+  `/ui` (WIRING.md §17), which makes its own stricter checks (this host, its own origin, a
+  session and a CSRF header) and is not part of the bus: its live view is a server-sent-events
+  stream at `/ui/api/events`, not `/ws`, and a body never uses it.
 - POSTs with a body must be `Content-Type: application/json`, else 415
   (`server.py:141-144`); a body that is not JSON is 400 (`server.py:147-148`).
 
