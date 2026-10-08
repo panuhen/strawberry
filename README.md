@@ -145,7 +145,8 @@ The settings you are most likely to change:
 | `[brain]`, `[thinker]` | `reaction_model`, `action_model` | which Ollama models she uses |
 | `[tools.servers.*]` | | MCP servers; see [ADAPTERS.md](ADAPTERS.md) and [Web search](#web-search-optional) |
 | `[daemon]` | `log_sentences` | write what you say or type to the log (off: only its length); see [Privacy](#privacy) |
-| `[learning]` | `log_outcomes` | keep what you say and how it was routed, locally, for tuning (off); see [Privacy](#privacy) |
+| `[learning]` | `log_outcomes` | keep what you say and how it was routed, locally, so she can learn from it (off); see [Learning](#learning) |
+| `[learning]` | `auto_switch`, `weekly_line` | put a better router in use without asking (off); say once a week what she learned (off) |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
 Files she keeps: settings in `~/.config/strawberry/`, the widget binary and voices in
@@ -212,11 +213,48 @@ notification bodies are off and where to change it, and logs the same note.
 She remembers the last few exchanges of conversation in memory, for context, and nothing more,
 unless you turn on the learning log (`[learning] log_outcomes = true`, off by default). Then each
 sentence you say or type is kept in `outcomes.jsonl` in the state directory, with how she routed
-it and what came of it (an undo, a correction, a rephrase, or silence), for a future step that
-tunes her routing on your own sentences. The file is readable only by you and pruned to 30 days
+it and what came of it (an undo, a correction, a rephrase, or silence), so she can learn from
+it (below). The file is readable only by you and pruned to 30 days
 and 5000 records; sentences that read as private (codes, sign-ins, bank matters) and other
 voices in the room are never kept, and no sentence goes into a log. `strawberry outcomes` shows
-what is there, `strawberry outcomes --clear` deletes it.
+what is there, `strawberry outcomes --clear` deletes it. What she learned from it is kept in
+`~/.local/share/strawberry/gate/learned.json`, also readable only by you;
+`strawberry learning forget` deletes it.
+
+## Learning
+
+With the learning log on (`[learning] log_outcomes = true`), she learns from how you react to
+what she does. When she skips a song and you say "go back" straight away, she learns that the
+sentence did not mean skip. When she sends something to the big model and it just pauses the
+music, she learns that the sentence was a plain "pause" she could have handled herself, faster.
+A correction ("no, I meant…"), a rephrase and silence after a reflex count too. She never
+learns from her own guesses, from other voices in the room or from anything private.
+
+What she learns from is the small classifier that sorts what you say (the gate's head), not the
+big model. When nobody has spoken to her for 20 minutes and there are at least 10 new labelled
+sentences, she trains a new head in the background at low priority, and stops if you start
+talking. The new head must do at least as well as the one in use on a fixed test set that ships
+with her and that nothing you say ever enters. If it does not, it is rejected. If it does, it
+waits for you:
+
+```bash
+strawberry learning status      # what is in use, what is waiting, what she has learned
+strawberry learning accept      # put the waiting head in use (or: reject)
+strawberry learning rollback    # back to the one before; every head is kept
+strawberry learning versions    # every head, its test score and what became of it
+strawberry learning report      # the week: "learned 14 new examples, 2 rejected, held-out 95.0% → 95.6%"
+strawberry learning train       # build and test a new head now instead of waiting
+strawberry learning examples --text   # the sentences she learned from, and what from
+strawberry learning forget      # delete them (--all: and every head she made)
+```
+
+A switch takes effect within a few seconds; no restart is needed. The tray menu has
+**Router: roll back to previous** while there is something to roll back to. With
+`auto_switch = true` a head that passes the test is put in use without asking, and with
+`weekly_line = true` she says once a week what she has got better at (never in quiet hours).
+`idle_train = false` stops the background training; `idle_minutes` and `min_new_labels` set
+when it runs. She learns only to answer her existing questions better; new kinds of request
+still need a new version of Strawberry.
 
 ## Spotify (optional)
 

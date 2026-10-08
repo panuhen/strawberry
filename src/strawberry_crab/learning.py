@@ -55,7 +55,7 @@ VERSION = 1
 CHUNK = 16                  # sentences per embedding call in the daemon: the user speaking stops the run between two
 MAX_EVENTS = 1000
 WEEK_S = 7 * 86400
-RETRY_AFTER_S = 15 * 60     # after a run that was interrupted or failed
+RUN_GAP_S = 15 * 60         # at most one idle run in this long, whatever became of the last
 TICK_S = 5.0                # the daemon's look at `current`, the outcome file and the clock
 WEEKLY_IDLE_S = 120.0       # the weekly line waits for this much quiet
 TRAIN_LOCK_STALE_S = 3600.0
@@ -770,7 +770,7 @@ class IdleTrainer:
             return False, "not idle long enough"
         if self.new_labels < self.config.min_new_labels:
             return False, f"{self.new_labels} new label(s), {self.config.min_new_labels} needed"
-        if time.monotonic() - self.last_attempt < RETRY_AFTER_S:
+        if time.monotonic() - self.last_attempt < RUN_GAP_S:
             return False, "tried recently"
         return True, ""
 
@@ -826,7 +826,7 @@ class IdleTrainer:
             log.info("learning: %s", exc)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - reported in /health, retried after RETRY_AFTER_S
+        except Exception as exc:  # noqa: BLE001 - reported in /health, retried after RUN_GAP_S
             self.errors += 1
             self.last_error = f"{type(exc).__name__}: {exc}"[:200]
             log.warning("learning: the run failed (%s)", self.last_error)

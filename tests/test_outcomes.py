@@ -384,3 +384,4 @@ def test_the_privacy_note_says_what_is_kept():
     config.learning = on()
     line = firstrun.log_text(config)
     assert str(paths.outcomes_file()) in line and "strawberry outcomes --clear" in line
+    assert "learned.json" in line and "strawberry learning forget" in line

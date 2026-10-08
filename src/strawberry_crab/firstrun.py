@@ -37,7 +37,8 @@ def log_text(config: Config) -> str:
     if config.learning.log_outcomes:
         learning = (f" The sentences you say or type to her are kept with how she routed them, for the "
                     f"learning loop, in {paths.outcomes_file()} ([learning] log_outcomes; private ones never; "
-                    f"`strawberry outcomes --clear` deletes them).")
+                    f"`strawberry outcomes --clear` deletes them); what she learns from them is kept in "
+                    f"{paths.data_dir() / 'gate' / 'learned.json'} (`strawberry learning forget` deletes it).")
     else:
         learning = " What you say to her is not stored ([learning] log_outcomes is off)."
     return (f"privacy: {reading}. Modes: off, react, glance; codes, sign-ins and bank alerts are "

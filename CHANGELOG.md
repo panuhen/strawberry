@@ -9,6 +9,21 @@ package and the widget binary.
 
 ### Added
 
+- The router learns from use (`strawberry learning`, README: *Learning*). With the learning log on,
+  an undo, a correction, a rephrase, silence after a reflex, and the big model doing exactly what a
+  reflex does become labelled sentences, kept locally and readable only by you. When she has been
+  idle for a while and enough new labels wait, she trains a new head for the gate in the
+  background at low priority (it stops when you speak); it must score at least as well as the one
+  in use on the shipped held-out set, which your sentences never enter. A head that passes waits
+  for `strawberry learning accept`, or goes in use at once with `[learning] auto_switch = true`.
+  Every head is kept: `strawberry learning rollback`, or **Router: roll back to previous** in the
+  tray, goes back one. A switch needs no restart. `strawberry learning status`, `versions`,
+  `report` ("learned 14 new examples, 2 rejected, held-out 95.0% → 95.6%"), `train`, `examples`,
+  `review` and `forget`; `/health.learning` shows the head in use, the candidate and the
+  trainer, never a sentence. `[learning] weekly_line = true` has her say once a week what she got
+  better at, never in quiet hours. New settings: `idle_train`, `idle_minutes`, `min_new_labels`,
+  `auto_switch`, `weekly_line`, `max_share`.
+
 - A spoken yes before a removal. When the big model calls a tool on a server's `confirm` list, she
   asks first ("Remove 'Teardrop' from Gym? Say yes.") and makes that exact call only if your next
   sentence is a yes (yes, sure, do it, go ahead). A no, any other sentence, or 10 seconds without
@@ -75,6 +90,8 @@ package and the widget binary.
 
 ### Changed
 
+- `strawberry gate use` takes effect in a running daemon within a few seconds, without a restart,
+  and `strawberry learning rollback` can undo it.
 - The Spotify adapter no longer uses the server's local favourites list (`favorite_current`,
   `get_favorites`, `remove_favorite`, `play_favorites`, `clear_favorites`), which the server has
   dropped: "favourites" means Liked Songs. Take those three names out of the server's `careful`

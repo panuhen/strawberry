@@ -406,8 +406,8 @@ class ExampleStore:
         return dropped
 
     def review(self, key: str, verdict: str) -> bool:
-        """approve: the example stays whatever the trainer's filters later say about its labels;
-        reject: it is taken out like a private one (the sentence deleted, the key kept)."""
+        """approve: marks the example as looked at (the filters still apply: privacy, the held-out
+        set); reject: it is taken out like a private one (the sentence deleted, the key kept)."""
         if verdict not in ("approve", "reject"):
             raise ValueError("verdict must be approve or reject")
         if verdict == "reject":
