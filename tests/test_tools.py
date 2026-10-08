@@ -319,10 +319,10 @@ async def test_real_server_that_exits_is_reported():
 
 
 async def test_careful_tools_are_withheld_unless_asked():
-    session = FakeSession([FakeTool("play"), FakeTool("save_tracks"), FakeTool("clear_favorites")], echo_handler)
-    box = toolbox({"spotify": {"topic": "music", "command": "music", "careful": ["save_tracks", "clear_favorites"]}}, {"music": session})
+    session = FakeSession([FakeTool("play"), FakeTool("save_tracks"), FakeTool("create_playlist")], echo_handler)
+    box = toolbox({"spotify": {"topic": "music", "command": "music", "careful": ["save_tracks", "create_playlist"]}}, {"music": session})
     assert [s.name for s in await box.tools_for("music", careful=False)] == ["play"]
-    assert [s.name for s in await box.tools_for("music")] == ["play", "save_tracks", "clear_favorites"]
+    assert [s.name for s in await box.tools_for("music")] == ["play", "save_tracks", "create_playlist"]
     await box.close()
 
 

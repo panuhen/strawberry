@@ -227,9 +227,9 @@ async def test_every_tool_is_offered_while_they_fit_in_one_order_for_every_sente
     token that differs, and a reordered tool list cost 2.1-2.7 s of re-reading (WIRING §8b)."""
     toolbox, thinker = two_servers()
     specs = await thinker.tools(topic="music")
-    assert len(specs) == 18
-    assert [s.server for s in specs[:10]] == ["spotify"] * 10   # music before notes: the topics' order
-    assert [s.server for s in specs[10:]] == ["notes"] * 8
+    assert len(specs) == 17
+    assert [s.server for s in specs[:9]] == ["spotify"] * 9   # music before notes: the topics' order
+    assert [s.server for s in specs[9:]] == ["notes"] * 8
     assert [s.key for s in await thinker.tools(topic="notes")] == [s.key for s in specs]
     assert [s.key for s in await thinker.tools(topic="")] == [s.key for s in specs]
     await toolbox.close()
@@ -241,7 +241,7 @@ async def test_over_max_tools_the_topic_and_the_common_tools_survive(caplog):
         specs = await thinker.tools(topic="music")
     # The music server's own common tools, in the adapter's order; the notes server is out.
     assert [s.name for s in specs] == ["play", "pause", "next", "previous", "get_current_track", "get_playlists"]
-    assert "18 tools is more than max_tools=6" in caplog.text
+    assert "17 tools is more than max_tools=6" in caplog.text
     assert "spotify.get_devices" in caplog.text and "notes.note_0" in caplog.text
     # A sentence the gate read as notes keeps the notes tools instead.
     assert [s.name for s in await thinker.tools(topic="notes")] == [f"note_{i}" for i in range(6)]

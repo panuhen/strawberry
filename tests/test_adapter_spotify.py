@@ -7,7 +7,7 @@ import json
 import pytest
 
 from strawberry_crab.adapters.spotify import (SPOTIFY, _failed, _track, clarify_error, playlist_request, says_like,
-                                              several)
+                                              says_play_liked, several)
 from strawberry_crab.config import Config
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
@@ -108,8 +108,8 @@ async def test_a_clarified_error_reaches_the_model_through_the_toolbox():
 async def test_vocabulary_comes_from_the_library_in_order_of_likelihood():
     spotify, toolbox, actor = make()
     names = await actor.vocabulary()
-    # now playing, playlists (no emoji), favourites, saved (a listing far longer than tools.result_chars)
-    assert names == ["Nina Simone", "Acid Techno", "Daft Punk", "New Order", "Erik Satie"]
+    # now playing, playlists (no emoji), saved (a listing far longer than tools.result_chars)
+    assert names == ["Nina Simone", "Acid Techno", "New Order", "Erik Satie"]
     assert await actor.situation("music") == "Now playing on Spotify: Feeling Good by Nina Simone (album: I Put a Spell on You)."
     await toolbox.close()
 
@@ -168,11 +168,24 @@ async def test_voice_to_skip_end_to_end_through_the_daemon(aiohttp_client):
 
 LIKES = ["I like this", "i like this song", "I really like this one!", "like this track", "Like this.", "save this song",
          "save this track please", "Save it.", "keep this one", "save this to my liked songs",
-         "add this to my liked songs", "add it to liked songs", "Strawberry, I like this", "ok save this song for me"]
+         "add this to my liked songs", "add it to liked songs", "Strawberry, I like this", "ok save this song for me",
+         # Favourites are Liked Songs.
+         "add this to my favourites", "add this song to my favorites please", "save this to my favourites",
+         "put it in my favourites", "favourite this track", "Favorite this.",
+         # The wrapping that leaves the request the same ("for later" made Qwen skip the call).
+         "hey could you save this song to my favourites for later", "could you add this one to my favourites",
+         "can you like this please", "please save this, thanks"]
 NOT_LIKES = ["I like this better than the last one", "I don't like this", "do you like this song", "I love this song",
              "save this to my gym playlist", "add this to my running playlist", "like this but faster",
-             "play something like this", "I like it when you dance", "save my place", "add this to my favourites",
-             "what do you like", "like"]
+             "play something like this", "I like it when you dance", "save my place", "what do you like", "like",
+             "add this to my favourites playlist", "play my favourites", "what are my favourites",
+             "would you like this song", "can you save this to my gym playlist for later"]
+PLAY_LIKED = ["play my favourites", "Play my favorites, please", "shuffle my favourites", "put on my liked songs",
+              "play some of my favourite songs", "Strawberry, play my saved tracks", "play the liked songs now",
+              "can you play my favourites", "Could you please play my favorites, thanks"]
+NOT_PLAY_LIKED = ["play my favourites playlist", "play my favourite songs from last month", "play some jazz",
+                  "add this to my favourites", "what are my favourites", "play my running playlist", "play",
+                  "can you play my favourites playlist", "would you play my favourites"]
 
 
 @pytest.mark.parametrize("text", LIKES)
@@ -183,6 +196,50 @@ def test_a_like_is_known_by_its_words(text):
 @pytest.mark.parametrize("text", NOT_LIKES)
 def test_anything_more_is_not_a_like(text):
     assert not says_like(text)
+
+
+@pytest.mark.parametrize("text", PLAY_LIKED)
+def test_play_my_favourites_is_known_by_its_words(text):
+    assert says_play_liked(text) and SPOTIFY.said_reflex(text, None) == "play_liked"
+
+
+@pytest.mark.parametrize("text", NOT_PLAY_LIKED)
+def test_anything_more_is_not_play_my_favourites(text):
+    assert not says_play_liked(text)
+
+
+async def test_add_this_to_my_favourites_likes_the_track():
+    """The favourites are the Liked Songs: the same reflex as "I like this", never a claim without a call."""
+    spotify, toolbox, actor = make(library=True)
+    outcome = await actor.act("add this to my favourites", route("add this to my favourites", "other"))
+    assert outcome.ok and outcome.fact == "Liked: Feeling Good by Nina Simone."
+    assert spotify.log == ["like_current"] and actor.stats()["last"]["tool"] == "like"
+    await toolbox.close()
+
+
+async def test_play_my_favourites_plays_the_liked_songs_shuffled():
+    spotify, toolbox, actor = make(library=True)
+    outcome = await actor.act("play my favourites", route("play my favourites", "other", decision="chat"))
+    assert outcome.ok and outcome.did == "played the liked songs"
+    assert outcome.fact == "Playing your Liked Songs, shuffled, starting with Around the World by Daft Punk."
+    assert spotify.log == ["play_liked"] and spotify.played_liked == [{"shuffle": True}]
+    assert actor.stats()["last"]["tool"] == "play_liked"
+    await toolbox.close()
+
+
+async def test_play_my_favourites_failures_in_her_words():
+    spotify, toolbox, actor = make(broken="device", library=True)
+    outcome = await actor.act("play my favourites", route("play my favourites", "other"))
+    assert not outcome.ok and outcome.fact == ("I tried to play your Liked Songs, but Spotify has no active device; "
+                                               "open Spotify on the computer or phone first.")
+    await toolbox.close()
+
+
+async def test_an_older_server_without_play_liked_leaves_play_my_favourites_to_the_thinker():
+    spotify, toolbox, actor = make()   # no library tools
+    assert await actor.act("play my favourites", route("play my favourites", "other", decision="chat")) is None
+    assert "play_liked" not in spotify.log
+    await toolbox.close()
 
 
 async def test_i_like_this_likes_the_track_even_when_the_gate_reads_chat():
@@ -292,14 +349,29 @@ def test_clarify_reads_the_code():
 
 
 def test_the_new_tools_are_common_and_not_careful():
-    assert {"like_current", "add_current_to_playlist", "find_playlist"} <= set(SPOTIFY.common_tools)
+    assert {"like_current", "add_current_to_playlist", "find_playlist", "play_liked"} <= set(SPOTIFY.common_tools)
+    assert len(SPOTIFY.common_tools) == 14 and len(set(SPOTIFY.common_tools)) == 14
     assert SPOTIFY.common_tools.index("like_current") < SPOTIFY.common_tools.index("add_to_queue")
-    assert SPOTIFY.guide_for(["like_current", "play"]) == SPOTIFY.guide and "add_current_to_playlist" in SPOTIFY.guide
-    assert SPOTIFY.guide_for(["play", "next"]) == ""        # an older server: no paragraph about tools it lacks
+    assert SPOTIFY.guide_for(["like_current", "play_liked", "play"]) == SPOTIFY.guide
+    assert "add_current_to_playlist" in SPOTIFY.guide and "call play_liked" in SPOTIFY.guide
+    # A server without play_liked gets the paragraph without it; an older one without the by-name tools, none.
+    assert "play_liked" not in SPOTIFY.guide_for(["like_current", "play"])
+    assert "add this to my favourites', call like_current" in SPOTIFY.guide_for(["like_current", "play"])
+    assert SPOTIFY.guide_for(["play", "next"]) == ""
 
 
-CAREFUL = ["save_tracks", "remove_saved_tracks", "add_to_playlist", "favorite_current", "remove_favorite",
-           "clear_favorites", "remove_from_playlist", "create_playlist"]
+def test_the_local_favourites_tools_are_gone():
+    """The server's local favourites list was retired: nothing here names its tools any more."""
+    import inspect
+
+    import strawberry_crab.adapters.spotify as module
+
+    source = inspect.getsource(module)
+    for name in ("favorite_current", "get_favorites", "remove_favorite", "play_favorites", "clear_favorites"):
+        assert name not in source and name not in CAREFUL
+
+
+CAREFUL = ["save_tracks", "remove_saved_tracks", "add_to_playlist", "remove_from_playlist", "create_playlist"]
 
 
 def thinker_over(script: list, broken: bool | str = False):
@@ -329,7 +401,25 @@ def test_a_playlist_sentence_gets_a_line_under_it(text, asks, name):
     assert SPOTIFY.wanted(text, None) is True and SPOTIFY.nudge(text, None) == line
 
 
-@pytest.mark.parametrize("text", ["play some jazz", "add this to my favourites", "what's on my gym playlist",
+@pytest.mark.parametrize("text, asks", [
+    ("I think you should add this one to my favourites", "save the playing track to their favourites"),
+    ("can you put this song in my favorites for me", "save the playing track to their favourites"),
+    ("can you play my favourites", "play their favourites"),
+    ("shuffle some of my liked songs while I work", "play their favourites"),
+])
+def test_a_favourites_sentence_gets_a_line_naming_the_liked_songs(text, asks):
+    line = playlist_request(text)
+    assert line.startswith(f"They asked to {asks}, which are their Liked Songs:") and "tool" in line
+    assert SPOTIFY.wanted(text, None) is True and SPOTIFY.nudge(text, None) == line
+
+
+def test_a_favourites_playlist_is_a_playlist():
+    assert playlist_request("add this to my favourites playlist").startswith(
+        "They asked to add the playing track to their playlist 'favourites'")
+    assert playlist_request("play my favourites playlist").startswith("They asked to play their playlist 'favourites'")
+
+
+@pytest.mark.parametrize("text", ["play some jazz", "what are my favourites", "what's on my gym playlist",
                                   "I like this", "how are you today", "play the playlist"])
 def test_other_sentences_get_no_line(text):
     assert playlist_request(text) == "" and SPOTIFY.wanted(text, None) is None
@@ -369,11 +459,21 @@ async def test_the_easy_to_undo_tools_are_offered_with_any_sentence_and_the_rest
     spotify, toolbox, qwen, thinker = thinker_over(["[neutral] Fine.", "[neutral] Fine."])
     await thinker.run("play my running playlist", topic="music")
     offered = {t["function"]["name"] for t in qwen.payloads[0]["tools"]}
-    assert {"like_current", "add_current_to_playlist", "find_playlist", "play"} <= offered
-    assert offered.isdisjoint({"remove_from_playlist", "create_playlist", "favorite_current"})
+    assert {"like_current", "add_current_to_playlist", "find_playlist", "play", "play_liked"} <= offered
+    assert offered.isdisjoint({"remove_from_playlist", "create_playlist"})
     await thinker.run("take this off my running playlist", careful=True, topic="music")
     offered = {t["function"]["name"] for t in qwen.payloads[1]["tools"]}
     assert {"remove_from_playlist", "create_playlist", "like_current"} <= offered
+    await toolbox.close()
+
+
+async def test_a_favourites_sentence_through_the_thinker_gets_its_line_and_calls_like_current():
+    spotify, toolbox, qwen, thinker = thinker_over([[("like_current", {})], "[happy] Liked it."])
+    outcome = await thinker.run("I think you should add this one to my favourites", topic="music")
+    assert outcome.ok and spotify.liked == ["Feeling Good – Nina Simone"]
+    system, user = qwen.payloads[0]["messages"][0]["content"], qwen.payloads[0]["messages"][1]["content"]
+    assert "the user's favourites are their Liked Songs" in system and "call play_liked" in system
+    assert "which are their Liked Songs" in user
     await toolbox.close()
 
 
