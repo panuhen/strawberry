@@ -38,6 +38,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -58,7 +59,8 @@ WEEK_S = 7 * 86400
 RUN_GAP_S = 15 * 60         # at most one idle run in this long, whatever became of the last
 TICK_S = 5.0                # the daemon's look at `current`, the outcome file and the clock
 WEEKLY_IDLE_S = 120.0       # the weekly line waits for this much quiet
-TRAIN_LOCK_STALE_S = 3600.0
+TRAIN_LOCK_STALE_S = 3600.0   # where a lock's holder cannot be asked (Windows): its age
+CHILD_TIMEOUT_S = 30 * 60.0  # the child's fit and scoring; a first run is a minute or two
 
 # What she is getting better at, by the reflex most of the week's labels were about.
 SKILLS = {"skip": "skipping songs", "previous": "going back a song", "pause": "pausing the music",
@@ -93,6 +95,16 @@ def version_of(path: Path | None) -> str:
     return "shipped" if path is None else gatehead.version_of_path(path)
 
 
+VERSION_NAME = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def check_version(version: str) -> str:
+    """A head's version as a file name may carry it: letters, digits, '.', '_' and '-', no '..'."""
+    if not isinstance(version, str) or not VERSION_NAME.fullmatch(version) or ".." in version:
+        raise LearningError(f"not a head version: {version!r}"[:80])
+    return version
+
+
 def pct(pair: list[int] | None) -> float | None:
     return round(100.0 * pair[0] / pair[1], 1) if pair and pair[1] else None
 
@@ -113,14 +125,14 @@ class Learning:
     # ------------------------------------------------------------------ the files
 
     def manifest_path(self, version: str) -> Path:
-        return self.heads.directory / f"head-{version}.json"
+        return self.heads.directory / f"head-{check_version(version)}.json"
 
     def manifest(self, version: str | None) -> dict[str, Any] | None:
         if not version or version == "shipped":
             return None
         try:
             data = json.loads(self.manifest_path(version).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, LearningError):
             return None
         return data if isinstance(data, dict) else None
 
@@ -218,8 +230,8 @@ class Learning:
 
     def _exists(self, version: str) -> bool:
         try:
-            self.heads.find(version)
-        except gatehead.HeadError:
+            self.heads.find(check_version(version))
+        except (gatehead.HeadError, LearningError):
             return False
         return True
 
@@ -318,52 +330,82 @@ class Learning:
                 self._event(state, "review", verdict=verdict)
         return done
 
-    def forget(self, everything: bool = False) -> dict[str, Any]:
+    def forget(self, everything: bool = False, wait_s: float = 5.0) -> dict[str, Any]:
         """Delete the learned examples (and the vectors cached for them), and ignore the outcome
         records written so far. With `everything`, also every head the loop made and its history:
-        the shipped head is in use again."""
+        the shipped head is in use again.
+
+        The outcome records are ignored first, so nothing read after this point brings a sentence
+        back; a candidate waiting is dropped. A training run in flight is waited for up to a few
+        seconds (the lock) and otherwise left to finish: its result is discarded (_record), never
+        offered or switched to."""
         from .gatecmd import cache_file
 
-        count = self.store.clear()
-        caches = list(cache_file("x").parent.glob("vectors-*.npz")) if cache_file("x").parent.is_dir() else []
-        for path in caches:
-            path.unlink(missing_ok=True)
-        for m in self.manifests():
-            if m.get("learned"):
-                m["learned"] = {}
-                m["forgotten"] = True
-                self._write_manifest(m["version"], m)
-        removed = 0
-        if everything:
-            for path in self.heads.versions():
-                if self.manifest(version_of(path)) is not None:
-                    self.manifest_path(version_of(path)).unlink(missing_ok=True)
-                    if self.heads.current() == path:
-                        self.heads.use(None)
-                    path.unlink(missing_ok=True)
-                    removed += 1
         with self._state() as state:
             state["ignore_before"] = time.time()
             state["tried"] = {}
+            waiting = state.get("candidate")
+            state["candidate"] = None
+        if waiting:
+            self._decide(waiting, "superseded", "forget")
+        with self._try_training(wait_s):
+            count = self.store.clear()
+            caches = list(cache_file("x").parent.glob("vectors-*.npz")) if cache_file("x").parent.is_dir() else []
+            for path in caches:
+                path.unlink(missing_ok=True)
+            for m in self.manifests():
+                if m.get("learned"):
+                    m["learned"] = {}
+                    m["forgotten"] = True
+                    self._write_manifest(m["version"], m)
+            removed = 0
             if everything:
-                state.update(candidate=None, history=[], stack=[], last_train=None)
-            elif state.get("candidate") and not self._exists(state["candidate"]):
-                state["candidate"] = None
-            if state.get("last_train"):
-                state["last_train"].pop("left_out", None)
-            self._event(state, "forget", examples=count, heads=removed)
+                for path in self.heads.versions():
+                    if self.manifest(version_of(path)) is not None:
+                        self.manifest_path(version_of(path)).unlink(missing_ok=True)
+                        if self.heads.current() == path:
+                            self.heads.use(None)
+                        path.unlink(missing_ok=True)
+                        removed += 1
+            with self._state() as state:
+                if everything:
+                    state.update(candidate=None, history=[], stack=[], last_train=None)
+                if state.get("last_train"):
+                    state["last_train"].pop("left_out", None)
+                self._event(state, "forget", examples=count, heads=removed)
         log.info("learning: forgot %d example(s)%s", count, f" and {removed} head(s)" if everything else "")
         return {"examples": count, "heads": removed, "caches": len(caches)}
 
     # ------------------------------------------------------------------ training
 
     @contextlib.contextmanager
-    def _training(self) -> Iterator[None]:
+    def _training(self, wait_s: float = 0.0) -> Iterator[None]:
+        """The one training run: LearningBusy when another holds it. Only taking the lock can say
+        busy; a TimeoutError inside the run is the run's own."""
+        lock = file_lock(self.root / "train.lock", timeout_s=wait_s, stale_s=TRAIN_LOCK_STALE_S)
         try:
-            with file_lock(self.root / "train.lock", timeout_s=0.0, stale_s=TRAIN_LOCK_STALE_S):
-                yield
+            lock.__enter__()
         except TimeoutError:
             raise LearningBusy("a training run is already going (the daemon's, or another terminal's)") from None
+        try:
+            yield
+        finally:
+            lock.__exit__(None, None, None)
+
+    @contextlib.contextmanager
+    def _try_training(self, wait_s: float = 5.0) -> Iterator[bool]:
+        """The training lock when it comes within `wait_s`; else go on without it (True: held)."""
+        lock = self._training(wait_s)
+        try:
+            lock.__enter__()
+            held = True
+        except LearningBusy:
+            held = False
+        try:
+            yield held
+        finally:
+            if held:
+                lock.__exit__(None, None, None)
 
     async def train(self, gate, *, runner: Callable | None = None, should_stop: Callable[[], bool] | None = None,
                     progress: Callable[[str], None] | None = None, trigger: str = "by hand") -> dict[str, Any]:
@@ -375,16 +417,17 @@ class Learning:
 
         say = progress or (lambda _: None)
         with self._training():
+            started = time.time()
             await asyncio.to_thread(self.extract)
             examples = [e for e in await asyncio.to_thread(self.examples) if e.usable]
             if not examples:
                 return await asyncio.to_thread(self._record, {"trained": False, "why": "no labelled examples yet"},
-                                               examples, trigger, "")
+                                               examples, trigger, "", started)
             say(f"{len(examples)} labelled example(s); embedding what is new")
             job = await self.job(gate, examples, should_stop)
             say("fitting a candidate and scoring it on the held-out set")
             result = await (runner or (lambda j: learnfit.run(j, say)))(job)
-            return await asyncio.to_thread(self._record, result, examples, trigger, job.current_version)
+            return await asyncio.to_thread(self._record, result, examples, trigger, job.current_version, started)
 
     async def job(self, gate, examples: list[Example], should_stop: Callable[[], bool] | None = None):
         """Everything the CPU part needs, embedded with the gate's own embedder (cached by text in the
@@ -421,20 +464,29 @@ class Learning:
                             phrases=str(more) if more else "", max_share=self.config.learning.max_share,
                             vectors=vectors)
 
-    def _record(self, result: dict[str, Any], examples: list[Example], trigger: str, parent: str) -> dict[str, Any]:
+    def _record(self, result: dict[str, Any], examples: list[Example], trigger: str, parent: str,
+                started: float = 0.0) -> dict[str, Any]:
         """What came of a run: the manifest, the store (a sentence found private is deleted), the
-        state; and with auto_switch, the switch."""
+        state; and with auto_switch, the switch. A run that started before a `forget` is discarded,
+        head and all: what it learned from is gone."""
         if "error" in result:
-            raise LearningError(result["error"])
+            raise LearningError(f"the trainer failed ({result['error']})")
         now = time.time()
         left = result.get("left_out") or {}
         private = [k for k, why in left.items() if why == "private"]
-        if private:
-            self.store.drop(private, "private")
         digests = {e.key: e.digest for e in examples}
         used = set(result.get("used") or [])
         out = {k: v for k, v in result.items() if k not in ("left_out", "used")}
         with self._state() as state:
+            if float(state.get("ignore_before") or 0.0) >= started:
+                self._discard(result.get("path"))
+                state["last_train"] = {"at": round(now, 3), "trigger": trigger, "result": "forgotten",
+                                       "why": "what it learned from was forgotten while it ran"}
+                self._event(state, "train", result="forgotten", trigger=trigger)
+                log.info("learning: the run's result is discarded: a forget came while it ran")
+                return {"trained": False, "why": "what it learned from was forgotten while it ran"}
+            if private:
+                self.store.drop(private, "private")
             state["tried"] = digests
             last: dict[str, Any] = {"at": round(now, 3), "trigger": trigger, "left_out": left,
                                     "counts": result.get("counts")}
@@ -483,6 +535,15 @@ class Learning:
             state["last_train"] = last
         return out
 
+    def _discard(self, path: str | None) -> None:
+        """Delete a head file the trainer wrote (only a head-*.npz in the heads dir)."""
+        if not path:
+            return
+        head = Path(path)
+        if head.parent.resolve() == self.heads.directory.resolve() and gatehead.POINTER_NAME.fullmatch(head.name):
+            head.unlink(missing_ok=True)
+            self.manifest_path(version_of(head)).unlink(missing_ok=True)
+
     # ------------------------------------------------------------------ the switch
 
     def _decide(self, version: str, status: str, by: str) -> None:
@@ -492,6 +553,7 @@ class Learning:
             self._write_manifest(version, m)
 
     def _switch(self, state: dict[str, Any], to: str, by: str, push: bool = True) -> dict[str, str]:
+        check_version(to)
         before = self.current_version()
         path = None if to == "shipped" else self.heads.find(to)
         if path is not None:
@@ -509,7 +571,7 @@ class Learning:
             version = version or state.get("candidate")
             if not version:
                 raise LearningError("no candidate is waiting")
-            m = self.manifest(version)
+            m = self.manifest(check_version(version))
             if m is None:
                 raise LearningError(f"no candidate {version!r}")
             if m.get("status") != "candidate":
@@ -530,7 +592,7 @@ class Learning:
             version = version or state.get("candidate")
             if not version:
                 raise LearningError("no candidate is waiting")
-            m = self.manifest(version)
+            m = self.manifest(check_version(version))
             if m is None or m.get("status") != "candidate":
                 raise LearningError(f"{version} is not a candidate waiting")
             if state.get("candidate") == version:
@@ -561,6 +623,7 @@ class Learning:
 
     def use(self, version: str) -> dict[str, str]:
         """`strawberry gate use VERSION|shipped`: any head, by hand; a rollback comes back from it."""
+        check_version(version)
         with self._state() as state:
             return self._switch(state, version, "use")
 
@@ -686,20 +749,23 @@ async def run_child(job) -> dict[str, Any]:
         sys.executable, "-m", "strawberry_crab.learnfit", stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env, **options)
     try:
-        out, err = await process.communicate(job.to_bytes())
-    except asyncio.CancelledError:
+        out, _ = await asyncio.wait_for(process.communicate(job.to_bytes()), CHILD_TIMEOUT_S)
+    except (asyncio.CancelledError, asyncio.TimeoutError) as exc:
         if process.returncode is None:
             process.kill()
             await process.wait()
+        if isinstance(exc, asyncio.TimeoutError):
+            raise LearningError(f"the trainer took over {CHILD_TIMEOUT_S / 60:.0f} minutes and was stopped") from None
         raise
     try:
         result = json.loads(out.decode("utf-8") or "{}")
     except ValueError:
         result = {}
+    # Its stderr is never read back: a library could print something of a sentence there.
     if process.returncode != 0 or not isinstance(result, dict) or not result:
-        tail = err.decode("utf-8", "replace").strip().splitlines()[-1:] if err else []
-        raise LearningError(result.get("error") if isinstance(result, dict) and result.get("error")
-                            else f"the trainer exited with {process.returncode} {tail}")
+        error = result.get("error") if isinstance(result, dict) and isinstance(result.get("error"), str) else ""
+        raise LearningError(f"the trainer failed ({error[:60]})" if error
+                            else f"the trainer exited with code {process.returncode}")
     return result
 
 
@@ -786,7 +852,7 @@ class IdleTrainer:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - the loop must outlive one bad tick
-                log.warning("learning: %s", type(exc).__name__ + (f": {exc}" if not isinstance(exc, KeyError) else ""))
+                log.warning("learning: a tick failed (%s)", type(exc).__name__)   # the type only: a message can quote values
 
     async def tick(self) -> None:
         await self.follow_pointer()
@@ -830,7 +896,8 @@ class IdleTrainer:
             raise
         except Exception as exc:  # noqa: BLE001 - reported in /health, retried after RUN_GAP_S
             self.errors += 1
-            self.last_error = f"{type(exc).__name__}: {exc}"[:200]
+            # The type only, in /health and the log: a message can carry what a library printed.
+            self.last_error = type(exc).__name__
             log.warning("learning: the run failed (%s)", self.last_error)
         finally:
             self.phase = "idle"

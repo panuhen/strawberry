@@ -280,7 +280,7 @@ def main() -> int:
         job = Job.from_bytes(sys.stdin.buffer.read())
         result = asyncio.run(run(job))
     except Exception as exc:  # noqa: BLE001 - reported to the parent as a type and a message
-        sys.stdout.write(json.dumps({"error": f"{type(exc).__name__}: {exc}"[:300]}))
+        sys.stdout.write(json.dumps({"error": type(exc).__name__}))   # never the message: it can quote values
         return 1
     sys.stdout.write(json.dumps(result))
     return 0

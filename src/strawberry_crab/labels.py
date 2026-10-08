@@ -43,6 +43,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -63,7 +64,8 @@ CONFLICT_RATIO = 0.5        # the runner-up at this share of the best positive o
 MAX_WEIGHT = 1.0
 MAX_EVIDENCE = 20           # per example, the newest
 MAX_EXAMPLES = 3000         # in the store, the most recently seen
-ACCEPTED = ("silence", "moved_on", "none", "repeat")   # outcomes that do not object to a sentence's handling
+ACCEPTED = ("silence", "moved_on", "none", "repeat")
+MAX_TEXT = 500              # longer than any spoken command: such a line is not learned from   # outcomes that do not object to a sentence's handling
 
 MUSIC_TOOLS = ("skip", "previous", "pause", "resume", "volume_down", "volume_up", "now_playing")
 SIGNALS = ("teacher", "undo", "correction", "rephrase", "hint", "silence")
@@ -106,11 +108,27 @@ class Evidence:
                 "avoid": self.avoid, "w": self.weight}
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _num(value: Any) -> float:
+    """A number from a record, or 0 for anything else (a hand-edited or damaged line)."""
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def _names(value: Any) -> dict[str, str]:
+    """A question -> option map from the store, or {} when it is anything else."""
+    if not isinstance(value, dict):
+        return {}
+    return {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, str)}
+
+
 def gate_reflex(record: dict[str, Any]) -> str:
     """The gate's own reflex the record fired and that worked, or "": the reflex path on the gate's
     act decision with its music tool, and the reflex named after that tool (not one read off the words)."""
-    route = record.get("route") or {}
-    tool = route.get("tool") or ""
+    route = _dict(record.get("route"))
+    tool = route.get("tool") if isinstance(route.get("tool"), str) else ""
     if record.get("path") != "reflex" or record.get("ok") is not True or tool not in MUSIC_TOOLS:
         return ""
     if route.get("decision") != "act" or route.get("topic") != "music":
@@ -121,60 +139,76 @@ def gate_reflex(record: dict[str, Any]) -> str:
 
 def teacher(record: dict[str, Any]) -> str:
     """The reflex the thinker's one bare call amounts to, when nothing objected to it afterwards."""
-    taught = REFLEX_TOOLS.get(str(record.get("teacher") or ""), record.get("teacher") or "")
+    raw = record.get("teacher")
+    raw = raw if isinstance(raw, str) else ""
+    taught = REFLEX_TOOLS.get(raw, raw)
     if record.get("path") != "thinker" or taught not in MUSIC_TOOLS or record.get("outcome") not in ACCEPTED:
         return ""
     return taught
 
 
 def sure(route: dict[str, Any]) -> bool:
-    return (route.get("confidence") or 0.0) >= SURE and (route.get("tool_confidence") or 0.0) >= SURE
+    return _num(route.get("confidence")) >= SURE and _num(route.get("tool_confidence")) >= SURE
 
 
 def usable(record: dict[str, Any], ignore_before: float = 0.0) -> bool:
     """A record that may become an example: the current format, a sentence, a reading that is not
-    another voice, newer than the last `forget`, and no code or sign-in wording in it."""
+    another voice, newer than the last `forget`, and no code or sign-in wording in it. Anything of
+    another shape (a damaged or hand-edited line) is not."""
+    if not isinstance(record, dict):
+        return False
     text, route = record.get("text"), record.get("route")
     if record.get("v") != VERSION or not isinstance(text, str) or not text.strip() or not isinstance(route, dict):
         return False
-    if route.get("kind") in (None, "other") or not isinstance(record.get("id"), str):
+    if len(text) > MAX_TEXT or not isinstance(route.get("kind"), str) or route.get("kind") == "other":
         return False
-    if (record.get("ts") or 0.0) <= ignore_before:
+    if not isinstance(record.get("id"), str) or _num(record.get("ts")) <= ignore_before:
         return False
     return privacy.pattern(text) is None
 
 
 def extract(records: Iterable[dict[str, Any]], ignore_before: float = 0.0) -> list[Evidence]:
-    """Every piece of evidence in the outcome records (oldest first), by the table above."""
-    records = list(records)
+    """Every piece of evidence in the outcome records (oldest first), by the table above. A record of
+    another shape is skipped, never the end of the run."""
+    records = [r for r in records if isinstance(r, dict)]
     by_id = {r["id"]: r for r in records if isinstance(r.get("id"), str)}
     out: list[Evidence] = []
     for r in records:
-        if not usable(r, ignore_before):
-            continue
-        outcome, route = r.get("outcome"), r["route"]
-        tool = gate_reflex(r)
-        found: list[tuple[str, dict[str, str], dict[str, str], float]] = []
-        if outcome == "undo" and tool:
-            found.append(("undo", {}, {"music_tool": tool}, STRONG))
-        elif outcome in ("correction", "rephrase"):
-            if tool:
-                found.append((outcome, {}, {"music_tool": tool}, STRONG if outcome == "correction" else MEDIUM))
-            after = by_id.get(r.get("by") or "")
-            if after is not None and (after.get("follows") or {}).get("id") == r["id"] and usable(after):
-                meant = (gate_reflex(after) if after.get("outcome") in ACCEPTED else "") or teacher(after)
-                if meant and meant != tool:
-                    found.append(("hint", reflex_labels(meant), {}, HINT))
-        elif outcome == "silence":
-            if tool and not sure(route):
-                found.append(("silence", reflex_labels(tool), {}, WEAK))
-            elif r.get("path") == "no_catalogue" and (route.get("catalogue") or 0.0) < SURE:
-                found.append(("silence", {"needs_catalogue": "yes"}, {}, WEAK))
-        taught = teacher(r)
-        if taught:
-            found.append(("teacher", reflex_labels(taught), {}, STRONG))
-        for signal, labels, avoid, weight in found:
-            out.append(Evidence(r["id"], signal, float(r.get("ts") or 0.0), r["text"], labels, avoid, weight))
+        try:
+            out += _evidence(r, by_id, ignore_before)
+        except Exception as exc:  # noqa: BLE001 - one bad line must not stop the others
+            log.debug("learning: an outcome record skipped (%s)", type(exc).__name__)
+    return out
+
+
+def _evidence(r: dict[str, Any], by_id: dict[str, dict[str, Any]], ignore_before: float) -> list[Evidence]:
+    out: list[Evidence] = []
+    if not usable(r, ignore_before):
+        return out
+    outcome, route = r.get("outcome"), r["route"]
+    tool = gate_reflex(r)
+    found: list[tuple[str, dict[str, str], dict[str, str], float]] = []
+    if outcome == "undo" and tool:
+        found.append(("undo", {}, {"music_tool": tool}, STRONG))
+    elif outcome in ("correction", "rephrase"):
+        if tool:
+            found.append((outcome, {}, {"music_tool": tool}, STRONG if outcome == "correction" else MEDIUM))
+        by = r.get("by")
+        after = by_id.get(by) if isinstance(by, str) else None
+        if after is not None and _dict(after.get("follows")).get("id") == r["id"] and usable(after):
+            meant = (gate_reflex(after) if after.get("outcome") in ACCEPTED else "") or teacher(after)
+            if meant and meant != tool:
+                found.append(("hint", reflex_labels(meant), {}, HINT))
+    elif outcome == "silence":
+        if tool and not sure(route):
+            found.append(("silence", reflex_labels(tool), {}, WEAK))
+        elif r.get("path") == "no_catalogue" and _num(route.get("catalogue")) < SURE:
+            found.append(("silence", {"needs_catalogue": "yes"}, {}, WEAK))
+    taught = teacher(r)
+    if taught:
+        found.append(("teacher", reflex_labels(taught), {}, STRONG))
+    for signal, labels, avoid, weight in found:
+        out.append(Evidence(r["id"], signal, _num(r.get("ts")), r["text"], labels, avoid, weight))
     return out
 
 
@@ -220,19 +254,24 @@ class Example:
 def resolve(key: str, entry: dict[str, Any], options: dict[str, list[str]] | None = None) -> Example:
     """An example from its stored evidence, by the rule in the module's docstring. `options` orders
     ties (the question's own option order); without it, alphabetically."""
-    evidence = entry.get("evidence") or []
+    evidence = entry.get("evidence") if isinstance(entry.get("evidence"), list) else []
     pos: dict[str, dict[str, float]] = {}
     neg: dict[str, dict[str, float]] = {}
     signals: dict[str, int] = {}
     for e in evidence:
-        w = float(e.get("w") or 0.0)
-        signals[e.get("signal", "?")] = signals.get(e.get("signal", "?"), 0) + 1
-        for q, o in (e.get("labels") or {}).items():
+        if not isinstance(e, dict):
+            continue                     # a damaged entry counts for nothing
+        w = max(_num(e.get("w")), 0.0)
+        signal = e.get("signal") if isinstance(e.get("signal"), str) else "?"
+        signals[signal] = signals.get(signal, 0) + 1
+        for q, o in _names(e.get("labels")).items():
             pos.setdefault(q, {})[o] = pos.get(q, {}).get(o, 0.0) + w
-        for q, o in (e.get("avoid") or {}).items():
+        for q, o in _names(e.get("avoid")).items():
             neg.setdefault(q, {})[o] = neg.get(q, {}).get(o, 0.0) + w
-    example = Example(key, entry.get("text", ""), signals=signals, first=float(entry.get("first") or 0.0),
-                      last=float(entry.get("last") or 0.0), review=entry.get("review", "auto"))
+    text = entry.get("text") if isinstance(entry.get("text"), str) else ""
+    review = entry.get("review") if entry.get("review") in ("auto", "approved", "rejected") else "auto"
+    example = Example(key, text, signals=signals, first=_num(entry.get("first")), last=_num(entry.get("last")),
+                      review=review)
     for q in sorted(set(pos) | set(neg)):
         order = (options or {}).get(q)
 
@@ -260,54 +299,90 @@ def resolve(key: str, entry: dict[str, Any], options: dict[str, list[str]] | Non
 
 
 def write_private(path: Path, text: str) -> None:
-    """Write `text` to `path` atomically, readable by the user alone."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Write `text` to `path` atomically, readable by the user alone, in a directory only the user
+    can read."""
+    paths.private_dir(path.parent)
     tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as out:
+    with paths.open_private(tmp, "w", encoding="utf-8") as out:
         out.write(text)
     os.replace(tmp, path)
     if os.name == "posix":
         os.chmod(path, 0o600)
 
 
-def _alive(path: Path) -> bool:
-    """Whether the process that wrote the lock still runs (POSIX; elsewhere only its age counts)."""
-    if os.name != "posix":
-        return True
+WRITE_GRACE_S = 5.0          # a lock file still empty this long after it was made: its maker died first
+
+
+def _holder(text: str) -> int:
+    """The pid in a lock's token ("<pid>:<random>"), or 0."""
     try:
-        pid = int(path.read_text().strip() or "0")
-    except (OSError, ValueError):
-        return True                      # being written right now
-    if pid <= 0:
-        return True
+        return int(text.split(":", 1)[0])
+    except ValueError:
+        return 0
+
+
+def _stale(path: Path, seen: str, stale_s: float) -> bool:
+    """Whether the lock holding `seen` was left behind. On POSIX by its holder: a process that is
+    gone (a live holder keeps its lock however long it runs). Elsewhere by its age."""
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
         return False
-    except PermissionError:
+    pid = _holder(seen)
+    if pid <= 0:
+        return age > WRITE_GRACE_S
+    if os.name != "posix":
+        return age > stale_s
+    try:
+        os.kill(pid, 0)                  # signal 0: asks whether it exists, sends nothing
+    except ProcessLookupError:
         return True
-    return True
+    except PermissionError:
+        return False
+    return False
+
+
+def _take_over(path: Path, seen: str) -> None:
+    """Remove a stale lock, and only that one: it is renamed aside first (one process wins the
+    rename), and put back if what was renamed is not the lock that was judged stale (another process
+    replaced it meanwhile)."""
+    aside = path.with_name(f"{path.name}.{uuid.uuid4().hex}.stale")
+    try:
+        os.rename(path, aside)
+    except OSError:
+        return
+    try:
+        if aside.read_text() != seen:
+            try:
+                os.link(aside, path)     # back where it was, unless a new one is already there
+            except OSError:
+                pass
+    except OSError:
+        pass
+    aside.unlink(missing_ok=True)
 
 
 @contextlib.contextmanager
 def file_lock(path: Path, timeout_s: float = 10.0, stale_s: float = 120.0) -> Iterator[None]:
-    """A short lock between the daemon, the CLI and the tray around a read-modify-write of the
-    learning files: an exclusive file, taken over when older than `stale_s` (a crashed holder)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """A lock between the daemon, the CLI and the tray: an exclusive file holding this process's
+    token. A lock whose holder is gone is taken over (_stale); on the way out the file is removed
+    only while it still holds this token."""
+    paths.private_dir(path.parent)
+    token = f"{os.getpid()}:{uuid.uuid4().hex}"
     deadline = time.monotonic() + timeout_s
     while True:
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            os.write(fd, str(os.getpid()).encode())
+            os.write(fd, token.encode())
             os.close(fd)
             break
         except FileExistsError:
             try:
-                if time.time() - path.stat().st_mtime > stale_s or not _alive(path):
-                    path.unlink(missing_ok=True)
-                    continue
+                seen = path.read_text()
             except OSError:
+                continue                 # gone meanwhile: try again
+            if _stale(path, seen, stale_s):
+                _take_over(path, seen)
                 continue
             if time.monotonic() > deadline:
                 raise TimeoutError(f"{path} is held by another process") from None
@@ -315,7 +390,11 @@ def file_lock(path: Path, timeout_s: float = 10.0, stale_s: float = 120.0) -> It
     try:
         yield
     finally:
-        path.unlink(missing_ok=True)
+        try:
+            if path.read_text() == token:
+                path.unlink()
+        except OSError:
+            pass
 
 
 class ExampleStore:
@@ -340,9 +419,21 @@ class ExampleStore:
             return {"v": VERSION, "examples": {}, "gone": {}}
         if not isinstance(data, dict) or data.get("v") != VERSION:
             return {"v": VERSION, "examples": {}, "gone": {}}
-        data.setdefault("examples", {})
-        data.setdefault("gone", {})
-        return data
+        return {"v": VERSION, "examples": self._clean(data.get("examples")),
+                "gone": {k: v for k, v in _dict(data.get("gone")).items() if isinstance(v, dict)}}
+
+    @staticmethod
+    def _clean(examples: Any) -> dict[str, Any]:
+        """The well-formed entries only: a damaged or hand-edited one is left out (and gone at the next
+        write), never the end of learning."""
+        out = {}
+        for key, entry in _dict(examples).items():
+            if not isinstance(entry, dict) or not isinstance(entry.get("text"), str) or len(entry["text"]) > MAX_TEXT:
+                continue
+            evidence = [e for e in entry.get("evidence") or [] if isinstance(e, dict)] \
+                if isinstance(entry.get("evidence"), list) else []
+            out[key] = entry | {"evidence": evidence, "first": _num(entry.get("first")), "last": _num(entry.get("last"))}
+        return out
 
     def save(self, data: dict[str, Any]) -> None:
         write_private(self.path, json.dumps(data, ensure_ascii=False, separators=(",", ":")))
@@ -367,7 +458,7 @@ class ExampleStore:
                 if any(x.get("id") == e.record and x.get("signal") == e.signal for x in entry["evidence"]):
                     continue
                 entry["evidence"].append(e.to_json())
-                entry["evidence"] = sorted(entry["evidence"], key=lambda x: x.get("ts", 0.0))[-MAX_EVIDENCE:]
+                entry["evidence"] = sorted(entry["evidence"], key=lambda x: _num(x.get("ts")))[-MAX_EVIDENCE:]
                 entry["first"] = min(entry.get("first", e.ts), e.ts)
                 entry["last"] = max(entry.get("last", e.ts), e.ts)
                 counts["evidence"] += 1

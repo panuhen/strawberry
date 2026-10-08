@@ -14,6 +14,7 @@ import sys
 import time
 from dataclasses import replace
 from datetime import time as dtime
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -412,12 +413,21 @@ def test_a_lock_left_by_a_process_that_is_gone_is_taken_over(tmp_path):
     lock = tmp_path / "x.lock"
     lock.write_text(str(gone.pid))
     with labels.file_lock(lock, timeout_s=0.0):
-        assert lock.read_text() == str(os.getpid())
+        assert lock.read_text().startswith(f"{os.getpid()}:")
     assert not lock.exists()
-    lock.write_text(str(os.getpid()))                          # a live holder: no
+    lock.write_text(f"{os.getpid()}:other")                    # a live holder: no, however old its lock
+    os.utime(lock, (time.time() - 10_000, time.time() - 10_000))
     with pytest.raises(TimeoutError):
-        with labels.file_lock(lock, timeout_s=0.0):
+        with labels.file_lock(lock, timeout_s=0.0, stale_s=1.0):
             pass
+    assert lock.read_text() == f"{os.getpid()}:other"
+
+
+def test_a_lock_is_removed_on_the_way_out_only_while_it_is_still_ours(tmp_path):
+    lock = tmp_path / "x.lock"
+    with labels.file_lock(lock, timeout_s=0.0):
+        lock.write_text("4242:someone-else")                   # taken over meanwhile
+    assert lock.read_text() == "4242:someone-else"
 
 
 async def test_forget_deletes_the_examples_and_ignores_the_old_records(world):
@@ -707,3 +717,182 @@ async def test_with_outcome_logging_off_the_idle_trainer_learns_nothing_new(worl
         assert trainer.due() == (False, "outcome logging is off")
     finally:
         await gate.close()
+
+
+# ----------------------------------------------------------------------------- the review's fixes
+
+
+@pytest.mark.linux_only
+async def test_vectors_heads_and_the_pointer_are_the_users_alone(world):
+    write_outcomes(teach(["hold everything"]))
+    loop = Learning(config(auto_switch=True))
+    result = await train(loop)
+    cache = gatecmd.cache_file("embeddinggemma-injected")
+    mode = lambda p: p.stat().st_mode & 0o777  # noqa: E731
+    assert mode(cache) == 0o600 and mode(cache.parent) == 0o700
+    assert mode(loop.heads.directory) == 0o700 and mode(loop.root) == 0o700
+    assert mode(Path(result["path"])) == 0o600 and mode(loop.heads.pointer) == 0o600
+    assert mode(loop.manifest_path(result["version"])) == 0o600 and mode(loop.state_path) == 0o600
+
+
+@pytest.mark.parametrize("content", [b"", b"PK\x03\x04 not a zip at all", "meta"])
+async def test_a_corrupt_head_falls_back_to_the_shipped_one_and_the_gate_still_starts(world, content):
+    heads = gatehead.Heads()
+    heads.directory.mkdir(parents=True, exist_ok=True)
+    path = heads.directory / "head-broken.npz"
+    if content == "meta":                                      # a zip whose meta has another shape
+        with path.open("wb") as f:
+            np.savez(f, meta=np.array(json.dumps(["not", "a", "dict"])))
+    else:
+        path.write_bytes(content)
+    with pytest.raises(gatehead.HeadError):
+        gatehead.load(path)
+    heads.use(path)
+    head, source, tried = gatehead.resolve()
+    assert source == "shipped" and head.version == world.shipped.version and tried
+    gate = await fake_gate()
+    try:
+        assert gate.ready and gate.scorer == "head" and gate.head.version == world.shipped.version
+    finally:
+        await gate.close()
+
+
+@pytest.mark.parametrize("name", ["/etc/passwd", "../head-x.npz", "sub/head-x.npz", "learned.json", "head-..npz"])
+def test_a_current_pointer_that_names_anything_but_a_head_here_is_ignored(name):
+    heads = gatehead.Heads()
+    heads.directory.mkdir(parents=True, exist_ok=True)
+    heads.pointer.write_text(name + "\n")
+    assert heads.current() is None
+    assert gatehead.resolve()[1] in ("shipped", "")
+
+
+async def test_a_corrupt_vector_cache_is_made_again(world):
+    cache = gatecmd.cache_file("embeddinggemma-injected")
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(b"")
+    gate = await fake_gate()
+    try:
+        got = await gatecmd.embed(gate, ["hold everything"], "", cache)
+    finally:
+        await gate.close()
+    assert got.shape == (1, 64)
+    with np.load(cache) as data:
+        assert len(data["keys"]) == 1
+
+
+async def test_forget_while_a_run_is_going_discards_its_head_even_with_auto_switch(world):
+    write_outcomes(teach(["hold everything", "freeze the music"]))
+    loop = Learning(config(auto_switch=True))
+
+    async def runner(job):
+        result = await learnfit.run(job)
+        await asyncio.to_thread(loop.forget, False, 0.0)       # the run holds the lock: forget goes on without it
+        return result
+
+    result = await train(loop, runner=runner)
+    assert result == {"trained": False, "why": "what it learned from was forgotten while it ran"}
+    assert loop.current_version() == "shipped" and loop.heads.versions() == [] and loop.state()["candidate"] is None
+    assert loop.state()["last_train"]["result"] == "forgotten" and loop.examples() == []
+
+
+async def test_forget_drops_the_candidate_waiting(world):
+    write_outcomes(teach(["hold everything"]))
+    loop = Learning(config())
+    version = (await train(loop))["version"]
+    loop.forget()
+    assert loop.state()["candidate"] is None and loop.manifest(version)["status"] == "superseded"
+    with pytest.raises(LearningError):
+        loop.accept(version)
+
+
+def test_malformed_records_and_store_entries_are_skipped_not_fatal():
+    good = rec("skip this one", "a", "undo")
+    bad = [
+        "not a record", ["a", "list"], None,
+        rec("x", "b1", "undo") | {"by": ["unhashable"]},
+        rec("x2", "b2", "correction") | {"by": "a"},
+        rec("x3", "b3", "silence") | {"route": dict(good["route"], confidence="0.4", tool_confidence=[1])},
+        rec("x4", "b4", "undo") | {"ts": "yesterday"},
+        rec("x5", "b5", "undo") | {"route": "a string"},
+        rec("x" * 600, "b6", "undo"),
+        rec("x7", "b7", "moved_on", path="thinker") | {"teacher": {"a": 1}},
+        rec("x8", "b8", "correction", by="b9"), rec("x9", "b9", "silence", tool="pause") | {"follows": "a"},
+    ]
+    got = extract(bad + [good])
+    assert ("undo", {}, {"music_tool": "skip"}, 1.0) in signals(got)
+    assert all(len(e.text) <= labels.MAX_TEXT for e in got)
+    store = ExampleStore()
+    store.merge(extract([good]))
+    data = json.loads(store.path.read_text())
+    data["examples"]["junk"] = "a string"
+    data["examples"]["junk2"] = {"text": "t", "evidence": [1, {"w": "heavy", "labels": ["x"], "avoid": {"q": 3}},
+                                                           {"w": 1.0, "signal": 5, "labels": {"kind": "chat"}}],
+                                 "first": "x", "review": 7}
+    data["gone"]["g"] = "nope"
+    store.path.write_text(json.dumps(data))
+    rows = {e.key: e for e in store.examples(QUESTIONS)}
+    assert "junk" not in rows and rows["junk2"].labels == {"kind": "chat"} and rows["junk2"].review == "auto"
+    assert store.stats()["examples"] == 2 and store.gone() == {}
+    assert store.merge(extract([rec("skip that", "c", "undo")]))["examples"] == 1
+
+
+async def test_a_failing_tick_logs_the_type_only(world, monkeypatch, caplog):
+    monkeypatch.setattr(learning, "TICK_S", 0.01)
+    trainer = IdleTrainer(daemon_like(config(), None))
+
+    async def tick():
+        raise ValueError(f"the sentence {CANARY}")
+
+    trainer.tick = tick
+    with caplog.at_level(logging.DEBUG):
+        trainer.start()
+        await asyncio.sleep(0.1)
+        await trainer.close()
+    messages = [r.getMessage() for r in caplog.records if r.name == "strawberryd.learning"]
+    assert any("ValueError" in m for m in messages) and not any(CANARY in m for m in messages)
+
+
+async def test_a_timeout_inside_the_run_is_not_busy():
+    loop = Learning()
+    with pytest.raises(TimeoutError):
+        with loop._training():
+            raise TimeoutError("the run's own")
+    with loop._training():                                     # and the lock was given back
+        pass
+
+
+async def test_the_child_is_killed_after_its_timeout_and_its_stderr_never_comes_back(monkeypatch):
+    class Garbage:
+        def to_bytes(self):
+            return f"not a job {CANARY}".encode()
+
+    with pytest.raises(LearningError) as failed:
+        await learning.run_child(Garbage())                    # the child fails on it: type only
+    assert CANARY not in str(failed.value) and "the trainer failed" in str(failed.value)
+    monkeypatch.setattr(learning, "CHILD_TIMEOUT_S", 0.01)
+    with pytest.raises(LearningError, match="took over"):
+        await learning.run_child(Garbage())
+
+
+@pytest.mark.parametrize("version", ["../x", "/etc/passwd", "a/b", "..", "x y", ""])
+def test_version_names_are_checked_before_any_path_is_built(version):
+    loop = Learning()
+    for call in (loop.accept, loop.reject, loop.use):
+        with pytest.raises(LearningError):
+            call(version) if version else call("bad name")
+    assert loop.manifest(version) is None
+
+
+async def test_last_error_is_the_type_only(world):
+    write_outcomes(teach(["hold it"]))
+    gate = await fake_gate()
+
+    async def runner(job):
+        raise RuntimeError(f"a library printed {CANARY}")
+
+    trainer = IdleTrainer(daemon_like(config(min_new_labels=1, idle_minutes=10), gate), runner=runner)
+    try:
+        await trainer.run()
+    finally:
+        await gate.close()
+    assert trainer.last_error == "RuntimeError" and CANARY not in json.dumps(trainer.health())
