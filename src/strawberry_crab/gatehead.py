@@ -17,6 +17,10 @@ The gate checks a head against its embedder and its questions at start and falls
 scorer, saying why, when it does not match.
 
 Training is plain numpy (L-BFGS on the convex loss): no new dependency, a few seconds per question.
+
+A row can also say what a sentence is *not* (`Sample.avoid`): the learning loop's "that reflex was
+wrong" (learning.py, WIRING.md §8d). Such a row's loss is -log(1 - p(option)), which pushes that
+option down and leaves the others to the rest of the data; it is still convex.
 """
 
 from __future__ import annotations
@@ -251,24 +255,45 @@ def typesafe(probabilities: np.ndarray) -> np.ndarray:
     return np.maximum(0.0, (n * probabilities.max(axis=1) - 1.0) / (n - 1))
 
 
-def balanced_weights(y: np.ndarray, k: int) -> np.ndarray:
-    counts = np.bincount(y, minlength=k).astype(np.float64)
-    per_class = np.where(counts > 0, len(y) / (k * np.maximum(counts, 1)), 0.0)
-    return per_class[y]
+def balanced_weights(y: np.ndarray, k: int, negative: np.ndarray | None = None) -> np.ndarray:
+    """Every class the same total weight, counted on the rows that say what a sentence is; a row
+    that only says what it is not (`negative`) weighs 1."""
+    positive = np.ones(len(y), bool) if negative is None else ~negative
+    counts = np.bincount(y[positive], minlength=k).astype(np.float64)
+    per_class = np.where(counts > 0, positive.sum() / (k * np.maximum(counts, 1)), 0.0)
+    return np.where(positive, per_class[y], 1.0)
 
 
-def _loss(params: np.ndarray, x: np.ndarray, y: np.ndarray, w: np.ndarray, k: int, l2: float):
+def _log_likelihood(z: np.ndarray, y: np.ndarray, negative: np.ndarray | None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per row: log p(y), or log(1 - p(y)) for a negative row; the probabilities; and the target the
+    gradient pulls them to (one-hot, or for a negative row the other options renormalised)."""
+    rows = np.arange(len(y))
+    z = z - z.max(axis=1, keepdims=True)
+    lse = np.log(np.exp(z).sum(axis=1, keepdims=True))
+    log_p = z - lse
+    p = np.exp(log_p)
+    target = np.zeros_like(p)
+    target[rows, y] = 1.0
+    ell = log_p[rows, y]
+    if negative is not None and negative.any():
+        rest = z.copy()
+        rest[rows, y] = -np.inf
+        top = rest.max(axis=1, keepdims=True)
+        lse_rest = top + np.log(np.exp(rest - top).sum(axis=1, keepdims=True))
+        ell = np.where(negative, (lse_rest - lse)[:, 0], ell)
+        target = np.where(negative[:, None], np.exp(rest - lse_rest), target)
+    return ell, p, target
+
+
+def _loss(params: np.ndarray, x: np.ndarray, y: np.ndarray, w: np.ndarray, k: int, l2: float,
+          negative: np.ndarray | None = None):
     d = x.shape[1]
     weights = params[: k * d].reshape(k, d)
     bias = params[k * d:]
-    z = x @ weights.T + bias
-    z -= z.max(axis=1, keepdims=True)
-    log_p = z - np.log(np.exp(z).sum(axis=1, keepdims=True))
+    ell, p, target = _log_likelihood(x @ weights.T + bias, y, negative)
     total = w.sum()
-    loss = -(w * log_p[np.arange(len(y)), y]).sum() / total + 0.5 * l2 * (weights * weights).sum()
-    residual = np.exp(log_p)
-    residual[np.arange(len(y)), y] -= 1.0
-    residual *= (w / total)[:, None]
+    loss = -(w * ell).sum() / total + 0.5 * l2 * (weights * weights).sum()
+    residual = (p - target) * (w / total)[:, None]
     grad_w = residual.T @ x + l2 * weights
     grad_b = residual.sum(axis=0)
     return loss, np.concatenate((grad_w.ravel(), grad_b))
@@ -322,47 +347,48 @@ def lbfgs(fun, x0: np.ndarray, iterations: int = 500, memory: int = 10, toleranc
     return x
 
 
-def fit(x: np.ndarray, y: np.ndarray, k: int, l2: float, sample: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+def fit(x: np.ndarray, y: np.ndarray, k: int, l2: float, sample: np.ndarray | None = None,
+        negative: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Weights and bias on the unit vectors `x` for labels `y` (0..k-1): features standardised for the
     fit, the standardisation folded back into W and b, so the head reads the raw unit vector. `sample`
-    weighs rows on top of the balanced class weights (the gate's own examples count more)."""
+    weighs rows on top of the balanced class weights (the gate's own examples count more); a row in
+    `negative` says the sentence is not y."""
     mean = x.mean(axis=0)
     scale = x.std(axis=0) + 1e-6
     xs = (x - mean) / scale
-    w = balanced_weights(y, k) * (sample if sample is not None else 1.0)
+    w = balanced_weights(y, k, negative) * (sample if sample is not None else 1.0)
     d = x.shape[1]
-    params = lbfgs(lambda p: _loss(p, xs, y, w, k, l2), np.zeros(k * d + k))
+    params = lbfgs(lambda p: _loss(p, xs, y, w, k, l2, negative), np.zeros(k * d + k))
     weights = params[: k * d].reshape(k, d)
     bias = params[k * d:]
     folded = weights / scale
     return folded, bias - folded @ mean
 
 
-def nll(logits: np.ndarray, y: np.ndarray, temperature: float, w: np.ndarray | None = None) -> float:
-    z = logits / temperature
-    z = z - z.max(axis=1, keepdims=True)
-    log_p = z - np.log(np.exp(z).sum(axis=1, keepdims=True))
-    picked = log_p[np.arange(len(y)), y]
+def nll(logits: np.ndarray, y: np.ndarray, temperature: float, w: np.ndarray | None = None,
+        negative: np.ndarray | None = None) -> float:
+    picked, _, _ = _log_likelihood(logits / temperature, y, negative)
     if w is None:
         return float(-picked.mean())
     return float(-(w * picked).sum() / w.sum())
 
 
-def fit_temperature(logits: np.ndarray, y: np.ndarray, w: np.ndarray | None = None) -> float:
+def fit_temperature(logits: np.ndarray, y: np.ndarray, w: np.ndarray | None = None,
+                    negative: np.ndarray | None = None) -> float:
     """The T that minimises the (weighted) log loss of softmax(logits / T): golden section on log T."""
     lo, hi = math.log(0.05), math.log(20.0)
     ratio = (math.sqrt(5) - 1) / 2
     a, b = hi - ratio * (hi - lo), lo + ratio * (hi - lo)
-    fa, fb = nll(logits, y, math.exp(a), w), nll(logits, y, math.exp(b), w)
+    fa, fb = nll(logits, y, math.exp(a), w, negative), nll(logits, y, math.exp(b), w, negative)
     for _ in range(60):
         if fa < fb:
             hi, b, fb = b, a, fa
             a = hi - ratio * (hi - lo)
-            fa = nll(logits, y, math.exp(a), w)
+            fa = nll(logits, y, math.exp(a), w, negative)
         else:
             lo, a, fa = a, b, fb
             b = lo + ratio * (hi - lo)
-            fb = nll(logits, y, math.exp(b), w)
+            fb = nll(logits, y, math.exp(b), w, negative)
     return round(math.exp((lo + hi) / 2), 4)
 
 
@@ -372,16 +398,18 @@ def folds(groups: Sequence[str], n: int = FOLDS) -> np.ndarray:
 
 
 def out_of_fold(x: np.ndarray, y: np.ndarray, k: int, l2: float, fold: np.ndarray,
-                sample: np.ndarray | None = None) -> np.ndarray:
+                sample: np.ndarray | None = None, negative: np.ndarray | None = None) -> np.ndarray:
     """Logits for every row from a head fitted without its fold."""
     logits = np.zeros((len(y), k))
     if len(np.unique(fold)) < 2:
         raise HeadError("every row is in one fold: too few groups to validate on")
+    positive = np.ones(len(y), bool) if negative is None else ~negative
     for f in np.unique(fold):
         held = fold == f
-        if len(np.unique(y[~held])) < k:
+        if len(np.unique(y[~held & positive])) < k:
             raise HeadError(f"fold {f} leaves an option without training rows: too few groups for it")
-        weights, bias = fit(x[~held], y[~held], k, l2, sample[~held] if sample is not None else None)
+        weights, bias = fit(x[~held], y[~held], k, l2, sample[~held] if sample is not None else None,
+                            negative[~held] if negative is not None else None)
         logits[held] = x[held] @ weights.T + bias
     return logits
 
@@ -411,6 +439,11 @@ class Sample:
     labels: dict[str, str]       # question -> option; a question the sentence does not answer is absent
     group: str                   # generation call: rows of one group share a fold
     weight: float = 1.0          # BASE_WEIGHT for the gate's own examples
+    avoid: dict[str, str] = field(default_factory=dict)      # question -> an option the sentence is not
+    weights: dict[str, float] = field(default_factory=dict)  # question -> weight, in place of `weight`
+
+    def weight_for(self, question: str) -> float:
+        return self.weights.get(question, self.weight)
 
 
 def read_dataset(path: Path = TRAIN_SET) -> tuple[list[Sample], str]:
@@ -438,39 +471,50 @@ def train(samples: Sequence[Sample], vectors: np.ndarray, questions: dict[str, S
     for name, options in questions.items():
         started = time.perf_counter()
         index = {o: i for i, o in enumerate(options)}
-        rows = np.array([i for i, s in enumerate(samples) if s.labels.get(name) in index])
+        rows = np.array([i for i, s in enumerate(samples)
+                         if s.labels.get(name) in index or s.avoid.get(name) in index])
         if len(rows) == 0:
             raise HeadError(f"no training rows for {name}")
-        y = np.array([index[samples[i].labels[name]] for i in rows])
-        missing = [o for o in options if index[o] not in set(y.tolist())]
+        # A row that says what the sentence is wins over one that says what it is not.
+        negative = np.array([samples[i].labels.get(name) not in index for i in rows])
+        y = np.array([index[samples[i].labels[name]] if not neg else index[samples[i].avoid[name]]
+                      for i, neg in zip(rows, negative)])
+        positive = ~negative
+        missing = [o for o in options if index[o] not in set(y[positive].tolist())]
         if missing:
             raise HeadError(f"{name}: no training rows for {missing}")
         x, fold, k = vectors[rows], fold_all[rows], len(options)
-        sample = np.array([samples[i].weight for i in rows])
-        w = balanced_weights(y, k)
+        sample = np.array([samples[i].weight_for(name) for i in rows])
+        neg = negative if negative.any() else None
+        w = balanced_weights(y, k, neg)
         best = None
         for l2 in l2_grid:
-            logits = out_of_fold(x, y, k, l2, fold, sample)
-            t = fit_temperature(logits, y, w)
-            loss = nll(logits, y, t, w)
+            logits = out_of_fold(x, y, k, l2, fold, sample, neg)
+            t = fit_temperature(logits, y, w, neg)
+            loss = nll(logits, y, t, w, neg)
             if best is None or loss < best[0]:
                 best = (loss, l2, t, logits)
         loss, l2, temperature, logits = best
-        if (logits.argmax(axis=1) == y).all():
+        right = np.where(positive, logits.argmax(axis=1) == y, logits.argmax(axis=1) != y)
+        if right.all():
             # Not one answer wrong out of fold: the log loss falls as T does, to the edge of the search.
             # Nothing to calibrate against, so the fit's own scale stands.
             temperature = 1.0
-            loss = nll(logits, y, temperature, w)
+            loss = nll(logits, y, temperature, w, neg)
         p = softmax_rows(logits / temperature)
-        oof[name] = (rows, y, p)
-        weights, bias = fit(x, y, k, l2, sample)
+        oof[name] = (rows[positive], y[positive], p[positive])
+        weights, bias = fit(x, y, k, l2, sample, neg)
         heads[name] = QuestionHead(tuple(options), weights, bias, temperature)
-        accuracy = float((p.argmax(axis=1) == y).mean())
-        balanced = float(np.mean([(p.argmax(axis=1)[y == c] == c).mean() for c in range(k)]))
+        yp, pp = y[positive], p[positive]
+        accuracy = float((pp.argmax(axis=1) == yp).mean())
+        balanced = float(np.mean([(pp.argmax(axis=1)[yp == c] == c).mean() for c in range(k)]))
         report["questions"][name] = {"rows": int(len(rows)), "l2": l2, "temperature": temperature,
                                      "oof_accuracy": round(accuracy, 4), "oof_balanced": round(balanced, 4),
                                      "oof_nll": round(loss, 4),
-                                     "counts": {o: int((y == i).sum()) for o, i in index.items()}}
+                                     "counts": {o: int((yp == i).sum()) for o, i in index.items()}}
+        if neg is not None:
+            report["questions"][name]["avoid"] = {"rows": int(negative.sum()),
+                                                  "oof_kept_off": round(float(right[negative].mean()), 4)}
         if progress:
             progress(f"{name}: {len(rows)} rows, L2 {l2}, T {temperature}, out-of-fold {accuracy:.3f} "
                      f"({time.perf_counter() - started:.1f}s)")
