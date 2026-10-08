@@ -78,7 +78,7 @@ async def embed(gate, texts: list[str], prefix: str, cache: Path | None = None, 
         try:
             with np.load(cache, allow_pickle=False) as data:
                 known = dict(zip(data["keys"].tolist(), data["vectors"]))
-        except (OSError, ValueError, KeyError):
+        except Exception:  # noqa: BLE001 - a broken cache is made again, never a failure
             known = {}
     first = {k: i for i, k in reversed(list(enumerate(keys)))}      # a text asked for twice is embedded once
     todo = sorted(i for k, i in first.items() if k not in known)
@@ -94,9 +94,10 @@ async def embed(gate, texts: list[str], prefix: str, cache: Path | None = None, 
             added += len(part)
     finally:
         if cache is not None and added:
-            cache.parent.mkdir(parents=True, exist_ok=True)
+            # Vectors of the user's sentences once the learning loop embeds them: the user's alone.
+            paths.private_dir(cache.parent)
             tmp = cache.with_name(cache.name + ".tmp")
-            with tmp.open("wb") as f:
+            with paths.open_private(tmp) as f:
                 np.savez(f, keys=np.array(list(known)), vectors=np.stack(list(known.values())))
             tmp.replace(cache)
     return np.stack([known[k] for k in keys]).astype(np.float64)

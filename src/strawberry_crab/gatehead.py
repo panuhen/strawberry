@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +53,9 @@ ACTIONABLE = ("request", "question")
 L2_GRID = (0.003, 0.01, 0.03, 0.1, 0.3)
 BASE_WEIGHT = 2.0              # a hand-written gate example counts as two generated sentences
 FOLDS = 5
+
+
+POINTER_NAME = re.compile(r"head-[A-Za-z0-9._-]+\.npz")
 
 
 class HeadError(ValueError):
@@ -122,9 +126,11 @@ class Head:
             "meta": self.meta,
         }
         arrays["meta"] = np.array(json.dumps(meta, ensure_ascii=False))
+        from . import paths
+
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
-        with tmp.open("wb") as f:
+        with paths.open_private(tmp) as f:      # trained on the user's sentences, once the loop adds them
             np.savez_compressed(f, **arrays)
         tmp.replace(path)
         self.path = path
@@ -146,15 +152,16 @@ def load(path: Path) -> Head:
                 if weights.shape != (len(options), meta["dims"]) or bias.shape != (len(options),):
                     raise HeadError(f"{path}: {name} has the wrong shape")
                 questions[name] = QuestionHead(options, weights, bias, float(spec["temperature"]))
+            head = Head(questions, str(meta["embedder"]), str(meta["query_prefix"]), int(meta["dims"]),
+                        float(meta["act"]), float(meta["offer"]), meta.get("dataset", ""), meta.get("version", ""),
+                        meta.get("created", ""), meta.get("meta", {}), path)
     except HeadError:
         raise
     except FileNotFoundError:
         raise HeadError(f"{path} does not exist") from None
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise HeadError(f"{path}: {exc}") from exc
-    return Head(questions, meta["embedder"], meta["query_prefix"], int(meta["dims"]), float(meta["act"]),
-                float(meta["offer"]), meta.get("dataset", ""), meta.get("version", ""), meta.get("created", ""),
-                meta.get("meta", {}), path)
+    except Exception as exc:  # noqa: BLE001 - an empty file (EOFError), a broken zip, a meta of another shape
+        raise HeadError(f"{path}: unreadable ({type(exc).__name__})") from exc
+    return head
 
 
 def normalise_model(name: str) -> str:
@@ -184,14 +191,24 @@ class Heads:
         return sorted(self.directory.glob("head-*.npz")) if self.directory.is_dir() else []
 
     def current(self) -> Path | None:
-        """The file `current` names, or None when there is no pointer."""
+        """The file `current` names, or None when there is no pointer, or when it names anything but a
+        `head-*.npz` in this directory (a path, a separator, `..`): then the shipped head is used."""
         try:
             name = self.pointer.read_text(encoding="utf-8").strip()
-        except OSError:
+        except (OSError, ValueError):
             return None
-        return self.directory / name if name else None
+        if not name:
+            return None
+        if not POINTER_NAME.fullmatch(name) or ".." in name:
+            log.warning("gate: the heads dir's current pointer names no head file there; ignoring it")
+            return None
+        return self.directory / name
 
     def add(self, head: Head, activate: bool = False) -> Path:
+        from . import paths
+
+        paths.private_dir(self.directory.parent)
+        paths.private_dir(self.directory)
         path = head.save(self.directory / f"head-{head.version}.npz")
         if activate:
             self.use(path)
@@ -204,9 +221,12 @@ class Heads:
             return
         if path.parent.resolve() != self.directory.resolve():
             raise HeadError(f"{path} is not in {self.directory}")
-        self.directory.mkdir(parents=True, exist_ok=True)
+        from . import paths
+
+        paths.private_dir(self.directory)
         tmp = self.pointer.with_name("current.tmp")
-        tmp.write_text(path.name + "\n", encoding="utf-8")
+        with paths.open_private(tmp, "w", encoding="utf-8") as f:
+            f.write(path.name + "\n")
         tmp.replace(self.pointer)
 
     def find(self, version: str) -> Path:
