@@ -113,6 +113,51 @@ def test_result_text_and_soft_errors():
     assert not looks_like_error("{not json")
 
 
+@dataclass
+class OldSdkResult:
+    """A result as the 1.x SDK spells it: camelCase fields, no `is_error` at all."""
+    content: list[FakeContent]
+    isError: bool = False
+    structuredContent: Any = None
+
+
+def test_the_error_flag_is_read_however_it_is_spelt():
+    from mcp.types import CallToolResult, TextContent
+
+    from strawberry_crab.tools import flagged_error
+
+    assert flagged_error(CallToolResult(content=[TextContent(type="text", text="nope")], is_error=True))
+    assert not flagged_error(CallToolResult(content=[TextContent(type="text", text="fine")]))
+    assert flagged_error(OldSdkResult([FakeContent("nope")], isError=True))
+    assert not flagged_error(OldSdkResult([FakeContent("fine")]))
+    assert flagged_error({"content": [{"type": "text", "text": "nope"}], "isError": True})
+    assert flagged_error({"content": [], "is_error": True})
+    assert not flagged_error({"content": [{"type": "text", "text": "fine"}]})
+    assert result_text({"content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}) == "a\nb"
+    assert result_text(OldSdkResult([], structuredContent={"x": 1})) == '{"x": 1}'
+    assert result_text({"content": [], "structuredContent": {"x": 1}}) == '{"x": 1}'
+
+
+async def test_a_flagged_error_with_a_plain_body_is_not_ok_whichever_sdk():
+    """Only the flag says this one failed: the body is a plain sentence, not an `{"error": …}`."""
+    async def handler(name: str, arguments: dict):
+        if name == "old":
+            return OldSdkResult([FakeContent("Playlist not found.")], isError=True)
+        if name == "wire":
+            return {"content": [{"type": "text", "text": "Playlist not found."}], "isError": True}
+        return OldSdkResult([FakeContent("Added.")])
+
+    session = FakeSession([FakeTool("old"), FakeTool("wire"), FakeTool("fine")], handler)
+    box = toolbox({"music": {"topic": "music", "command": "music"}}, {"music": session})
+    for name in ("old", "wire"):
+        result = await box.call("music", name)
+        assert not result.ok and result.text == "Playlist not found.", name
+    fine = await box.call("music", "fine")
+    assert fine.ok and fine.text == "Added."
+    assert box.servers["music"].stats()["failures"] == 2
+    await box.close()
+
+
 def test_toolspec_for_ollama_uses_function_name_and_schema():
     spec = ToolSpec("spotify", "next", "Skip.", {"type": "object", "properties": {"device_id": {"type": "string"}}}, function="spotify_next")
     tool = spec.for_ollama()

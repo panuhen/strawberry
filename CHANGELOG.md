@@ -9,6 +9,19 @@ package and the widget binary.
 
 ### Added
 
+- Spotify likes and playlists by name, with the Spotify MCP server's new tools. "I like this"
+  and "save this song" put the playing track in your Liked Songs at once, without the big model
+  ("Liked: Blue Monday by New Order."); your local favourites stay for "add this to my
+  favourites". "Add this to my gym playlist", "play my running playlist" and "take this off my
+  gym playlist" pass the name as heard and the server finds the playlist, misheard names
+  included. When several playlists match she asks which one, naming at most three. Adding and
+  liking are offered with every sentence (each is undone in a word, and duplicates are skipped);
+  removing from a playlist and making one are careful tools, offered only when you ask for such a
+  change. Add `remove_from_playlist` and `create_playlist` to the server's `careful` list (the
+  config template has them). An older server without these tools works as before.
+- Adapters can name reflexes by the sentence's own words, for commands the gate has no option
+  for, and give their paragraph for the brain only to a server that lists the tools it names
+  (ADAPTERS.md).
 - Web search, with a SearXNG instance of your own and the `mcp-searxng` MCP server in
   `[tools.servers.web]` (README: *Web search*). She searches when you ask ("look up…", "search
   the web for…", "google…") and when a question depends on something current (weather, news,
@@ -52,6 +65,10 @@ package and the widget binary.
 
 ### Changed
 
+- Spotify failures are worded by the server's error code: "I can't reach Spotify right now",
+  "Spotify needs signing in again", and otherwise the server's own sentence without its hints for
+  a terminal. Before, a network failure came out as "…but Spotify said: Could not reach Spotify.
+  Check the internet connection and try again..". Errors from an older server read as before.
 - The thinker offers the tools in the same order for every sentence while they fit
   `max_tools`, so Ollama reuses its cached prompt: putting the gate's topic first re-read the
   whole prompt whenever the topic changed (2.1-2.7 s instead of ~0.3 s). Over the cap the topic
@@ -94,6 +111,18 @@ package and the widget binary.
 
 ### Fixed
 
+- Web search no longer reads a page whose site name points at a private address. The page
+  address was checked as written (no IP addresses, no internal names), but a public-looking name
+  can resolve to the machine itself or the home network (`localtest.me` is 127.0.0.1). The name
+  is now looked up first, with 1.5 seconds to answer, and the page is not read if any address is
+  loopback, private, link-local, CGNAT, multicast or reserved, or if the name does not resolve.
+  The search server's own address filter stays as a second layer, against DNS answers that change
+  between the check and the fetch.
+- A tool result with the MCP error flag set is read as a failure under either spelling of the
+  flag: `is_error` (the `mcp` 2.x SDK) and `isError` (1.x, which the dependency range allows, and
+  a result as a dict). Under 1.x only an `{"error": …}` body was caught, so a server that flagged
+  an error with a plain sentence was taken as a success. The structured content is read under
+  both spellings too.
 - Whisper on CUDA no longer stops working when the GPU is full. Ollama cannot free VRAM for
   whisper, so when Qwen loads first a CUDA load or a transcription failed with "CUDA failed with
   error out of memory". Whisper now moves to the CPU (`int8`) and the failed sentence is

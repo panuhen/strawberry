@@ -23,6 +23,8 @@ What it adds over the plain tool list:
                     choosing with something of the user's in it (with Thinker._run's half,
                     which takes the private context out once a result is in, and refuses the
                     other servers' tools).
+    screen          just before a page is read, its host is looked up and every address it
+                    resolves to must be public: a public-looking name can point at 127.0.0.1.
     guide           when to search and how to say what was found (no URLs read aloud).
     wanted, nudge   an explicit "search the web for…", "look up…", "google…", or a question
                     about now, today, the latest or the weather, gets a line under the sentence
@@ -37,10 +39,12 @@ never does (daemon.handle_notification has no tools), so nothing in a notificati
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import json
 import re
+import socket
 from typing import Any
-import ipaddress
 from urllib.parse import quote, urlparse
 
 from ..tools import ToolSpec
@@ -287,6 +291,71 @@ def canonical(url: str) -> tuple[str, str]:
     return forward, key
 
 
+# `canonical` reads the name; this reads what the name points at. A public-looking name can resolve
+# to a private or loopback address (localtest.me is 127.0.0.1, *.nip.io is any address you write
+# into it, and an attacker's DNS says whatever it likes), so before a page is read its host is
+# looked up and every address must be one the internet routes. One private answer among public
+# ones refuses it too: the fetch may pick any of them. A name that does not resolve in time is
+# refused as well. What stays open is DNS rebinding, an answer that changes between this lookup
+# and the fetch: the server that fetches resolves again, and filtering its own connections is
+# its job (mcp-searxng's reader refuses private addresses at connect time), as a second layer.
+RESOLVE_TIMEOUT_S = 1.5
+CGNAT = ipaddress.ip_network("100.64.0.0/10")
+UNIQUE_LOCAL = ipaddress.ip_network("fc00::/7")
+NAT64 = ipaddress.ip_network("64:ff9b::/96")   # the well-known prefix: an IPv4 address inside
+
+
+def public_address(address: str) -> bool:
+    """Is this an address the internet routes? Not loopback, private, link-local, CGNAT,
+    multicast, reserved, unspecified or unique-local, nor an IPv6 form of one of those (IPv4-mapped,
+    NAT64; 6to4 and Teredo are refused outright)."""
+    try:
+        ip = ipaddress.ip_address(str(address).split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return public_address(str(ip.ipv4_mapped))
+        if ip in NAT64:
+            return public_address(str(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)))
+        if ip in UNIQUE_LOCAL or ip.is_site_local:
+            return False
+    elif ip in CGNAT:
+        return False
+    if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        return False
+    return ip.is_global
+
+
+async def lookup(host: str, port: int) -> list[str]:
+    """The addresses a host name resolves to, from the event loop's resolver (a thread: it never
+    blocks the loop), within RESOLVE_TIMEOUT_S."""
+    loop = asyncio.get_running_loop()
+    infos = await asyncio.wait_for(loop.getaddrinfo(host, port, type=socket.SOCK_STREAM), RESOLVE_TIMEOUT_S)
+    return [str(info[4][0]) for info in infos]
+
+
+async def resolves_public(url: str) -> str | None:
+    """None when every address the URL's host resolves to is public, else why it is not read."""
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    try:
+        port = parsed.port or DEFAULT_PORTS.get(parsed.scheme, 443)
+    except ValueError:
+        return "not a port"
+    if not host:
+        return "no address"
+    try:
+        addresses = await lookup(host, port)
+    except (OSError, asyncio.TimeoutError, UnicodeError, ValueError):
+        return "its name could not be looked up"
+    if not addresses:
+        return "its name could not be looked up"
+    if not all(public_address(a) for a in addresses):
+        return "it points to a private address"
+    return None
+
+
 NOT_FROM_RESULTS = ("Not done: only a URL from this question's search results can be read. Answer from the results "
                     "you have.")
 AFTER_READ = "Not done: one page a question, and no searching after it. Answer now from what you have."
@@ -381,6 +450,13 @@ class WebAdapter(Adapter):
             _, key = canonical(arguments["url"])
             return {**arguments, "url": state["urls"][key]}
         return dict(arguments)
+
+    async def screen(self, state: dict[str, Any], name: str, arguments: dict[str, Any]) -> str | None:
+        # The URL `forward` will send, pinned and canonical: does its host point anywhere private?
+        if name not in READ_TOOLS:
+            return None
+        why = await resolves_public(str(arguments.get("url", "")))
+        return BAD_URL.format(why=why) if why else None
 
     def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool) -> None:
         if name in SEARCH_TOOLS and ok:

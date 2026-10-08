@@ -48,6 +48,7 @@ An adapter is for a server you use every day, where the generic path is not good
 | | why |
 |---|---|
 | `reflexes` | "skip this" done in one round trip instead of a 27B model's six seconds |
+| `said_reflexes`, `said_reflex` | a command the gate has no option for ("I like this"), known by the whole sentence's words |
 | `situation` | one line the brain is told before it starts, so "this song" means something |
 | `vocabulary` | names the speech recogniser should know ("Daft Punk" came through as Dove Punk) |
 | `clarify_error` | this server's confusing refusals, reworded before a model reads them |
@@ -56,10 +57,10 @@ An adapter is for a server you use every day, where the generic path is not good
 | `tools`, `shape_tool` | the only tools of the server the brain sees, and shorter schemas for them |
 | `shape_result` | a result made compact before it is cut to `result_chars` |
 | `log_result` | what the journal says of a call when the result must stay out of it |
-| `guide`, `unavailable` | a paragraph for the brain's rules when its tools are offered, or when the server is down |
+| `guide`, `guide_for`, `unavailable` | a paragraph for the brain's rules when its tools are offered (`guide_for`: only for a server that lists the tools it names), or when the server is down |
 | `wanted`, `nudge` | whether a sentence asks for this server outright, and the line added under it |
 | `max_calls` | how many calls to its tools one sentence may make |
-| `untrusted`, `guard`, `forward`, `observe` | its results are strangers' text: what may follow one, in what form a call is sent |
+| `untrusted`, `guard`, `forward`, `screen`, `observe` | its results are strangers' text: what may follow one, in what form a call is sent, and a last check that may wait on the network |
 | `claims_tools` | tool names that give a server this adapter whatever it is called |
 
 Every one is optional. An adapter is loaded **only** when a configured server matches it, so an
@@ -131,7 +132,8 @@ Rules the core relies on:
 - **An `untrusted` server's results are never trusted.** Once one is in a conversation, the
   thinker takes the ledger, the situation (but the date) and the other servers' results out of
   it, refuses every other server's tool, and leaves three rounds; the adapter's `guard` decides
-  each further call and `forward` sends it in the form that was checked.
+  each further call, `forward` sends it in the form that was checked, and `screen` may still refuse
+  it on a check that waits on the network (a DNS lookup).
 
 Tests: `tests/test_adapters.py` covers matching and the routing above it, and
 `tests/test_adapter_spotify.py` covers one adapter's own behaviour against a fake server. A new
@@ -142,9 +144,9 @@ adapter wants the same pair.
 The worked example, `strawberry/adapters/spotify.py`. Its server is a separate MCP wrapper around
 the Spotify Web API, not shipped with her: you install it, register a Spotify app and authorise it
 once. The one this adapter was written against is
-[panuhen/spotify-mcp](https://github.com/panuhen/spotify-mcp) (25 tools over the Web API). The adapter binds to the tool names that wrapper exposes (`next`, `previous`,
+[panuhen/spotify-mcp](https://github.com/panuhen/spotify-mcp) (30 tools over the Web API). The adapter binds to the tool names that wrapper exposes (`next`, `previous`,
 `pause`, `play`, `get_current_track`, `get_devices`, `set_volume`, `get_playlists`,
-`get_favorites`, `get_saved_tracks`); a different wrapper with other names needs its own adapter.
+`get_favorites`, `get_saved_tracks`, `like_current`); a different wrapper with other names needs its own adapter.
 Then:
 
 ```toml
@@ -152,8 +154,41 @@ Then:
 topic = "music"
 command = "spotify-mcp"      # or the full path into its venv
 careful = ["save_tracks", "remove_saved_tracks", "add_to_playlist",
-           "favorite_current", "remove_favorite", "clear_favorites"]
+           "favorite_current", "remove_favorite", "clear_favorites",
+           "remove_from_playlist", "create_playlist"]
 ```
+
+`like_current` and `add_current_to_playlist` are not in that list on purpose: each is undone in a
+word and the server skips a track that is already there, so they are offered with every sentence.
+Removing a track from a playlist and making a new playlist are offered only when the gate reads the
+sentence as asking for a library change (`wants_library_change` ≥ 0.5).
+
+The library by name (spotify-mcp's `like_current`, `add_current_to_playlist`, `find_playlist`,
+`remove_from_playlist`, `create_playlist`, and `play` with `playlist`):
+
+- **"I like this", "save this song"** is a reflex on the sentence's own words (`said_reflexes`): the
+  gate has no option for liking and reads "I like this" as chat, so the adapter recognises the
+  whole sentence ("I like this", "like this track", "save this song please", "add this to my liked
+  songs"; nothing longer, nothing with a name in it) and calls `like_current`: "Liked: Blue Monday
+  by New Order." It goes to Spotify's Liked Songs. The local favourites stay for sentences that say
+  "favourites". With an older server that has no `like_current`, the sentence goes to the thinker.
+- **"Add this to my gym playlist"**, **"play my running playlist"** and **"take this off my gym
+  playlist"** carry a name, so the thinker does them: `add_current_to_playlist(playlist=…)`,
+  `play(playlist=…)` and `remove_from_playlist(playlist=…, track="current")`, with the name as it
+  was heard; the server matches it, speech-to-text errors included. The adapter's `guide` names the
+  first and the last (a clause for `play` made Qwen skip the call), and its `nudge` puts a line
+  under a playlist sentence: "They asked to play their playlist 'running': do it with a tool call
+  now … Say it is done only if a tool did it." Without that line Qwen said "Blue Monday is out of
+  your gym playlist" with no call 4 times in 5.
+- **Several playlists match** is the one question she asks back: `clarify_error` tells the model to
+  ask which one, naming at most three, and a reflex says "several playlists match: Gym, Gym Mix or
+  Old Gym. Which one?"
+
+Failures are worded by the server's `code`: `network` is "I can't reach Spotify right now",
+`auth` "Spotify needs signing in again", `no_active_device` and `restricted` keep their own lines,
+and the rest say the server's sentence without its hints for a terminal ("Run spotify-mcp
+--login…", "name a device_id…"). An older server's errors, without a `code`, are read by Spotify's
+own `details` and their wording as before.
 
 What it is worth: the Web API knows the *next* track before the desktop player's metadata catches
 up, its volume is the active device's rather than the app's, and it can search, queue, and reach
@@ -161,8 +196,13 @@ playlists and saved tracks — which is where the recogniser's names come from. 
 MPRIS for exactly that reason. It costs a round trip: measured live, `skip` is 1.2 s through the
 server against 0.4 s over MPRIS, and `what song is this` is 0.46 s against 9 ms.
 
-Its 25 tools are 2382 prompt tokens of Qwen's 8192 context (measured with `prompt_eval_count`), so
-`common_tools` names the ten a sentence about music usually needs.
+Its 25 tools were 2382 prompt tokens of Qwen's 8192 context (measured with `prompt_eval_count`).
+The server's schemas are shorter now; by their size at ~3.7 characters a token (estimated, not
+measured live) all 30 are ~2500 tokens plus ~200 for the template, the five new ones ~540 of that,
+and the thirteen `common_tools` a sentence about music usually needs ~1150 (`like_current`,
+`add_current_to_playlist` and `find_playlist` among them). With the careful ones held back an
+ordinary sentence is offered 22 of them (~1800), and with the web server's two that is under
+`max_tools`. Its `guide` is ~160 tokens more, once, in the system prompt.
 
 With no Spotify server configured, nothing of that is loaded: music control is MPRIS, the gate never
 learns "save this song", and no error is described in Spotify's words.
@@ -208,7 +248,11 @@ What it adds:
   one a snippet mentions), and `forward` sends that result's canonical URL, not the model's
   string; anything two URL parsers could read differently is refused (a login part,
   backslashes, whitespace, an encoded host, a trailing dot, any IP notation, internal or
-  single-label hosts, other schemes); one page a question and no search after it.
+  single-label hosts, other schemes); one page a question and no search after it. Then `screen`
+  looks the host up (1.5 s, the event loop's resolver) and refuses the read when the name does not
+  resolve or any address it gives is not public: a public-looking name can point at 127.0.0.1.
+  A rebinding answer that changes before the fetch is left to the server, which filters its own
+  connections.
 
 Tests: `tests/test_adapter_web.py`, against a fake mcp-searxng, including one whose results and
 page carry injection text and a scripted model that obeys it.

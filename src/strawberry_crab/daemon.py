@@ -407,8 +407,10 @@ class Daemon:
         if outcome is not None:
             # A reflex: code wrote the fact, the reaction path adds the quip.
             self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
-            done_by = (getattr(self.actor, "last", None) or {}).get("server", "")
-            self.outcomes.acted(record, "reflex", outcome.ok, reflex=f"{done_by}.{route.tool}")
+            last = getattr(self.actor, "last", None) or {}
+            # The reflex's own name: the gate's tool, or one read off the words ("spotify.like").
+            self.outcomes.acted(record, "reflex", outcome.ok,
+                                reflex=f"{last.get('server', '')}.{last.get('tool') or route.tool}")
             performance, sent = await self.report(outcome.event(text), outcome.ok)
             self.ledger.record(text, performance.text or "", did=outcome.did)
             return performance, sent

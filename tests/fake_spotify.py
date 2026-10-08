@@ -29,6 +29,9 @@ class FakeSpotify:
         self.volume = 80
         self.broken = broken
         self.log: list[str] = []
+        self.liked: list[str] = []
+        self.added: list[tuple] = []
+        self.removed: list[tuple] = []
 
     async def handle(self, name: str, arguments: dict) -> FakeResult:
         self.log.append(name)
@@ -38,8 +41,27 @@ class FakeSpotify:
         if self.broken == "restricted":
             return FakeResult([FakeContent(json.dumps({"error": "Permission denied. Check app scopes.", "status": 403,
                                                        "details": "http status: 403 ... Player command failed: Restriction violated, reason: UNKNOWN"}))])
+        if self.broken in NEW_ERRORS:
+            # The server's current shape: one sentence and a code, with the MCP error flag set.
+            return FakeResult([FakeContent(json.dumps(NEW_ERRORS[self.broken]))], is_error=True)
         if self.broken:
             return FakeResult([FakeContent(json.dumps({"error": "error: no active device"}))])
+        label = f"{TRACKS[self.index]['name']} – {', '.join(TRACKS[self.index]['artists'])}"
+        if name == "like_current":
+            if label in self.liked:
+                return FakeResult([FakeContent(json.dumps({"already_liked": label}))])
+            self.liked.append(label)
+            return FakeResult([FakeContent(json.dumps({"liked": label}))])
+        if name == "add_current_to_playlist":
+            self.added.append((arguments.get("playlist"), label))
+            return FakeResult([FakeContent(json.dumps({"added": label, "playlist": arguments.get("playlist")}))])
+        if name == "remove_from_playlist":
+            self.removed.append((arguments.get("playlist"), arguments.get("track")))
+            return FakeResult([FakeContent(json.dumps({"removed": label, "playlist": arguments.get("playlist")}))])
+        if name == "find_playlist":
+            return FakeResult([FakeContent(json.dumps({"playlists": [{"name": "Running", "id": "x" * 22,
+                                                                      "uri": "spotify:playlist:" + "x" * 22,
+                                                                      "owned": True, "tracks": 12}]}))])
         if name == "next":
             self.index = (self.index + 1) % len(TRACKS)
             return FakeResult([FakeContent(json.dumps({"success": True, "message": "Skipped to next track"}))])
@@ -73,14 +95,36 @@ class FakeSpotify:
 
 TOOLS = [FakeTool(n) for n in ("next", "previous", "pause", "play", "get_current_track", "get_devices", "set_volume",
                                "get_favorites", "get_saved_tracks", "get_playlists")]
+# The by-name library tools the server gained: like the playing track, a playlist by its name.
+LIBRARY_TOOLS = [FakeTool(n) for n in ("like_current", "add_current_to_playlist", "find_playlist",
+                                       "remove_from_playlist", "create_playlist", "favorite_current")]
+
+# spotify-mcp's error shape: {"error": <one speakable sentence>, "code": <category>, "status"?, "details"?}.
+NEW_ERRORS = {
+    "network": {"error": "Could not reach Spotify. Check the internet connection and try again.", "code": "network"},
+    "auth": {"error": "The Spotify sign-in has expired. Run spotify-mcp --login in a terminal to sign in again.",
+             "code": "auth"},
+    "device": {"error": "No Spotify device is active. Open Spotify on a computer or phone, or name a device_id from "
+                        "get_devices.", "code": "no_active_device", "status": 404,
+               "details": "Player command failed: No active device found"},
+    "rate_limited": {"error": "Spotify is limiting requests right now. Try again in 30 seconds.", "code": "rate_limited",
+                     "status": 429},
+    "nothing": {"error": "Nothing is playing right now.", "code": "not_found"},
+    "premium": {"error": "That needs Spotify Premium.", "code": "premium_required", "status": 403,
+                "details": "Player command failed: Premium required"},
+    "several": {"error": "Several playlists match 'gym': Gym, Gym Mix (id 0123456789abcdefABCDEF), Gym Mix (id "
+                         "abcdefABCDEF0123456789), Old Gym, Gym 2 and 3 more. Which one?", "code": "bad_request"},
+    # An older server: the same sentence and no code.
+    "old_network": {"error": "Could not reach Spotify. Check the internet connection and try again."},
+}
 
 
-def make(broken: bool = False, actions: ActionsConfig | None = None, name: str = "spotify",
-         server: dict[str, Any] | None = None, mpris: Any | None = None):
+def make(broken: bool | str = False, actions: ActionsConfig | None = None, name: str = "spotify",
+         server: dict[str, Any] | None = None, mpris: Any | None = None, library: bool = False):
     """A fake Spotify server under `name`, its toolbox (adapters loaded as they would be live),
-    and an Actor over it."""
+    and an Actor over it. `library` adds the by-name library tools (LIBRARY_TOOLS)."""
     spotify = FakeSpotify(broken)
-    session = FakeSession(TOOLS, spotify.handle)
+    session = FakeSession(TOOLS + (LIBRARY_TOOLS if library else []), spotify.handle)
     tools = ToolsConfig(servers={name: server or {"topic": "music", "command": "spotify"}}, preconnect=False)
     toolbox = Toolbox(tools, connect=make_connect({(server or {}).get("command", "spotify"): session}))
     return spotify, toolbox, Actor(actions or ActionsConfig(), toolbox, mpris=mpris)

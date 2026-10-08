@@ -11,7 +11,7 @@ import logging
 import pytest
 
 from strawberry_crab import logtext
-from strawberry_crab.adapters import adapter_for, load
+from strawberry_crab.adapters import adapter_for, load, web
 from strawberry_crab.adapters.web import (WEB, about_now, asks_to_search, compact, count)
 from strawberry_crab.config import Config, ThinkerConfig, ToolsConfig
 from strawberry_crab.daemon import Daemon
@@ -107,6 +107,22 @@ def web_box(mode: str = "ok", tools=None, spotify: bool = False, command: str = 
 def reset_log_sentences():
     yield
     logtext.configure(False)
+
+
+PUBLIC = "93.184.215.14"
+
+
+@pytest.fixture(autouse=True)
+def public_dns(monkeypatch):
+    """No real DNS in tests: every host resolves to one public address unless a test says otherwise."""
+    looked_up: list[tuple[str, int]] = []
+
+    async def lookup(host: str, port: int) -> list[str]:
+        looked_up.append((host, port))
+        return [PUBLIC]
+
+    monkeypatch.setattr(web, "lookup", lookup)
+    return looked_up
 
 
 # ----------------------------------------------------------------------------- matching, tools
@@ -565,6 +581,117 @@ def test_an_internationalised_result_host_is_compared_and_sent_in_idna():
     state = pinned_state("https://bücher.example/katalog")
     assert WEB.forward(state, "read_page", {"url": "https://BÜCHER.example/katalog"}) == {
         "url": "https://xn--bcher-kva.example/katalog"}
+
+
+# ----------------------------------------------------------------------------- where a name points
+
+
+def resolving_to(monkeypatch, *addresses: str):
+    async def lookup(host: str, port: int) -> list[str]:
+        return list(addresses)
+
+    monkeypatch.setattr(web, "lookup", lookup)
+
+
+@pytest.mark.parametrize("addresses", [("127.0.0.1",), ("10.1.2.3",), ("169.254.169.254",), ("::1",),
+                                       ("::ffff:127.0.0.1",), ("192.168.1.10",), ("172.16.0.5",), ("100.64.3.4",),
+                                       ("0.0.0.0",), ("224.0.0.1",), ("240.0.0.1",), ("fd12::1",), ("fe80::1%eth0",),
+                                       ("fec0::1",), ("ff02::1",), ("::",), ("64:ff9b::a00:1",), ("2002:7f00:1::1",),
+                                       ("8.8.8.8", "127.0.0.1"), ("2606:4700::1111", "10.0.0.1"), ("not an address",)])
+async def test_a_public_looking_name_that_points_somewhere_private_is_not_read(monkeypatch, addresses):
+    """localtest.me is 127.0.0.1, *.nip.io whatever is written into it: the name passes `canonical`,
+    so the host is looked up, and any private answer among them refuses the read."""
+    resolving_to(monkeypatch, *addresses)
+    state = pinned_state("https://localtest.example/admin")
+    arguments = WEB.forward(state, "web_url_read", {"url": "https://localtest.example/admin"})
+    assert WEB.guard(state, "web_url_read", arguments) is None              # the name alone passes
+    refusal = await WEB.screen(state, "web_url_read", arguments)
+    assert refusal == "Not done: that address cannot be read (it points to a private address)."
+
+
+@pytest.mark.parametrize("addresses", [("93.184.215.14",), ("2606:4700::1111",), ("8.8.8.8", "2001:4860:4860::8888"),
+                                       ("::ffff:8.8.8.8",), ("64:ff9b::808:808",)])
+async def test_a_name_that_points_only_at_public_addresses_is_read(monkeypatch, addresses):
+    resolving_to(monkeypatch, *addresses)
+    assert await WEB.screen({}, "read_page", {"url": "https://docs.example.org:8443/guide"}) is None
+
+
+async def test_the_lookup_is_of_the_host_and_port_that_will_be_sent(public_dns):
+    assert await WEB.screen({}, "read_page", {"url": "https://xn--bcher-kva.example:8443/katalog"}) is None
+    assert await WEB.screen({}, "web_url_read", {"url": "http://example.org/x"}) is None
+    assert await WEB.screen({}, "searxng_web_search", {"query": "godot"}) is None     # a search is not looked up
+    assert public_dns == [("xn--bcher-kva.example", 8443), ("example.org", 80)]
+
+
+@pytest.mark.parametrize("failure", [OSError("Name or service not known"), TimeoutError()])
+async def test_a_name_that_does_not_resolve_is_not_read(monkeypatch, failure):
+    async def lookup(host: str, port: int) -> list[str]:
+        raise failure
+
+    monkeypatch.setattr(web, "lookup", lookup)
+    assert await WEB.screen({}, "read_page", {"url": "https://gone.example/x"}) == (
+        "Not done: that address cannot be read (its name could not be looked up).")
+    resolving_to(monkeypatch)    # an empty answer
+    assert await WEB.screen({}, "read_page", {"url": "https://gone.example/x"}) == (
+        "Not done: that address cannot be read (its name could not be looked up).")
+
+
+async def test_the_lookup_uses_the_event_loops_resolver_and_gives_up_in_time(monkeypatch):
+    """The real `lookup`: the loop's getaddrinfo (a thread, so the loop never blocks), cut off after
+    RESOLVE_TIMEOUT_S; a slow resolver is a refusal, not a wait."""
+    import asyncio
+    import socket
+
+    monkeypatch.undo()           # the autouse fixture's stand-in out; the real lookup back
+    loop = asyncio.get_running_loop()
+    asked = []
+
+    async def answers(host, port, **kwargs):
+        asked.append((host, port, kwargs.get("type")))
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port)),
+                (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:4700::1111", port, 0, 0))]
+
+    monkeypatch.setattr(loop, "getaddrinfo", answers)
+    assert await web.lookup("localtest.example", 443) == ["127.0.0.1", "2606:4700::1111"]
+    assert asked == [("localtest.example", 443, socket.SOCK_STREAM)]
+    assert "private" in await WEB.screen({}, "read_page", {"url": "https://localtest.example/"})
+
+    async def hangs(host, port, **kwargs):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(loop, "getaddrinfo", hangs)
+    monkeypatch.setattr(web, "RESOLVE_TIMEOUT_S", 0.05)
+    started = loop.time()
+    assert "could not be looked up" in await WEB.screen({}, "read_page", {"url": "https://slow.example/"})
+    assert loop.time() - started < 1.0
+
+
+async def test_the_thinker_does_not_read_a_pinned_page_whose_name_points_inside(monkeypatch):
+    """End to end: the search's own result, pinned and canonical, still is not fetched when its host
+    resolves to a loopback address; the model is told it cannot be read, and nothing is sent."""
+    resolving_to(monkeypatch, "127.0.0.1")
+    box, fake = web_box()
+    qwen = FakeQwen([[("searxng_web_search", {"query": "godot"})],
+                     [("web_url_read", {"url": "https://www.example1.org/page/1"})], "[neutral] Couldn't read it."])
+    thinker = Thinker(ThinkerConfig(), box, "qwen-test", chat=qwen)
+    await thinker.run("look up godot")
+    assert [name for name, _ in fake.calls] == ["searxng_web_search"]
+    assert qwen.payloads[2]["messages"][-1]["content"] == (
+        "Not done: that address cannot be read (it points to a private address).")
+    await box.close()
+
+
+async def test_a_check_that_breaks_lets_nothing_through(monkeypatch):
+    async def broken(state, name, arguments):
+        raise RuntimeError("resolver exploded")
+
+    monkeypatch.setattr(WEB, "screen", broken)
+    box, fake = web_box()
+    qwen = FakeQwen([[("searxng_web_search", {"query": "godot"})], "[neutral] Nothing."])
+    thinker = Thinker(ThinkerConfig(), box, "qwen-test", chat=qwen)
+    await thinker.run("look up godot")
+    assert fake.calls == [] and qwen.payloads[1]["messages"][-1]["content"] == AFTER_WEB
+    await box.close()
 
 
 async def test_one_reply_asks_for_at_most_six_calls():
