@@ -32,6 +32,7 @@ class FakeSpotify:
         self.liked: list[str] = []
         self.added: list[tuple] = []
         self.removed: list[tuple] = []
+        self.played_liked: list[dict] = []
 
     async def handle(self, name: str, arguments: dict) -> FakeResult:
         self.log.append(name)
@@ -58,6 +59,11 @@ class FakeSpotify:
         if name == "remove_from_playlist":
             self.removed.append((arguments.get("playlist"), arguments.get("track")))
             return FakeResult([FakeContent(json.dumps({"removed": label, "playlist": arguments.get("playlist")}))])
+        if name == "play_liked":
+            self.played_liked.append(dict(arguments))
+            self.playing = True
+            return FakeResult([FakeContent(json.dumps({"success": True, "message": "Playing 50 of your 360 Liked Songs, "
+                                                       "shuffled", "first": "Around the World – Daft Punk"}))])
         if name == "find_playlist":
             return FakeResult([FakeContent(json.dumps({"playlists": [{"name": "Running", "id": "x" * 22,
                                                                       "uri": "spotify:playlist:" + "x" * 22,
@@ -82,8 +88,6 @@ class FakeSpotify:
         if name == "set_volume":
             self.volume = arguments["volume"]
             return FakeResult([FakeContent(json.dumps({"success": True}))])
-        if name == "get_favorites":
-            return FakeResult([FakeContent(json.dumps({"favorites": [{"name": "Around the World", "artists": ["Daft Punk"]}]}))])
         if name == "get_saved_tracks":
             padding = [{"name": f"Filler {i}", "artists": ["New Order"], "album": "x" * 60} for i in range(40)]  # > result_chars
             return FakeResult([FakeContent(json.dumps({"tracks": padding + [{"name": "Feeling Good", "artists": ["Nina Simone"]},
@@ -94,10 +98,11 @@ class FakeSpotify:
 
 
 TOOLS = [FakeTool(n) for n in ("next", "previous", "pause", "play", "get_current_track", "get_devices", "set_volume",
-                               "get_favorites", "get_saved_tracks", "get_playlists")]
-# The by-name library tools the server gained: like the playing track, a playlist by its name.
+                               "get_saved_tracks", "get_playlists")]
+# The by-name library tools the server gained: like the playing track, a playlist by its name, and
+# play the Liked Songs (the user's favourites).
 LIBRARY_TOOLS = [FakeTool(n) for n in ("like_current", "add_current_to_playlist", "find_playlist",
-                                       "remove_from_playlist", "create_playlist", "favorite_current")]
+                                       "remove_from_playlist", "create_playlist", "play_liked")]
 
 # spotify-mcp's error shape: {"error": <one speakable sentence>, "code": <category>, "status"?, "details"?}.
 NEW_ERRORS = {
