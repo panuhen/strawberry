@@ -25,6 +25,7 @@ command = "my-notes-mcp"     # or a full path, e.g. ~/notes-mcp/.venv/bin/notes-
 # env = { NOTES_TOKEN = "…" }
 # cwd = "~/notes"
 # careful = ["delete_note"]  # tools with consequences: offered only when the sentence asks for one
+# confirm = ["delete_note"]  # tools she asks about out loud first and runs only after a spoken yes
 # adapter = "spotify"        # only when the server's own name does not name its adapter
 ```
 
@@ -32,6 +33,19 @@ command = "my-notes-mcp"     # or a full path, e.g. ~/notes-mcp/.venv/bin/notes-
 go first when the tool list has to be cut (`[thinker] max_tools`). `careful` lists the tools that
 change something the user would miss; they reach the brain only when the gate's
 `wants_library_change` is ≥ 0.5 ("save this song", not "play this song").
+
+`confirm` lists the tools she asks about before calling them, because the gate or the brain can
+misread a sentence and these cannot be taken back. When the brain calls one, the call is not made:
+she says what she is about to do in one line ("Shall I go ahead with delete note? Say yes.", or the
+adapter's own wording) and keeps the call exactly as it was. The user's next sentence decides: a
+yes (yes, sure, do it, go ahead…) makes that one call with those arguments and no model is asked
+again; a no, any other sentence, or no answer within `[actions] confirm_s` (10 s, not counted while
+she is listening) leaves it undone and she says so, and any other sentence is then handled as
+usual. Only the user's own sentence (spoken or typed) can answer: a notification, a media change, a
+tool result or a web page never can. Without the key a server gets its adapter's list (`confirm`
+on the adapter; the Spotify one asks about its two removals) or none; `confirm = []` asks about
+nothing. A tool can be on both lists, on one, or on neither. `/health.confirm` shows what she is
+waiting for.
 
 Check it: `strawberry tools` lists everything she can reach, `strawberry tool notes search
 '{"q": "garden"}'` calls one by hand, and `/health.tools` shows each server's state and which
@@ -62,6 +76,7 @@ An adapter is for a server you use every day, where the generic path is not good
 | `max_calls` | how many calls to its tools one sentence may make |
 | `untrusted`, `guard`, `forward`, `screen`, `observe` | its results are strangers' text: what may follow one, in what form a call is sent, and a last check that may wait on the network |
 | `claims_tools` | tool names that give a server this adapter whatever it is called |
+| `confirm`, `ask`, `done` | the tools asked about before they run (when the config has no `confirm`), the question with the call pinned ("current" as the playing track), and the sentence after the yes |
 
 Every one is optional. An adapter is loaded **only** when a configured server matches it, so an
 adapter nobody uses shapes nothing she says, and no adapter means the core's own plain behaviour.
@@ -162,6 +177,17 @@ word and the server skips a track that is already there, so they are offered wit
 Nor is `play_liked`, which only changes what is playing, like `play`.
 Removing a track from a playlist and making a new playlist are offered only when the gate reads the
 sentence as asking for a library change (`wants_library_change` ≥ 0.5).
+
+The two removals, `remove_from_playlist` and `remove_saved_tracks`, are also asked about first (the
+adapter's `confirm`, used when the table has no `confirm` key of its own): "Remove 'Teardrop' from
+Gym? Say yes." Before asking, the adapter pins the call: `track = "current"` becomes the playing
+track's URI, so a yes after the song has changed removes the one she named, and a playlist name that
+matches exactly one playlist becomes that playlist's URI, said by its own name. After the yes she
+says "Removed Teardrop by Massive Attack from Gym." or that it was not on the playlist. A Liked
+Songs removal whose ID the server could not read (the model made one up from the track's name) is
+sent back to the model to look the track up first, so the question names a track a yes can remove.
+`confirm = []` in the table turns the question off; `confirm = ["remove_saved_tracks"]` keeps it
+for one of them.
 
 The library by name (spotify-mcp's `like_current`, `add_current_to_playlist`, `find_playlist`,
 `remove_from_playlist`, `create_playlist`, `play_liked`, and `play` with `playlist`):

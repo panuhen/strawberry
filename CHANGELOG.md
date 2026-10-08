@@ -9,6 +9,14 @@ package and the widget binary.
 
 ### Added
 
+- A spoken yes before a removal. When the big model calls a tool on a server's `confirm` list, she
+  asks first ("Remove 'Teardrop' from Gym? Say yes.") and makes that exact call only if your next
+  sentence is a yes (yes, sure, do it, go ahead). A no, any other sentence, or 10 seconds without
+  an answer leaves it, and she says so; any other sentence is still done. Only your own spoken or
+  typed sentence can answer, never a notification, a media change or a tool result. On by default
+  for Spotify's `remove_from_playlist` and `remove_saved_tracks`; `confirm = [...]` in
+  `[tools.servers.<name>]` sets the list and `confirm = []` turns it off. `[actions] confirm_s`
+  is the wait. Saves and adds stay instant.
 - Spotify likes and playlists by name, with the Spotify MCP server's new tools. "I like this"
   and "save this song" put the playing track in your Liked Songs at once, without the big model
   ("Liked: Blue Monday by New Order."). Your favourites are your Liked Songs: "add this to my
