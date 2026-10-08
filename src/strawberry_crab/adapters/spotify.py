@@ -237,23 +237,28 @@ async def play_liked(toolbox: Toolbox, server: str) -> Outcome:
 # thinker. Anything longer or with a name in it ("I like this better", "save this to my gym
 # playlist", "add this to my favourites playlist") goes to the thinker.
 _LIKED = r"(?:liked\s+songs|library|favou?rites)"
+# "Hey, could you please …", "… for later, please": the wrapping that leaves the request the same.
+# Qwen took "for later" as a reason not to call: "hey could you save this song to my favourites for
+# later" was answered "Saved" with no call 4 times in 6.
+_ASK = r"(?:(?:hey|ok|okay|oh)\s+)?(?:strawberry\s+)?(?:(?:can|could|will)\s+you\s+)?(?:please\s+)?"
+_POLITE = r"(?:\s+(?:please|for\s+me|for\s+later|strawberry|now|thanks|thank\s+you))*"
 LIKE_SENTENCE = re.compile(
-    rf"""^(?:(?:hey|ok|okay|oh)\s+)?(?:strawberry\s+)?(?:
+    rf"""^{_ASK}(?:
         i\s+(?:really\s+|do\s+)?like\s+(?:this|that|it)(?:\s+(?:one|song|track|tune))?
       | like\s+(?:this|that|it)(?:\s+(?:one|song|track|tune))?
       | favou?rite\s+(?:this|that|it)(?:\s+(?:one|song|track|tune))?
       | (?:save|keep)\s+(?:this|that|it)(?:\s+(?:one|song|track|tune))?(?:\s+(?:to|in)\s+(?:my\s+)?{_LIKED})?
       | (?:add|put)\s+(?:this|that|it)(?:\s+(?:one|song|track|tune))?\s+(?:to|in|into)\s+(?:my\s+)?{_LIKED}
-    )(?:\s+(?:please|for\s+me|strawberry))*$""",
+    ){_POLITE}$""",
     re.IGNORECASE | re.VERBOSE,
 )
 # "Play my favourites": the Liked Songs, shuffled. Whole sentences only, as above: "play my
 # favourites playlist" is a playlist, and "play my favourite songs from last month" goes to the thinker.
 PLAY_LIKED_SENTENCE = re.compile(
-    r"""^(?:(?:hey|ok|okay|oh)\s+)?(?:strawberry\s+)?
+    rf"""^{_ASK}
         (?:play|put\s+on|shuffle|start)\s+(?:some\s+(?:of\s+)?)?(?:my|the)\s+
         (?:favou?rites|favou?rite\s+(?:songs|tracks|music)|liked\s+(?:songs|tracks)|saved\s+(?:songs|tracks))
-    (?:\s+(?:please|for\s+me|strawberry|now))*$""",
+    {_POLITE}$""",
     re.IGNORECASE | re.VERBOSE,
 )
 

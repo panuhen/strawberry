@@ -171,15 +171,21 @@ LIKES = ["I like this", "i like this song", "I really like this one!", "like thi
          "add this to my liked songs", "add it to liked songs", "Strawberry, I like this", "ok save this song for me",
          # Favourites are Liked Songs.
          "add this to my favourites", "add this song to my favorites please", "save this to my favourites",
-         "put it in my favourites", "favourite this track", "Favorite this."]
+         "put it in my favourites", "favourite this track", "Favorite this.",
+         # The wrapping that leaves the request the same ("for later" made Qwen skip the call).
+         "hey could you save this song to my favourites for later", "could you add this one to my favourites",
+         "can you like this please", "please save this, thanks"]
 NOT_LIKES = ["I like this better than the last one", "I don't like this", "do you like this song", "I love this song",
              "save this to my gym playlist", "add this to my running playlist", "like this but faster",
              "play something like this", "I like it when you dance", "save my place", "what do you like", "like",
-             "add this to my favourites playlist", "play my favourites", "what are my favourites"]
+             "add this to my favourites playlist", "play my favourites", "what are my favourites",
+             "would you like this song", "can you save this to my gym playlist for later"]
 PLAY_LIKED = ["play my favourites", "Play my favorites, please", "shuffle my favourites", "put on my liked songs",
-              "play some of my favourite songs", "Strawberry, play my saved tracks", "play the liked songs now"]
+              "play some of my favourite songs", "Strawberry, play my saved tracks", "play the liked songs now",
+              "can you play my favourites", "Could you please play my favorites, thanks"]
 NOT_PLAY_LIKED = ["play my favourites playlist", "play my favourite songs from last month", "play some jazz",
-                  "add this to my favourites", "what are my favourites", "play my running playlist", "play"]
+                  "add this to my favourites", "what are my favourites", "play my running playlist", "play",
+                  "can you play my favourites playlist", "would you play my favourites"]
 
 
 @pytest.mark.parametrize("text", LIKES)
@@ -396,7 +402,7 @@ def test_a_playlist_sentence_gets_a_line_under_it(text, asks, name):
 
 
 @pytest.mark.parametrize("text, asks", [
-    ("could you add this one to my favourites", "save the playing track to their favourites"),
+    ("I think you should add this one to my favourites", "save the playing track to their favourites"),
     ("can you put this song in my favorites for me", "save the playing track to their favourites"),
     ("can you play my favourites", "play their favourites"),
     ("shuffle some of my liked songs while I work", "play their favourites"),
@@ -463,7 +469,7 @@ async def test_the_easy_to_undo_tools_are_offered_with_any_sentence_and_the_rest
 
 async def test_a_favourites_sentence_through_the_thinker_gets_its_line_and_calls_like_current():
     spotify, toolbox, qwen, thinker = thinker_over([[("like_current", {})], "[happy] Liked it."])
-    outcome = await thinker.run("could you add this one to my favourites", topic="music")
+    outcome = await thinker.run("I think you should add this one to my favourites", topic="music")
     assert outcome.ok and spotify.liked == ["Feeling Good – Nina Simone"]
     system, user = qwen.payloads[0]["messages"][0]["content"], qwen.payloads[0]["messages"][1]["content"]
     assert "the user's favourites are their Liked Songs" in system and "call play_liked" in system
