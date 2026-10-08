@@ -5,7 +5,10 @@ status row. Clicks become daemon calls: `POST /command` broadcasts `{"command": 
 "value": ...}` to the widgets, `GET /health` tells us what she is doing, and the check marks
 are read back from the widget's own settings file so the two menus agree.
 
-One row is not the widget's: "Message bodies" writes `[notifications] body` into config.toml
+Two rows are not the widget's. "Router: roll back to previous" moves the gate's heads dir back to
+the head in use before the learning loop's last switch (learning.py, WIRING.md §8d); it is shown
+only when /health.learning says there is one, and the daemon follows the switch on its own.
+"Message bodies" writes `[notifications] body` into config.toml
 (configedit.py: comments kept, validated, backed up), then tells the daemon to re-read
 [notifications] and restarts the notification doorway child, the two readers of that setting
 (§4, §14).
@@ -48,6 +51,7 @@ SKINS = (("strawberry", "Strawberry"), ("peach", "Peach"), ("blueberry", "Bluebe
 # only the widget's own preferences.
 BODY_CHOICES = (("off", "Off"), ("react", "React"), ("glance", "Glance"))
 BODY_OVERRIDES_LABEL = "Per-app overrides in config"
+ROUTER_ROLLBACK_LABEL = "Router: roll back to previous"
 
 STATE_LABELS = {
     "idle": "Idle",
@@ -114,6 +118,7 @@ class TrayState:
     body_mode: str = "off"            # [notifications] body, read from config.toml (read_body_setting)
     body_overrides: bool = False      # the file has a body_apps table
     ears_loading: bool = False        # /health.voice.phase: whisper still loading (a first start downloads it)
+    router_rollback: str = ""         # /health.learning.rollback: the head a rollback goes to ("" = none)
 
     @property
     def quiet(self) -> bool:
@@ -134,7 +139,8 @@ def menu_items(state: TrayState) -> list[MenuItem]:
     """Her right-click menu, in the top bar: the same preferences, plus show/hide and a status
     row (WIRING.md §13 for the crab's menu, §14 for this one). Ids are stable, so a host may
     cache them; the submenu rows take 20, 30, 40 and 50 upwards. "Per-app overrides in config"
-    and its separator are always there, hidden when body_apps is empty, so no row moves."""
+    and its separator are always there, hidden when body_apps is empty, so no row moves; so is the
+    router's rollback, hidden when there is nothing to roll back to."""
     volume = [MenuItem(20 + i, "volume", f"{int(v * 100)}%", toggle="radio",
                        checked=abs(state.volume - v) < 0.01, value=v) for i, v in enumerate(VOLUMES)]
     skins = [MenuItem(30 + i, "skin", name, toggle="radio", checked=state.skin == skin_id, value=skin_id)
@@ -160,6 +166,7 @@ def menu_items(state: TrayState) -> list[MenuItem]:
         MenuItem(11, "hat", "Top hat", toggle="checkmark", checked=state.top_hat),
         MenuItem(12, "on_top", "Always on top", toggle="checkmark", checked=state.always_on_top),
         MenuItem(50, "submenu", "Message bodies", children=bodies),
+        MenuItem(60, "router_rollback", ROUTER_ROLLBACK_LABEL, visible=bool(state.router_rollback)),
         MenuItem(13, "separator", separator=True),
         MenuItem(14, "settings_file", "Settings file…"),
         MenuItem(15, "voices_folder", "Voices folder…"),
@@ -312,6 +319,8 @@ class TrayCore:
                 self.state.always_on_top = want
         elif action == "body_mode":
             await self.set_body_mode(str(value))
+        elif action == "router_rollback":
+            await self.roll_back_router()
         elif action == "settings_file":
             await self.open_settings_file()
         elif action == "voices_folder":
@@ -370,6 +379,22 @@ class TrayCore:
         for name in NOTIFY_CHILDREN:
             if self.children.restart_child(name):
                 log.info("message bodies: restarting %s", name)
+
+    async def roll_back_router(self) -> None:
+        """Router: roll back to previous (learning.py): `current` goes back one switch. The daemon
+        follows it within a few seconds; nothing restarts. Logs versions only."""
+        from .config import ConfigError, load
+        from .gatehead import HeadError
+        from .learning import Learning, LearningError
+
+        try:
+            config = await asyncio.to_thread(load, self.config_file())
+            switched = await asyncio.to_thread(Learning(config).rollback)
+        except (ConfigError, LearningError, HeadError, OSError, TimeoutError) as exc:
+            log.warning("router rollback: not done (%s)", exc)
+            return
+        log.info("router rollback: %s -> %s", switched["from"], switched["to"])
+        self.state.router_rollback = ""       # the next refresh says whether there is another
 
     def read_config(self) -> None:
         """The body mode from config.toml, re-read only when the file has changed."""
@@ -437,6 +462,9 @@ class TrayCore:
             self.state.state = str(health.get("state") or health.get("rest_state") or "idle")
             voice = health.get("voice")
             self.state.ears_loading = isinstance(voice, dict) and voice.get("phase") == "loading"
+            learning = health.get("learning")
+            rollback = learning.get("rollback") if isinstance(learning, dict) else None
+            self.state.router_rollback = rollback if isinstance(rollback, str) else ""
         self.read_prefs()
         self.read_config()
         return await self.publish()

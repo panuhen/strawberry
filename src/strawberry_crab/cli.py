@@ -6,7 +6,7 @@
     strawberry install         start on login (a systemd user unit for the tray; on Windows a
                                shortcut in the Startup folder)
     strawberry setup | doctor  models, voice and widget; then check it all (setupcmd.py, doctor.py)
-    strawberry status | stop | restart | config | say | listen | route | talk | outcomes | ...
+    strawberry status | stop | restart | config | say | listen | route | talk | outcomes | learning | ...
 
 The daemon itself is `strawberryd` (strawberryd.py); the by-hand tools that share its config
 (route, tools, tool, think, talk, tray) call its main() in this process. Everything else is the
@@ -1172,6 +1172,18 @@ def cmd_outcomes(last: int, clear: bool) -> int:
     return 0
 
 
+def cmd_learning(args: argparse.Namespace) -> int:
+    """`strawberry learning ...` (learncmd.py): the learning loop's candidate heads, by hand."""
+    from . import learncmd
+    from .config import ConfigError, load
+
+    try:
+        config = load()
+    except ConfigError as exc:
+        raise CliError(f"config error: {exc}", 2) from None
+    return learncmd.main(args, config)
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     """`strawberry gate train | eval | use` (gatecmd.py): the daemon need not run."""
     from . import gatecmd
@@ -1245,8 +1257,26 @@ def parser() -> argparse.ArgumentParser:
     g.add_argument("--set", type=Path, default=None, metavar="FILE",
                    help="a labelled set: the held-out file's shape, or scripts/gate_phrases.json")
     g.add_argument("--misses", action="store_true", help="list every sentence with a wrong field")
-    g = gate.add_parser("use", help="put a head from the heads dir in use (a version, or `shipped`); restart after")
+    g = gate.add_parser("use", help="put a head from the heads dir in use (a version, or `shipped`)")
     g.add_argument("version")
+    p = add("learning", "the router's learning loop: candidate heads from the outcomes, accept, roll back, the report")
+    learning = p.add_subparsers(dest="learning_command", metavar="ACTION", required=True)
+    learning.add_parser("status", help="the head in use, the candidate waiting, the labelled sentences")
+    learning.add_parser("train", help="build a candidate head now and score it against the one in use on the held-out set")
+    for name, help in (("accept", "put the candidate in use"), ("reject", "drop the candidate; the head in use stays")):
+        g = learning.add_parser(name, help=help)
+        g.add_argument("version", nargs="?", default=None, help="the candidate (default: the one waiting)")
+    learning.add_parser("rollback", help="back to the head in use before this one (every head is kept)")
+    learning.add_parser("versions", help="every head, with its held-out score and what became of it")
+    g = learning.add_parser("report", help="the summary: examples learned and rejected, heads, the held-out score")
+    g.add_argument("--days", type=float, default=7.0, metavar="N", help="the last N days (default 7)")
+    g = learning.add_parser("examples", help="the labelled sentences, by key; --text prints the sentences too")
+    g.add_argument("--text", action="store_true")
+    g = learning.add_parser("review", help="approve an example, or reject it (its sentence is deleted for good)")
+    g.add_argument("key")
+    g.add_argument("verdict", choices=("approve", "reject"))
+    g = learning.add_parser("forget", help="delete the learned sentences and ignore the outcome records so far")
+    g.add_argument("--all", action="store_true", help="also delete every head the loop made: the shipped head is in use")
     p = add("tools", "list the MCP tools she can reach")
     p.add_argument("topic", nargs="?", default=None)
     p = add("tool", "call one MCP tool by hand, e.g. strawberry tool spotify next")
@@ -1327,6 +1357,8 @@ def dispatch(command: str, args: argparse.Namespace, extra: list[str]) -> int:
         return cmd_outcomes(args.last, args.clear)
     if command == "gate":
         return cmd_gate(args)
+    if command == "learning":
+        return cmd_learning(args)
     if command == "config":
         return cmd_config(init_only=args.init)
     if command == "widget" and (args.fetch or args.widget_version):

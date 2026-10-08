@@ -216,6 +216,11 @@ class Heads:
         raise HeadError(f"no head {version!r} in {self.directory}")
 
 
+def version_of_path(path: Path) -> str:
+    """`head-<version>.npz` -> the version."""
+    return path.stem[len("head-"):] if path.stem.startswith("head-") else path.stem
+
+
 def resolve(configured: str = "", heads: Heads | None = None) -> tuple[Head | None, str, list[str]]:
     """The head to use: `[gate] head` when set, else the user's current one, else the shipped one.
     Returns (head or None, where it came from: "config" | "user" | "shipped", what was tried and failed)."""

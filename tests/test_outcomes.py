@@ -323,7 +323,9 @@ async def test_health_says_off_with_no_file(aiohttp_client):
     await daemon.start()
     await client.post("/event", json={"source": "voice", "title": "hi"})
     health = await (await client.get("/health")).json()
-    assert health["learning"] == {"enabled": False, "records": 0}
+    learning = health["learning"]
+    assert learning["enabled"] is False and learning["records"] == 0 and "written" not in learning
+    assert learning["head"] == "shipped" and learning["candidate"] is None and learning["examples"] == 0
     await daemon.close()
     assert not paths.outcomes_file().exists()
 

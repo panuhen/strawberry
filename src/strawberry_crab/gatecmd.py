@@ -61,8 +61,15 @@ def cache_file(model: str) -> Path:
     return paths.cache_dir() / "gate" / f"vectors-{safe}.npz"
 
 
-async def embed(gate, texts: list[str], prefix: str, cache: Path | None = None) -> np.ndarray:
-    """Unit vectors for `texts` with `prefix`, through the gate's embedder, cached by text."""
+class EmbedInterrupted(GateCommandError):
+    """`should_stop` said so between two chunks (the learning loop's idle trainer: the user spoke)."""
+
+
+async def embed(gate, texts: list[str], prefix: str, cache: Path | None = None, chunk: int = 256,
+                should_stop=None) -> np.ndarray:
+    """Unit vectors for `texts` with `prefix`, through the gate's embedder, cached by text. With
+    `should_stop`, asked before each chunk of `chunk` texts: True keeps what is done in the cache and
+    raises EmbedInterrupted."""
     from .systemone import normalise
 
     keys = [hashlib.sha256((prefix + t).encode()).hexdigest()[:24] for t in texts]
@@ -73,18 +80,25 @@ async def embed(gate, texts: list[str], prefix: str, cache: Path | None = None) 
                 known = dict(zip(data["keys"].tolist(), data["vectors"]))
         except (OSError, ValueError, KeyError):
             known = {}
-    todo = [i for i, k in enumerate(keys) if k not in known]
-    for start in range(0, len(todo), 256):
-        chunk = todo[start:start + 256]
-        vectors = normalise(await gate.embedder([prefix + texts[i] for i in chunk]))
-        for i, v in zip(chunk, vectors):
-            known[keys[i]] = v.astype(np.float32)
-    if cache is not None and todo:
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        tmp = cache.with_name(cache.name + ".tmp")
-        with tmp.open("wb") as f:
-            np.savez(f, keys=np.array(list(known)), vectors=np.stack(list(known.values())))
-        tmp.replace(cache)
+    first = {k: i for i, k in reversed(list(enumerate(keys)))}      # a text asked for twice is embedded once
+    todo = sorted(i for k, i in first.items() if k not in known)
+    added = 0
+    try:
+        for start in range(0, len(todo), chunk):
+            if should_stop is not None and should_stop():
+                raise EmbedInterrupted(f"stopped after {added} of {len(todo)} new sentences")
+            part = todo[start:start + chunk]
+            vectors = normalise(await gate.embedder([prefix + texts[i] for i in part]))
+            for i, v in zip(part, vectors):
+                known[keys[i]] = v.astype(np.float32)
+            added += len(part)
+    finally:
+        if cache is not None and added:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache.with_name(cache.name + ".tmp")
+            with tmp.open("wb") as f:
+                np.savez(f, keys=np.array(list(known)), vectors=np.stack(list(known.values())))
+            tmp.replace(cache)
     return np.stack([known[k] for k in keys]).astype(np.float64)
 
 
@@ -151,16 +165,18 @@ async def eval_command(config, scorer: str, head: str, set_path: Path | None, mi
     return 0
 
 
-def use(version: str, out=print) -> int:
-    heads = gatehead.Heads()
+def use(version: str, out=print, config=None) -> int:
+    """Through the learning loop's switch (learning.py), so `strawberry learning rollback` comes back."""
+    from .learning import Learning
+
+    loop = Learning(config)
+    if version != "shipped":
+        version = gatehead.version_of_path(loop.heads.find(version))
+    loop.use(version)
     if version == "shipped":
-        heads.use(None)
-        out(f"the shipped head is in use ({gatehead.SHIPPED}); restart the daemon to use it")
-        return 0
-    path = heads.find(version)
-    gatehead.load(path)                  # a broken file is refused here, not at the next start
-    heads.use(path)
-    out(f"{path.name} is in use ({heads.pointer}); restart the daemon to use it")
+        out(f"the shipped head is in use ({gatehead.SHIPPED}); a running daemon switches within a few seconds")
+    else:
+        out(f"head-{version}.npz is in use ({loop.heads.pointer}); a running daemon switches within a few seconds")
     return 0
 
 
@@ -173,7 +189,7 @@ def main(args, config) -> int:
             return asyncio.run(train(config, args.data, args.activate, args.output))
         if args.gate_command == "eval":
             return asyncio.run(eval_command(config, args.scorer, args.head or "", args.set, args.misses))
-        return use(args.version)
+        return use(args.version, config=config)
     except (GateCommandError, gatehead.HeadError) as exc:
         print(f"strawberry gate: {exc}", file=sys.stderr)
         return 1

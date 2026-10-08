@@ -18,6 +18,7 @@ from .config import Config
 from .contract import Performance
 from .events import CannedReactor, Event, Reactor
 from .hub import WidgetHub
+from .learning import IdleTrainer
 from .ledger import Ledger
 from .logtext import sentence
 from . import logtext, media, privacy
@@ -85,6 +86,11 @@ class Daemon:
         # The router's learning loop, data only (§8c): each routed sentence and what came of it,
         # in a local file, when [learning] log_outcomes is on. Off, every call is a no-op.
         self.outcomes = OutcomeLog(self.config.learning)
+        # Its second half (§8d): labels from those outcomes, a candidate head trained on them when she
+        # has been idle a while, and the gate following the heads dir's `current` without a restart.
+        self.voice_at = time.monotonic()     # the last sentence handled (or the start): the trainer waits for quiet
+        self.voice_handling = 0              # sentences being handled right now
+        self.trainer = IdleTrainer(self)
         self.background_tasks: set[asyncio.Task] = set()
         # A call the thinker stopped at to ask first (confirm.py): made only if the user's next
         # sentence is a yes, and dropped after [actions] confirm_s without one.
@@ -128,6 +134,7 @@ class Daemon:
         await self.toolbox.start()
         await self.thinker.start()
         self.outcomes.start()
+        self.trainer.start()
         if self.config.voice.enabled and self.config.voice.hotwords and self.toolbox.servers:
             self.vocabulary_task = asyncio.get_running_loop().create_task(self._vocabulary_loop())
         if self.wake is not None:
@@ -175,6 +182,7 @@ class Daemon:
                 pass
         for task in list(self.background_tasks):
             task.cancel()
+        await self.trainer.close()
         self.outcomes.close()
         # Each part is closed even if another one fails: an HTTP session left open is an
         # "Unclosed client session" error in the journal at exit.
@@ -398,8 +406,14 @@ class Daemon:
     async def handle_voice(self, event: Event) -> tuple[Performance, int]:
         """A sentence the user said or typed: the gate (§8a), a bare reflex if it is plainly one,
         otherwise Qwen in her own voice with the tools (§8b). Gemma answers only if Qwen is off."""
-        with logtext.hearing(event.title):   # her lines in the log leave it out (log_sentences)
-            return await self._handle_voice(event)
+        self.voice_handling += 1
+        self.voice_at = time.monotonic()
+        try:
+            with logtext.hearing(event.title):   # her lines in the log leave it out (log_sentences)
+                return await self._handle_voice(event)
+        finally:
+            self.voice_handling -= 1
+            self.voice_at = time.monotonic()
 
     async def _handle_voice(self, event: Event) -> tuple[Performance, int]:
         text = event.title

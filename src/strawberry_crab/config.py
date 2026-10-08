@@ -227,8 +227,9 @@ class ThinkerConfig:
 
 @dataclass
 class LearningConfig:
-    """The router's learning loop, its first half: what came of each routed sentence (WIRING.md §8c).
-    Off by default: on, the sentences you say or type are kept in a local file (outcomes.py)."""
+    """The router's learning loop (WIRING.md §8c, §8d): what came of each routed sentence, and the
+    labels, the candidate heads and the switch built on it. Off by default: on, the sentences you
+    say or type are kept in a local file (outcomes.py), and so are the examples learned from them."""
 
     log_outcomes: bool = False     # keep routed sentences and their outcomes in <state>/outcomes.jsonl
     max_days: int = 30             # records older than this are pruned…
@@ -237,6 +238,14 @@ class LearningConfig:
     rephrase_s: float = 10.0       # a close sentence, or a correction ("no, I meant…"), this soon after is about it
     silence_s: float = 30.0        # nothing said for this long after a sentence: the weak "that was right"
     rephrase_similarity: float = 0.8   # cosine of the gate's two embeddings from which a sentence is a rephrase
+    # The second half (learning.py, §8d): a candidate head from the labels, held to the held-out set.
+    idle_train: bool = True        # the daemon trains a candidate on its own when idle (strawberry learning train by hand)
+    idle_minutes: float = 20.0     # …once nobody has spoken for this long…
+    min_new_labels: int = 10       # …and at least this many labelled sentences are new since the last run
+    auto_switch: bool = False      # true: a candidate that passes the held-out check is put in use at once;
+                                   # false: it waits for `strawberry learning accept`
+    weekly_line: bool = False      # once a week she says what she learned, outside quiet hours
+    max_share: float = 0.25        # the user's labels weigh at most this share of the data set's, per option
 
 
 @dataclass
@@ -418,6 +427,10 @@ def _validate(config: Config) -> None:
         raise ConfigError("learning.undo_s and learning.rephrase_s must be positive, and learning.silence_s at least both")
     if not (0.0 < learning.rephrase_similarity <= 1.0):
         raise ConfigError("learning.rephrase_similarity must be above 0 and at most 1")
+    if learning.idle_minutes <= 0 or learning.min_new_labels < 1:
+        raise ConfigError("learning.idle_minutes must be positive and learning.min_new_labels >= 1")
+    if not (0.0 < learning.max_share <= 1.0):
+        raise ConfigError("learning.max_share must be above 0 and at most 1")
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
 
     try:
@@ -622,6 +635,16 @@ def default_toml() -> str:
         f"undo_s = {lr.undo_s}                  # the opposite reflex this soon after one is an undo (skip, then previous)",
         f"rephrase_s = {lr.rephrase_s}              # a close sentence or a \"no, I meant\" this soon after is about it",
         f"silence_s = {lr.silence_s}               # nothing said for this long afterwards counts as a weak \"right\"",
+        "# What she learns from it (README: Learning): the outcomes become labelled sentences in the data",
+        "# dir, and a candidate head is trained on them and the shipped data set. It must score at least",
+        "# as well as the head in use on the held-out set; `strawberry learning accept` puts it in use and",
+        "# `strawberry learning rollback` goes back. `strawberry learning forget` deletes what was learned.",
+        f"idle_train = {str(lr.idle_train).lower()}             # train a candidate on its own when nobody has spoken for a while",
+        f"idle_minutes = {lr.idle_minutes}           # that long",
+        f"min_new_labels = {lr.min_new_labels}            # and only with at least this many new labelled sentences",
+        f"auto_switch = {str(lr.auto_switch).lower()}            # true: a candidate that passes is put in use without asking",
+        f"weekly_line = {str(lr.weekly_line).lower()}            # true: once a week she says what she learned (never in quiet hours)",
+        f"max_share = {lr.max_share}              # your labels weigh at most this share of the data set's, per option",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]
