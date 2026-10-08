@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf" content="{{csrf}}">
+<title>Strawberry: Brain</title>
+<link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/style.css">
+<script src="/ui/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="/ui/icon.svg" alt="" width="22" height="22"><span>Strawberry</span><span class="dim">Brain</span></div>
+  <div class="chips" id="chips"></div>
+  <div class="top-right">
+    <span class="live" id="live" title="Live updates">offline</span>
+    <button type="button" class="ghost" id="theme" title="Light, dark or the system's">Theme: auto</button>
+  </div>
+</header>
+<div class="banner hidden" id="banner" role="alert"></div>
+<div class="layout">
+  <nav class="nav" id="nav" aria-label="Sections">
+    <button type="button" data-section="learning" class="on">Learning</button>
+    <button type="button" data-section="router">Router live</button>
+    <button type="button" data-section="data">Data and scores</button>
+    <button type="button" data-section="settings">Settings and privacy</button>
+    <button type="button" data-section="system">System</button>
+  </nav>
+  <main id="main">
+    <section id="learning" class="section"></section>
+    <section id="router" class="section hidden"></section>
+    <section id="data" class="section hidden"></section>
+    <section id="settings" class="section hidden"></section>
+    <section id="system" class="section hidden"></section>
+  </main>
+</div>
+<div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
