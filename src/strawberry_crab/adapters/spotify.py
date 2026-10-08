@@ -23,6 +23,9 @@ What it adds over the plain tool list:
     common_tools    the fourteen of its twenty-six worth keeping when the context is tight.
     guide           which of its tools a "like", a favourites or a playlist sentence means.
     nudge           a line under a playlist or favourites sentence the reflexes did not take.
+    confirm         the two removals are asked about first ("Remove 'Teardrop' from Gym? Say yes."),
+                    with "current" pinned to the playing track so a yes removes the one she named.
+    guard           a Liked Songs removal with an ID the server cannot read is sent back to look it up.
 
 The user's favourites are Spotify's Liked Songs: the server once kept a separate local list
 with tools of its own, and that list is gone.
@@ -422,6 +425,94 @@ def clarify_error(text: str) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+# Asked about before they run (confirm.py): removing is the one thing here a word does not undo.
+CONFIRM = ("remove_from_playlist", "remove_saved_tracks")
+# spotify-mcp's words for "the playing track" in remove_from_playlist's `track` (its _CURRENT).
+CURRENT_WORDS = frozenset({"current", "now", "this", "playing", "current track", "current song", "this track",
+                           "this song", "now playing", "currently playing"})
+
+
+# A track as remove_saved_tracks takes it: a URI, a bare ID or a link. Qwen has no URI for the playing
+# track unless it looked one up, and live it sent "spotify:track:teardrop-massive-attack": asking the
+# user about that would end in the server's refusal after their yes, so the brain is sent to look first.
+TRACK_ID = re.compile(r"^(?:spotify:track:|https?://open\.spotify\.com/(?:intl-[\w-]+/)?track/)?[A-Za-z0-9]{22}(?:\?\S*)?$")
+NOT_A_TRACK = ("Not done: track_ids takes Spotify track URIs, such as the uri get_current_track or search returns. "
+               "Look it up first.")
+
+
+def guard(name: str, arguments: dict[str, Any]) -> str | None:
+    """Before remove_saved_tracks: every ID one the server can read, or the brain is told to look it up."""
+    if name != "remove_saved_tracks":
+        return None
+    ids = arguments.get("track_ids")
+    ids = ids if isinstance(ids, list) else [ids]
+    return None if ids and all(isinstance(i, str) and TRACK_ID.match(i.strip()) for i in ids) else NOT_A_TRACK
+
+
+def _quoted(name: Any) -> str:
+    return "'" + " ".join(str(name or "").split())[:60] + "'"
+
+
+async def ask(toolbox: Toolbox, server: str, name: str, arguments: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """The question before a removal, with the call pinned: "current" becomes the playing track's URI
+    (a yes after the song changed must remove the one she named), and a playlist name that matches
+    exactly one playlist becomes that playlist's URI, said by its own name."""
+    pinned = dict(arguments)
+    track, data, now = await _current(toolbox, server)
+    playing = (data.get("track") or {}) if now.ok else {}
+    playing_uri = str(playing.get("uri") or "")
+    if name == "remove_from_playlist":
+        what = "the playing track"
+        asked = " ".join(str(pinned.get("track") or "").lower().split())
+        if asked in CURRENT_WORDS:
+            if playing_uri:
+                pinned["track"] = playing_uri
+                what = _quoted(playing.get("name"))
+        elif playing_uri and asked.rsplit(":", 1)[-1] == playing_uri.rsplit(":", 1)[-1]:
+            what = _quoted(playing.get("name"))
+        else:
+            what = "that track"
+        playlist = str(pinned.get("playlist") or "").strip()
+        where = playlist or "the playlist"
+        if playlist:
+            found = await toolbox.call(server, "find_playlist", {"query": playlist})
+            rows = [r for r in _json(found).get("playlists", []) if isinstance(r, dict)] if found.ok else []
+            if len(rows) == 1 and rows[0].get("uri") and rows[0].get("name"):
+                pinned["playlist"], where = rows[0]["uri"], " ".join(str(rows[0]["name"]).split())[:60]
+        return f"Remove {what} from {where}? Say yes.", pinned
+    if name == "remove_saved_tracks":
+        ids = pinned.get("track_ids")
+        ids = [str(i) for i in ids] if isinstance(ids, list) else [str(ids)] if ids else []
+        if len(ids) == 1 and playing_uri and ids[0].rsplit(":", 1)[-1] == playing_uri.rsplit(":", 1)[-1]:
+            what = _quoted(playing.get("name"))
+        elif len(ids) == 1:
+            what = "that track"
+        else:
+            what = f"{len(ids)} tracks"
+        return f"Remove {what} from your Liked Songs? Say yes.", pinned
+    from ..confirm import generic_question
+
+    return generic_question(name), pinned
+
+
+def done(name: str, arguments: dict[str, Any], result: ToolResult) -> Outcome | None:
+    """What came of a removal after the yes, in one plain sentence."""
+    if not result.ok:
+        return _failed("remove it", result)
+    data = _json(result)
+    if name == "remove_from_playlist":
+        if data.get("removed"):
+            return Outcome("removed a track from a playlist", f"Removed {_label(data['removed'])} from "
+                           f"{data.get('playlist') or 'the playlist'}.", True, (result,))
+        if data.get("not_in_playlist"):
+            return Outcome("checked the playlist", f"{_label(data['not_in_playlist'])} wasn't on "
+                           f"{data.get('playlist') or 'that playlist'}, so nothing changed.", True, (result,))
+        return Outcome("removed a track from a playlist", "Removed.", True, (result,))
+    if name == "remove_saved_tracks":
+        return Outcome("removed from the liked songs", "Removed from your Liked Songs.", True, (result,))
+    return None
+
+
 # What the brain is told about this server's tools, once, in the system prompt (the same for every
 # sentence: Ollama's prompt cache, §8b). The playlist tools take a name as the user said it and the
 # server matches it, misheard words included, so nothing needs looking up first.
@@ -469,6 +560,7 @@ class SpotifyAdapter(Adapter):
                     "add_current_to_playlist", "find_playlist", "play_liked", "add_to_queue", "get_playlists",
                     "set_volume", "shuffle")
     guide = GUIDE
+    confirm = CONFIRM
 
     def guide_for(self, tools: list[str]) -> str:
         # An older server without the by-name tools gets no paragraph about them, nor about play_liked.
@@ -496,6 +588,16 @@ class SpotifyAdapter(Adapter):
 
     def clarify_error(self, text: str) -> str:
         return clarify_error(text)
+
+    def guard(self, state: dict[str, Any], name: str, arguments: dict[str, Any]) -> str | None:
+        return guard(name, arguments)
+
+    async def ask(self, toolbox: Toolbox, server: str, name: str,
+                  arguments: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        return await ask(toolbox, server, name, arguments)
+
+    def done(self, name: str, arguments: dict[str, Any], result: ToolResult) -> Outcome | None:
+        return done(name, arguments, result)
 
 
 SPOTIFY = SpotifyAdapter()

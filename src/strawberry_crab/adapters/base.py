@@ -20,6 +20,8 @@ earns once you use it every day:
     max_calls       how many calls to its tools one sentence may make
     untrusted       its results are outside text; with `guard`, `forward`, `screen` and `observe`,
                     what may follow one, and in what form it is sent
+    confirm         the tools she asks about before calling, unless the config's `confirm` says
+                    otherwise; `ask` words the question (and pins the call), `done` the result
 
 Every one of them is optional; the base class answers "nothing to add" to all of them. An
 adapter is loaded only when a configured server matches it, by name or by an explicit
@@ -72,6 +74,9 @@ class Adapter:
     #: tool names that mark a server as this adapter's whatever its name: listed by a server with
     #: no adapter (or with one that is not `untrusted`), they give it this adapter (Server._run)
     claims_tools: tuple[str, ...] = ()
+    #: tools she asks about first, out loud, and calls only after a spoken yes (confirm.py), when the
+    #: server's config has no `confirm` list of its own
+    confirm: tuple[str, ...] = ()
 
     def matches(self, server_name: str, server_config: dict[str, Any]) -> bool:
         """Is this adapter for that configured server? An explicit `adapter` key decides alone."""
@@ -143,6 +148,20 @@ class Adapter:
 
     def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool) -> None:
         """After a call: note what `guard` needs to know later in the same sentence."""
+
+    async def ask(self, toolbox: Toolbox, server: str, name: str,
+                  arguments: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        """Before a `confirm` tool: the one line that asks about it ("Remove 'Teardrop' from Gym? Say
+        yes."), and the arguments to call it with after the yes, with anything that could change by
+        then pinned ("current" as the playing track). Read-only calls only. The core's line names
+        the tool by default (confirm.generic_question), with the arguments as they came."""
+        from ..confirm import generic_question   # local: confirm imports the tools, as this module does
+
+        return generic_question(name), arguments
+
+    def done(self, name: str, arguments: dict[str, Any], result: Any) -> Any:
+        """After the yes: an Outcome saying what came of the call, or None for the core's "Done."."""
+        return None
 
     def nudge(self, text: str, route: Any) -> str:
         """A line added under the sentence when `wanted` said True ("search first"), or ""."""

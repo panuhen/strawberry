@@ -12,6 +12,8 @@ from typing import Any
 
 from .actions import NO_CATALOGUE, Actor, Outcome
 from .adapters import gate_examples
+from . import confirm
+from .confirm import Held
 from .config import Config
 from .contract import Performance
 from .events import CannedReactor, Event, Reactor
@@ -84,6 +86,11 @@ class Daemon:
         # in a local file, when [learning] log_outcomes is on. Off, every call is a no-op.
         self.outcomes = OutcomeLog(self.config.learning)
         self.background_tasks: set[asyncio.Task] = set()
+        # A call the thinker stopped at to ask first (confirm.py): made only if the user's next
+        # sentence is a yes, and dropped after [actions] confirm_s without one.
+        self.held: Held | None = None
+        self.held_task: asyncio.Task | None = None
+        self.dropped_at = -1e9   # when a held call was last dropped by silence or a no (confirm.LATE_S)
         # Resume from suspend (logind on the system bus; Windows' power notification): the models
         # are loaded again before the first notification needs them (wake.py, winwake.py). No bus,
         # no registration: one log line, nothing else.
@@ -396,6 +403,30 @@ class Daemon:
 
     async def _handle_voice(self, event: Event) -> tuple[Performance, int]:
         text = event.title
+        preface = ""
+        held = self.take_held()
+        late, self.dropped_at = time.monotonic() - self.dropped_at < confirm.LATE_S, -1e9
+        said = confirm.answer(text) if held is not None or late else None
+        if held is None and said is not None:
+            # A yes or no to a question she already dropped: hers to answer, not the thinker's.
+            line = confirm.LATE_YES if said == "yes" else confirm.LEFT_NO
+            performance = decorate(event, Performance(state="talking", text=line, emotion="neutral"))
+            sent = await self.perform(performance)
+            self.ledger.record(text, line, did="nothing; the question was already dropped")
+            return performance, sent
+        if held is not None:
+            # Her question is open: this sentence is the answer. Only a sentence of the user's own
+            # gets here; nothing else can make the held call.
+            if said == "yes":
+                return await self.confirmed(text, held)
+            log.info("confirm: %s not made (%s)", held.key, "a no" if said == "no" else "another sentence")
+            if said == "no":
+                self.dropped_at = time.monotonic()
+                performance = decorate(event, Performance(state="talking", text=confirm.LEFT_NO, emotion="neutral"))
+                sent = await self.perform(performance)
+                self.ledger.record(text, performance.text or "", did=f"left {held.name} undone")
+                return performance, sent
+            preface = confirm.LEFT_OTHER   # said ahead of whatever this sentence gets: one line, not two
         route = await self.route(text)
         record = self.outcomes.heard(text, route, "voice" if event.spoken else "typed")
         music = route is not None and route.topic == "music"
@@ -411,17 +442,17 @@ class Daemon:
             # The reflex's own name: the gate's tool, or one read off the words ("spotify.like").
             self.outcomes.acted(record, "reflex", outcome.ok,
                                 reflex=f"{last.get('server', '')}.{last.get('tool') or route.tool}")
-            performance, sent = await self.report(outcome.event(text), outcome.ok)
+            performance, sent = await self.report(outcome.event(text), outcome.ok, preface)
             self.ledger.record(text, performance.text or "", did=outcome.did)
             return performance, sent
         if route is not None and self.actor.needs_catalogue(route):
             self.outcomes.acted(record, "no_catalogue", True)
-            return await self.no_catalogue(event, route)
+            return await self.no_catalogue(event, route, preface)
         if not self.thinker.enabled:
             if music:
                 self.quiet_media_until = 0.0  # Gemma cannot touch the music; it is not hers to explain
             self.outcomes.acted(record, "chat", True)
-            return await self.chat(event)
+            return await self.chat(event, preface)
         outcome = await self.think(text, route)
         self.outcomes.acted(record, "thinker", outcome.ok, calls=outcome.calls)
         if music and not outcome.calls:
@@ -429,36 +460,85 @@ class Daemon:
         elif outcome.calls:
             # Again after the tools: the thinker can take longer than the window.
             self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
-        performance = decorate(event, Performance(state="talking", text=outcome.fact,
+        performance = decorate(event, Performance(state="talking", text=prefaced(preface, outcome.fact),
                                                   emotion=outcome.emotion or "neutral"))
         sent = await self.perform(performance)
+        if outcome.held is not None:
+            self.hold(outcome.held)   # the clock starts once she has asked
         # An answer from web results is not kept in her words: the ledger goes into the next
         # sentence's prompt before anything marks it as strangers' text (Thinker._run).
         web = self.thinker.used_untrusted(outcome) if hasattr(self.thinker, "used_untrusted") else False
-        self.ledger.record(text, WEB_REPLY if web else performance.text or "", did=outcome.did)
+        # Her question before a held call is not kept in her words either: with it in the ledger, Qwen
+        # asked "Remove Blue Monday from your Liked Songs? Say yes." itself, with no call held (confirm.py).
+        said = WEB_REPLY if web else confirm.LEDGER_HELD if outcome.held is not None else performance.text or ""
+        self.ledger.record(text, said, did=outcome.did)
         return performance, sent
 
-    async def no_catalogue(self, event: Event, route: Route) -> tuple[Performance, int]:
+    async def no_catalogue(self, event: Event, route: Route, preface: str = "") -> tuple[Performance, int]:
         """A request for particular music with only MPRIS to act through: her fixed line that it
         needs a music add-on, instead of a model that would claim it played something (§8b)."""
         self.quiet_media_until = 0.0   # she changed nothing; a track change now is somebody else's
         log.info("voice: %s wants music found (needs_catalogue %.2f) and no music server is configured; "
                  "saying so (ADAPTERS.md: adding a server)", sentence(event.title), route.catalogue)
-        performance = decorate(event, Performance(state="talking", text=self.rng.choice(NO_CATALOGUE),
+        performance = decorate(event, Performance(state="talking", text=prefaced(preface, self.rng.choice(NO_CATALOGUE)),
                                                   emotion="neutral"))
         sent = await self.perform(performance)
         self.ledger.record(event.title, performance.text or "", did="needs a music add-on")
         return performance, sent
 
-    async def chat(self, event: Event) -> tuple[Performance, int]:
+    async def chat(self, event: Event, preface: str = "") -> tuple[Performance, int]:
         """Gemma answers, with the recent exchanges for context. The voice fallback when the
         thinker is off (and the path every desktop event takes)."""
         context = self.ledger.context(limit=3) if event.source == "voice" else ""
         performance = decorate(event, await self.reactor.react(event, context))
+        if preface:
+            performance = replace(performance, text=prefaced(preface, performance.text or ""))
         sent = await self.perform(performance)
         if event.source == "voice":
             self.ledger.record(event.title, performance.text or "")
         return performance, sent
+
+    def hold(self, held: Held) -> None:
+        """Wait for a yes to `held` (confirm.py): one at a time, a newer question replaces an older one."""
+        self.take_held()
+        self.held = held
+        self.held_task = self.background(self._drop_held(held), "confirmation timer")
+        log.info("confirm: %s waits up to %.0fs for a yes", held.key, self.config.actions.confirm_s)
+
+    def take_held(self) -> Held | None:
+        """The held call, if any, now answered or replaced: no longer waiting."""
+        held, self.held = self.held, None
+        if self.held_task is not None and self.held_task is not asyncio.current_task():
+            self.held_task.cancel()
+        self.held_task = None
+        return held
+
+    async def _drop_held(self, held: Held) -> None:
+        """No answer in `confirm_s`: nothing is done and she says so. Not while she is listening or
+        transcribing: that is the answer on its way, and it is the one that decides."""
+        await asyncio.sleep(self.config.actions.confirm_s)
+        while getattr(self.listener, "busy", False):
+            await asyncio.sleep(0.25)
+        if self.held is not held:
+            return
+        self.held, self.held_task = None, None
+        self.dropped_at = time.monotonic()
+        log.info("confirm: no answer in %.0fs; %s not made", self.config.actions.confirm_s, held.key)
+        await self.perform(Performance(state="talking", text=confirm.LEFT_SILENT, emotion="neutral"))
+        # In her memory too: a late "yes" then reads as what it is to the thinker, not as the answer.
+        self.ledger.record("(no answer)", confirm.LEFT_SILENT, did=f"left {held.name} undone")
+
+    async def confirmed(self, text: str, held: Held) -> tuple[Performance, int]:
+        """The yes: the held call, exactly as it was asked about, and no model asked again. Code writes
+        the fact and the reaction path adds the quip, as for a reflex."""
+        outcome = await confirm.run(self.toolbox, self.toolbox.adapters.get(held.server), held)
+        log.info("confirm: %s made after a yes -> %s", held.key, "ok" if outcome.ok else "failed")
+        performance, sent = await self.report(outcome.event(text), outcome.ok)
+        self.ledger.record(text, performance.text or "", did=outcome.did)
+        return performance, sent
+
+    def confirm_stats(self) -> dict[str, Any]:
+        return {"waiting": self.held.key if self.held is not None else None, "timeout_s": self.config.actions.confirm_s}
 
     async def think(self, text: str, route: Route | None) -> Outcome:
         """Qwen, with cover that scales with the wait: the thinking pose at once and nothing said (a
@@ -555,13 +635,13 @@ class Daemon:
     QUIP_WORDS = 10
     QUIP_UNTIL_CHARS = 200   # a fact this long is a paragraph already; no quip after it
 
-    async def report(self, event: Event, ok: bool) -> tuple[Performance, int]:
+    async def report(self, event: Event, ok: bool, preface: str = "") -> tuple[Performance, int]:
         """Say what she did: the fact (event.body, written by code) and the reactor's quip after it."""
         performance = decorate(event, await self.reactor.react(event))
         quip = short_quip(performance.text or "", self.QUIP_WORDS)
         if len(event.body) > self.QUIP_UNTIL_CHARS:
             quip = ""
-        text = f"{event.body} {quip}".strip() if quip else event.body
+        text = prefaced(preface, f"{event.body} {quip}".strip() if quip else event.body)
         performance = replace(performance, text=text, emotion=performance.emotion if ok else "alert")
         sent = await self.perform(performance)
         return performance, sent
@@ -582,6 +662,12 @@ def read_wav_16k(path: str) -> Any:
         return samples
     positions = np.arange(0, len(samples), rate / RATE)
     return np.interp(positions, np.arange(len(samples)), samples).astype(np.float32)
+
+
+def prefaced(preface: str, text: str) -> str:
+    """Her line with `preface` said first (that she left a held call undone), as one line: the widget
+    cuts a line short when the next one arrives."""
+    return f"{preface} {text}".strip() if preface else text
 
 
 def short_quip(text: str, max_words: int) -> str:

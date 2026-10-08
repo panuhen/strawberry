@@ -228,6 +228,19 @@ adapter then recognises it and adds its reflexes and your artist and playlist na
 saves the playing track to your Liked Songs, and "add this to my gym playlist" or "play my
 running playlist" find the playlist by name.
 
+Removals are asked about first. "Take this off my gym playlist" gets "Remove 'Teardrop' from Gym?
+Say yes." and nothing happens until you answer: yes (sure, do it, go ahead) removes that track,
+even if the song has changed meanwhile; no, anything else, or 10 seconds without an answer leaves
+it, and she says so; a late yes gets "ask me again". Anything else you said is still done. Only your own spoken or typed sentence
+can answer, never a notification. The list is the server's `confirm` key, next to `careful`:
+
+```toml
+[tools.servers.spotify]
+confirm = ["remove_from_playlist", "remove_saved_tracks"]   # the default; [] turns the question off
+```
+
+`[actions] confirm_s` sets how long she waits. Saves and adds are never asked about.
+
 ## Web search (optional)
 
 She searches through a [SearXNG](https://docs.searxng.org/) instance you run yourself, with its

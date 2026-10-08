@@ -39,7 +39,7 @@ from .actions import Outcome
 from .config import ThinkerConfig
 from .contract import EMOTIONS
 from .ledger import as_context
-from . import logtext
+from . import confirm, logtext
 from .logtext import line, sentence
 from .tools import Toolbox, ToolResult, ToolSpec
 
@@ -426,7 +426,7 @@ class Thinker:
             logtext.from_web()   # her line carries text from the web: the journal gets its length only
         self.last = {
             "asked": text, "did": outcome.did, "said": outcome.fact, "emotion": outcome.emotion, "ok": outcome.ok,
-            "s": round(self.last_s, 2),
+            "s": round(self.last_s, 2), "held": outcome.held.key if outcome.held is not None else None,
             "calls": [c.to_dict() | {"text": f"<{len(c.text)} chars from the web>" if self._untrusted(c.server)
                                      else c.text[:200]} for c in outcome.calls],
         }
@@ -571,6 +571,15 @@ class Thinker:
                     # Not made, and not counted as a call: the brain is told why and to answer.
                     messages.append({"role": "tool", "tool_name": name, "content": refusal})
                     continue
+                if spec is not None and self.toolbox.needs_confirm(spec.server, spec.name):
+                    # A tool she asks about first (confirm.py): not made, and the sentence ends here
+                    # with her question, written by code. The call is kept exactly as it would have
+                    # been sent; only the user's next sentence can make it. The rest of this reply's
+                    # calls are not made.
+                    held = await confirm.hold(self.toolbox, adapter, spec.server, spec.name, arguments)
+                    log.info("thinker: %s held for a spoken yes", held.key)
+                    did = f"asked before {spec.name}" if not used else f"{_did(used)}, then asked before {spec.name}"
+                    return Outcome(did, held.question, True, tuple(calls), "neutral", held=held)
                 if spec:
                     per_server[spec.server] = per_server.get(spec.server, 0) + 1
                 result = await self.toolbox.call_function(name, arguments)

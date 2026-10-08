@@ -51,6 +51,7 @@ class Outcome:
     ok: bool
     calls: tuple[ToolResult, ...] = ()
     emotion: str = ""   # set by the thinker (her own line, her own mood); "" = the reaction path picks
+    held: Any = None    # a confirm.Held: a call the thinker stopped at, made only after a spoken yes
 
     def event(self, asked: str) -> Event:
         """For the reaction path: it adds a quip after `fact` (brain.describe)."""

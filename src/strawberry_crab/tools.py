@@ -167,6 +167,10 @@ class Server:
         # Tools with consequences (saving, removing, changing playlists): withheld from the thinker
         # unless the sentence asks for such a change (systemone.WANTS_LIBRARY_CHANGE).
         self.careful: frozenset[str] = frozenset(config.get("careful", []))
+        # Tools she asks about before calling (confirm.py): the config's `confirm` when it has one
+        # (`confirm = []` asks about none), else the adapter's own default.
+        self.confirm: frozenset[str] = frozenset(config["confirm"] if "confirm" in config
+                                                 else getattr(adapter, "confirm", ()) or ())
         self.connect = connect
         self.connect_timeout_s = connect_timeout_s
         self.call_timeout_s = call_timeout_s
@@ -361,7 +365,8 @@ class Server:
     def stats(self) -> dict[str, Any]:
         return {"topic": self.topic, "state": self.state, "tools": len(self.tools), "calls": self.calls,
                 "failures": self.failures, "last_ms": round(self.last_ms, 1) if self.last_ms is not None else None,
-                "error": self.failed or None, "adapter": self.adapter.name if self.adapter else None}
+                "error": self.failed or None, "adapter": self.adapter.name if self.adapter else None,
+                "confirm": sorted(self.confirm)}
 
 
 def _describe(exc: BaseException) -> str:
@@ -446,6 +451,11 @@ class Toolbox:
         if server not in self.servers:
             return ToolResult(server, name, False, f"no server named {server!r} in [tools.servers]", 0.0, arguments=arguments or {})
         return await self.servers[server].call(name, arguments, result_chars or self.config.result_chars)
+
+    def needs_confirm(self, server: str, name: str) -> bool:
+        """Is this tool on its server's `confirm` list: a spoken yes first (confirm.py)?"""
+        found = self.servers.get(server)
+        return found is not None and name in found.confirm
 
     async def call_function(self, function: str, arguments: dict[str, Any] | None = None) -> ToolResult:
         """By the model-facing name from the last `tools_for`."""
