@@ -271,6 +271,25 @@ def write_private(path: Path, text: str) -> None:
         os.chmod(path, 0o600)
 
 
+def _alive(path: Path) -> bool:
+    """Whether the process that wrote the lock still runs (POSIX; elsewhere only its age counts)."""
+    if os.name != "posix":
+        return True
+    try:
+        pid = int(path.read_text().strip() or "0")
+    except (OSError, ValueError):
+        return True                      # being written right now
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 @contextlib.contextmanager
 def file_lock(path: Path, timeout_s: float = 10.0, stale_s: float = 120.0) -> Iterator[None]:
     """A short lock between the daemon, the CLI and the tray around a read-modify-write of the
@@ -285,7 +304,7 @@ def file_lock(path: Path, timeout_s: float = 10.0, stale_s: float = 120.0) -> It
             break
         except FileExistsError:
             try:
-                if time.time() - path.stat().st_mtime > stale_s:
+                if time.time() - path.stat().st_mtime > stale_s or not _alive(path):
                     path.unlink(missing_ok=True)
                     continue
             except OSError:

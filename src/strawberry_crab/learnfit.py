@@ -179,7 +179,7 @@ async def run(job: Job, progress=None) -> dict[str, Any]:
     left_out: dict[str, str] = {}
     base, dataset = gatehead.read_dataset(Path(job.base))
 
-    current_version = job.current_version
+    current_version = job.current_version if job.current else "nearest"
     try:
         current_gate = await shadow_gate(job, job.current)
     except gatehead.HeadError:

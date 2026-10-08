@@ -417,7 +417,7 @@ class Learning:
                             heldout=str(gatehead.HELDOUT_SET), heads=str(self.heads.directory),
                             learned=[{"key": e.key, "text": e.text, "labels": e.labels, "avoid": e.avoid,
                                       "weights": e.weights} for e in examples],
-                            current=current, current_version=self.current_version() if current else "nearest",
+                            current=current, current_version=self.current_version(),
                             phrases=str(more) if more else "", max_share=self.config.learning.max_share,
                             vectors=vectors)
 
