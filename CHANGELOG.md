@@ -11,14 +11,16 @@ package and the widget binary.
 
 - Spotify likes and playlists by name, with the Spotify MCP server's new tools. "I like this"
   and "save this song" put the playing track in your Liked Songs at once, without the big model
-  ("Liked: Blue Monday by New Order."); your local favourites stay for "add this to my
-  favourites". "Add this to my gym playlist", "play my running playlist" and "take this off my
-  gym playlist" pass the name as heard and the server finds the playlist, misheard names
-  included. When several playlists match she asks which one, naming at most three. Adding and
-  liking are offered with every sentence (each is undone in a word, and duplicates are skipped);
-  removing from a playlist and making one are careful tools, offered only when you ask for such a
-  change. Add `remove_from_playlist` and `create_playlist` to the server's `careful` list (the
-  config template has them). An older server without these tools works as before.
+  ("Liked: Blue Monday by New Order."). Your favourites are your Liked Songs: "add this to my
+  favourites" likes the track the same way, and "play my favourites" plays your Liked Songs
+  shuffled, also without the big model (with the server's `play_liked`). "Add this to my gym
+  playlist", "play my running playlist" and "take this off my gym playlist" pass the name as heard
+  and the server finds the playlist, misheard names included. When several playlists match she
+  asks which one, naming at most three. Adding and liking are offered with every sentence (each is
+  undone in a word, and duplicates are skipped); removing from a playlist and making one are
+  careful tools, offered only when you ask for such a change. Add `remove_from_playlist` and
+  `create_playlist` to the server's `careful` list (the config template has them). An older server
+  without these tools works as before.
 - Adapters can name reflexes by the sentence's own words, for commands the gate has no option
   for, and give their paragraph for the brain only to a server that lists the tools it names
   (ADAPTERS.md).
@@ -65,6 +67,12 @@ package and the widget binary.
 
 ### Changed
 
+- The Spotify adapter no longer uses the server's local favourites list (`favorite_current`,
+  `get_favorites`, `remove_favorite`, `play_favorites`, `clear_favorites`), which the server has
+  dropped: "favourites" means Liked Songs. Take those three names out of the server's `careful`
+  list if yours has them (`favorite_current`, `remove_favorite`, `clear_favorites`); left in, they
+  do nothing. "Add this to my favourites" was sometimes answered "Saved" with no call; it is a
+  reflex now.
 - Spotify failures are worded by the server's error code: "I can't reach Spotify right now",
   "Spotify needs signing in again", and otherwise the server's own sentence without its hints for
   a terminal. Before, a network failure came out as "…but Spotify said: Could not reach Spotify.
