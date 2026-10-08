@@ -180,9 +180,11 @@ class ToolsConfig:
     result_chars: int = 2000       # a tool result is cut here before any model reads it
     connect_timeout_s: float = 20.0
     call_timeout_s: float = 20.0
-    # name -> {topic, command, args, env, cwd, careful, adapter}; topic is one of the gate's (music, calendar,
-    # notes, system); careful lists tools with consequences, offered to the thinker only when you ask for such a
-    # change; adapter names one of strawberry/adapters/ when the server's own name does not (ADAPTERS.md).
+    # name -> {topic, command, args, env, cwd, careful, confirm, adapter}; topic is one of the gate's (music,
+    # calendar, notes, system); careful lists tools with consequences, offered to the thinker only when you ask
+    # for such a change; confirm lists tools she asks about out loud first and runs only after a spoken yes
+    # (missing: the adapter's own list, Spotify's two removals; [] asks about none, confirm.py); adapter names
+    # one of strawberry/adapters/ when the server's own name does not (ADAPTERS.md).
     # Empty by default: no server ships configured, and music control works over MPRIS without one.
     servers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -198,6 +200,8 @@ class ActionsConfig:
     reflex: float = 0.6            # tool confidence at which a plain command fires the tool directly
     argument: float = 0.5          # p(has_argument) above this needs the thinker (Qwen) to fill it in
     timeout_s: float = 25.0        # the whole action, tools included; then she says it failed
+    confirm_s: float = 10.0        # how long she waits for a yes to a tool on a server's `confirm` list
+                                   # (confirm.py); not counted while she is listening to the answer
     ledger_turns: int = 6          # her memory: this many recent exchanges…
     ledger_age_s: float = 600.0    # …no older than this, given to both models
 
@@ -382,11 +386,13 @@ def _validate(config: Config) -> None:
         env = server.get("env", {})
         if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
             raise ConfigError(f"tools.servers.{name}.env must be a table of strings")
-        if not all(isinstance(t, str) for t in server.get("careful", [])):
-            raise ConfigError(f"tools.servers.{name}.careful must be a list of tool names")
+        for key in ("careful", "confirm"):
+            listed = server.get(key, [])
+            if not isinstance(listed, list) or not all(isinstance(t, str) for t in listed):
+                raise ConfigError(f"tools.servers.{name}.{key} must be a list of tool names")
         if "adapter" in server and not (isinstance(server["adapter"], str) and server["adapter"].strip()):
             raise ConfigError(f"tools.servers.{name}.adapter must be an adapter name, e.g. \"spotify\" (ADAPTERS.md)")
-        unknown = set(server) - {"topic", "command", "args", "env", "cwd", "careful", "adapter"}
+        unknown = set(server) - {"topic", "command", "args", "env", "cwd", "careful", "confirm", "adapter"}
         if unknown:
             raise ConfigError(f"tools.servers.{name}: unknown keys {sorted(unknown)}")
     if config.tools.result_chars < 100:
@@ -395,6 +401,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("actions.reflex and actions.argument must be between 0 and 1")
     if config.actions.ledger_turns < 1 or config.actions.ledger_age_s <= 0:
         raise ConfigError("actions.ledger_turns >= 1 and actions.ledger_age_s > 0 are required")
+    if config.actions.confirm_s <= 0:
+        raise ConfigError("actions.confirm_s must be positive (how long she waits for a yes)")
     if config.thinker.max_rounds < 1 or config.thinker.timeout_s <= 0 or config.thinker.num_ctx < 1024:
         raise ConfigError("thinker.max_rounds >= 1, timeout_s > 0 and num_ctx >= 1024 are required")
     if not (1 <= config.thinker.num_predict <= config.thinker.num_ctx // 2):
@@ -579,6 +587,9 @@ def default_toml() -> str:
         '#            "create_playlist"]',
         "#                                        # offered only when you ask for such a change; like_current,",
         "#                                        # add_current_to_playlist and play_liked are easy to undo and stay offered",
+        "# confirm = [\"remove_from_playlist\", \"remove_saved_tracks\"]",
+        "#                                        # she asks first (\"Remove 'Teardrop' from Gym? Say yes.\") and runs",
+        "#                                        # it only after a spoken yes; this is the default, [] asks about none",
         "#",
         "# [tools.servers.web]                    # web search through your own SearXNG (README: Web search);",
         "# topic = \"other\"                        # your search queries go to the engines SearXNG asks",
@@ -590,6 +601,7 @@ def default_toml() -> str:
         "enabled = true                 # the reflexes: skip, pause, what's playing… (needs [gate])",
         "mpris = true                   # do the bare music commands over MPRIS (SMTC on Windows) when no server covers them",
         "reflex = 0.6                   # how sure the gate must be to fire a plain command straight away",
+        "confirm_s = 10.0               # how long she waits for a yes to a tool on a server's confirm list",
         "ledger_turns = 6               # her memory: this many recent exchanges, given to whoever answers",
         "",
         "[thinker]",

@@ -15,8 +15,10 @@ from strawberry_crab.tools import Toolbox
 from tests.test_tools import FakeContent, FakeResult, FakeSession, FakeTool, make_connect
 
 TRACKS = [
-    {"name": "Feeling Good", "artists": ["Nina Simone"], "album": "I Put a Spell on You"},
-    {"name": "Blue Monday", "artists": ["New Order"], "album": "Power, Corruption & Lies"},
+    {"name": "Feeling Good", "artists": ["Nina Simone"], "album": "I Put a Spell on You",
+     "uri": "spotify:track:" + "1" * 22},
+    {"name": "Blue Monday", "artists": ["New Order"], "album": "Power, Corruption & Lies",
+     "uri": "spotify:track:" + "2" * 22},
 ]
 
 
@@ -58,7 +60,16 @@ class FakeSpotify:
             return FakeResult([FakeContent(json.dumps({"added": label, "playlist": arguments.get("playlist")}))])
         if name == "remove_from_playlist":
             self.removed.append((arguments.get("playlist"), arguments.get("track")))
-            return FakeResult([FakeContent(json.dumps({"removed": label, "playlist": arguments.get("playlist")}))])
+            named = [t for t in TRACKS if t["uri"] == arguments.get("track")]   # a URI, or "current"
+            if named:
+                label = f"{named[0]['name']} – {', '.join(named[0]['artists'])}"
+            playlist = str(arguments.get("playlist") or "")
+            playlist = "Running" if playlist.startswith("spotify:playlist:") else playlist   # find_playlist's one
+            return FakeResult([FakeContent(json.dumps({"removed": label, "playlist": playlist}))])
+        if name == "remove_saved_tracks":
+            self.removed.append(("liked", tuple(arguments.get("track_ids") or ())))
+            return FakeResult([FakeContent(json.dumps({"success": True, "message": "Removed 1 track(s) from your "
+                                                       "library"}))])
         if name == "play_liked":
             self.played_liked.append(dict(arguments))
             self.playing = True
@@ -125,11 +136,12 @@ NEW_ERRORS = {
 
 
 def make(broken: bool | str = False, actions: ActionsConfig | None = None, name: str = "spotify",
-         server: dict[str, Any] | None = None, mpris: Any | None = None, library: bool = False):
+         server: dict[str, Any] | None = None, mpris: Any | None = None, library: bool = False,
+         extra: list[FakeTool] | None = None):
     """A fake Spotify server under `name`, its toolbox (adapters loaded as they would be live),
-    and an Actor over it. `library` adds the by-name library tools (LIBRARY_TOOLS)."""
+    and an Actor over it. `library` adds the by-name library tools (LIBRARY_TOOLS), `extra` more."""
     spotify = FakeSpotify(broken)
-    session = FakeSession(TOOLS + (LIBRARY_TOOLS if library else []), spotify.handle)
+    session = FakeSession(TOOLS + (LIBRARY_TOOLS if library else []) + list(extra or []), spotify.handle)
     tools = ToolsConfig(servers={name: server or {"topic": "music", "command": "spotify"}}, preconnect=False)
     toolbox = Toolbox(tools, connect=make_connect({(server or {}).get("command", "spotify"): session}))
     return spotify, toolbox, Actor(actions or ActionsConfig(), toolbox, mpris=mpris)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -374,12 +375,14 @@ def test_the_local_favourites_tools_are_gone():
 CAREFUL = ["save_tracks", "remove_saved_tracks", "add_to_playlist", "remove_from_playlist", "create_playlist"]
 
 
-def thinker_over(script: list, broken: bool | str = False):
+def thinker_over(script: list, broken: bool | str = False, confirm: list[str] | None = None):
     from strawberry_crab.config import ThinkerConfig
     from strawberry_crab.thinker import Thinker
     from tests.test_thinker import FakeQwen
 
-    server = {"topic": "music", "command": "spotify", "careful": CAREFUL}
+    server: dict[str, Any] = {"topic": "music", "command": "spotify", "careful": CAREFUL}
+    if confirm is not None:
+        server["confirm"] = confirm
     spotify, toolbox, actor = make(broken=broken, server=server, library=True)
     qwen = FakeQwen(script)
     return spotify, toolbox, qwen, Thinker(ThinkerConfig(), toolbox, "qwen-test", chat=qwen)
@@ -480,7 +483,8 @@ async def test_a_favourites_sentence_through_the_thinker_gets_its_line_and_calls
 async def test_take_this_off_my_playlist_removes_the_current_track_only_when_asked():
     spotify, toolbox, qwen, thinker = thinker_over([[("remove_from_playlist", {"playlist": "running",
                                                                                "track": "current"})],
-                                                    "[neutral] Gone from Running."])
+                                                    "[neutral] Gone from Running."], confirm=[])
+    # `confirm = []`: no spoken yes first (test_confirm.py has the default, which asks).
     outcome = await thinker.run("take this off my running playlist", careful=True, topic="music")
     assert outcome.ok and spotify.removed == [("running", "current")]
     # Not asked to change the library: the same call is never made.

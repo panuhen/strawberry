@@ -165,6 +165,7 @@ async def health(request: web.Request) -> web.Response:
             "wake": daemon.wake.stats() if daemon.wake else {"watching": False, "resumes": 0, "reason": "off in config"},
             "tools": daemon.toolbox.stats(),
             "actions": daemon.actor.stats(),
+            "confirm": daemon.confirm_stats(),
             "thinker": daemon.thinker.stats(),
             "learning": daemon.outcomes.stats(),
             "ledger": daemon.ledger.to_list(),
