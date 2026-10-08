@@ -398,3 +398,57 @@ def test_the_cli_parses_the_gate_commands():
     args = parser().parse_args(["gate", "eval", "--scorer", "head", "--misses"])
     assert args.gate_command == "eval" and args.scorer == "head" and args.misses
     assert parser().parse_args(["gate", "use", "shipped"]).version == "shipped"
+
+
+# ----------------------------------------------------------------------------- rows that say what a sentence is not
+
+
+def test_the_gradient_is_the_losss_with_negative_rows():
+    rng = np.random.default_rng(3)
+    x, y = rng.normal(size=(30, 5)), rng.integers(0, 3, 30)
+    negative = np.arange(30) % 4 == 0
+    w = gatehead.balanced_weights(y, 3, negative)
+    params = rng.normal(size=3 * 5 + 3)
+    _, grad = gatehead._loss(params, x, y, w, 3, 0.1, negative)
+    eye = np.eye(len(params)) * 1e-6
+    numeric = [(gatehead._loss(params + e, x, y, w, 3, 0.1, negative)[0]
+                - gatehead._loss(params - e, x, y, w, 3, 0.1, negative)[0]) / 2e-6 for e in eye]
+    assert np.allclose(grad, numeric, atol=1e-6)
+
+
+def test_balanced_weights_count_only_the_positive_rows():
+    y = np.array([0] * 8 + [1] * 2 + [0] * 5)
+    negative = np.array([False] * 10 + [True] * 5)
+    w = gatehead.balanced_weights(y, 2, negative)
+    assert w[:8].sum() == pytest.approx(w[8:10].sum()) and (w[10:] == 1.0).all()
+    assert gatehead.balanced_weights(y, 2) == pytest.approx(gatehead.balanced_weights(y, 2, np.zeros(15, bool)))
+
+
+def test_a_negative_row_pushes_its_option_down_and_nothing_else_is_asked_of_it():
+    x, y, groups = blobs(k=3, n=90, d=16, spread=0.9, seed=4)
+    probe = x[0] * 0.5 + x[1] * 0.5
+    probe /= np.linalg.norm(probe)
+    plain_w, plain_b = gatehead.fit(x, y, 3, 0.01)
+    before = gatehead.softmax_rows((probe @ plain_w.T + plain_b)[None, :])[0]
+    top = int(before.argmax())
+    xs = np.vstack([x, np.repeat(probe[None, :], 5, axis=0)])
+    ys = np.concatenate([y, np.full(5, top)])
+    negative = np.concatenate([np.zeros(90, bool), np.ones(5, bool)])
+    w, b = gatehead.fit(xs, ys, 3, 0.01, negative=negative)
+    after = gatehead.softmax_rows((probe @ w.T + b)[None, :])[0]
+    assert after[top] < before[top] - 0.2
+    assert ((x @ w.T + b).argmax(axis=1) == y).mean() > 0.95     # the rest of the data still holds
+
+
+def test_training_takes_avoid_labels_and_per_question_weights():
+    samples, vectors = fake_samples()
+    skip = next(s for s in samples if s.labels.get("music_tool") == "skip")
+    extra = Sample(skip.text, {"kind": "request"}, "learned:x", avoid={"music_tool": "skip"},
+                   weights={"kind": 0.5, "music_tool": 1.0})
+    head = gatehead.train(samples + [extra], np.vstack([vectors, normalise([bag_embed(extra.text)])]), QUESTIONS,
+                          embedder="embeddinggemma", query_prefix="", dataset="t", l2_grid=(0.01,))
+    assert head.meta["questions"]["music_tool"]["avoid"]["rows"] == 1
+    assert "avoid" not in head.meta["questions"]["kind"]
+    assert head.meta["questions"]["music_tool"]["counts"]["skip"] == sum(
+        1 for s in samples if s.labels.get("music_tool") == "skip")
+    assert extra.weight_for("kind") == 0.5 and extra.weight_for("topic") == 1.0

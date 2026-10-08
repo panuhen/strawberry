@@ -129,6 +129,23 @@ def privacy_notice_marker() -> Path:
     return state_dir() / "privacy-notice-shown"
 
 
+def private_dir(path: Path) -> Path:
+    """`path` made if missing and, on POSIX, readable by the user alone (0700). Its parents are made
+    as usual: only the last directory holds anything of the user's."""
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "posix":
+        os.chmod(path, 0o700)
+    return path
+
+
+def open_private(path: Path, mode: str = "wb", encoding: str | None = None):
+    """A new or truncated file only the user can read (0600, also when it existed before)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if os.name == "posix":
+        os.fchmod(fd, 0o600)
+    return os.fdopen(fd, mode, encoding=encoding)
+
+
 def outcomes_file() -> Path:
     """The learning loop's records, when `[learning] log_outcomes` is on (outcomes.py)."""
     return state_dir() / "outcomes.jsonl"

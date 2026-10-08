@@ -61,7 +61,7 @@ def test_the_rows_are_the_crabs_menu_plus_show_hide_and_a_status_line():
     assert [(r.id, r.action) for r in rows] == [
         (1, "status"), (2, "hide"), (3, "chat"), (4, "separator"), (5, "mute"), (6, "quiet"),
         (7, "submenu"), (8, "submenu"), (9, "submenu"), (10, "sleep_now"), (11, "hat"), (12, "on_top"),
-        (50, "submenu"), (13, "separator"), (14, "settings_file"), (15, "voices_folder"), (16, "reset_position"),
+        (50, "submenu"), (60, "router_rollback"), (13, "separator"), (14, "settings_file"), (15, "voices_folder"), (16, "reset_position"),
         (17, "separator"), (18, "restart"), (19, "quit")]
     assert rows[0].label == "Idle" and rows[0].enabled is False
     assert rows[1].label == "Hide her"
@@ -136,7 +136,7 @@ def test_the_layout_carries_the_submenus_under_one_root():
     root_id, root_props, children = root
     assert revision == 3 and root_id == 0
     assert root_props["children-display"] == ("s", "submenu")
-    assert [child[1][0] for child in children] == list(range(1, 13)) + [50] + list(range(13, 20))
+    assert [child[1][0] for child in children] == list(range(1, 13)) + [50, 60] + list(range(13, 20))
     assert all(child[0] == "(ia{sv}av)" for child in children)
     volume = children[6][1]
     assert [grandchild[1][0] for grandchild in volume[2]] == [20, 21, 22, 23]
@@ -168,7 +168,7 @@ async def test_getgroupproperties_answers_only_the_ids_asked_for():
     reply = await answer(item, MENU, "GetGroupProperties", "aias", ([2, 19, 31], []))
     assert [entry[0] for entry in reply.body[0]] == [2, 31, 19]      # menu order, submenus in place
     reply = await answer(item, MENU, "GetGroupProperties", "aias", ([], []))
-    assert len(reply.body[0]) == 20 + 4 + 5 + 5 + 5      # the rows plus the four submenus
+    assert len(reply.body[0]) == 21 + 4 + 5 + 5 + 5      # the rows plus the four submenus
 
 
 async def test_abouttoshow_refreshes_the_status_row():
@@ -651,3 +651,27 @@ def test_the_notification_watcher_reads_the_trays_config_file(tmp_path):
                                                    doorways=doorways.for_system("win32"))}
     assert windows["toast_watch"].argv[-2:] == ["--config", str(config)]
     assert "--config" not in windows["smtc_watch"].argv
+
+
+# --- the router's rollback (learning.py) -------------------------------------------
+
+async def test_the_router_rollback_row_shows_only_when_there_is_one_and_rolls_back(tmp_path):
+    from strawberry_crab import gatehead
+    from strawberry_crab.learning import Learning
+    from tests.test_learning import make_head
+
+    item = tray_for(daemon_ok=True)
+    row = next(r for r in item.items if r.id == 60)
+    assert row.label == "Router: roll back to previous" and row.visible is False
+    loop = Learning()
+    path = loop.heads.add(make_head("v1"))
+    loop.use(gatehead.version_of_path(path))
+    item.daemon = FakeDaemon(health={"ok": True, "state": "idle", "learning": {"rollback": "shipped"}})
+    await item.refresh()
+    assert next(r for r in item.items if r.id == 60).visible is True
+    await item.clicked(60)
+    assert loop.heads.current() is None and loop.current_version() == "shipped"
+    assert next(r for r in item.items if r.id == 60).visible is False      # until the next refresh says otherwise
+    item.daemon = FakeDaemon(health={"ok": True, "state": "idle", "learning": {"rollback": None}})
+    await item.refresh()
+    assert next(r for r in item.items if r.id == 60).visible is False

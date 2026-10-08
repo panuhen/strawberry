@@ -765,6 +765,40 @@ class Gate:
                  source, head.act, head.offer, sum(len(a) for a in anchors.values()))
         return True
 
+    async def reload_head(self) -> bool:
+        """The heads dir's `current` moved (`strawberry learning accept` or `rollback`, the tray's
+        rollback, `strawberry gate use`): score with the head it names from the next sentence on,
+        without a restart. A head that does not fit is not used, the one in use stays, and the
+        journal says why. Nothing to do with `[gate] head` set or the nearest scorer configured.
+        True when the gate now scores with another head."""
+        if self.config.scorer != "head" or self.config.head or not self.ready or not self.systemone:
+            return False
+        if self.systemone.head is None:
+            self.head_fallback = ""
+            return await self.use_head()   # it was on the nearest examples: the full load, anchors and all
+        from . import gatehead
+
+        head, source, tried = gatehead.resolve("")
+        if head is None:
+            log.warning("gate: no head to switch to (%s); keeping %s", "; ".join(tried), self.scorer_name)
+            return False
+        if self.head is not None and head.version == self.head.version and head.path == self.head.path:
+            return False
+        questions = {q.name: [o.name for o in _options(q)] for q in (*self.questions, IS_SENSITIVE)}
+        dims = self.systemone.matrix.shape[1] if len(self.systemone.matrix) else None
+        reason = head.mismatch(self.embedder_id, self.config.query_prefix, dims, questions)
+        if reason:
+            log.warning("gate: the head %s is not used (%s); keeping %s", head.version, reason, self.scorer_name)
+            return False
+        for failure in tried:
+            log.warning("gate: %s; using the %s head", failure, source)
+        self.systemone.head = head
+        self.head, self.head_source = head, source
+        self.act, self.offer = head.act, head.offer
+        log.info("gate: now scoring with the head %s (%s; act %.2f, offer %.2f)", head.version, source, head.act,
+                 head.offer)
+        return True
+
     @property
     def embedder_id(self) -> str:
         """The embedding model, as a head names what it was trained on."""
