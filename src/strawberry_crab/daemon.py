@@ -24,6 +24,7 @@ from .logtext import sentence
 from . import logtext, media, privacy
 from .outcomes import OutcomeLog
 from .reactions import decorate, is_burst
+from .routefeed import RouteFeed
 from .speech import Speaker
 from .systemone import Gate, Route
 from .thinker import WEB_REPLY, Thinker
@@ -86,6 +87,8 @@ class Daemon:
         # The router's learning loop, data only (§8c): each routed sentence and what came of it,
         # in a local file, when [learning] log_outcomes is on. Off, every call is a no-op.
         self.outcomes = OutcomeLog(self.config.learning)
+        # The same sentences as they are routed, in memory, for the Brain UI's live view (routefeed.py).
+        self.feed = RouteFeed(self.config.learning)
         # Its second half (§8d): labels from those outcomes, a candidate head trained on them when she
         # has been idle a while, and the gate following the heads dir's `current` without a restart.
         self.voice_at = time.monotonic()     # the last sentence handled (or the start): the trainer waits for quiet
@@ -408,14 +411,16 @@ class Daemon:
         otherwise Qwen in her own voice with the tools (§8b). Gemma answers only if Qwen is off."""
         self.voice_handling += 1
         self.voice_at = time.monotonic()
+        live = self.feed.start("voice" if event.spoken else "typed")
         try:
             with logtext.hearing(event.title):   # her lines in the log leave it out (log_sentences)
-                return await self._handle_voice(event)
+                return await self._handle_voice(event, live)
         finally:
             self.voice_handling -= 1
             self.voice_at = time.monotonic()
+            self.feed.done(live)
 
-    async def _handle_voice(self, event: Event) -> tuple[Performance, int]:
+    async def _handle_voice(self, event: Event, live: dict[str, Any]) -> tuple[Performance, int]:
         text = event.title
         preface = ""
         held = self.take_held()
@@ -443,6 +448,7 @@ class Daemon:
             preface = confirm.LEFT_OTHER   # said ahead of whatever this sentence gets: one line, not two
         route = await self.route(text)
         record = self.outcomes.heard(text, route, "voice" if event.spoken else "typed")
+        self.feed.routed(live, text, route)
         music = route is not None and route.topic == "music"
         if music:
             # Set before acting: the MPRIS doorway reports the new track while the skip is still
@@ -454,21 +460,21 @@ class Daemon:
             self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
             last = getattr(self.actor, "last", None) or {}
             # The reflex's own name: the gate's tool, or one read off the words ("spotify.like").
-            self.outcomes.acted(record, "reflex", outcome.ok,
-                                reflex=f"{last.get('server', '')}.{last.get('tool') or route.tool}")
+            self.acted(record, live, "reflex", outcome.ok,
+                       reflex=f"{last.get('server', '')}.{last.get('tool') or route.tool}")
             performance, sent = await self.report(outcome.event(text), outcome.ok, preface)
             self.ledger.record(text, performance.text or "", did=outcome.did)
             return performance, sent
         if route is not None and self.actor.needs_catalogue(route):
-            self.outcomes.acted(record, "no_catalogue", True)
+            self.acted(record, live, "no_catalogue", True)
             return await self.no_catalogue(event, route, preface)
         if not self.thinker.enabled:
             if music:
                 self.quiet_media_until = 0.0  # Gemma cannot touch the music; it is not hers to explain
-            self.outcomes.acted(record, "chat", True)
+            self.acted(record, live, "chat", True)
             return await self.chat(event, preface)
         outcome = await self.think(text, route)
-        self.outcomes.acted(record, "thinker", outcome.ok, calls=outcome.calls)
+        self.acted(record, live, "thinker", outcome.ok, calls=outcome.calls)
         if music and not outcome.calls:
             self.quiet_media_until = 0.0  # she only talked; a track change now is somebody else's
         elif outcome.calls:
@@ -487,6 +493,11 @@ class Daemon:
         said = WEB_REPLY if web else confirm.LEDGER_HELD if outcome.held is not None else performance.text or ""
         self.ledger.record(text, said, did=outcome.did)
         return performance, sent
+
+    def acted(self, record, live: dict[str, Any], path: str, ok: bool, reflex: str = "", calls=()) -> None:
+        """How a sentence was handled: for the outcome log (§8c) and the live view (routefeed.py)."""
+        self.outcomes.acted(record, path, ok, reflex=reflex, calls=calls)
+        self.feed.acted(live, path, ok, reflex=reflex, calls=calls)
 
     async def no_catalogue(self, event: Event, route: Route, preface: str = "") -> tuple[Performance, int]:
         """A request for particular music with only MPRIS to act through: her fixed line that it

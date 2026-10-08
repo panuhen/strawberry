@@ -867,7 +867,19 @@ class IdleTrainer:
             self.run_task = asyncio.get_running_loop().create_task(self.run())
         await self.maybe_weekly_line()
 
-    async def run(self) -> dict[str, Any] | None:
+    def train_now(self) -> tuple[bool, str]:
+        """The Brain UI's "train now": one run in the background, as the idle one runs (the gate's own
+        embedder, stopped when the user speaks, the child process), without waiting for quiet or
+        new labels. (False, why) when one is running or the gate is not ready."""
+        if self.run_task is not None and not self.run_task.done():
+            return False, "a run is going already"
+        gate = self.daemon.gate
+        if not getattr(gate, "ready", False) or getattr(gate, "embedder", None) is None:
+            return False, "the gate is not ready"
+        self.run_task = asyncio.get_running_loop().create_task(self.run(trigger="by hand"))
+        return True, ""
+
+    async def run(self, trigger: str = "idle") -> dict[str, Any] | None:
         from .gatecmd import EmbedInterrupted
 
         self.last_attempt = time.monotonic()
@@ -881,12 +893,15 @@ class IdleTrainer:
             self.phase = "fitting" if line.startswith("fitting") else self.phase
 
         self.phase = "embedding"
-        log.info("learning: idle for %.0f min with %d new label(s); training a candidate", self.quiet_for() / 60,
-                 self.new_labels)
+        if trigger == "idle":
+            log.info("learning: idle for %.0f min with %d new label(s); training a candidate", self.quiet_for() / 60,
+                     self.new_labels)
+        else:
+            log.info("learning: training a candidate (%s, %d new label(s))", trigger, self.new_labels)
         result = None
         try:
             result = await self.learning.train(self.daemon.gate, runner=self.runner, should_stop=stop,
-                                               progress=progress, trigger="idle")
+                                               progress=progress, trigger=trigger)
         except EmbedInterrupted as exc:
             self.interrupted += 1
             log.info("learning: the user spoke; the run stops (%s) and waits for the next quiet spell", exc)
