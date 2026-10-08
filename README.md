@@ -256,6 +256,33 @@ A switch takes effect within a few seconds; no restart is needed. The tray menu 
 when it runs. She learns only to answer her existing questions better; new kinds of request
 still need a new version of Strawberry.
 
+## Brain UI
+
+```bash
+strawberry ui
+```
+
+opens a page in your browser, served by her own daemon, that shows what she does with what you
+say and what she has learned from it:
+
+- **Learning**: the head in use and the one waiting, side by side on the test set (fields right,
+  wrong reflexes, each question), with Accept, Reject, Train now and Roll back; the sentences she
+  learned from, each with Approve and Reject; the learning log; every head, with Use; the week.
+- **Router live**: each sentence as she routes it: what she read it as, how sure she was, what
+  handled it and how long it took.
+- **Data and scores**: what a head is trained and tested on, and each head's test score over time.
+- **Settings and privacy**: what is kept and logged, and the line in `config.toml` that changes
+  it (the page does not change settings), and Forget.
+- **System**: the models, where the gate runs, the head in use.
+
+The link works once, within a minute; the page then runs on a cookie that ends after 12 hours
+without use or when she restarts. Everything stays on this machine and the page loads nothing
+from the internet. Sentences show only while the learning log is on. No other web page can
+reach her: every other address refuses browsers, and this one takes only its own page, signed
+in. Programs you run yourself could always talk to her; the sign-in keeps web pages out, not
+other programs on your computer. No browser opening (a remote shell, say)?
+`strawberry ui --no-browser` prints the link.
+
 ## Spotify (optional)
 
 Music control works for every player without Spotify's API. If you want more (play an artist,

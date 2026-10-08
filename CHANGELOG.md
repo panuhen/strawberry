@@ -9,6 +9,15 @@ package and the widget binary.
 
 ### Added
 
+- The Brain UI (`strawberry ui`, README: *Brain UI*): a page in your browser, served by the
+  daemon, that shows the router live (each sentence's reading, confidence, what handled it and
+  how long it took) and what the learning loop learned: the candidate against the head in use
+  on the held-out set, the learned sentences with approve and reject, the learning log, every
+  head with its score over time, use and roll back, the week's report, train now and forget. It
+  also shows the effective settings with how to change each, and what runs where. It opens with
+  a one-time link and runs on a session cookie kept in memory; every other route still refuses
+  browsers, the page checks the host, its own origin and a CSRF header, and loads nothing from
+  the internet. Sentences appear only while outcome logging is on, and never in a log.
 - The router learns from use (`strawberry learning`, README: *Learning*). With the learning log on,
   an undo, a correction, a rephrase, silence after a reflex, and the big model doing exactly what a
   reflex does become labelled sentences, kept locally and readable only by you. When she has been
