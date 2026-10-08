@@ -711,8 +711,8 @@ _UNSEEN = object()
 class IdleTrainer:
     """The daemon's side of the loop. Every TICK_S: follow `current` (a CLI accept, a rollback from the
     tray: the gate swaps heads without a restart), take new outcome records into the store, train a
-    candidate when nobody has spoken for `idle_minutes` and `min_new_labels` new labels wait, and say
-    the weekly line when it is on and due.
+    candidate when nobody has spoken for `idle_minutes` and `min_new_labels` new labels wait (only
+    with outcome logging on: off, nothing new is learned), and say the weekly line when it is on and due.
 
     The run never holds up a sentence: the embedding is the gate's own (a worker thread, CHUNK
     sentences a call, stopped between two calls as soon as the user speaks), and the fit and the
@@ -759,6 +759,8 @@ class IdleTrainer:
         """Whether to train now, and why not."""
         if not self.config.idle_train:
             return False, "idle_train is off"
+        if not self.config.log_outcomes:
+            return False, "outcome logging is off"
         if self.run_task is not None and not self.run_task.done():
             return False, "running"
         gate = self.daemon.gate
@@ -791,7 +793,7 @@ class IdleTrainer:
         outcomes = self._stat(self.learning.outcomes_path)
         if outcomes != self.outcomes_seen and not self.voice_busy():
             self.outcomes_seen = outcomes
-            if outcomes is not None:
+            if outcomes is not None and self.config.log_outcomes:
                 await asyncio.to_thread(self.learning.extract)
             self.new_labels = len(await asyncio.to_thread(self.learning.new_examples))
         ok, _ = self.due()
@@ -851,8 +853,8 @@ class IdleTrainer:
     async def follow_pointer(self) -> bool:
         """`current` changed since the last look: the gate scores with the head it names now."""
         seen = self._pointer()
-        if seen == self.pointer_seen:
-            return False
+        if seen == self.pointer_seen or not getattr(self.daemon.gate, "ready", False):
+            return False             # unchanged, or the gate is still starting (it reads `current` itself)
         self.pointer_seen = seen
         reload = getattr(self.daemon.gate, "reload_head", None)
         if reload is None:

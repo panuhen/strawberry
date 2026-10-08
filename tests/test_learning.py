@@ -693,3 +693,17 @@ async def test_the_cli_trains_shows_accepts_rolls_back_and_forgets(world, monkey
     assert cli.main(["learning", "rollback"]) == 1 and "nothing to roll back" in capsys.readouterr().err
     assert cli.main(["learning", "reject"]) == 1 and "no candidate" in capsys.readouterr().err
     assert cli.main(["learning", "forget"]) == 0 and "forgot 1 example" in capsys.readouterr().out
+
+
+async def test_with_outcome_logging_off_the_idle_trainer_learns_nothing_new(world):
+    write_outcomes(teach([f"hold it {i}" for i in range(3)]))
+    gate = await fake_gate()
+    cfg = config(min_new_labels=1, idle_minutes=10)
+    cfg.learning.log_outcomes = False
+    trainer = IdleTrainer(daemon_like(cfg, gate), runner=learnfit.run)
+    try:
+        await trainer.tick()
+        assert trainer.run_task is None and Learning(cfg).examples() == []
+        assert trainer.due() == (False, "outcome logging is off")
+    finally:
+        await gate.close()
