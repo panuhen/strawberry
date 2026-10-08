@@ -109,6 +109,7 @@ p { margin: 0.4rem 0; }
 }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.05rem; }
 .brand .dim { font-weight: 500; }
+.brand .mark { font-size: 1.25rem; line-height: 1; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
 .top-right { display: flex; align-items: center; gap: 10px; }
 
