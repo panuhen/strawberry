@@ -66,6 +66,8 @@ def test_the_base_adapter_adds_nothing():
     plain = Adapter()
     assert plain.reflexes == {} and plain.common_tools == () and plain.flat_gate_examples() == {}
     assert plain.clarify_error(RESTRICTED) == RESTRICTED
+    assert plain.said_reflexes == {} and plain.said_reflex("I like this", None) is None
+    assert plain.guide_for(["anything"]) == ""
 
 
 async def test_a_server_without_an_adapter_is_left_in_its_own_words():

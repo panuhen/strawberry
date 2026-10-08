@@ -132,6 +132,36 @@ class Actor:
                 return "mpris", reflex
         return None
 
+    async def said_reflex_for(self, text: str, route: Route) -> tuple[str, str, Reflex] | None:
+        """A whole sentence a configured server's adapter knows by its words ("I like this": the gate
+        has no option for liking), for a server of the sentence's topic that lists the tool it
+        needs: (server, name, reflex), or None. Asked before the gate's decision, which reads "I like
+        this" as chat; never for a sentence the gate reads as not aimed at her."""
+        if route.kind == "other":
+            return None
+        for name, server in self.toolbox.servers.items():
+            adapter = self.adapters.get(name)
+            if adapter is None or server.topic != route.topic or not getattr(adapter, "said_reflexes", None):
+                continue
+            try:
+                said = adapter.said_reflex(text, route)
+                needs, reflex = adapter.said_reflexes[said] if said else ("", None)
+            except Exception as exc:   # an adapter must never cost the sentence its answer
+                log.warning("actions: %s adapter could not read the sentence (%s)", name, type(exc).__name__)
+                continue
+            if reflex is None:
+                continue
+            try:
+                await server.ensure()
+                listed = {t.name for t in server.tools}
+            except Exception as exc:   # not answering: the thinker says so
+                log.info("actions: %s cannot do %s (%s); over to the thinker", name, said, exc)
+                continue
+            if needs in listed:
+                return name, said, reflex
+            log.info("actions: %s has no %s tool (an older server?); %s goes to the thinker", name, needs, said)
+        return None
+
     CATALOGUE = 0.5   # p(needs_catalogue) from which a music request wants a server's catalogue
 
     def has_catalogue(self) -> bool:
@@ -152,30 +182,37 @@ class Actor:
         """Do what the sentence asks, if this tier can. Returns the outcome (its `fact` is what she
         says, `event()` lets the reaction path add a quip), or None when nothing here applies and
         the caller treats the sentence as chat."""
-        if not self.config.enabled or route.decision != "act":
+        if not self.config.enabled:
             return None
-        found = self.reflex_for(route)
-        if found is None:
-            self.deferred += 1
-            log.info("actions: %s (%s/%s tool %s %.2f arg %.2f) is not a bare reflex; over to the thinker",
-                     sentence(text), route.kind, route.topic, route.tool or "-", route.tool_confidence, route.has_argument)
+        said = await self.said_reflex_for(text, route)
+        if said is not None:
+            server, tool, reflex = said
+        elif route.decision != "act":
             return None
-        server, reflex = found
+        else:
+            found = self.reflex_for(route)
+            if found is None:
+                self.deferred += 1
+                log.info("actions: %s (%s/%s tool %s %.2f arg %.2f) is not a bare reflex; over to the thinker",
+                         sentence(text), route.kind, route.topic, route.tool or "-", route.tool_confidence,
+                         route.has_argument)
+                return None
+            (server, reflex), tool = found, route.tool
         started = time.perf_counter()
         try:
             outcome = await asyncio.wait_for(reflex(self.toolbox, server), self.config.timeout_s)
         except asyncio.TimeoutError:
-            verb = route.tool.replace("_", " ")
+            verb = tool.replace("_", " ")
             outcome = Outcome(f"tried to {verb}", f"I tried to {verb}, but {server} did not answer in time.", False)
         ms = (time.perf_counter() - started) * 1000
         self.acted += 1
         if not outcome.ok:
             self.failed += 1
         self.last = {
-            "asked": text, "tool": route.tool, "server": server, "did": outcome.did, "fact": outcome.fact,
+            "asked": text, "tool": tool, "server": server, "did": outcome.did, "fact": outcome.fact,
             "ok": outcome.ok, "ms": round(ms, 1), "calls": [c.to_dict() | {"text": c.text[:200]} for c in outcome.calls],
         }
-        log.info("actions: %s -> %s.%s: %s -> %r (%.0f ms)", sentence(text), server, route.tool, outcome.did,
+        log.info("actions: %s -> %s.%s: %s -> %r (%.0f ms)", sentence(text), server, tool, outcome.did,
                  line(outcome.fact), ms)
         return outcome
 

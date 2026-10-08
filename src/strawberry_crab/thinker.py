@@ -341,7 +341,7 @@ class Thinker:
                 continue
             if server in offered:
                 lookup = lookup or bool(getattr(adapter, "looks_up_only", False))
-                text_for = getattr(adapter, "guide", "")
+                text_for = self._guide(server, adapter)
                 if server in first:
                     try:
                         note = adapter.nudge(text, route)
@@ -360,6 +360,18 @@ class Thinker:
             log.info("thinker: the sentence wants %s; %s", ", ".join(sorted(first)),
                      "offered first" if first & offered else "not answering")
         return specs, prompt, " ".join(notes)
+
+    def _guide(self, server: str, adapter: Any) -> str:
+        """The adapter's paragraph for a server that answers, for the tools that server lists."""
+        guide_for = getattr(adapter, "guide_for", None)
+        if guide_for is None:
+            return getattr(adapter, "guide", "")
+        listed = getattr(self.toolbox.servers.get(server), "tools", None) or []
+        try:
+            return guide_for([t.name for t in listed]) or ""
+        except Exception as exc:   # an adapter must never cost the sentence its answer
+            log.warning("thinker: %s adapter could not write its guide (%s)", server, exc)
+            return ""
 
     def fit(self, specs: list[ToolSpec]) -> list[ToolSpec]:
         """At most `max_tools` schemas in the prompt (25 Spotify tools are ~360 tokens of an 8192

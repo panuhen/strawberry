@@ -224,7 +224,9 @@ Music control works for every player without Spotify's API. If you want more (pl
 a playlist, save a track), install the separate Spotify MCP server
 [panuhen/spotify-mcp](https://github.com/panuhen/spotify-mcp), authorise it with your Spotify
 account, and add it to the config as shown in [ADAPTERS.md](ADAPTERS.md). Strawberry's Spotify
-adapter then recognises it and adds its reflexes and your artist and playlist names.
+adapter then recognises it and adds its reflexes and your artist and playlist names. "I like this"
+saves the playing track to your Liked Songs, and "add this to my gym playlist" or "play my
+running playlist" find the playlist by name.
 
 ## Web search (optional)
 

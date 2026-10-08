@@ -5,6 +5,7 @@ is all a server needs to be useful. An *adapter* is the optional extra a particu
 earns once you use it every day:
 
     reflexes        the gate's bare commands done without a model, in that server's tool names
+    said_reflexes   commands the gate has no option for, known by the sentence's own words
     situation       one line the thinker is told before it starts ("Now playing on Spotify: …")
     vocabulary      names the speech recogniser should know (artists, playlists)
     clarify_error   this server's confusing refusals, reworded before a model reads them
@@ -43,6 +44,10 @@ class Adapter:
     server_names: tuple[str, ...] = ()
     #: the gate's tool option ("skip", "pause", …) -> a reflex over this server's tools
     reflexes: dict[str, Reflex] = {}
+    #: reflexes picked by the sentence's own words (`said_reflex`), for a command the gate has no
+    #: option for: name -> (the server tool it needs, the reflex). One whose tool the server does not
+    #: list (an older version of it) is not used, and the sentence goes to the thinker
+    said_reflexes: dict[str, tuple[str, Reflex]] = {}
     #: question -> option -> extra phrases, merged into the gate's examples at start
     gate_examples: dict[str, dict[str, list[str]]] = {}
     #: the tools the brain should keep first when there are more than `[thinker] max_tools`
@@ -106,6 +111,18 @@ class Adapter:
         """Does this sentence want this server's tools? True: asked for outright (offered first,
         with `nudge`); False: left out of this sentence's offer; None: no opinion, offered as usual.
         `route` is the gate's reading, None when the gate could not read it."""
+        return None
+
+    def guide_for(self, tools: list[str]) -> str:
+        """`guide`, for a server that lists these tools (all of them, not this sentence's offer, so
+        the paragraph is the same from sentence to sentence): "" when it would name tools the
+        server does not have."""
+        return self.guide
+
+    def said_reflex(self, text: str, route: Any) -> str | None:
+        """The name of one of `said_reflexes` when the whole sentence plainly is that command ("I like
+        this"), else None. Asked before the gate's tool question, for a sentence of this server's
+        topic: keep it to whole sentences with nothing to fill in, and anything else to the thinker."""
         return None
 
     def guard(self, state: dict[str, Any], name: str, arguments: dict[str, Any]) -> str | None:
