@@ -77,6 +77,7 @@ class ToolResult:
     ms: float
     truncated: bool = False
     arguments: dict[str, Any] = field(default_factory=dict)
+    urls: tuple[str, ...] = ()          # the result's own URLs (Adapter.result_urls), read before the cut
 
     def to_dict(self) -> dict[str, Any]:
         return {"server": self.server, "name": self.name, "ok": self.ok, "text": self.text, "ms": round(self.ms, 1),
@@ -351,6 +352,8 @@ class Server:
         is_error = flagged_error(raw)
         text = clarify_error(result_text(raw), self.adapter, is_error)
         ok = not is_error and not looks_like_error(text)
+        urls = self._adapted("result_urls", [], name, text, ok)
+        urls = tuple(u for u in urls if isinstance(u, str)) if isinstance(urls, (list, tuple)) else ()
         text = self._adapted("shape_result", text, name, text, ok)
         if not isinstance(text, str):
             text = result_text(raw)
@@ -366,7 +369,7 @@ class Server:
             summary = text[:160].replace("\n", " ")
         log.info("tools: %s.%s(%s) -> %s in %.0f ms: %s", self.name, name, logtext.arguments(arguments),
                  "ok" if ok else "error", ms, summary)
-        return ToolResult(self.name, name, ok, text, ms, truncated, arguments)
+        return ToolResult(self.name, name, ok, text, ms, truncated, arguments, urls)
 
     async def close(self) -> None:
         if self.task and not self.task.done():

@@ -290,6 +290,12 @@ What it adds:
   `query` (and `max_results`) and `url` (and a length), ~1000. A listing is compacted to numbered
   results (title and site, snippet, URL), so ~8 fit the 2000 characters a result is cut to
   instead of ~2 with the server's scores, engine names and thumbnail URLs.
+- **Which pages can be read.** Only a URL that one of this question's results names as its own.
+  The adapter reads those URLs from the server's whole answer, before it is compacted and cut,
+  and only from a layout a page cannot write a line of: web-mcp's numbered listing (numbered in
+  order, as many results as its header says) or a JSON list's `url` fields. mcp-searxng's
+  `Title:/Description:/URL:` blocks keep a page's line breaks, so a snippet could write a block
+  of its own: they pin nothing. With mcp-searxng she answers from the results and reads no page.
 - **When to search** is its `guide` (asked to; current or specific facts: weather, news,
   results, prices, opening hours, the newest or latest of anything; never small talk, questions
   about her, or recommending music) plus a `nudge` under the sentence for an explicit request

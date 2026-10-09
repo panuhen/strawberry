@@ -705,7 +705,8 @@ class Thinker:
                 used.append(name)
                 if adapter is not None and spec is not None:
                     try:
-                        adapter.observe(states.setdefault(spec.server, {}), spec.name, arguments, result.text, result.ok)
+                        adapter.observe(states.setdefault(spec.server, {}), spec.name, arguments, result.text, result.ok,
+                                        result.urls)
                     except Exception as exc:
                         log.warning("thinker: %s adapter could not note a result (%s)", spec.server, exc)
                 tool_message = {"role": "tool", "tool_name": name,

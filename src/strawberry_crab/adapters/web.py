@@ -13,6 +13,11 @@ What it adds over the plain tool list:
     shape_result    a search listing as numbered lines (title, site, snippet, URL) instead of
                     the server's relevance scores, engine names and thumbnail URLs, so ~8
                     results fit the 2000 characters a tool result is cut to instead of ~2.
+    result_urls     the results' own URLs, read from the server's whole answer before it is
+                    compacted or cut, only from web-mcp's numbered listing or a JSON list (a
+                    page cannot write a line of either); `guard` lets only these be read.
+                    mcp-searxng's blocks keep a page's line breaks, so they pin nothing: its
+                    results are shown, none of their pages is read.
     clarify_error   "fetch failed" becomes "search isn't reachable"; "No results for <the
                     query>" becomes "the search found nothing", without the query.
     log_result      the journal gets the result count and size, never a result: the listing
@@ -114,26 +119,32 @@ def about_now(text: str, route: Any = None) -> bool:
 
 
 def _site(url: str) -> str:
-    host = urlparse(url).netloc.lower()
+    try:
+        host = urlparse(url).netloc.lower()
+    except ValueError:      # a malformed netloc ("http://[x")
+        return ""
     return host.removeprefix("www.")
 
 
-BARE_URL = re.compile(r"^https?://\S+$")
+BARE_URL = re.compile(r"^https?://\S+$", re.IGNORECASE)
 
 
 def _numbered(text: str) -> list[dict[str, str]]:
     """web-mcp's listing: "N. Title", then indented lines: the URL, the snippet, and "engines: …
-    · published: <date>". Only a block whose first line after the title is a bare URL counts, so a
-    URL written in a snippet is never taken for the result's own. The date goes into the snippet."""
+    · published: <date>". web-mcp folds every run of whitespace in a title or snippet to one space,
+    so the lines are the server's own: numbered in order, as many as its header says, or nothing is
+    taken. A result whose URL line is not a bare http(s) URL keeps its place with no URL. The date
+    goes into the snippet."""
     out: list[dict[str, str]] = []
     lines = text.splitlines()
     for i, line in enumerate(lines):
         title = re.match(r"^(\d+)\. (.*)$", line)
         if not title:
             continue
-        url = lines[i + 1].strip() if i + 1 < len(lines) and lines[i + 1].startswith(" ") else ""
-        if int(title.group(1)) != len(out) + 1 or not BARE_URL.match(url):
+        if int(title.group(1)) != len(out) + 1 or i + 1 >= len(lines) or not lines[i + 1].startswith(" "):
             return []      # not the listing web-mcp writes: nothing is taken from it
+        url = lines[i + 1].strip()
+        url = url if BARE_URL.match(url) else ""
         snippet: list[str] = []
         published = ""
         for rest in lines[i + 2:]:
@@ -199,7 +210,7 @@ def _entries(text: str) -> list[dict[str, str]]:
 def compact(text: str) -> str:
     """A search listing as numbered results: title (site), the snippet, the URL. Text it cannot
     read as a listing is returned as it came."""
-    entries = _entries(text)
+    entries = [entry for entry in _entries(text) if entry["url"]]
     if not entries:
         return text
     lines = []
@@ -214,28 +225,15 @@ def compact(text: str) -> str:
 
 
 def result_urls(text: str) -> list[str]:
-    """The results' own URLs, never one written inside a title or a snippet. The first line decides the
-    layout, once: `compact`'s numbered listing, or what `_entries` reads. A listing that fails its
-    layout's checks pins nothing; it is never read again by another layout's rules."""
-    # One layout per text, decided once; a listing that fails its own layout's checks pins nothing
-    # rather than being read again by another layout's rules.
-    # Decided by the first line alone, which no snippet can be.
-    first = next((line for line in text.splitlines() if line.strip()), "")
-    if not re.match(r"^1\. .* \([^()\s]+\)$", first):
-        return [entry["url"] for entry in _entries(text)]
-    # `compact`'s layout: "N. Title (site)", the snippet, the URL; numbered in order, and the URL's
-    # site the one the title line names.
-    lines = text.splitlines()
-    urls: list[str] = []
-    for i, line in enumerate(lines[:-2]):
-        title = re.match(r"^(\d+)\. .* \(([^()\s]+)\)$", line)
-        if not title:
-            continue
-        url = lines[i + 2].strip()
-        if int(title.group(1)) != len(urls) + 1 or not BARE_URL.match(url) or _site(url) != title.group(2):
-            return []
-        urls.append(url)
-    return urls
+    """The results' own URLs, read from the server's whole answer before it is compacted or cut
+    (`WebAdapter.result_urls`; the toolbox passes them on as `ToolResult.urls`). Only from a layout
+    whose lines a page cannot write: web-mcp's listing (`_numbered`) or a JSON list's URL fields.
+    mcp-searxng's "Title:/URL:" blocks keep a page's line breaks, so a snippet could write a block of
+    its own: they pin nothing (its results are shown, no page of them is read)."""
+    stripped = text.strip()
+    if not (stripped.startswith('Search results for "') or stripped[:1] in "[{"):
+        return []
+    return [entry["url"] for entry in _entries(text) if BARE_URL.match(entry["url"])]
 
 
 def count(text: str) -> int:
@@ -518,11 +516,16 @@ class WebAdapter(Adapter):
         why = await resolves_public(str(arguments.get("url", "")))
         return BAD_URL.format(why=why) if why else None
 
-    def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool) -> None:
+    def result_urls(self, name: str, text: str, ok: bool) -> list[str]:
+        return result_urls(text) if ok and name in SEARCH_TOOLS else []
+
+    def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool,
+                urls: tuple[str, ...] = ()) -> None:
         if name in SEARCH_TOOLS and ok:
-            # Only the results' own URL fields: a URL a snippet mentions is the page author's choice.
+            # Only the results' own URL fields, as `result_urls` read them from the whole answer: a
+            # URL a snippet mentions is the page author's choice, and the text here is compacted and cut.
             pinned = state.setdefault("urls", {})
-            for url in result_urls(text):
+            for url in urls:
                 try:
                     forward, key = canonical(url)
                 except BadUrl:

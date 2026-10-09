@@ -168,8 +168,15 @@ class Adapter:
         instead. Keep it short: the sentence is waiting."""
         return None
 
-    def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool) -> None:
-        """After a call: note what `guard` needs to know later in the same sentence."""
+    def result_urls(self, name: str, text: str, ok: bool) -> list[str]:
+        """The URLs a call's result names as its own (a search's results), read from the server's whole
+        answer before `shape_result` and the cut to `result_chars`; they reach `observe` as `urls`."""
+        return []
+
+    def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool,
+                urls: tuple[str, ...] = ()) -> None:
+        """After a call: note what `guard` needs to know later in the same sentence. `text` is the
+        result as the model got it (compacted, cut); `urls` what `result_urls` read before that."""
 
     async def ask(self, toolbox: Toolbox, server: str, name: str,
                   arguments: dict[str, Any]) -> tuple[str, dict[str, Any]]:

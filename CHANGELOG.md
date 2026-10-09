@@ -211,6 +211,15 @@ package and the widget binary.
 
 ### Fixed
 
+- She can read a page from her web search again. With web-mcp the adapter took each result's
+  snippet for its URL, so every page read was refused and she answered from snippets alone. The
+  results' URLs are now read from the server's whole answer, before it is compacted and cut
+  (cutting a long listing used to drop them all), and only from web-mcp's numbered listing or a
+  JSON list. mcp-searxng's listing pins nothing, since a page could write a result of its own
+  into it: with mcp-searxng she answers from the results and reads no page. A refused call's log
+  line names the rule. Snippets carry their published date when the engine gives one.
+- She glances up at every notification, not only one with an app icon.
+
 - Web search no longer reads a page whose site name points at a private address. The page
   address was checked as written (no IP addresses, no internal names), but a public-looking name
   can resolve to the machine itself or the home network (`localtest.me` is 127.0.0.1). The name

@@ -341,6 +341,11 @@ args = ["-y", "mcp-searxng@2.5.1"]
 env = { SEARXNG_URL = "http://127.0.0.1:8888", NODE_OPTIONS = "--dns-result-order=ipv4first", PATH = "/dir/of/node:/usr/bin:/bin" }
 ```
 
+With mcp-searxng she answers from the search results but reads no page of them: its listing
+keeps a page's line breaks, so a result's own URL cannot be told from one a page wrote
+(ADAPTERS.md, *Which pages can be read*). A server that lists results as JSON, or as numbered
+results with one line each, lets her read one page a question.
+
 `PATH` is needed when Node.js is not on the service's own PATH (a Node from nvm is not): `npx`
 starts `node` by name. `NODE_OPTIONS` makes the page reader use IPv4 first; without it, on a
 machine with no IPv6 route, every page read timed out after 10 s. The name `web` picks her web
