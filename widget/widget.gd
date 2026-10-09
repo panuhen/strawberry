@@ -2,7 +2,8 @@ extends Node3D
 ## The desktop widget: a frameless, transparent, always-on-top window that performs
 ## whatever strawberryd sends over the websocket (WIRING.md §1, §6, §13).
 ##
-## Drag the crab to move her. Q quits, C cycles skins, T opens the type box. Outlines are always on.
+## Drag the crab to move her; a quick tap pokes her (touch.gd). Q quits, C cycles skins, T opens the
+## type box. Outlines are always on.
 ## Command-line (after `--`): --ws=ws://host:port/ws   --capture=/path/out.png (--chip: with the step chip)
 ##   --acceptance=res://validate_widget.gd  run a validator instead (the exported binary has no --script)
 
@@ -20,6 +21,7 @@ const TopHat = preload("res://top_hat.gd")
 const TypeBox = preload("res://type_box.gd")
 const StepChip = preload("res://step_chip.gd")
 const Turn = preload("res://turn.gd")
+const Touch = preload("res://touch.gd")
 const Paths = preload("res://paths.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
@@ -45,6 +47,12 @@ const REGION_HOLD_S := 1.5
 const REGION_SLACK := 8.0
 const REGION_SHRINK := 0.97
 const MENU_PADDING := 3.0
+# A press shorter than TAP_S that moves less than TAP_SLOP_PX is a poke; one that moves further
+# drags her window; one held still past HOLD_S is a hold (touch.gd). Mouse and touch alike: Godot
+# turns a touch into the same mouse events.
+const TAP_S := 0.22
+const TAP_SLOP_PX := 6.0
+const HOLD_S := 0.5
 
 var ws_url := "ws://127.0.0.1:8770/ws"
 var capture_path := ""
@@ -87,12 +95,17 @@ var quiet_until := 0.0          # unix time; > now means "quiet for a while" is 
 var voice_volume := 1.0
 var always_on_top := true
 var turn_to_screen := true      # her view follows where the window sits (turn.gd)
+var touch_reactions := true     # pokes, pats and holds get a reaction (touch.gd)
+var touch_talk := false         # ... and now and then a short spoken line (the daemon's)
 var state := "idle"
 var rest_state := "idle"
 var one_shot := ""
 var performances := 0
 var dragging := false
 var drag_offset := Vector2i.ZERO
+var pressing := false           # the left button (or a finger) is down on her, not yet a drag
+var press_at := 0.0
+var press_pos := Vector2.ZERO
 var bone_boxes := {}            # mesh -> [[bone, bind pose, box of what that bone moves], ...] (body_points)
 var recent_hulls: Array = []    # [seconds, padded hull] of the last REGION_HOLD_S (Windows)
 var region := PackedVector2Array()
@@ -113,6 +126,7 @@ func _ready() -> void:
 	setup_controllers()
 	setup_reactions()
 	setup_turn()
+	setup_touch()
 	setup_bubble()
 	setup_menu()
 	setup_type_box()
@@ -401,18 +415,41 @@ static func area(polygon: PackedVector2Array) -> float:
 		sum += polygon[i].cross(polygon[(i + 1) % polygon.size()])
 	return absf(sum) / 2.0
 
+## Left press: a poke, a hold or a drag (TAP_S, TAP_SLOP_PX, HOLD_S). The step chip's ✕ and the type
+## box are Controls that take their clicks before this sees them; a press on them is never a poke.
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
-			dragging = true
+			if on_controls(event.position):
+				return
+			pressing = true
+			press_at = Time.get_ticks_msec() / 1000.0
+			press_pos = event.position
 			drag_offset = DisplayServer.mouse_get_position() - DisplayServer.window_get_position()
 		elif dragging:
 			dragging = false
+			pressing = false
 			save_settings()
+		elif pressing:
+			pressing = false
+			touch.release_hold()
+			if Time.get_ticks_msec() / 1000.0 - press_at <= TAP_S:
+				touch.poke(press_pos)
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 		menu.open_at(event.position)
-	elif event is InputEventMouseMotion and dragging:
-		DisplayServer.window_set_position(DisplayServer.mouse_get_position() - drag_offset)
+	elif event is InputEventMouseMotion and (pressing or dragging):
+		if not dragging and event.position.distance_to(press_pos) > TAP_SLOP_PX:
+			dragging = true
+			touch.release_hold()
+		if dragging:
+			DisplayServer.window_set_position(DisplayServer.mouse_get_position() - drag_offset)
+
+## The step chip and the open type box win over her: a press on them is theirs.
+func on_controls(point: Vector2) -> bool:
+	for control: Control in [step_chip, type_box]:
+		if control and control.visible and control.get_global_rect().has_point(point):
+			return true
+	return false
 
 # --- right-click menu and preferences --------------------------------------------
 
@@ -636,6 +673,19 @@ func setup_turn() -> void:
 	turn.setup(self, model)
 	turn.enabled = turn_to_screen
 	turn.location_override = place_at
+
+func setup_touch() -> void:
+	touch = Touch.new()
+	add_child(touch)
+	touch.setup(self, model, camera, blink_controller)
+
+func set_touch_reactions(value: bool) -> void:
+	touch_reactions = value
+	save_settings()
+
+func set_touch_talk(value: bool) -> void:
+	touch_talk = value
+	save_settings()
 
 func set_turn_to_screen(value: bool) -> void:
 	turn_to_screen = value
@@ -903,6 +953,8 @@ func restore_settings() -> void:
 		voice_volume = clampf(float(config.get_value("audio", "volume", 1.0)), 0.0, 1.0)
 		always_on_top = bool(config.get_value("window", "always_on_top", true))
 		turn_to_screen = bool(config.get_value("window", "turn_to_screen", true))
+		touch_reactions = bool(config.get_value("touch", "reactions", true))
+		touch_talk = bool(config.get_value("touch", "talk", false))
 	if is_headless():
 		return
 	get_window().always_on_top = always_on_top
@@ -935,6 +987,8 @@ func save_settings() -> void:
 	config.set_value("audio", "volume", voice_volume)
 	config.set_value("window", "always_on_top", always_on_top)
 	config.set_value("window", "turn_to_screen", turn_to_screen)
+	config.set_value("touch", "reactions", touch_reactions)
+	config.set_value("touch", "talk", touch_talk)
 	if not is_headless():
 		var pos := DisplayServer.window_get_position()
 		config.set_value("window", "x", pos.x)

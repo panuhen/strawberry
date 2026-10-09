@@ -70,6 +70,8 @@ if [ -n "$WIDGET" ]; then
   "$WIDGET" --headless -- --acceptance=res://validate_prefs.gd || STATUS=$?
   echo "== widget turning"
   "$WIDGET" --headless -- --acceptance=res://validate_turn.gd || STATUS=$?
+  echo "== widget touch"
+  "$WIDGET" --headless -- --acceptance=res://validate_touch.gd || STATUS=$?
 else
   REPORT="$ROOT/widget/widget_checks.json"
   echo "== widget end-to-end (headless)"
@@ -79,6 +81,8 @@ else
   "$GODOT" --headless --path "$(native "$ROOT/widget")" --script res://validate_prefs.gd || STATUS=$?
   echo "== widget turning"
   "$GODOT" --headless --path "$(native "$ROOT/widget")" --script res://validate_turn.gd || STATUS=$?
+  echo "== widget touch"
+  "$GODOT" --headless --path "$(native "$ROOT/widget")" --script res://validate_touch.gd || STATUS=$?
 fi
 
 cat "$REPORT"

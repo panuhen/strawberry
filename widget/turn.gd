@@ -90,7 +90,7 @@ func advance(delta: float) -> void:
 	if widget.touch:
 		layered += widget.touch.yaw
 	yaw = clampf(place.x + drift * Easing.in_out(idle_weight) + glance + layered, -MAX_YAW, MAX_YAW)
-	pitch = clampf(place.y + (widget.touch.pitch if widget.touch else 0.0), -MAX_PITCH, MAX_PITCH)
+	pitch = clampf(place.y, -MAX_PITCH, MAX_PITCH)
 	apply()
 
 ## Her rotation: yaw about her own up, then the view's tilt about the screen's horizontal.

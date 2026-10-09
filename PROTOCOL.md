@@ -95,9 +95,9 @@ In order, on one socket:
    - `{"tempo": {…}}` if a beat estimate arrived in the last 6 s (`daemon.py:257-262`).
 3. The body sends its hello (§2.1).
 4. From then on the brain broadcasts performances, tempo and commands to every open socket, and
-   the body may send `ping` and `heard`.
+   the body may send `ping`, `heard` and `poked` (§6).
 
-A socket that never says hello is still served: it gets every broadcast and may send `heard`
+A socket that never says hello is still served: it gets every broadcast and may send `heard` and `poked`
 (`server.py:374-398`, `hub.py:57-71`).
 
 ### 2.1 `hello` (body → brain)
@@ -282,6 +282,7 @@ first (`widget.gd:650-652`).
 | `{"type":"ping"}` | – | answers `{"type":"pong"}` | `server.py:387-388` |
 | `{"type":"heard","text":"…"}` | `text`: string, the sentence the user typed | trimmed; empty ignored; becomes `Event(source="voice", title=text)` and runs the same funnel as a spoken sentence, in the background. It is a foreground run (Part 1b): one at a time, and it stops the one before it unless it answers her question | `server.py:390-397`, sent by `widget.gd:411-417` |
 | `{"type":"run.cancel","run_id":"…"}` | v2 only | §11c; from a v1 body it is ignored | `server.py` `_cancel_from_body` |
+| `{"type":"poked","zone":"…","level":1}` | `zone`: `shell` `belly` `eye` `claw` `near`; `level`: 1 (curious) or 2 (annoyed) | from any body. The widget sends it now and then only with its *Talk when poked* setting on (off by default; WIRING.md §13, Touch); it has already reacted itself. The brain may answer with one short line written in `pokes.py` (no model, nothing in the ledger) as an ordinary `talking` performance without `anim` or `reaction`, unless a run is going on, its state is not `idle` or `dancing`, or it said one in the last 20 s. Anything else in the fields: logged at DEBUG, ignored. Not the proposed v2 `touch` (§14), which maps to bindings and never speaks | `server.py` `_poked`, sent by `touch.gd` `maybe_talk` |
 | anything else | – | logged at DEBUG, ignored | `server.py:398-399` |
 | not JSON | – | logged at DEBUG, ignored | `server.py:379-381` |
 

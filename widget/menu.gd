@@ -1,6 +1,7 @@
 extends PopupMenu
 ## Right-click menu on the crab (WIRING.md §13): type to her, mute, quiet hour, voice volume, skin,
-## always-on-top, the settings file, and quit. Preferences persist in
+## always-on-top, turning toward the screen, touch reactions and their spoken lines, the settings
+## file, and quit. Preferences persist in
 ## $XDG_CONFIG_HOME/strawberry/widget.cfg through the widget's save_settings(); daemon-side
 ## settings live in config.toml, which "Settings file…" opens in the desktop's text editor.
 ## Both that and "Apply settings" go through the `strawberry` CLI (paths.gd: STRAWBERRY_CLI
@@ -10,7 +11,7 @@ const Paths = preload("res://paths.gd")
 
 # Explicit ids for every item: items added without one get their index as id, and a
 # submenu row would then collide with a real id and take its check mark.
-enum { MUTE, QUIET_HOUR, ALWAYS_ON_TOP, SETTINGS_FILE, APPLY_SETTINGS, VOICES_FOLDER, RESET_POSITION, QUIT, TOP_HAT = 20, RESTART_WIDGET = 21, VOLUME_MENU = 100, SKIN_MENU = 101, SLEEP_MENU = 102, SLEEP_NOW = 22, TYPE_BOX = 23, TURN_TO_SCREEN = 24 }
+enum { MUTE, QUIET_HOUR, ALWAYS_ON_TOP, SETTINGS_FILE, APPLY_SETTINGS, VOICES_FOLDER, RESET_POSITION, QUIT, TOP_HAT = 20, RESTART_WIDGET = 21, VOLUME_MENU = 100, SKIN_MENU = 101, SLEEP_MENU = 102, SLEEP_NOW = 22, TYPE_BOX = 23, TURN_TO_SCREEN = 24, TOUCH_REACTIONS = 25, TOUCH_TALK = 26 }
 const SLEEP_MINUTES := [5.0, 1.0, 10.0, 30.0, 0.0]
 const VOLUMES := [0.25, 0.5, 0.75, 1.0]
 const QUIET_SECONDS := 3600.0
@@ -49,6 +50,8 @@ func setup(owner: Node3D) -> void:
 	add_item("Sleep now", SLEEP_NOW)
 	add_check_item("Top hat", TOP_HAT)
 	add_check_item("Turn toward the screen", TURN_TO_SCREEN)
+	add_check_item("Touch reactions", TOUCH_REACTIONS)
+	add_check_item("Talk when poked", TOUCH_TALK)
 	add_check_item("Always on top", ALWAYS_ON_TOP)
 	add_separator()
 	add_item("Settings file…", SETTINGS_FILE)
@@ -72,6 +75,9 @@ func _refresh() -> void:
 		sleep_menu.set_item_checked(i, is_equal_approx(widget.sleep_after_minutes, SLEEP_MINUTES[i]))
 	set_item_checked(get_item_index(TOP_HAT), widget.top_hat_enabled)
 	set_item_checked(get_item_index(TURN_TO_SCREEN), widget.turn_to_screen)
+	set_item_checked(get_item_index(TOUCH_REACTIONS), widget.touch_reactions)
+	set_item_checked(get_item_index(TOUCH_TALK), widget.touch_talk)
+	set_item_disabled(get_item_index(TOUCH_TALK), not widget.touch_reactions)
 	set_item_checked(get_item_index(MUTE), widget.muted)
 	var quiet_left: float = widget.quiet_until - Time.get_unix_time_from_system()
 	var quiet_index := get_item_index(QUIET_HOUR)
@@ -95,6 +101,10 @@ func _on_pressed(id: int) -> void:
 			widget.set_top_hat(not widget.top_hat_enabled)
 		TURN_TO_SCREEN:
 			widget.set_turn_to_screen(not widget.turn_to_screen)
+		TOUCH_REACTIONS:
+			widget.set_touch_reactions(not widget.touch_reactions)
+		TOUCH_TALK:
+			widget.set_touch_talk(not widget.touch_talk)
 		RESTART_WIDGET:
 			widget.restart_widget()
 		MUTE:
