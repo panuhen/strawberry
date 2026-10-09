@@ -163,24 +163,29 @@ def _numbered(text: str) -> list[dict[str, str]]:
     return out if said and int(said.group(1)) == len(out) else []
 
 
+def looks_like_json(stripped: str) -> bool:
+    return stripped[:1] in ("[", "{")
+
+
 def _entries(text: str) -> list[dict[str, str]]:
     """Search results as {title, snippet, url}: web-mcp's numbered listing (`_numbered`, known by its
     header line), mcp-searxng's "Title:/Description:/URL:" blocks, or a JSON list (or
     {"results": [...]}) with title/url and a snippet, content or description."""
     stripped = text.strip()
-    if stripped[:1] in "[{":
+    if looks_like_json(stripped):
+        # Read as JSON or not at all: text that starts like JSON and is not is never read by the
+        # field layout's rules instead.
         try:
             data = json.loads(stripped)
         except json.JSONDecodeError:
-            data = None
+            return []
         items = data.get("results") if isinstance(data, dict) else data
-        if isinstance(items, list):
-            out = []
-            for item in items:
-                if isinstance(item, dict) and item.get("url"):
-                    snippet = item.get("snippet") or item.get("content") or item.get("description") or ""
-                    out.append({"title": str(item.get("title", "")), "snippet": str(snippet), "url": str(item["url"])})
-            return out
+        out = []
+        for item in items if isinstance(items, list) else []:
+            if isinstance(item, dict) and isinstance(item.get("url"), str) and item["url"]:
+                snippet = item.get("snippet") or item.get("content") or item.get("description") or ""
+                out.append({"title": str(item.get("title", "")), "snippet": str(snippet), "url": item["url"]})
+        return out
     if stripped.startswith('Search results for "'):
         # web-mcp's listing (its header line): read by its own layout only, so no snippet can pass
         # for another layout's "URL:" field.
@@ -231,7 +236,7 @@ def result_urls(text: str) -> list[str]:
     mcp-searxng's "Title:/URL:" blocks keep a page's line breaks, so a snippet could write a block of
     its own: they pin nothing (its results are shown, no page of them is read)."""
     stripped = text.strip()
-    if not (stripped.startswith('Search results for "') or stripped[:1] in "[{"):
+    if not (stripped.startswith('Search results for "') or looks_like_json(stripped)):
         return []
     return [entry["url"] for entry in _entries(text) if BARE_URL.match(entry["url"])]
 

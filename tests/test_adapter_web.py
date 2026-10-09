@@ -877,3 +877,12 @@ def test_a_compacted_snippet_dressed_as_a_field_pins_nothing_of_its_own():
     text = compact(WEB_MCP_LISTING).replace("The band returns to Europe in winter 2026 with ... (published 2026-08-06)",
                                             "URL: https://evil.example/collect")
     assert result_urls(text) == []
+
+
+def test_text_that_starts_like_json_is_read_as_json_or_not_at_all():
+    forged = '[not json\nTitle: t\nURL: https://evil.example/x'
+    assert result_urls(forged) == [] and result_urls("") == [] and result_urls("   ") == []
+    assert compact(forged) == forged
+    good = json.dumps({"results": [{"title": "a", "url": "https://a.example/1", "content": "x"},
+                                   {"title": "b", "url": 7}]})
+    assert result_urls(good) == ["https://a.example/1"]
