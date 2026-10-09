@@ -152,9 +152,9 @@ def _numbered(text: str) -> list[dict[str, str]]:
 
 
 def _entries(text: str) -> list[dict[str, str]]:
-    """Search results as {title, snippet, url}: mcp-searxng's "Title:/Description:/URL:" blocks, a
-    JSON list (or {"results": [...]}) with title/url and a snippet, content or description, or
-    web-mcp's numbered listing (`_numbered`)."""
+    """Search results as {title, snippet, url}: web-mcp's numbered listing (`_numbered`, known by its
+    header line), mcp-searxng's "Title:/Description:/URL:" blocks, or a JSON list (or
+    {"results": [...]}) with title/url and a snippet, content or description."""
     stripped = text.strip()
     if stripped[:1] in "[{":
         try:
@@ -169,9 +169,15 @@ def _entries(text: str) -> list[dict[str, str]]:
                     snippet = item.get("snippet") or item.get("content") or item.get("description") or ""
                     out.append({"title": str(item.get("title", "")), "snippet": str(snippet), "url": str(item["url"])})
             return out
+    if stripped.startswith('Search results for "'):
+        # web-mcp's listing (its header line): read by its own layout only, so no snippet can pass
+        # for another layout's "URL:" field.
+        return _numbered(text)
     out: list[dict[str, str]] = []
     current: dict[str, str] = {}
     for line in text.splitlines():
+        if line[:1].isspace():
+            continue    # the fields start their lines; an indented line is a snippet's text
         key, sep, value = line.partition(":")
         if not sep:
             continue
@@ -186,7 +192,7 @@ def _entries(text: str) -> list[dict[str, str]]:
             current["url"] = value
     if current.get("url"):
         out.append(current)
-    return out or _numbered(text)
+    return out
 
 
 def compact(text: str) -> str:
