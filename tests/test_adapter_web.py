@@ -12,7 +12,7 @@ import pytest
 
 from strawberry_crab import logtext
 from strawberry_crab.adapters import adapter_for, load, web
-from strawberry_crab.adapters.web import (WEB, about_now, asks_to_search, compact, count)
+from strawberry_crab.adapters.web import (WEB, WebAdapter, about_now, asks_to_search, compact, count, result_urls)
 from strawberry_crab.config import Config, ThinkerConfig, ToolsConfig
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
@@ -772,3 +772,39 @@ async def test_health_keeps_no_web_result_text():
     await thinker.run("look up godot")
     assert RESULT_CANARY not in json.dumps(thinker.stats())
     await box.close()
+
+
+# web-mcp's own listing: "N. Title", then the URL, the snippet and an engines line, indented.
+WEB_MCP_LISTING = """Search results for "a band live 2026" (provider: cache; 3 results; untrusted web content)
+Note: cached answer from searxng
+1. A band returns to Europe in 2026 ...
+   https://band.example/news/tour-2026/
+   The band returns to Europe in winter 2026 with ...
+   engines: startpage, google cse · published: 2026-08-06
+2. A band | Some Arena - Events
+   https://events.example/a-band
+   See https://elsewhere.example/ for more · Festival 2026
+   engines: startpage
+3. Tickets
+   https://tickets.example/a-band/5242
+   engines: yahoo"""
+
+
+def test_web_mcp_listing_pins_the_results_own_urls():
+    assert result_urls(WEB_MCP_LISTING) == ["https://band.example/news/tour-2026/", "https://events.example/a-band",
+                                             "https://tickets.example/a-band/5242"]
+
+
+def test_web_mcp_listing_compacts_with_its_date():
+    text = compact(WEB_MCP_LISTING)
+    assert text.splitlines()[:3] == ["1. A band returns to Europe in 2026 ... (band.example)",
+                                     "The band returns to Europe in winter 2026 with ... (published 2026-08-06)",
+                                     "https://band.example/news/tour-2026/"]
+    assert result_urls(text) == result_urls(WEB_MCP_LISTING)
+
+
+def test_a_web_mcp_result_can_be_read_after_its_search():
+    adapter, state = WebAdapter(), {}
+    adapter.observe(state, "web_search", {"query": "a band live 2026"}, WEB_MCP_LISTING, True)
+    assert adapter.guard(state, "read_page", {"url": "https://band.example/news/tour-2026/"}) is None
+    assert adapter.guard(state, "read_page", {"url": "https://elsewhere.example/"}) is not None

@@ -787,7 +787,9 @@ class Thinker:
                     reason = AFTER_WEB if untrusted else None
                 why = "its adapter's guard"
         if reason is not None:
-            log.info("thinker: %s.%s not called: %s", spec.server, spec.name, why)
+            # The rule, from the refusal's own fixed wording: never the "(why)" part, which can quote the URL.
+            rule = reason.removeprefix("Not done: ").split(".")[0].split(" (")[0][:80]
+            log.info("thinker: %s.%s not called: %s (%s)", spec.server, spec.name, why, rule)
         return reason
 
     async def _screen(self, spec: ToolSpec, adapter: Any, untrusted: bool, states: dict[str, dict[str, Any]],

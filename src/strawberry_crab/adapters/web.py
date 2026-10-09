@@ -118,9 +118,43 @@ def _site(url: str) -> str:
     return host.removeprefix("www.")
 
 
+BARE_URL = re.compile(r"^https?://\S+$")
+
+
+def _numbered(text: str) -> list[dict[str, str]]:
+    """web-mcp's listing: "N. Title", then indented lines: the URL, the snippet, and "engines: …
+    · published: <date>". Only a block whose first line after the title is a bare URL counts, so a
+    URL written in a snippet is never taken for the result's own. The date goes into the snippet."""
+    out: list[dict[str, str]] = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        title = re.match(r"^\d+\. (.*)$", line)
+        if not title or i + 1 >= len(lines) or not lines[i + 1].startswith(" "):
+            continue
+        url = lines[i + 1].strip()
+        if not BARE_URL.match(url):
+            continue
+        snippet: list[str] = []
+        published = ""
+        for rest in lines[i + 2:]:
+            if not rest.startswith(" "):
+                break
+            rest = rest.strip()
+            if rest.startswith("engines:"):
+                found = re.search(r"published: (\S+)", rest)
+                published = found.group(1) if found else ""
+            elif rest:
+                snippet.append(rest)
+        text_part = " ".join(snippet)
+        out.append({"title": title.group(1).strip(), "url": url,
+                    "snippet": f"{text_part} (published {published})" if published else text_part})
+    return out
+
+
 def _entries(text: str) -> list[dict[str, str]]:
-    """Search results as {title, snippet, url}: mcp-searxng's "Title:/Description:/URL:" blocks, or a
-    JSON list (or {"results": [...]}) with title/url and a snippet, content or description."""
+    """Search results as {title, snippet, url}: mcp-searxng's "Title:/Description:/URL:" blocks, a
+    JSON list (or {"results": [...]}) with title/url and a snippet, content or description, or
+    web-mcp's numbered listing (`_numbered`)."""
     stripped = text.strip()
     if stripped[:1] in "[{":
         try:
@@ -152,7 +186,7 @@ def _entries(text: str) -> list[dict[str, str]]:
             current["url"] = value
     if current.get("url"):
         out.append(current)
-    return out
+    return out or _numbered(text)
 
 
 def compact(text: str) -> str:
@@ -173,11 +207,15 @@ def compact(text: str) -> str:
 
 
 def result_urls(text: str) -> list[str]:
-    """The results' own URLs, never one written inside a title or a snippet: in a compacted listing
-    the third line of each numbered result; in anything else, what `_entries` reads as a URL field."""
+    """The results' own URLs, never one written inside a title or a snippet: what `_entries` reads as
+    a URL field; else, in a compacted listing, the third line of each numbered result when it is a
+    bare URL."""
+    entries = _entries(text)
+    if entries:
+        return [entry["url"] for entry in entries]
     lines = text.splitlines()
-    urls = [lines[i + 2].strip() for i, line in enumerate(lines[:-2]) if re.match(r"^\d+\. ", line)]
-    return urls or [entry["url"] for entry in _entries(text)]
+    return [lines[i + 2].strip() for i, line in enumerate(lines[:-2])
+            if re.match(r"^\d+\. ", line) and BARE_URL.match(lines[i + 2].strip())]
 
 
 def count(text: str) -> int:
