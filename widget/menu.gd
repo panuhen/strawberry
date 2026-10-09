@@ -10,7 +10,7 @@ const Paths = preload("res://paths.gd")
 
 # Explicit ids for every item: items added without one get their index as id, and a
 # submenu row would then collide with a real id and take its check mark.
-enum { MUTE, QUIET_HOUR, ALWAYS_ON_TOP, SETTINGS_FILE, APPLY_SETTINGS, VOICES_FOLDER, RESET_POSITION, QUIT, TOP_HAT = 20, RESTART_WIDGET = 21, VOLUME_MENU = 100, SKIN_MENU = 101, SLEEP_MENU = 102, SLEEP_NOW = 22, TYPE_BOX = 23 }
+enum { MUTE, QUIET_HOUR, ALWAYS_ON_TOP, SETTINGS_FILE, APPLY_SETTINGS, VOICES_FOLDER, RESET_POSITION, QUIT, TOP_HAT = 20, RESTART_WIDGET = 21, VOLUME_MENU = 100, SKIN_MENU = 101, SLEEP_MENU = 102, SLEEP_NOW = 22, TYPE_BOX = 23, TURN_TO_SCREEN = 24 }
 const SLEEP_MINUTES := [5.0, 1.0, 10.0, 30.0, 0.0]
 const VOLUMES := [0.25, 0.5, 0.75, 1.0]
 const QUIET_SECONDS := 3600.0
@@ -48,6 +48,7 @@ func setup(owner: Node3D) -> void:
 	add_submenu_node_item("Sleep after inactivity", sleep_menu, SLEEP_MENU)
 	add_item("Sleep now", SLEEP_NOW)
 	add_check_item("Top hat", TOP_HAT)
+	add_check_item("Turn toward the screen", TURN_TO_SCREEN)
 	add_check_item("Always on top", ALWAYS_ON_TOP)
 	add_separator()
 	add_item("Settings file…", SETTINGS_FILE)
@@ -70,6 +71,7 @@ func _refresh() -> void:
 	for i in SLEEP_MINUTES.size():
 		sleep_menu.set_item_checked(i, is_equal_approx(widget.sleep_after_minutes, SLEEP_MINUTES[i]))
 	set_item_checked(get_item_index(TOP_HAT), widget.top_hat_enabled)
+	set_item_checked(get_item_index(TURN_TO_SCREEN), widget.turn_to_screen)
 	set_item_checked(get_item_index(MUTE), widget.muted)
 	var quiet_left: float = widget.quiet_until - Time.get_unix_time_from_system()
 	var quiet_index := get_item_index(QUIET_HOUR)
@@ -91,6 +93,8 @@ func _on_pressed(id: int) -> void:
 			widget.sleeper.call_deferred("begin_sleep")
 		TOP_HAT:
 			widget.set_top_hat(not widget.top_hat_enabled)
+		TURN_TO_SCREEN:
+			widget.set_turn_to_screen(not widget.turn_to_screen)
 		RESTART_WIDGET:
 			widget.restart_widget()
 		MUTE:

@@ -19,6 +19,7 @@ const DanceStyle = preload("res://dance_style.gd")
 const TopHat = preload("res://top_hat.gd")
 const TypeBox = preload("res://type_box.gd")
 const StepChip = preload("res://step_chip.gd")
+const Turn = preload("res://turn.gd")
 const Paths = preload("res://paths.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
@@ -51,6 +52,7 @@ var look_at := Vector2(-1, -1)   # --look=x,y pins the cursor position (captures
 var capture_dance := ""          # --dance=rave: capture that style mid-beat instead of the wave
 var capture_typing := false      # --typing: capture with the glass type box open
 var capture_chip := false        # --chip: capture with the step chip of a run under way
+var place_at := Vector2(INF, INF)  # --at=u,v: pretend her window sits there on its monitor (-1..1)
 
 var model: Node3D
 var player: AnimationPlayer
@@ -72,6 +74,8 @@ var sleep_after_minutes := 5.0
 var ws: Node
 var blink_controller: Node
 var claw_controller: Node
+var turn: Node
+var touch: Node                 # touch reactions (touch.gd)
 var pending_hops := 0
 var one_shots_played := 0
 var window_hops := 0
@@ -82,6 +86,7 @@ var muted := false
 var quiet_until := 0.0          # unix time; > now means "quiet for a while" is on
 var voice_volume := 1.0
 var always_on_top := true
+var turn_to_screen := true      # her view follows where the window sits (turn.gd)
 var state := "idle"
 var rest_state := "idle"
 var one_shot := ""
@@ -107,6 +112,7 @@ func _ready() -> void:
 	apply_appearance()
 	setup_controllers()
 	setup_reactions()
+	setup_turn()
 	setup_bubble()
 	setup_menu()
 	setup_type_box()
@@ -134,6 +140,10 @@ func parse_args() -> void:
 			capture_typing = true
 		elif arg == "--chip":
 			capture_chip = true
+		elif arg.begins_with("--at="):
+			var at := arg.trim_prefix("--at=").split(",")
+			if at.size() == 2:
+				place_at = Vector2(clampf(float(at[0]), -1.0, 1.0), clampf(float(at[1]), -1.0, 1.0))
 		elif arg.begins_with("--dance="):
 			capture_dance = arg.trim_prefix("--dance=")
 
@@ -187,14 +197,7 @@ func update_passthrough() -> void:
 		return
 	if menu and menu.visible:
 		return     # the open menu takes the whole window; popup_hide brings the polygon back
-	var points := PackedVector2Array()
-	for node in model.find_children("*", "MeshInstance3D", true, false):
-		var mesh := node as MeshInstance3D
-		if not mesh.is_visible_in_tree():
-			continue
-		var aabb: AABB = mesh.global_transform * mesh.get_aabb()
-		for i in 8:
-			points.append(camera.unproject_position(aabb.get_endpoint(i)))
+	var points := hull_points()
 	if type_box and type_box.visible:
 		# The glass box sits below her; while it is open it takes clicks as well.
 		var rect := type_box.get_global_rect()
@@ -213,6 +216,28 @@ func update_passthrough() -> void:
 	for p in hull:
 		padded.append(p + (p - center).normalized() * PASSTHROUGH_PADDING)
 	get_window().mouse_passthrough_polygon = padded
+
+## Her meshes' corners on screen, at every turn and tilt she can take (turn.gd: MAX_YAW and MAX_PITCH
+## either way). X11's input shape is set now and then, not every frame, so it holds all of them
+## while she turns; on Windows follow_pose takes her pose as it is, each frame.
+func hull_points() -> PackedVector2Array:
+	var points := PackedVector2Array()
+	var turns: Array[Transform3D] = []
+	for y in [-1.0, 0.0, 1.0]:
+		for p in [-1.0, 1.0]:
+			var basis := Basis(Vector3.RIGHT, p * Turn.MAX_PITCH) * Basis(Vector3.UP, y * Turn.MAX_YAW)
+			turns.append(model.get_parent_node_3d().global_transform * Transform3D(basis, model.position))
+	var unturned := model.global_transform.affine_inverse()
+	for node in model.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node as MeshInstance3D
+		if not mesh.is_visible_in_tree():
+			continue
+		var local := unturned * mesh.global_transform
+		for placed in turns:
+			var aabb: AABB = (placed * local) * mesh.get_aabb()
+			for i in 8:
+				points.append(camera.unproject_position(aabb.get_endpoint(i)))
+	return points
 
 ## Windows makes the polygon the window's region (SetWindowRgn): what lies outside it is neither
 ## clicked nor drawn. So there it is her pose, not her meshes at rest: run before each frame is
@@ -605,6 +630,18 @@ func setup_reactions() -> void:
 	add_child(dance)
 	dance.setup(self, player, model, blink_controller)
 
+func setup_turn() -> void:
+	turn = Turn.new()
+	add_child(turn)
+	turn.setup(self, model)
+	turn.enabled = turn_to_screen
+	turn.location_override = place_at
+
+func set_turn_to_screen(value: bool) -> void:
+	turn_to_screen = value
+	turn.enabled = value
+	save_settings()
+
 func setup_bubble() -> void:
 	bubble = Bubble.new()
 	bubble.position = Vector3(0, 0.98, 0)
@@ -716,6 +753,10 @@ func perform(data: Dictionary) -> void:
 			push_warning("unknown anim %s; ignored" % anim)
 
 	var reaction := str(data.get("reaction", ""))
+	# Something arrived for her (an app's icon, a perk, a burst): a glance toward where the desktop
+	# shows notifications, then back to the user.
+	if data.has("icon") or anim == "notify_perk" or reaction == "double_hop":
+		turn.glance_at_notification()
 	if reaction != "":
 		if reaction == "double_hop":
 			play_one_shot("notify_perk")
@@ -861,6 +902,7 @@ func restore_settings() -> void:
 		quiet_until = float(config.get_value("audio", "quiet_until", 0.0))
 		voice_volume = clampf(float(config.get_value("audio", "volume", 1.0)), 0.0, 1.0)
 		always_on_top = bool(config.get_value("window", "always_on_top", true))
+		turn_to_screen = bool(config.get_value("window", "turn_to_screen", true))
 	if is_headless():
 		return
 	get_window().always_on_top = always_on_top
@@ -892,6 +934,7 @@ func save_settings() -> void:
 	config.set_value("audio", "quiet_until", quiet_until)
 	config.set_value("audio", "volume", voice_volume)
 	config.set_value("window", "always_on_top", always_on_top)
+	config.set_value("window", "turn_to_screen", turn_to_screen)
 	if not is_headless():
 		var pos := DisplayServer.window_get_position()
 		config.set_value("window", "x", pos.x)

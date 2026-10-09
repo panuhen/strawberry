@@ -9,6 +9,15 @@ package and the widget binary.
 
 ### Added
 
+- She turns. A slow, small sway while idle; a glance toward a notification as it arrives, toward
+  the middle of the screen now and then, and toward the cursor when it comes to rest near her;
+  a quick turn and back in the peek and the wave; a turn on the beat when she dances. Always a
+  few degrees, always back to face you, and her eyes stay on you while she turns.
+- *Turn toward the screen* in her right-click menu (on by default): her view follows where her
+  window sits on its monitor. Near the top you see her a little from below, near the bottom a
+  little from above, and near a side edge she turns a little toward the middle. Each monitor
+  counts on its own, and it follows a drag smoothly. Her click-through area follows the turns.
+
 - Runs you can watch and stop. Every sentence she handles, and every notification she reacts to,
   is a run with its steps: how the gate read it, thinking, each tool call and how long it took,
   what she said, and how it ended. While a slower one is going on, a chip under her bubble says

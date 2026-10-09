@@ -5,6 +5,7 @@ extends Node
 ## of the animation and drives a few morphs. Nothing here is baked into the GLB, so a
 ## recipe is a dozen lines you can tune live. Bone axes come from the rig:
 ## claw lift = local +X, eyestalk sway = local Z, body pitch = local X, body roll = local Z.
+## Turning (yaw) is not a bone: a recipe sets `yaw` and turn.gd turns the whole model by it.
 ##
 ## Runs as a plain node at process priority 150, after the AnimationPlayer has written the
 ## frame's pose, the same way blink_controller and claw_controller layer their morphs.
@@ -41,6 +42,8 @@ var body_pitch := 0.0
 var body_roll := 0.0
 var claw_l_lift := 0.0
 var eye_stretch := 0.0
+var yaw := 0.0                   # radians, read by turn.gd: +turns her face to the viewer's right
+var turn_side := 1.0
 
 func setup(model: Node, blink: Node) -> void:
 	skeleton = model.find_child("Skeleton3D", true, false) as Skeleton3D
@@ -68,6 +71,8 @@ func play(name: String) -> bool:
 	recipe = name
 	t = 0.0
 	duration = DURATIONS[name]
+	# Peek looks round to one side or the other; the wave turns toward the lifted (left) claw.
+	turn_side = -1.0 if name == "wave" else (1.0 if randf() < 0.5 else -1.0)
 	return true
 
 func _process(delta: float) -> void:
@@ -80,6 +85,7 @@ func _process(delta: float) -> void:
 	body_roll = 0.0
 	claw_l_lift = 0.0
 	eye_stretch = 0.0
+	yaw = 0.0
 	var claw_open := Vector2.ZERO
 	var squash_extra := 0.0
 	var wide := 0.0
@@ -91,8 +97,10 @@ func _process(delta: float) -> void:
 			claw_l_lift = deg_to_rad(48.0) * Easing.back_out(p / 0.22) * (1.0 - smoothstep(0.78, 1.0, p))
 			claw_open.x = 0.9 * env * maxf(0.0, sin(TAU * 2.0 * p))  # two open-close beats
 			wide = 0.8 * env
+			yaw = turn_side * deg_to_rad(8.0) * Easing.there_and_back(p / 0.45)   # a quick turn and back
 		"peek":
 			eye_stretch = 0.35 * env
+			yaw = turn_side * deg_to_rad(10.0) * Easing.there_and_back(p / 0.55)
 			body_pitch = deg_to_rad(-7.0) * env  # lean toward the viewer
 			wide = 0.5 * env
 		"shiver":
@@ -127,6 +135,7 @@ func finish() -> void:
 	body_roll = 0.0
 	claw_l_lift = 0.0
 	eye_stretch = 0.0
+	yaw = 0.0
 	blink_controller.extra_wide = 0.0
 	blink_controller.extra_happy = 0.0
 	blink_controller.extra_squint = 0.0

@@ -46,6 +46,7 @@ var presence := 0.0              # 0..1, how much of the moves she is doing (FAD
 var previous_style := ""
 var since_switch := SWITCH_S
 var last_moves := {}
+var yaw := 0.0                   # the styles' turn on the beat, read by turn.gd
 
 func setup(owner: Node3D, animation_player: AnimationPlayer, model: Node, blink_controller: Node) -> void:
 	process_priority = 155
@@ -168,7 +169,7 @@ func _process(delta: float) -> void:
 func moves(name: String, now: float) -> Dictionary:
 	var phase := beat_phase(now)
 	var parity := beat_index(now) % 2
-	var m := {"pitch": 0.0, "roll": 0.0, "lift_l": 0.0, "lift_r": 0.0, "squash": 0.0,
+	var m := {"pitch": 0.0, "roll": 0.0, "yaw": 0.0, "lift_l": 0.0, "lift_r": 0.0, "squash": 0.0,
 		"wide": 0.0, "happy": 0.0, "squint": 0.0, "speed": clip_speed()}
 	match name:
 		"rave":
@@ -179,6 +180,7 @@ func moves(name: String, now: float) -> Dictionary:
 			# A quick lean onto the beat's side that eases back by the next one (was a sawtooth).
 			var lean := Easing.out(phase / 0.12) * (1.0 - Easing.in_out((phase - 0.12) / 0.88))
 			m.roll = deg_to_rad(3.0) * (1.0 if parity == 0 else -1.0) * lean
+			m.yaw = deg_to_rad(5.0) * (1.0 if parity == 0 else -1.0) * lean
 			m.wide = 0.6
 		"headbang":
 			m.pitch = -deg_to_rad(16.0) * pulse(phase, 5.0)
@@ -188,15 +190,19 @@ func moves(name: String, now: float) -> Dictionary:
 		"groove":
 			var bar := fposmod((now - float(tempo.get("next_beat", now))) / (2.0 * float(tempo.get("period_s", 0.5))), 1.0)
 			m.roll = deg_to_rad(5.0) * sin(TAU * bar)
+			m.yaw = deg_to_rad(7.0) * sin(TAU * bar + PI / 2.0)   # turns at the ends of the roll
 			m.squash = 0.18 * pulse(phase, 5.0) * (1.0 if parity == 0 else 0.5)
 			m.lift_l = 0.35 * pulse(phase, 4.0) if parity == 0 else 0.0
 			m.lift_r = 0.35 * pulse(phase, 4.0) if parity == 1 else 0.0
 		"bounce":
 			m.squash = 0.32 * pulse(phase, 6.0)
 			m.pitch = -deg_to_rad(4.0) * pulse(phase, 6.0)
+			var hop := Easing.out(phase / 0.15) * (1.0 - Easing.in_out((phase - 0.15) / 0.85))
+			m.yaw = deg_to_rad(3.0) * (1.0 if parity == 0 else -1.0) * hop
 		"sway":
 			m.speed = 0.75
 			m.roll = deg_to_rad(4.0) * sin(TAU * now / 3.2)
+			m.yaw = deg_to_rad(6.0) * sin(TAU * now / 6.4)
 			m.happy = 0.4
 	return m
 
@@ -209,6 +215,7 @@ static func mix(a: Dictionary, b: Dictionary, weight: float) -> Dictionary:
 ## Puts the moves on top of the clip's pose, scaled by `weight` (the clip's speed is the caller's).
 func layer(m: Dictionary, weight: float) -> void:
 	var pitch: float = m.pitch * weight
+	yaw = m.yaw * weight
 	var roll: float = m.roll * weight
 	if pitch != 0.0 or roll != 0.0:
 		var q := Quaternion(Vector3.RIGHT, pitch) * Quaternion(Vector3.BACK, roll)
@@ -226,6 +233,7 @@ func layer(m: Dictionary, weight: float) -> void:
 func reset() -> void:
 	applied = false
 	presence = 0.0
+	yaw = 0.0
 	last_moves = {}
 	if wrote_speed:
 		player.speed_scale = 1.0
