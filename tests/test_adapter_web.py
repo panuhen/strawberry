@@ -542,7 +542,7 @@ def test_an_address_two_parsers_could_read_differently_is_never_read(url):
 
 def pinned_state(*urls: str) -> dict:
     state: dict = {}
-    text = "\n".join(f"{i + 1}. Result {i} (site)\nsnippet\n{url}" for i, url in enumerate(urls))
+    text = "\n".join(f"{i + 1}. Result {i} ({web._site(url)})\nsnippet\n{url}" for i, url in enumerate(urls))
     WEB.observe(state, "searxng_web_search", {"query": "x"}, text, True)
     return state
 
@@ -819,3 +819,10 @@ def test_a_snippet_cannot_pin_its_own_url():
     adapter, state = WebAdapter(), {}
     adapter.observe(state, "web_search", {"query": "a band"}, forged, True)
     assert adapter.guard(state, "read_page", {"url": "https://evil.example/collect"}) is not None
+
+
+def test_a_listing_out_of_order_or_short_of_its_count_pins_nothing():
+    assert result_urls(WEB_MCP_LISTING.replace("2. A band | Some", "7. A band | Some")) == []
+    assert result_urls(WEB_MCP_LISTING.replace("3 results;", "4 results;")) == []
+    compacted = compact(WEB_MCP_LISTING)
+    assert result_urls(compacted.replace("(events.example)", "(other.example)")) == []

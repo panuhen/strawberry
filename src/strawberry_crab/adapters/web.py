@@ -128,12 +128,12 @@ def _numbered(text: str) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     lines = text.splitlines()
     for i, line in enumerate(lines):
-        title = re.match(r"^\d+\. (.*)$", line)
-        if not title or i + 1 >= len(lines) or not lines[i + 1].startswith(" "):
+        title = re.match(r"^(\d+)\. (.*)$", line)
+        if not title:
             continue
-        url = lines[i + 1].strip()
-        if not BARE_URL.match(url):
-            continue
+        url = lines[i + 1].strip() if i + 1 < len(lines) and lines[i + 1].startswith(" ") else ""
+        if int(title.group(1)) != len(out) + 1 or not BARE_URL.match(url):
+            return []      # not the listing web-mcp writes: nothing is taken from it
         snippet: list[str] = []
         published = ""
         for rest in lines[i + 2:]:
@@ -146,9 +146,10 @@ def _numbered(text: str) -> list[dict[str, str]]:
             elif rest:
                 snippet.append(rest)
         text_part = " ".join(snippet)
-        out.append({"title": title.group(1).strip(), "url": url,
+        out.append({"title": title.group(2).strip(), "url": url,
                     "snippet": f"{text_part} (published {published})" if published else text_part})
-    return out
+    said = re.match(r'^Search results for ".*" \(provider: [^;]*; (\d+) results;', text)
+    return out if said and int(said.group(1)) == len(out) else []
 
 
 def _entries(text: str) -> list[dict[str, str]]:
@@ -219,9 +220,19 @@ def result_urls(text: str) -> list[str]:
     entries = _entries(text)
     if entries:
         return [entry["url"] for entry in entries]
+    # `compact`'s layout: "N. Title (site)", the snippet, the URL; numbered in order, and the URL's
+    # site the one the title line names.
     lines = text.splitlines()
-    return [lines[i + 2].strip() for i, line in enumerate(lines[:-2])
-            if re.match(r"^\d+\. ", line) and BARE_URL.match(lines[i + 2].strip())]
+    urls: list[str] = []
+    for i, line in enumerate(lines[:-2]):
+        head = re.match(r"^(\d+)\. .* \(([^()\s]+)\)$", line)
+        if not head:
+            continue
+        url = lines[i + 2].strip()
+        if int(head.group(1)) != len(urls) + 1 or not BARE_URL.match(url) or _site(url) != head.group(2):
+            return []
+        urls.append(url)
+    return urls
 
 
 def count(text: str) -> int:
