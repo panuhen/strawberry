@@ -24,6 +24,7 @@ const StepChip = preload("res://step_chip.gd")
 const ApprovalCard = preload("res://approval_card.gd")
 const Turn = preload("res://turn.gd")
 const Touch = preload("res://touch.gd")
+const Legs = preload("res://legs.gd")
 const Paths = preload("res://paths.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
@@ -89,6 +90,7 @@ var blink_controller: Node
 var claw_controller: Node
 var turn: Node
 var touch: Node                 # touch reactions (touch.gd)
+var legs: Node                  # the procedural leg layer and the gait (legs.gd)
 var pending_hops := 0
 var one_shots_played := 0
 var window_hops := 0
@@ -130,6 +132,7 @@ func _ready() -> void:
 	apply_appearance()
 	setup_controllers()
 	setup_reactions()
+	setup_legs()
 	setup_turn()
 	setup_touch()
 	setup_bubble()
@@ -717,6 +720,14 @@ func setup_reactions() -> void:
 	dance = DanceStyle.new()
 	add_child(dance)
 	dance.setup(self, player, model, blink_controller)
+
+func setup_legs() -> void:
+	legs = Legs.new()
+	add_child(legs)
+	legs.setup(self, model, camera)
+	reactions.legs = legs
+	reactions.player = player
+	dance.legs = legs
 
 func setup_turn() -> void:
 	turn = Turn.new()

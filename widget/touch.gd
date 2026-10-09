@@ -214,6 +214,10 @@ func _process(delta: float) -> void:
 		body_pitch = deg_to_rad(-6.0) * h
 		squint = 0.6 * h
 		squash = 0.12 * (0.5 - 0.5 * cos(TAU * now() / 2.4)) * h
+		if widget.legs:
+			# Her legs settle: she sinks a little and the toes spread.
+			widget.legs.lift(-0.014 * h)
+			widget.legs.add_all(Vector3.ZERO, -0.012 * h)
 		if hold_amount <= 0.0 and not holding and recipe == "hold":
 			recipe = ""
 	if recipe != "" and recipe != "hold":
@@ -231,6 +235,12 @@ func _process(delta: float) -> void:
 				squash = 0.35 * absf(sin(TAU * 4.0 * t)) * env
 				body_roll = deg_to_rad(2.5) * sin(TAU * 12.0 * t) * env
 				squint = 0.8 * env    # eyes screwed up, giggling
+				if widget.legs:
+					# The legs scrabble a little: the tripods kick up in turn, toes skittering sideways.
+					for leg in widget.legs.LEGS:
+						var turn_of := 0.0 if leg in widget.legs.TRIPOD_A else PI
+						var kick := maxf(0.0, sin(TAU * 7.0 * t + turn_of))
+						widget.legs.add(leg, Vector3(0.008 * sin(TAU * 7.0 * t + turn_of + 1.2), 0.018 * kick, 0.0) * env)
 			"flinch":
 				# Eyes shut at once, a jerk back and away, then open again.
 				closed = 1.0 - Easing.in_out((p - 0.35) / 0.4)

@@ -342,6 +342,9 @@ def phase6():
                 pb['eyestalk_R'].rotation_euler.z=-.045*math.sin(w+.4)
                 pb['claw_arm_L'].rotation_euler.x=.025*math.sin(w)
                 pb['claw_arm_R'].rotation_euler.x=-.025*math.sin(w)
+                # A slow weight shift from side to side, the toes staying where they stand.
+                pb['body'].location.x=.007*math.sin(w)
+                pb['body'].rotation_euler.z=-.018*math.sin(w)
                 breathe=.22*(.5-.5*math.cos(w))
             elif name=='listen_loop':
                 for side in ['L','R']:
@@ -380,6 +383,10 @@ def phase6():
                     a,_,c=(Vector(p) for p in leg_points(i,sign))
                     toe=tuck_toe(a,c,lift)
                     if sleep_amount>0: toe=toe.lerp(fold_toe(a,c),sleep_amount)
+                    if name=='idle_loop': toe=planted(arm,c)
+                    if name=='think_loop' and side=='L' and i==1:
+                        # Impatient: the front left toe taps four times a loop.
+                        toe=c+Vector((.006,-.004,.026))*tap_lift(4*t%1)
                     pose_leg(arm,side,i,toe)
             for p in pb:
                 for prop in ['location','rotation_euler','scale']: p.keyframe_insert(prop,frame=frame,group=p.name)
@@ -603,6 +610,16 @@ def pose_leg(arm,side,index,target):
     rest_up=up.bone.matrix_local; rest_lo=lo.bone.matrix_local
     up.matrix_basis=rest_up.inverted()@m_up
     lo.matrix_basis=rest_lo.inverted()@rest_up@m_up.inverted()@m_lo
+
+def planted(arm,point):
+    """A toe that stays at `point` (armature space) however the body is posed, in the body's rest frame."""
+    body=arm.pose.bones['body']; rest=body.bone.matrix_local
+    return rest@body.matrix_basis.inverted()@rest.inverted()@point
+
+def tap_lift(u):
+    """One tap over u in [0, 1): a moment on the floor, eased up, held, then down fast onto it at 1."""
+    up=ease_in_out((u-.12)/.35)
+    return up*(1-clamp01((u-.7)/.3)**2)
 
 def make_belly():
     # A shallow cream underside nested inside the shell rim, not a front bib.

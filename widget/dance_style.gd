@@ -4,10 +4,14 @@ extends Node
 ## dance clip at the music's tempo, and layers beat-locked moves on top of the clip the same
 ## way the reaction recipes do (bone offsets after the AnimationPlayer, morphs via the eyes).
 ##
-##   rave      techno/house/trance: even four-on-the-floor kick, 118+ BPM. Stomp + alternating arms.
-##   headbang  rock/metal: fast, dense, uneven. Forward nod on the beat, claws up, squint.
-##   groove    hip hop/funk: 80–108 BPM with low end. Slow roll, claw pumps every other beat.
-##   bounce    pop and the rest with a beat. Squash on the beat.
+##   rave      techno/house/trance: even four-on-the-floor kick, 118+ BPM. Stomp + alternating arms,
+##             a side's front legs stomping on each beat.
+##   headbang  rock/metal: fast, dense, uneven. Forward nod on the beat, claws up, squint, both
+##             front legs stomping together on every beat.
+##   groove    hip hop/funk: 80–108 BPM with low end. Slow roll, claw pumps every other beat, a
+##             front leg tapping on alternate beats.
+##   bounce    pop and the rest with a beat. Squash on the beat, a front leg tapping it.
+## A tap or stomp lifts the toe between beats and brings it down on the next one (legs.gd beat_lift).
 ##   sway      slow, quiet, beatless, or a tempo the tracker is not steady on yet. Gentle roll,
 ##             no lock, clip slowed.
 ##
@@ -23,6 +27,7 @@ const MAX_SPEED := 1.6
 const FADE_S := 0.3              # the moves ease in when she starts and out when the beat goes
 const SWITCH_S := 0.5            # a new style crossfades from the one before over this long
 const Easing = preload("res://easing.gd")
+const Legs = preload("res://legs.gd")
 
 var widget: Node3D
 var player: AnimationPlayer
@@ -47,6 +52,7 @@ var previous_style := ""
 var since_switch := SWITCH_S
 var last_moves := {}
 var yaw := 0.0                   # the styles' turn on the beat, read by turn.gd
+var legs: Node                   # legs.gd: the taps and stomps go to it as toe lifts
 
 func setup(owner: Node3D, animation_player: AnimationPlayer, model: Node, blink_controller: Node) -> void:
 	process_priority = 155
@@ -168,9 +174,11 @@ func _process(delta: float) -> void:
 ## One style's moves at this moment, at full strength.
 func moves(name: String, now: float) -> Dictionary:
 	var phase := beat_phase(now)
-	var parity := beat_index(now) % 2
+	var parity := posmod(beat_index(now), 2)   # 0 or 1 (the index is negative before next_beat)
 	var m := {"pitch": 0.0, "roll": 0.0, "yaw": 0.0, "lift_l": 0.0, "lift_r": 0.0, "squash": 0.0,
-		"wide": 0.0, "happy": 0.0, "squint": 0.0, "speed": clip_speed()}
+		"wide": 0.0, "happy": 0.0, "squint": 0.0, "speed": clip_speed(),
+		"tap_l": 0.0, "tap_r": 0.0, "stomp_l": 0.0, "stomp_r": 0.0}
+	var down := Legs.beat_lift(phase)   # 0 on the beat, up between beats
 	match name:
 		"rave":
 			m.squash = 0.3 * pulse(phase, 7.0)
@@ -182,11 +190,17 @@ func moves(name: String, now: float) -> Dictionary:
 			m.roll = deg_to_rad(3.0) * (1.0 if parity == 0 else -1.0) * lean
 			m.yaw = deg_to_rad(5.0) * (1.0 if parity == 0 else -1.0) * lean
 			m.wide = 0.6
+			# Hard: front and middle legs of a side together, the sides taking turns.
+			m.stomp_l = 0.036 * down if parity == 0 else 0.0
+			m.stomp_r = 0.036 * down if parity != 0 else 0.0
 		"headbang":
 			m.pitch = -deg_to_rad(16.0) * pulse(phase, 5.0)
 			m.lift_l = 0.5
 			m.lift_r = 0.5
 			m.squint = 0.35
+			# Hard: both front legs stomp with the nod, every beat.
+			m.tap_l = 0.04 * down
+			m.tap_r = 0.04 * down
 		"groove":
 			var bar := fposmod((now - float(tempo.get("next_beat", now))) / (2.0 * float(tempo.get("period_s", 0.5))), 1.0)
 			m.roll = deg_to_rad(5.0) * sin(TAU * bar)
@@ -194,11 +208,15 @@ func moves(name: String, now: float) -> Dictionary:
 			m.squash = 0.18 * pulse(phase, 5.0) * (1.0 if parity == 0 else 0.5)
 			m.lift_l = 0.35 * pulse(phase, 4.0) if parity == 0 else 0.0
 			m.lift_r = 0.35 * pulse(phase, 4.0) if parity == 1 else 0.0
+			m.tap_l = 0.018 * down if parity == 0 else 0.0
+			m.tap_r = 0.018 * down if parity != 0 else 0.0
 		"bounce":
 			m.squash = 0.32 * pulse(phase, 6.0)
 			m.pitch = -deg_to_rad(4.0) * pulse(phase, 6.0)
 			var hop := Easing.out(phase / 0.15) * (1.0 - Easing.in_out((phase - 0.15) / 0.85))
 			m.yaw = deg_to_rad(3.0) * (1.0 if parity == 0 else -1.0) * hop
+			m.tap_l = 0.022 * down if parity == 0 else 0.0
+			m.tap_r = 0.022 * down if parity != 0 else 0.0
 		"sway":
 			m.speed = 0.75
 			m.roll = deg_to_rad(4.0) * sin(TAU * now / 3.2)
@@ -229,6 +247,11 @@ func layer(m: Dictionary, weight: float) -> void:
 		var clip_value := squashers[i].get_blend_shape_value(squash_indices[i])
 		squashers[i].set_blend_shape_value(squash_indices[i], lerpf(clip_value, m.squash, weight))
 	blink.set_layer("dance", m.wide * weight, m.happy * weight, m.squint * weight)
+	if legs:
+		legs.add("L1", Vector3(0.0, m.tap_l * weight, 0.0))
+		legs.add("R1", Vector3(0.0, m.tap_r * weight, 0.0))
+		legs.add_side(1.0, Vector3(0.0, m.stomp_l * weight, 0.0), [1, 2])
+		legs.add_side(-1.0, Vector3(0.0, m.stomp_r * weight, 0.0), [1, 2])
 
 func reset() -> void:
 	applied = false

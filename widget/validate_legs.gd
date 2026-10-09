@@ -1,7 +1,7 @@
 extends SceneTree
 ## The legs and pincers (WIRING.md §9, §13): the rig's bones and their skin, the clips driving the
-## legs, the pincers following her voice with a spring. Real widget, isolated settings, no daemon
-## (a stand-in socket).
+## legs, the pincers following her voice with a spring, the procedural leg pass (dance, reactions,
+## touch). Real widget, isolated settings, no daemon (a stand-in socket).
 ##
 ## godot --headless --path widget --script res://validate_legs.gd
 class FakeWs:
@@ -168,6 +168,69 @@ func run() -> void:
 	report["clacks"] = claws.clacks - clacks
 	check(claws.clacks > clacks and claws.value(0) < 0.01, "shutting should clack and stay shut")
 
+	# 5. The procedural leg pass: stomps and taps on the beat (harder for rave and headbang), the hop's
+	# crouch and landing, the shiver, the peek's tiptoes, a tickle's scrabble, a hold settling her.
+	var legs: Node = widget.legs
+	var dance_lifts := {}
+	for style in ["bounce", "rave", "headbang"]:
+		dance_lifts[style] = await dance_lift(style)
+	report["dance_toe_lift"] = dance_lifts
+	check(dance_lifts.bounce > 0.012, "bounce: a front leg should tap the beat, %.3f" % dance_lifts.bounce)
+	check(dance_lifts.rave > dance_lifts.bounce + 0.008 and dance_lifts.headbang > dance_lifts.bounce + 0.008, "rave and headbang should stomp harder than bounce taps (%s)" % [dance_lifts])
+	widget.perform({"state": "idle"})
+	widget.dance.set_tempo({"silent": true})
+	await wait(0.6)
+
+	widget.perform({"state": "idle", "reaction": "double_hop"})
+	var crouch := 0.0
+	var planted := 0.0
+	waited = 0.0
+	while waited < 0.2:
+		await process_frame
+		waited += widget.get_process_delta_time()
+		var dropped: float = skeleton.get_bone_global_pose(skeleton.find_bone("body")).origin.y - legs.clip_body.origin.y
+		if dropped < crouch:
+			crouch = dropped
+			planted = (legs.toe_now("L2") - (legs.clip["L2"][2] as Vector3)).length()
+	report["hop_crouch"] = [snappedf(crouch, 0.001), snappedf(planted, 0.001)]
+	check(crouch < -0.015 and planted < 0.004, "double_hop: a crouch before the jump, toes staying put (%.3f, %.3f)" % [crouch, planted])
+	var landing := 0.0
+	var knee_most := 0.0
+	while widget.one_shot != "":
+		await process_frame
+		var hop: float = widget.player.current_animation_position / widget.player.get_animation("notify_perk").length
+		if hop > 0.62 and hop < 0.84:
+			var dropped: float = skeleton.get_bone_global_pose(skeleton.find_bone("body")).origin.y - legs.clip_body.origin.y
+			landing = minf(landing, dropped)
+			knee_most = maxf(knee_most, turned("leg_L2_lower"))
+	report["hop_landing"] = [snappedf(landing, 0.001), snappedf(rad_to_deg(knee_most), 0.1)]
+	check(landing < -0.015 and knee_most > deg_to_rad(10.0), "double_hop: the landing bends the knees (%.3f, %.1f°)" % [landing, rad_to_deg(knee_most)])
+	await wait(0.4)
+
+	var trembled := await toe_motion(func(): widget.reactions.play("shiver"), 0.6)
+	report["shiver_toe_motion"] = snappedf(trembled, 0.001)
+	check(trembled > 0.004, "shiver should tremble the legs, %.3f" % trembled)
+	await wait(0.4)
+	widget.reactions.play("peek")
+	await wait(0.6)
+	var up: float = skeleton.get_bone_global_pose(skeleton.find_bone("body")).origin.y - legs.clip_body.origin.y
+	var toe_in: float = absf((legs.clip["L1"][2] as Vector3).x) - absf(legs.toe_now("L1").x)
+	report["peek_tiptoe"] = [snappedf(up, 0.001), snappedf(toe_in, 0.001)]
+	check(up > 0.01 and toe_in > 0.015, "peek: up on tiptoe, toes drawn in (%.3f, %.3f)" % [up, toe_in])
+	await wait(1.2)
+	var scrabble := await toe_motion(func(): widget.touch.play("tickle"), 0.6)
+	report["tickle_toe_motion"] = snappedf(scrabble, 0.001)
+	check(scrabble > 0.01, "a tickle should make the legs scrabble, %.3f" % scrabble)
+	await wait(0.8)
+	widget.touch.holding = true
+	widget.touch.play("hold")
+	await wait(0.7)
+	var sunk: float = skeleton.get_bone_global_pose(skeleton.find_bone("body")).origin.y - legs.clip_body.origin.y
+	widget.touch.holding = false
+	report["hold_settle"] = snappedf(sunk, 0.001)
+	check(sunk < -0.008, "a hold settles her legs (she sinks a little), %.3f" % sunk)
+	await wait(0.8)
+
 	var path: String = widget.settings_path()
 	widget.queue_free()
 	await process_frame
@@ -177,6 +240,72 @@ func run() -> void:
 	print(JSON.stringify(report))
 	print("legs checks: ", "PASSED" if failures.is_empty() else "FAILED (%d)" % failures.size())
 	quit(0 if failures.is_empty() else 1)
+
+## Nothing going on: idle, awake, no recipe, no clip on top, no walk, no run, no card.
+func calm_down() -> void:
+	widget.pressing = false
+	widget.dragging = false
+	widget.touch.release_hold()
+	if widget.wander.walking:
+		widget.wander.stop("test")
+	widget.set_state("idle")
+	widget.rest_state = "idle"
+	var waited := 0.0
+	while waited < 5.0 and (widget.one_shot != "" or widget.reactions.recipe != "" or widget.touch.recipe != "" \
+			or widget.sleeper.phase != "awake" or widget.step_chip.visible or widget.approval_card.visible):
+		await process_frame
+		waited += widget.get_process_delta_time()
+	await process_frame
+
+## Model-space point -> window pixel, through her current pose.
+func aim(point: Vector3) -> Vector2:
+	return widget.touch.world_to_pixel(widget.model.global_transform * point)
+
+func button(at: Vector2, pressed: bool) -> void:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.pressed = pressed
+	e.position = at
+	e.global_position = at
+	Input.parse_input_event(e)
+	await process_frame
+
+func tap(at: Vector2) -> void:
+	await button(at, true)
+	await wait(0.06)
+	await button(at, false)
+
+## The highest a front or middle toe lifts above where the clip has it, over a second of `style`.
+func dance_lift(style: String) -> float:
+	var by_style := {"rave": [130.0, 0.8, 0.7, 0.45, 3.0], "headbang": [160.0, 0.6, 0.3, 0.2, 5.0], "bounce": [112.0, 0.6, 0.3, 0.15, 3.0]}
+	var f: Array = by_style[style]
+	widget.perform({"state": "dancing"})
+	var t := {"bpm": f[0], "period_s": 60.0 / f[0], "confidence": f[1], "next_beat": Time.get_unix_time_from_system() + 0.3,
+		"evenness": f[2], "low_ratio": f[3], "density": f[4], "loudness_db": -16.0}
+	widget.dance.set_tempo(t)
+	widget.dance.set_tempo(t)
+	await wait(0.8)
+	check(widget.dance.style == style, "dance style should be %s, was %s" % [style, widget.dance.style])
+	var most := 0.0
+	var waited := 0.0
+	while waited < 1.2:
+		await process_frame
+		waited += widget.get_process_delta_time()
+		for leg in ["L1", "R1", "L2", "R2"]:
+			most = maxf(most, widget.legs.toe_now(leg).y - (widget.legs.clip[leg][2] as Vector3).y)
+	return snappedf(most, 0.001)
+
+## Start something, then the largest any toe strays from where the clip has it over `seconds`.
+func toe_motion(start: Callable, seconds: float) -> float:
+	start.call()
+	var most := 0.0
+	var waited := 0.0
+	while waited < seconds:
+		await process_frame
+		waited += widget.get_process_delta_time()
+		for leg in widget.legs.LEGS:
+			most = maxf(most, widget.legs.toe_now(leg).distance_to(widget.legs.clip[leg][2] as Vector3))
+	return most
 
 ## A 1 kHz tone with a syllable-like 5 Hz wobble (as validate_widget.gd), in this run's user dir.
 func make_test_wav(seconds: float) -> String:
