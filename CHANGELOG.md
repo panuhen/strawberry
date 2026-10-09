@@ -211,6 +211,11 @@ package and the widget binary.
 
 ### Fixed
 
+- The one-time privacy note now reaches a body that can show it. It went out on the first hello,
+  so a body that shows no text (the orbs) saying hello first used it up and the user never saw
+  it. It now goes only to a body that shows text (a v1 widget, or a v2 body whose hello says
+  `capabilities.speech.bubble`, which the crab now does; PROTOCOL.md §9b), on that body's socket,
+  and counts as shown only once it went out there.
 - Web search no longer reads a page whose site name points at a private address. The page
   address was checked as written (no IP addresses, no internal names), but a public-looking name
   can resolve to the machine itself or the home network (`localtest.me` is 127.0.0.1). The name

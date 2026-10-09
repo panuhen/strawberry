@@ -1,8 +1,9 @@
 """The first-run privacy note (PACKAGING.md step 6): said once, then never again.
 
 On start, while the marker file is missing, the daemon logs what she reads from notifications
-and where to change it. When the first widget says hello she says a short version in her
-bubble and the marker is written, so the note appears once per user, not once per start.
+and where to change it. When the first body that shows text says hello (a v1 widget, or a v2
+body with `speech.bubble`; server.py) she says a short version in her bubble to it, and once it
+went out the marker is written, so the note appears once per user, not once per start.
 Deleting the marker (`paths.privacy_notice_marker()`) brings it back.
 """
 
