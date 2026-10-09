@@ -10,7 +10,7 @@ nothing here decides anything.
     GET  /ui/api/events       server-sent events: `route` (a sentence routed), `run` (a step of a run,
                               runs.py), `learning` (a file of the loop changed), a comment line as a
                               keep-alive
-    POST /ui/api/accept | reject | rollback | use | review | train | forget | cancel
+    POST /ui/api/accept | reject | rollback | use | review | train | forget | cancel | approval
 
 Everything else on the port refuses a request with an Origin header, so no web page can reach
 it. The routes under /ui are the one place a browser is let in, and only this way:
@@ -214,6 +214,7 @@ def setup(app: web.Application, daemon) -> BrainUI:
         web.post("/ui/api/train", api_train),
         web.post("/ui/api/forget", api_forget),
         web.post("/ui/api/cancel", api_cancel),
+        web.post("/ui/api/approval", api_approval),
     ])
     return ui
 
@@ -503,7 +504,8 @@ async def api_runs(request: web.Request, ui: BrainUI, session: Session) -> web.R
     timings only: runs.emit whitelists them)."""
     book = ui.daemon.runs
     return web.json_response({"events": ui.daemon.config.runs.events,
-                              "runs": [run.view() for run in book.recent(ui.daemon.config.runs.keep)]})
+                              "runs": [run.view() for run in book.recent(ui.daemon.config.runs.keep)],
+                              "approvals": ui.daemon.approvals.views()})
 
 
 @checked("get")
@@ -560,10 +562,10 @@ async def api_events(request: web.Request, ui: BrainUI, session: Session) -> web
                 step = dict(stepper.result())
                 stepper = None
                 run = book.get(step.get("run_id", ""))
-                if run is not None:
+                if run is not None:   # `listening` belongs to no run: the page has no use for it
                     step["source"] = run.source
-                await response.write(_event("run", step))
-                quiet_since = time.monotonic()
+                    await response.write(_event("run", step))
+                    quiet_since = time.monotonic()
             now = ui.learning.signature()
             if now != signature:
                 signature = now
@@ -711,3 +713,21 @@ async def api_cancel(request: web.Request, ui: BrainUI, session: Session) -> web
         return web.json_response({"error": "that run is not going on"}, status=409)
     log.info("ui: run %s stopped by hand", run_id)
     return web.json_response({"cancelled": run_id})
+
+
+@checked("post")
+async def api_approval(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """Yes or No to the approval she is waiting on, as the user's own sentence or her card would answer
+    it (approvals.py): only the open one, and the first answer wins (409 otherwise)."""
+    data = await _payload(request)
+    approval_id, answer = data.get("approval_id"), data.get("answer")
+    if not isinstance(approval_id, str) or not re.fullmatch(r"a-\d{1,9}", approval_id):
+        raise web.HTTPBadRequest(text="approval_id must be an approval's id")
+    if answer not in ("yes", "no"):
+        raise web.HTTPBadRequest(text="answer must be yes or no")
+    reason = ui.daemon.approvals.answer(approval_id, answer, "ui")
+    if reason is not None:
+        why = {"resolved": "that question has been answered already"}.get(reason, "she is not waiting on that question")
+        return web.json_response({"error": why, "reason": reason}, status=409)
+    log.info("ui: approval %s answered %s by hand", approval_id, answer)
+    return web.json_response({"answered": approval_id, "answer": answer})
