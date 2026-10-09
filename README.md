@@ -152,6 +152,8 @@ The settings you are most likely to change:
 | `[learning]` | `log_outcomes` | keep what you say and how it was routed, locally, so she can learn from it (off); see [Learning](#learning) |
 | `[learning]` | `auto_switch`, `weekly_line` | put a better router in use without asking (off); say once a week what she learned (off) |
 | `[runs]` | `events`, `supersede`, `keep` | the chip under her bubble and the Brain UI's Runs (`events`); whether a new sentence stops the one she is on (`supersede`, on) or waits; how many finished runs the Brain UI keeps |
+| `[approvals]` | `change_s`, `sends_s`, `destructive_s`, `hold`, `risk` | the calls that wait for your yes: how long she waits per tier (10, 30, 30 s), which tiers need a press-and-hold on her card, and a tool's (or a server's) tier: `read`, `change`, `sends`, `destructive` |
+| `[thinker]` | `stream` | read the big model's reply as it is written, for the tokens-per-second gauge (on) |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
 Files she keeps: settings in `~/.config/strawberry/`, the widget binary and voices in
@@ -312,7 +314,11 @@ can answer, never a notification. The list is the server's `confirm` key, next t
 confirm = ["remove_from_playlist", "remove_saved_tracks"]   # the default; [] turns the question off
 ```
 
-`[actions] confirm_s` sets how long she waits. Saves and adds are never asked about.
+`[approvals] change_s` sets how long she waits (the old `[actions] confirm_s` still works). Saves
+and adds are never asked about. Any call a server's tools make that sends something to someone
+(`sends`) or deletes something for good (`destructive`) is asked about the same way, with 30
+seconds to answer; `[approvals] risk` sets a tool's tier. Besides saying or typing yes or no, you
+can answer in the Brain UI's Runs section, and the widget will show the question as a card.
 
 ## Web search (optional)
 

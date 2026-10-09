@@ -20,6 +20,25 @@ package and the widget binary.
   two typed in a row no longer run side by side. The Brain UI has a Runs section with each run's
   timeline and a Cancel button. The steps carry tool names and timings only, never what you said,
   a tool's arguments or its results. New settings: `[runs] events`, `supersede`, `keep`.
+- Approvals with risk tiers. A call that waits for your yes is now bound to that exact call: the
+  question she asks keeps a copy of it, checked before it is made, and nothing else can be made
+  with your yes. Besides Spotify's removals (asked about as before, in the same words), every call a
+  server's tool makes that sends something to someone (`sends`) or deletes something for good
+  (`destructive`) waits for a yes, for 30 seconds instead of 10. A tool's tier comes from the new
+  `[approvals] risk` setting, else its adapter, else it is a plain change; a server that marks a
+  tool destructive raises it, and nothing a server says lowers one. You can answer by voice or by
+  typing as before, or in the Brain UI's Runs section (Yes and No, and a history of what was asked
+  and how it was answered); the widget gets everything it needs to show the question as a card,
+  where a yes to a `sends` or `destructive` call is a press-and-hold. Stopping the run, or saying
+  something else, leaves the call undone. New settings: `[approvals] change_s` (the old `[actions]
+  confirm_s`, still read), `sends_s`, `destructive_s`, `hold`, `risk`, and `[thinker] stream`.
+- Protocol v2, second part (PROTOCOL.md §11d, §13b): `approval.request` and `approval.resolved` for a
+  body that says `approvals`, `approval.answer` from one that also says `sends.approval` (refused,
+  with the reason, for anything but the open question), the open question again after `welcome`
+  for a body that reconnects, the `listening` gauge (a voice capture started and ended), the
+  `token_rate` gauge (tokens a second while she thinks; numbers only), and a run that ends
+  `didnt_catch` when she heard nothing she could understand. A v1 body still gets exactly the bytes
+  it always did.
 - Protocol v2, first part (PROTOCOL.md Part 1b): a body that says `protocol: 2` in its hello gets
   `welcome`, the run events it asks for, the run's id on the performance that answers it, the
   brain's clock in each pong, and may send `run.cancel` if it said so. A v1 body gets exactly the
