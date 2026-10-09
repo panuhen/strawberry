@@ -214,22 +214,25 @@ def compact(text: str) -> str:
 
 
 def result_urls(text: str) -> list[str]:
-    """The results' own URLs, never one written inside a title or a snippet: what `_entries` reads as
-    a URL field; else, in a compacted listing, the third line of each numbered result when it is a
-    bare URL."""
-    entries = _entries(text)
-    if entries:
-        return [entry["url"] for entry in entries]
+    """The results' own URLs, never one written inside a title or a snippet. The first line decides the
+    layout, once: `compact`'s numbered listing, or what `_entries` reads. A listing that fails its
+    layout's checks pins nothing; it is never read again by another layout's rules."""
+    # One layout per text, decided once; a listing that fails its own layout's checks pins nothing
+    # rather than being read again by another layout's rules.
+    # Decided by the first line alone, which no snippet can be.
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    if not re.match(r"^1\. .* \([^()\s]+\)$", first):
+        return [entry["url"] for entry in _entries(text)]
     # `compact`'s layout: "N. Title (site)", the snippet, the URL; numbered in order, and the URL's
     # site the one the title line names.
     lines = text.splitlines()
     urls: list[str] = []
     for i, line in enumerate(lines[:-2]):
-        head = re.match(r"^(\d+)\. .* \(([^()\s]+)\)$", line)
-        if not head:
+        title = re.match(r"^(\d+)\. .* \(([^()\s]+)\)$", line)
+        if not title:
             continue
         url = lines[i + 2].strip()
-        if int(head.group(1)) != len(urls) + 1 or not BARE_URL.match(url) or _site(url) != head.group(2):
+        if int(title.group(1)) != len(urls) + 1 or not BARE_URL.match(url) or _site(url) != title.group(2):
             return []
         urls.append(url)
     return urls
