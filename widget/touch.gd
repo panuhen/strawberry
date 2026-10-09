@@ -7,8 +7,8 @@ extends Node
 ##             shell top = pat, body/belly/legs = tickle, eye or eyestalk = flinch, claw = pinch back
 ##             (every other time a wave with that claw). A hold anywhere: she leans into it.
 ##   how often pokes in a row escalate: curious (the zone's reaction), then mildly annoyed
-##             (alert_snap and a squint). The third level, scuttling away, needs legs (a later
-##             stage): scuttle_away() is the hook, and until it does something she stays annoyed.
+##             (alert_snap and a squint), then on the sixth she scuttles a short step away from the
+##             poke (wander.gd, the gait) and the annoyance starts over.
 ##   asleep    a poke wakes her gently (the wake_up clip), nothing else.
 ##   busy      talking, listening, thinking, a run going on (the step chip), a one-shot or a
 ##             daemon reaction playing: only a blink. Nothing here plays a clip over a line,
@@ -18,14 +18,14 @@ extends Node
 ## rotation after the AnimationPlayer (process priority 157, after the reactions and dance
 ## styles), eyes through the blink controller's "touch" layer, yaw through turn.gd.
 
-signal scuttle_wanted   # level 3: the hook for scuttling away once she has legs that walk
+signal scuttle_wanted   # level 3: she scuttles away (emitted whether or not she could move)
 
 const Easing = preload("res://easing.gd")
 const DURATIONS := {"pat": 1.2, "tickle": 1.1, "flinch": 0.75, "pinch": 1.0, "claw_wave": 1.3,
 	"annoyed": 1.1, "curious": 1.0, "noticed": 0.35, "hold": 0.0}
 const STREAK_S := 4.0            # a poke within this long of the last one continues the streak
 const ANNOYED_AT := 3            # the streak's poke that makes her annoyed
-const SCUTTLE_AT := 6            # ... and the one that would send her scuttling away
+const SCUTTLE_AT := 6            # ... and the one that sends her scuttling away
 const SHELL_TOP_Y := 0.40        # model space: above this the shell is "top" (pat), below "body"
 const HOLD_IN_S := 0.4
 const HOLD_OUT_S := 0.5
@@ -64,6 +64,7 @@ var played := {}
 var last_zone := ""
 var last_level := 0
 var scuttles := 0
+var poked_at := Vector2.ZERO     # the last poke, window pixels (the scuttle goes away from it)
 var lines_asked := 0
 
 func setup(owner: Node3D, model: Node, cam: Camera3D, blink_controller: Node) -> void:
@@ -107,6 +108,7 @@ func poke(pixel: Vector2) -> void:
 		return
 	var hit := hit_test(pixel)
 	last_zone = str(hit.zone)
+	poked_at = pixel
 	if busy():
 		play("noticed")
 		last_level = 0
@@ -121,18 +123,28 @@ func poke(pixel: Vector2) -> void:
 			last_level = 2
 	elif streak >= ANNOYED_AT:
 		last_level = 2
-	if last_level >= 2:
+	if last_level == 3:
+		play("annoyed")      # a squint as she goes; the scuttle is the reaction
+		streak = 0           # and the annoyance starts over
+	elif last_level == 2:
 		annoyed()
 	else:
 		react(hit)
-	maybe_talk(str(hit.zone), last_level)
+	maybe_talk(str(hit.zone), mini(last_level, 2))
 
-## Level 3. Scuttling off needs legs that walk (the crab plan's later stages); until then the hook
-## is announced and she stays annoyed. Return true once she really does it.
+## Level 3: a short scuttle away from the poke (wander.gd moves her window with the gait). False
+## when she may not move now (dragged, busy, no room is fine: she scrabbles in place); then she
+## stays annoyed.
 func scuttle_away() -> bool:
 	scuttles += 1
 	scuttle_wanted.emit()
-	return false
+	if widget.wander == null:
+		return false
+	var middle := world_to_pixel(skeleton.global_transform * skeleton.get_bone_global_pose(body_i).origin).x
+	var away := 1.0 if poked_at.x < middle else -1.0
+	if absf(poked_at.x - middle) < 4.0:
+		away = 1.0 if rng.randf() < 0.5 else -1.0
+	return widget.wander.scuttle(away)
 
 func annoyed() -> void:
 	if widget.one_shot == "" and widget.state in ["idle", "dancing"]:

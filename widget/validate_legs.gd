@@ -2,7 +2,7 @@ extends SceneTree
 ## The legs and pincers (WIRING.md §9, §13): the rig's bones and their skin, the clips driving the
 ## legs, the pincers following her voice with a spring, the procedural leg pass (dance, reactions,
 ## touch), the gait under a drag, Wander's rules (direction, staying on her monitor, never while
-## busy, stopping when something starts, never while pressed).
+## busy, stopping when something starts, never while pressed) and the scuttle on the sixth poke.
 ## Real widget, isolated settings, no daemon (a stand-in socket), a stand-in desktop for the window.
 ##
 ## godot --headless --path widget --script res://validate_legs.gd
@@ -379,6 +379,36 @@ func run() -> void:
 	report["walk_stops"] = stopped
 	await calm_down()
 
+	# 8. Touch level 3: the sixth poke in a row sends her scuttling a short step away from it, and the
+	# annoyance starts over. With no room that way she scrabbles in place.
+	wander.desk.pos = Vector2i(700, 400)
+	var left_of_her := aim(Vector3(0.12, 0.47, -0.12))     # her shell, on the viewer's left
+	var scuttle_signals := [0]
+	widget.touch.scuttle_wanted.connect(func(): scuttle_signals[0] += 1)
+	var from: int = wander.desk.pos.x
+	for i in 6:
+		await tap(left_of_her)
+		await wait(0.15)
+	report["scuttle"] = {"level": widget.touch.last_level, "kind": wander.kind, "dir": wander.direction, "streak": widget.touch.streak}
+	check(widget.touch.last_level == 3 and scuttle_signals[0] == 1 and wander.walking and wander.kind == "scuttle", "the sixth poke should scuttle her")
+	check(wander.direction > 0.0, "away from a poke on her left side: to the right")
+	check(widget.touch.streak == 0, "and the annoyance resets")
+	waited = 0.0
+	var scuttle_gait := 0.0
+	while wander.walking and waited < 2.0:
+		await process_frame
+		waited += widget.get_process_delta_time()
+		scuttle_gait = maxf(scuttle_gait, legs.gait_weight)
+	report["scuttle"]["moved_px"] = wander.desk.pos.x - from
+	check(wander.desk.pos.x - from > wander.SCUTTLE_PX - 6 and wander.desk.pos.x - from <= wander.SCUTTLE_PX + 6 and scuttle_gait > 0.9, "a short scuttle with the gait (%d px)" % (wander.desk.pos.x - from))
+	await calm_down()
+	wander.desk.pos = Vector2i(1920 - 380, 400)
+	widget.touch.streak = 0
+	for i in 6:
+		await tap(left_of_her)
+		await wait(0.15)
+	check(wander.kind == "shuffle" and wander.desk.pos.x == 1920 - 380, "no room to the right: she scrabbles in place (%s)" % wander.kind)
+	await wait(0.8)
 	wander.desk = {}
 
 	var path: String = widget.settings_path()

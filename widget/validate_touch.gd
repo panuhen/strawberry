@@ -179,7 +179,8 @@ func run() -> void:
 	check(touch.recipe == "claw_wave", "every other claw poke is a wave, got %s" % touch.recipe)
 	await calm()
 
-	# 6. Pokes in a row: curious, then annoyed (alert_snap), then the scuttle hook.
+	# 6. Pokes in a row: curious, then annoyed (alert_snap), then the scuttle. Headless there is no window
+	# to move (validate_legs.gd gives her a stand-in desktop and sees her go), so here she stays annoyed.
 	var shots: int = widget.one_shots_played
 	for i in 2:
 		await tap(shell)
@@ -193,7 +194,7 @@ func run() -> void:
 		await wait(0.2)
 		await tap(shell)
 	report["streak"] = touch.streak
-	check(touch.scuttles == 1 and scuttle_signals[0] == 1 and touch.last_level == 2, "the sixth should ask for the scuttle hook and stay annoyed")
+	check(touch.scuttles == 1 and scuttle_signals[0] == 1 and touch.last_level == 2, "the sixth should try to scuttle; with no window to move she stays annoyed")
 	await calm()
 
 	# 7. Nothing over a line, a run or the step chip: only a blink.
