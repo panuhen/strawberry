@@ -411,6 +411,57 @@ func run() -> void:
 	check(not widget.type_box.visible and not widget.type_box.field.has_focus(), "type box should close and drop focus")
 	await wait_speech_end()
 
+	# 18. Runs (protocol v2): the hello asked for run events and the right to stop a run, and the
+	#     daemon's welcome granted both. The typed line above was a run whose events reached the
+	#     chip; it ended within SHOW_AFTER, so the chip never showed.
+	var bodies := await get_json("/health")
+	var v2 := false
+	for body: Dictionary in bodies[2].get("bodies", []):
+		if int(body.get("protocol", 1)) == 2 and bool(body.get("cancel", false)) and "tool" in body.get("phases", []):
+			v2 = true
+	check(v2, "the widget should be a v2 body with run events and cancel, /health has %s" % str(bodies[2].get("bodies", [])))
+	var chip = widget.step_chip
+	check(chip.can_cancel, "the welcome should let the widget offer the stop button")
+	report["runs_seen_by_chip"] = chip.runs_seen
+	check(chip.runs_seen >= 1 and chip.runs_ended >= 1, "the typed line's run events should reach the chip")
+	check(chip.shown_count == 0 and not chip.visible, "a quick run should never show the chip")
+
+	# 18b. A slower run: the chip shows after SHOW_AFTER with the step in plain words, takes clicks
+	#      (its corners join the click-through hull), and its ✕ sends run.cancel to the daemon, which
+	#      declines it for a run that is not going on there. The run's end hides it.
+	chip.on_phase({"type": "thinking", "run_id": "r-900", "backend": "builtin"})
+	check(not chip.visible, "the chip should wait before it shows")
+	await wait(chip.SHOW_AFTER + 0.2)
+	check(chip.visible and chip.label.text == chip.THINKING, "the chip should say she is thinking, said '%s'" % chip.label.text)
+	chip.on_phase({"type": "tool.started", "run_id": "r-900", "tool": "spotify.next", "label": "Spotify: next", "call_id": "c1"})
+	check(chip.label.text == "Spotify: next", "the chip should name the tool by its label, said '%s'" % chip.label.text)
+	chip.on_phase({"type": "tool.completed", "run_id": "r-900", "tool": "spotify.next", "ok": true, "duration": 0.2})
+	check(chip.label.text == chip.THINKING, "between tools the chip says thinking again")
+	check(chip.stop_button.visible and chip.stop_button.size.x >= 40.0 and chip.stop_button.size.y >= 40.0,
+		"the stop button should be at least 40 px square, was %s" % str(chip.stop_button.size))
+	var corners: PackedVector2Array = widget.chip_points()
+	check(corners.size() == 4, "a shown chip should add its four corners to the click-through hull")
+	var anchor: Vector2 = widget.bubble_anchor_on_screen()
+	check(corners.size() == 4 and corners[0].y > anchor.y, "the chip should sit under the bubble's anchor")
+	report["chip_rect"] = [chip.position.x, chip.position.y, chip.size.x, chip.size.y]
+	var other_end := {"type": "run.completed", "run_id": "r-901", "outcome": "spoken"}
+	chip.on_phase(other_end)
+	check(chip.visible, "another run's end should not hide this run's chip")
+	chip.stop_button.pressed.emit()
+	check(chip.cancels_sent == 1 and chip.label.text == "stopping…", "the ✕ should send run.cancel once and say so")
+	waited = 0.0
+	while chip.refused != "r-900" and waited < 3.0:
+		await wait(0.1)
+		waited += 0.1
+	check(chip.refused == "r-900", "the daemon should answer run.cancel for a run it is not on with input.refused")
+	chip.on_phase({"type": "run.cancelled", "run_id": "r-900", "reason": "stopped", "duration": 1.2})
+	check(not chip.visible and widget.chip_points().is_empty(), "the run's end should hide the chip and free its clicks")
+	chip.on_phase({"type": "thinking", "run_id": "r-902"})
+	chip.on_phase({"type": "run.completed", "run_id": "r-902", "outcome": "spoken"})
+	await wait(chip.SHOW_AFTER + 0.2)
+	check(not chip.visible, "a run that ends at once never shows the chip")
+	report["chip_shown"] = chip.shown_count
+
 	finish()
 
 ## The highest point of a set of screen points (smallest y).

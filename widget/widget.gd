@@ -3,7 +3,7 @@ extends Node3D
 ## whatever strawberryd sends over the websocket (WIRING.md §1, §6, §13).
 ##
 ## Drag the crab to move her. Q quits, C cycles skins, T opens the type box. Outlines are always on.
-## Command-line (after `--`): --ws=ws://host:port/ws   --capture=/path/out.png
+## Command-line (after `--`): --ws=ws://host:port/ws   --capture=/path/out.png (--chip: with the step chip)
 ##   --acceptance=res://validate_widget.gd  run a validator instead (the exported binary has no --script)
 
 const CelStyle = preload("res://cel_style.gd")
@@ -18,6 +18,7 @@ const Gaze = preload("res://gaze.gd")
 const DanceStyle = preload("res://dance_style.gd")
 const TopHat = preload("res://top_hat.gd")
 const TypeBox = preload("res://type_box.gd")
+const StepChip = preload("res://step_chip.gd")
 const Paths = preload("res://paths.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
@@ -49,6 +50,7 @@ var capture_path := ""
 var look_at := Vector2(-1, -1)   # --look=x,y pins the cursor position (captures, headless checks)
 var capture_dance := ""          # --dance=rave: capture that style mid-beat instead of the wave
 var capture_typing := false      # --typing: capture with the glass type box open
+var capture_chip := false        # --chip: capture with the step chip of a run under way
 
 var model: Node3D
 var player: AnimationPlayer
@@ -59,6 +61,7 @@ var reactions: Node
 var speech: AudioStreamPlayer
 var menu: PopupMenu
 var type_box: PanelContainer
+var step_chip: PanelContainer
 var gaze: Node
 var dance: Node
 var top_hat: Node3D
@@ -107,6 +110,7 @@ func _ready() -> void:
 	setup_bubble()
 	setup_menu()
 	setup_type_box()
+	setup_step_chip()
 	setup_sleep()
 	setup_ws()
 	set_state("idle")
@@ -128,6 +132,8 @@ func parse_args() -> void:
 			capture_hat = true
 		elif arg == "--typing":
 			capture_typing = true
+		elif arg == "--chip":
+			capture_chip = true
 		elif arg.begins_with("--dance="):
 			capture_dance = arg.trim_prefix("--dance=")
 
@@ -194,6 +200,8 @@ func update_passthrough() -> void:
 		var rect := type_box.get_global_rect()
 		for i in 4:
 			points.append(rect.position + Vector2(rect.size.x * (i % 2), rect.size.y * (i >> 1)))
+	# The step chip and its ✕, while a run shows it.
+	points.append_array(chip_points())
 	if points.size() < 3:
 		return
 	var hull := Geometry2D.convex_hull(points)
@@ -228,6 +236,7 @@ func follow_pose(force := false) -> void:
 		var rect := type_box.get_global_rect()
 		for i in 4:
 			points.append(rect.position + Vector2(rect.size.x * (i % 2), rect.size.y * (i >> 1)))
+	points.append_array(chip_points())
 	if points.size() < 3:
 		return
 	var now := Time.get_ticks_msec() / 1000.0
@@ -406,6 +415,33 @@ func open_type_box() -> void:
 
 func close_type_box() -> void:
 	type_box.close()
+
+# --- what she is doing: the step chip (§18) -----------------------------------------
+
+func setup_step_chip() -> void:
+	step_chip = StepChip.new()
+	add_child(step_chip)
+	step_chip.setup(self)
+
+## The chip's corners in window pixels while it shows: it takes clicks, like the type box.
+func chip_points() -> PackedVector2Array:
+	return step_chip.corners() if step_chip else PackedVector2Array()
+
+## Where the bubble's anchor (the bottom of her line) is in the window.
+func bubble_anchor_on_screen() -> Vector2:
+	return camera.unproject_position(bubble.global_position)
+
+## A protocol v2 message (it has a `type`; a performance never does): the welcome, a run event,
+## or the daemon declining a run.cancel. Anything else is not for this body and is ignored.
+func on_typed(data: Dictionary) -> void:
+	var kind := str(data.get("type", ""))
+	if kind == "welcome":
+		var accepted: Variant = data.get("accepted", {})
+		step_chip.welcomed(accepted if accepted is Dictionary else {})
+	elif kind == "input.refused":
+		step_chip.on_refused(data)
+	elif data.has("run_id"):
+		step_chip.on_phase(data)
 
 ## A typed line goes to the daemon as a heard sentence: the same funnel as speech (§8b).
 func send_typed(text: String) -> void:
@@ -647,6 +683,9 @@ func cycle_skin() -> void:
 # --- performing (the receiving end of the contract) -----------------------------
 
 func _on_message(data: Dictionary) -> void:
+	if data.has("type"):
+		on_typed(data)
+		return
 	if data.has("command"):
 		run_command(data)
 		return
@@ -732,6 +771,8 @@ func run_command(data: Dictionary) -> void:
 			visible = shown
 			if not shown and type_box:
 				close_type_box()
+			if step_chip:
+				step_chip.refresh()
 			if not is_headless():
 				if shown:
 					update_passthrough()
@@ -868,7 +909,14 @@ func capture() -> void:
 	if capture_typing:
 		type_box.open()
 		type_box.field.text = "play some nina simone"
-	if capture_dance != "":
+	if capture_chip:
+		# A run under way: her thinking pose and cover line, the chip naming the tool, its ✕.
+		perform({"state": "thinking", "text": "On it.", "emotion": "neutral"})
+		step_chip.welcomed({"cancel": true})
+		step_chip.on_phase({"type": "thinking", "run_id": "r-1"})
+		step_chip.on_phase({"type": "tool.started", "run_id": "r-1", "tool": "web.web_search", "label": "searching the web…"})
+		await get_tree().create_timer(1.9).timeout   # the cover line fully revealed
+	elif capture_dance != "":
 		# A style frozen just after a beat: bpm/features that the rule table maps to it.
 		var by_style := {"rave": [130.0, 0.8, 0.7, 0.45, 3.0], "headbang": [160.0, 0.6, 0.3, 0.2, 5.0],
 			"groove": [92.0, 0.7, 0.4, 0.35, 2.0], "bounce": [112.0, 0.6, 0.3, 0.15, 3.0], "sway": [70.0, 0.9, 0.5, 0.3, 2.0]}
