@@ -30,8 +30,8 @@ WIDGET="${WIDGET:-}"
 if [ -n "$WIDGET" ]; then
   WIDGET="$(realpath "$WIDGET")"
   [ -x "$WIDGET" ] || { echo "WIDGET=$WIDGET is not an executable" >&2; exit 1; }
-elif [ ! -d "$ROOT/widget/.godot" ]; then
-  echo "== importing widget project"
+elif "$BIN/python" -c "import sys; from pathlib import Path; from strawberry_crab.widgetbin import stale_imports; sys.exit(0 if stale_imports(Path(sys.argv[1])) else 1)" "$ROOT/widget"; then
+  echo "== importing widget project (never imported, or an asset is newer than its import)"
   "$GODOT" --headless --path "$(native "$ROOT/widget")" --editor --import >/dev/null 2>&1 || true
 fi
 

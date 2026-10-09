@@ -84,6 +84,28 @@ class Widget:
         return [str(self.program), *display_args(), "--path", str(self.project), *user]
 
 
+def stale_imports(project: Path) -> bool:
+    """Does the checkout's Godot project need `--import`? Yes when it was never imported, or when an
+    asset (the model, a texture) changed since its import: a run outside the editor loads the cached
+    import, so a re-exported model would otherwise not show until something imported it."""
+    if not (project / ".godot").is_dir():
+        return True
+    for sidecar in project.rglob("*.import"):
+        if ".godot" in sidecar.relative_to(project).parts:
+            continue
+        source = sidecar.with_suffix("")
+        found = re.search(r'^dest_files=\["res://([^"]+)"', sidecar.read_text(encoding="utf-8", errors="replace"), re.M)
+        if not source.is_file() or not found:
+            continue
+        # Godot's own test: the source's MD5 against the one its import recorded.
+        stamp = (project / found.group(1)).with_suffix(".md5")
+        recorded = re.search(r'^source_md5="([0-9a-f]+)"', stamp.read_text(encoding="utf-8", errors="replace"), re.M) \
+            if stamp.is_file() else None
+        if not recorded or hashlib.md5(source.read_bytes()).hexdigest() != recorded.group(1):
+            return True
+    return False
+
+
 def is_runnable(path: Path) -> bool:
     if paths.windows():
         return path.is_file() and _windows_program(path)

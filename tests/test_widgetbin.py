@@ -228,3 +228,20 @@ def test_sha256_files_parse_like_sha256sum():
         widgetbin.parse_sha256(f"{digest}  some-other-file", "strawberry-widget-1-x")
     with pytest.raises(widgetbin.FetchError):
         widgetbin.parse_sha256("<html>not found</html>", "strawberry-widget-1-x")
+
+
+def test_a_model_changed_since_its_import_needs_one(tmp_path):
+    import hashlib
+    from strawberry_crab.widgetbin import stale_imports
+    project = tmp_path / "widget"
+    assert stale_imports(project)                      # never imported
+    (project / ".godot" / "imported").mkdir(parents=True)
+    (project / "model.glb").write_bytes(b"glb one")
+    (project / "model.glb.import").write_text('[remap]\n\n[deps]\n\nsource_file="res://model.glb"\n'
+                                              'dest_files=["res://.godot/imported/model.glb-abc.scn"]\n')
+    stamp = project / ".godot" / "imported" / "model.glb-abc.md5"
+    assert stale_imports(project)                      # imported files missing
+    stamp.write_text(f'source_md5="{hashlib.md5(b"glb one").hexdigest()}"\ndest_md5="x"\n')
+    assert not stale_imports(project)
+    (project / "model.glb").write_bytes(b"glb two")    # re-exported after the import
+    assert stale_imports(project)

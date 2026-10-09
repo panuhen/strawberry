@@ -400,8 +400,8 @@ def cmd_widget(here: Here, extra: list[str]) -> int:
         raise CliError(str(exc), 2) from None
     start_daemon(here)
     start_watchers(here)
-    if widget.kind == "checkout" and not (widget.project / ".godot").is_dir():
-        print("importing widget project (first run)")
+    if widget.kind == "checkout" and widgetbin.stale_imports(widget.project):
+        print("importing widget project (first run, or a changed model or texture)")
         subprocess.run([str(widget.program), "--headless", "--path", str(widget.project), "--editor", "--import"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # Pinned to the X11 backend on purpose: native on an X11 session, XWayland on a Wayland
