@@ -642,6 +642,8 @@ Strawberry lives on the desktop as a pet: a **frameless, transparent, always-on-
 
 **Type box (`widget/type_box.gd`).** *Chat with Strawberry…* in the menu, or the T key while she has focus, opens a plain field under her: a square-cornered `LineEdit` styled as smoked glass (a 40 % dark tint with a hairline rim; the desktop is not in Godot's viewport, so there is nothing to blur) with only the caret in the skin's claw colour; the rim stays glass, and focus only brightens it. Enter sends the line over the websocket as `{"type": "heard", "text": …}`; the daemon turns it into `Event(source="voice", title=text)` and runs `handle_event` as a background task, so it takes the same funnel as speech and `strawberry talk` (gate, reflexes, Qwen, ledger) while the socket keeps answering pings. Escape closes it. The field greys out while she is listening or thinking ("She's on it…") or the daemon is away ("Not connected to strawberryd"). While open, the field's corners join the passthrough hull so it takes clicks; closed, they fall through again. `--typing` opens it for a capture; step 17 of `validate_widget.gd` opens it headless, submits a line and sees the answer and the ledger entry.
 
+**Step chip (`widget/step_chip.gd`, §18).** While a run is busy, a small chip under her bubble says what she is doing in plain words: "thinking…", the tool's label from the daemon ("Spotify: next", "searching the web…"), "stopping…". It is the type box's smoked glass (40 % dark tint, hairline rim, cream text, square corners), centred under the bubble's anchor and as wide as its words. Its ✕ is a 40 px square (a fingertip on a touch screen) and sends `{"type": "run.cancel", "run_id": …}`; it shows only when the daemon's `welcome` said this body may cancel. The chip waits 0.35 s before it shows, so a reflex (~0.25 s) never flashes one, and goes with the run's terminal event (or after 60 s without one). While it shows, its corners join the click-through hull, as the type box's do (`chip_points`, in `update_passthrough` and `follow_pose`). It is fed by the protocol v2 run events (PROTOCOL.md Part 1b), which the widget asks for in its hello (`ws_client.gd` `hello`); it never sees an argument or a result. `--capture=… --chip` captures her with the chip of a run under way. `validate_widget.gd` §18 checks the v2 hello and welcome, the chip staying hidden for a quick run, the step text, the 40 px ✕, the corners in the hull, the round trip of a `run.cancel` the daemon declines, and the run's end hiding it.
+
 **Pupils follow the cursor (`widget/gaze.gd`, `widget/strawberry_pupil.gdshader`).** No pupil bones: the pupil is a small ellipsoid baked into each eye mesh's ink surface, and the eye mesh is bound rigidly (weight 1) to its eyestalk bone. So each frame the widget passes the bone's pose to a variant of the cel shader as `to_rest`/`from_rest` (authored rest space ⇄ posed skeleton space); vertices that land within 0.034 of the authored pupil centre are rotated about the authored eyeball centre by a shared yaw/pitch, then sent back through the pose. Exact under any eyestalk bend or stretch, and the blend shapes (lids) are untouched. The gaze itself: the cursor's screen position (readable without focus on X11) is mapped to the crab's plane from the project window size and the orthographic camera (not `Camera3D.project_position`, which needs a real viewport), the direction from the midpoint between the eyes to that point, with the cursor imagined `LOOK_DEPTH` = 2.5 units in front of her, gives the angles, clamped to ±0.7 rad and eased at 14/s. Both pupils share one gaze. After 12 s of a still cursor she looks straight ahead. `--look=x,y` pins the cursor for captures and the headless check (step 13). `CelStyle.apply()` replaces surface materials on a skin change, so the widget re-applies the pupil material after it.
 
 **Start on login.** One unit now: `strawberry install` writes `strawberry-tray.service` (`Type=simple`, `After=`/`WantedBy=graphical-session.target`, `Restart=on-failure`) with `ExecStart=<the installed strawberry> tray --port <port>`, where the first word is the absolute path of the `strawberry` executable that ran `install` (`~/.local/bin/strawberry` after `uv tool install`, `<checkout>/.venv/bin/strawberry` through `bin/strawberry`), else `<python> -m strawberry_crab`. It runs `systemctl --user import-environment DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS`, enables it, and drops `~/.config/autostart/strawberry.desktop` as a fallback for a session that never reaches that target — the entry runs `strawberry tray-autostart`, which does nothing when the unit is enabled, so two trays can never start. It also writes `~/.local/share/applications/strawberry.desktop` (`NoDisplay=true`, `StartupWMClass=Strawberry`, `Icon=strawberry-crab`) and the berry at 48, 64 and 128 px into the user's hicolor theme as `strawberry-crab`: not a launcher, but what GNOME's app switcher and dock match the widget's window to (Godot sets its X11 class to the project name), so they show her name and the berry instead of a generic icon. The window itself carries the same berry (`config/icon`), and its title is set through the display server as well, because a debug build (developer mode) makes `Window` add " (DEBUG)". Then it `daemon-reload`s and **restarts** the unit (not just `enable --now`), so a tray still running from an older ExecStart comes back on the new one; that is how the move from `strawberryd/.venv/bin/strawberryd --tray` to the package is made. The old per-doorway units and `strawberryd.service` are removed by the same command. Everything else is the tray's to start (§14). Once installed, `daemon/stop/restart/status` drive the tray unit instead of pidfiles; logs move to `journalctl --user -u strawberry-tray`. `strawberry uninstall` reverses it.
@@ -758,6 +760,11 @@ min_new_labels = 10              # …and this many new labelled sentences
 auto_switch = false              # true: a candidate that passes the held-out check is put in use at once
 weekly_line = false              # true: once a week she says what she learned (never in quiet hours)
 max_share = 0.25                 # the user's labels weigh at most this share of the data set's, per option
+
+[runs]
+events = true                    # each run's steps go to the bodies that ask (the widget's chip) and the Brain UI (§18)
+supersede = true                 # a new sentence stops the one she is on (never a yes or no to her question); false: it waits
+keep = 50                        # finished runs kept in memory for the Brain UI
 ```
 
 `strawberry config` creates the file from a commented template (`strawberryd --init-config`) and opens it in `$EDITOR`; `strawberry restart` applies it; `strawberry config --init` only writes the template if missing and prints the path (the widget's *Settings file…* runs that). `STRAWBERRYD_PORT` still overrides the port for scripts. The widget's own preferences (skin, window position, …) are `~/.config/strawberry/widget.cfg` (§13).
@@ -770,7 +777,7 @@ max_share = 0.25                 # the user's labels weigh at most this share of
 
 ```
 WIRING.md                this document
-PROTOCOL.md              the bus protocol between the brain and its bodies (v1 as built, v2 proposed)
+PROTOCOL.md              the bus protocol between the brain and its bodies (v1 as built, v2's runs as built, the rest of v2 proposed)
 PACKAGING.md             the plan from a developer checkout to `uv tool install strawberry-crab`
 ADAPTERS.md              adding an MCP server, and writing an adapter for one
 README.md                for users: install, setup, configuration, privacy
@@ -783,9 +790,10 @@ src/strawberry_crab/          the package: contract, events/reactor, brain, spee
                          setupcmd.py (`strawberry setup [--no-download]`: tiers by VRAM, config merge, pulls, the gate's model, voice, widget), configedit.py (config.toml edited as text: setup and the tray's Message bodies), doctor.py (`strawberry doctor [--talk]`; on Windows its own checks: notification access, media sessions, microphone, process loopback, the Startup shortcut, the tray)
 src/strawberry_crab/doorways/ notify_watch.py, mpris_watch.py, beat_watch.py + beat_track.py with its captures beat_pipewire.py (Linux) and beat_loopback.py (Windows), smtc_watch.py and toast_watch.py (Windows), notifications.py (what both notification doorways share) (`strawberry-doorway <name>`, or python -m strawberry_crab.doorways.<name>; `for_system()` says which run where)
 src/strawberry_crab/assets/icons/  the tray icon PNGs (package data), rendered by scripts/render_icons.py
+src/strawberry_crab/runs.py  runs (§18): Run, RunBook, the event whitelist, `is_stop`; hub.py keeps a Body per socket (protocol v2)
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
-widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, gaze.gd, menu.gd, type_box.gd, paths.gd (XDG, the CLI, the version), validate_*.gd
+widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), paths.gd (XDG, the CLI, the version), validate_*.gd
                          + strawberry_v2.glb, the shaders/controllers, export_presets.cfg (the Linux binary)
 bin/strawberry           the checkout's shim: runs the CLI from .venv (created with `uv sync --inexact --group gpu` on first use)
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon (WIDGET=<binary> for the export)
@@ -817,13 +825,14 @@ Or press play in any media player: the MPRIS watcher (§4b) does the rest.
 
 A local web page, served by the daemon, that shows what the router decides and what the learning loop learns (§8a–8d), and lets the user act on it. `strawberry ui` opens it. It calls `learning.py` and reads the daemon's parts; it decides nothing itself.
 
-**What it shows**, in five sections:
+**What it shows**, in six sections:
 
 1. *Learning*: the head in use, the candidate, the labelled examples, the last run and the trainer, with **Train now** (`IdleTrainer.train_now`: the idle run's own path, the gate's embedder, stopped when the user speaks, the child process, without waiting for quiet) and **Roll back**. The candidate against the head it was compared with: fields, strict sentences, Finnish fields, privacy readings, wrong reflexes and AUROC on the held-out set, the per-field scores, how many sentences it learned and how many are new to it, with **Accept** and **Reject**. The learned examples with their labels, avoids, conflicts, signals and review state, each with **Approve** and **Reject** (`Learning.review`; reject deletes the sentence for good). The outcome log's last 60 records and its counts per signal. Every head with its status, held-out score, the score of the head it beat and **Use**, and the history of switches. The week's report.
 2. *Router live*: each sentence as it is handled: kind and topic with confidence, the decision, the tool and its confidence, what handled it (the reflex, the thinker and its tool calls, no_catalogue, chat), the gate's ms and the whole sentence's ms. `routefeed.py` keeps the last 100 in memory (`Daemon.feed`, filled in `handle_voice` beside the outcome log) and the page gets them over a stream.
 3. *Data and scores*: the training and held-out set sizes, the learned examples, what review and the privacy check removed, what the last run trained on and left out, and the held-out score of every head the loop built, as an SVG chart drawn by the page (no library) with the shipped head as a line.
 4. *Settings and privacy*: outcome logging, `log_sentences` and the notification body modes, each with what it means now and the line in `config.toml` that changes it; the learning settings; the whole effective config (env values and anything named like a secret shown as `(set)`). Read-only in this version. **Forget** (`Learning.forget`, optionally with every head) is here, behind a second click.
-5. *System*: the version and uptime, where the gate embeds (ONNX or the Ollama fallback, and why), the scorer and the head in use with its thresholds, the reaction model, the thinker, speech, voice, the MCP servers and the trainer. `/health` has no VRAM or CPU figures, so neither does the page.
+5. *Runs* (§18): each run, newest first, with its steps as a timeline (routing and its path, thinking and the model, each tool started and completed with its duration and code, speaking, the end and why), the tools by name, the outcome and the duration, and **Cancel** on a run that is going on (the widget's ✕ by another way: `RunBook.cancel(…, "stopped")`). The stream's `run` events fill it as they happen; `GET /ui/api/runs` gives the last `[runs] keep`. Names and timings only: what the page gets is what `runs.emit` let through.
+6. *System*: the version and uptime, where the gate embeds (ONNX or the Ollama fallback, and why), the scorer and the head in use with its thresholds, the reaction model, the thinker, speech, voice, the MCP servers and the trainer. `/health` has no VRAM or CPU figures, so neither does the page.
 
 **Routes.**
 
@@ -833,8 +842,9 @@ A local web page, served by the daemon, that shows what the router decides and w
 | `GET /ui/login?token=…` | swaps the token for a session cookie, then 303 to `/ui` | the browser, once |
 | `GET /ui` | the page, with the session's CSRF token in `<meta name="csrf">` | the browser |
 | `GET /ui/app.js`, `style.css`, `icon.svg` | the page's files (no data in them; no session needed, so the sign-in page is styled) | the browser |
-| `GET /ui/api/learning`, `routes`, `data`, `settings`, `system` | JSON for each section | the page |
-| `GET /ui/api/events` | server-sent events: `route` (one entry), `learning` (a file of the loop changed; the page asks again), a keep-alive comment every 15 s | the page |
+| `GET /ui/api/learning`, `routes`, `runs`, `data`, `settings`, `system` | JSON for each section | the page |
+| `GET /ui/api/events` | server-sent events: `route` (one entry, with its `run_id`), `run` (one run event, §18, with the run's `source`), `learning` (a file of the loop changed; the page asks again), a keep-alive comment every 15 s | the page |
+| `POST /ui/api/cancel` (`{run_id}`) | stops that run if it is going on (`{"cancelled": id}`), else 409 | the page |
 | `POST /ui/api/accept`, `reject` (`{version?}`), `rollback`, `use` (`{version}`), `review` (`{key, verdict}`), `train`, `forget` (`{confirm: "forget", everything}`) | `Learning`'s own calls; a refusal from it ("no candidate is waiting", "a training run is already going") is a 409 with the reason | the page |
 
 **The security model.** Every other route refuses any request with an `Origin` header (§2), so no web page the user visits can make her talk, read `/health` or open `/ws`. `/ui` is the one place a browser is let in, on these terms (`brainui.checked`, one decorator on every UI handler; `server.local_only` lets a handler through only when it carries the decorator's mark, so a new route cannot open itself by accident, and an unmatched path such as `/ui/../health` still meets the Origin rule):
@@ -854,4 +864,89 @@ A local web page, served by the daemon, that shows what the router decides and w
 **Measured end to end** (2026-10-08, a throwaway daemon on port 8796 with temp dirs, the real ONNX model, outcome logging on, 11 synthetic outcome records and ten typed sentences, headless Chrome over the DevTools protocol): `strawberry ui --no-browser` printed the link; the login left `/ui#learning` in the address bar and an empty `document.cookie`; the canary sentence showed as text with no `img` element and no dialog; **Train now** built a candidate in the daemon's child process, which the held-out gate rejected (wrong reflexes 4 > 3); two pause examples rejected in the page and a second run gave a passing candidate (95.0% against 94.9%); **Accept** moved `/health.learning.head` and the gate's head to it at once (`follow_pointer` after the switch, not at the next 5 s tick) and **Roll back** moved both back to the shipped head; a typed sentence appeared in Router live within a second; after a daemon restart the old session got the sign-in page; **Forget** left 0 examples. The daemon's log had no sentence, token or cookie in it.
 
 Tests: `tests/test_brainui.py` (the token's single use and expiry, the session's idle and total limits and its end with the daemon, no session, a wrong Host, Origin or CSRF header, JSON only, every other route refusing any Origin including the UI's own, the headers, the script's text-only rule, no sentence with logging off and the sentences with it on, the live feed's privacy, nothing in a log line, each action reaching `Learning`, a real accept and rollback through the API, the event stream, `strawberry ui`).
+
+---
+
+## 18. Runs — `strawberry/runs.py` (brain step 6, stage 1)
+
+Every input she handles is a **run**: a sentence the user says or types, or a notification she
+reacts to. A run has an id (`r-<n>`), a `source` (`voice`, `typed`, `notification`; `job` is
+reserved for scheduled work), a sequence of events and one end. It goes
+
+```
+routing → thinking ⇄ tool → (awaiting_approval, stage 2) → speaking → completed | failed | cancelled
+```
+
+and each step is an event (PROTOCOL.md Part 1b has every field). The bodies that ask for them get
+them over `/ws` (the widget's step chip, §13); the Brain UI shows them (§17).
+
+**Where the events come from.** `Daemon.handle_voice` starts the run; `_routing` sends `routing`
+once the path is known (a reflex as it starts, `escalate` before the thinker, `fixed` for the
+add-on line, `chat` when the thinker is off). `Actor.act` tells its `on_call` about the reflex's
+call (`tool.started` / `tool.completed`, named by `Actor.label`). `Thinker.run(run=…)` sends
+`thinking`, and `Thinker._call` puts `tool.started` / `tool.completed` around each call; a refused
+call is one `tool.completed` with `error: "refused"`. `Daemon.perform` sends `speaking` for the
+line that answers the run going on in its task (`runs.active`, a context variable set in the run's
+own task), and first waits up to 0.5 s for the run's earlier events to go out, so a body sees them
+in order with the line. `RunBook.finish` sends the terminal event, once, from the `finally` of
+`handle_voice` (and of `handle_notification`). `confirm.hold` takes the run too: stage 2 sends
+`approval.request` there.
+
+**What may go out.** `RunBook.emit` keeps, per event type, only the fields PROTOCOL §11 lists, as
+plain numbers, booleans and short strings, and codes only from their lists. A tool's arguments and
+result, the user's sentence and her line cannot reach the bus, the Brain UI or the run's log line
+through it (`tests/test_runs.py` puts canaries in all four with every logger at DEBUG). A made-up
+tool name goes out as `unknown`. The labels the chip shows are written by code: an adapter's
+`labels` (the web adapter's "searching the web…"), else its `title` (or the server's name) and the
+tool's name. Sinks are queues fed with `put_nowait`: a slow body or page misses events rather
+than slowing her down; a run carries at most 200.
+
+**One foreground run.** A typed or spoken sentence is the foreground run, and there is one at a
+time: a new sentence waits for the run before it to end. Before it waits, it stops that run
+(`superseded`) when `[runs] supersede` is on, except when it is a yes or no to her question
+(confirm.py), which is the answer that run was after. A whole sentence of "stop", "cancel that",
+"never mind" (`runs.is_stop`, word lists like `confirm.answer`) while a run is busy stops every
+foreground run going on (`stopped`), never reaches the gate and is answered "Okay, stopped.". The
+same "stop" with nothing going on is an ordinary sentence (the pause reflex, usually). A
+notification's run is never the foreground one: a sentence does not stop it.
+
+**Cancel.** From the widget's ✕ (`run.cancel`, only from a v2 body that declared it, only for the
+foreground run going on), the Brain UI's Cancel, "stop", supersede, and the daemon's shutdown
+(`Daemon.close`: `shutdown`). `RunBook.cancel` cancels the run's own task (`Daemon._in_run` runs
+the sentence in a task of its own, so the request handler or the typed sentence's background task
+is not the one cancelled). A call already in flight decides what happens next:
+
+- one that only reads (a web search or page, a Spotify search; `Toolbox.reads`: an adapter that
+  only looks things up, its `reads`, or MCP's `readOnlyHint` on the tool) is dropped at once. The
+  server finishes it on its own; its queue is serial, so the next call to that server waits for it;
+- one that may change something is shielded (`asyncio.shield`, in `Thinker._call` and
+  `Actor.act`): it finishes, bounded by its timeout, no further round is asked of the model, and
+  she says "Stopped, but <label> had already gone through." before `run.cancelled`.
+
+Otherwise a cancelled run goes back to her resting pose with nothing said (a superseded one leaves
+that to the sentence after it). The cover lines ("On it.", "Still on it.") are not said once a stop
+is under way. `CancelledError` is caught nowhere on the way: the thinker catches only timeouts and
+its own errors, and the tool client only `ToolError`.
+
+**Not built yet (later stages):** approvals bound to the exact call (stage 2), `listening` events
+from the microphone, `token_rate`, several foreground runs, scheduled jobs.
+
+Measured end to end (2026-10-09, a throwaway daemon on port 8797 with temp XDG dirs, the gate on
+Ollama's embeddinggemma, the real thinker, the fake Spotify (`python -m tests.fake_spotify`) and
+the echo server over stdio, a v2 ws client): "next song" was `routing (reflex, skip) →
+tool.started spotify.skip → tool.completed → speaking → run.completed` in 0.74 s; "play some jazz"
+was `routing (escalate) → thinking → spotify.search → spotify.play → speaking → run.completed` in
+6.4 s; a slow read cancelled from the ws client ended with `run.cancelled` 1 s after the cancel; a
+4 s change call cancelled a second in finished first and she said "Stopped, but Echo slow change
+had already gone through."; the Brain UI in headless Chrome cancelled a slow run with its button
+(`run.cancelled`, reason `stopped`); the widget under Xvfb showed the chip with "Echo: slow" and
+its ✕, hid it when the run ended, and stopped a second run with its own ✕.
+
+Tests: `tests/test_runs.py` (the order of events for a reflex, a thinker run with tools, a refused
+call, a failure, a timeout and a notification; one terminal event per run and `seq` without gaps;
+cancel mid-thought, a read dropped at once, a change finishing first and her line about it for the
+thinker and a reflex; "stop"; supersede and supersede off; an answer never superseding; shutdown;
+the privacy canaries; the v1 golden bytes; welcome and the clock in pong; who may cancel; the Brain
+UI's list, stream and Cancel), `tests/test_tools.py` (`readOnlyHint`, labels),
+`widget/validate_widget.gd` §18.
 

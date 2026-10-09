@@ -77,6 +77,8 @@ An adapter is for a server you use every day, where the generic path is not good
 | `untrusted`, `guard`, `forward`, `screen`, `observe` | its results are strangers' text: what may follow one, in what form a call is sent, and a last check that may wait on the network |
 | `claims_tools` | tool names that give a server this adapter whatever it is called |
 | `confirm`, `ask`, `done` | the tools asked about before they run (when the config has no `confirm`), the question with the call pinned ("current" as the playing track), and the sentence after the yes |
+| `title`, `labels` | how the widget's step chip names a call while it runs: the adapter's words for a tool ("searching the web…"), else `<title>: <tool>` ("Spotify: play"); written by you, never from an argument (WIRING §18) |
+| `reads` | tools that only look things up: a stop drops one at once, where any other call is let finish first. A tool the server marks `readOnlyHint` counts too, and so does every tool of a `looks_up_only` adapter |
 
 Every one is optional. An adapter is loaded **only** when a configured server matches it, so an
 adapter nobody uses shapes nothing she says, and no adapter means the core's own plain behaviour.

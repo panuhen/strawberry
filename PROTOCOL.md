@@ -5,9 +5,11 @@
 Godot crab widget (`widget/`). A second body can be written from this document alone, in any
 language, without importing any brain code.
 
-**Two parts.** Part 1 is what the code does now (protocol v1); every statement there is taken from
-the code and cites it as `file:line`. Part 2 is **PROPOSED** (protocol v2): designs for new
-message families. Nothing in Part 2 is implemented yet; each section says so in its heading.
+**Three parts.** Part 1 is protocol v1 as the code does it; every statement there is taken from
+the code and cites it as `file:line`. Part 1b is the part of protocol v2 that is built (runs and
+their events, stopping a run, the clock in ping and pong); it cites functions rather than lines.
+Part 2 is the rest of v2, **PROPOSED**: designs for new message families, not code. Each of its
+sections says in its heading whether it is proposed or partly built.
 
 File paths are relative to the repo root; `server.py` means `src/strawberry_crab/server.py`, and
 so on for the other Python modules.
@@ -278,7 +280,8 @@ first (`widget.gd:650-652`).
 |---|---|---|---|
 | `{"type":"hello",…}` | §2.1 | version check, privacy note | `server.py:383-386` |
 | `{"type":"ping"}` | – | answers `{"type":"pong"}` | `server.py:387-388` |
-| `{"type":"heard","text":"…"}` | `text`: string, the sentence the user typed | trimmed; empty ignored; becomes `Event(source="voice", title=text)` and runs the same funnel as a spoken sentence, in the background | `server.py:390-397`, sent by `widget.gd:411-417` |
+| `{"type":"heard","text":"…"}` | `text`: string, the sentence the user typed | trimmed; empty ignored; becomes `Event(source="voice", title=text)` and runs the same funnel as a spoken sentence, in the background. It is a foreground run (Part 1b): one at a time, and it stops the one before it unless it answers her question | `server.py:390-397`, sent by `widget.gd:411-417` |
+| `{"type":"run.cancel","run_id":"…"}` | v2 only | §11c; from a v1 body it is ignored | `server.py` `_cancel_from_body` |
 | anything else | – | logged at DEBUG, ignored | `server.py:398-399` |
 | not JSON | – | logged at DEBUG, ignored | `server.py:379-381` |
 
@@ -287,13 +290,15 @@ to it comes back as ordinary performances; there is no reply addressed to the se
 
 ## 7. How a body tells the messages apart (v1)
 
-In this order (`widget.gd:649-659`, `ws_client.gd:85`):
+In this order (`widget.gd` `_on_message`, `ws_client.gd` `_process`):
 
 1. `type == "pong"` → liveness only.
-2. has `command` → a command.
-3. has `tempo` (an object) → a beat estimate.
-4. has `state` → a performance.
-5. anything else → ignore.
+2. has `type` (any other) → a v2 message (Part 1b): the widget hands it to `on_typed`. A v1 body
+   never receives one.
+3. has `command` → a command.
+4. has `tempo` (an object) → a beat estimate.
+5. has `state` → a performance.
+6. anything else → ignore.
 
 ## 8. Things found in the code that a body author should know
 
@@ -329,13 +334,159 @@ These are v1 as it stands; some are gaps, noted for fixing. The numbers stay whe
     log_sentences = false`, the default, they log only its length (`<sentence, 23 chars>`); on,
     the sentence as before (WIRING §15).
 
+
+---
+
+# Part 1b — Protocol v2, as built (runs)
+
+Built in brain step 6, stage 1. A body that says `protocol: 2` in its hello gets what it asks for
+from this part; a body that does not is a v1 body and gets exactly the Part 1 traffic, byte for
+byte (`tests/test_runs.py` `test_v1_bodies_get_exactly_the_bytes_they_always_did`, recorded from the
+code before runs existed). The crab widget speaks v2 from this stage on (`ws_client.gd` `hello`).
+What stays proposed is in Part 2.
+
+## 9b. The v2 hello and `welcome`
+
+```json
+{"type": "hello", "client": "strawberry-widget", "version": "0.2.0", "godot": "4.7.2-stable (official)",
+ "protocol": 2, "body": {"id": "crab", "name": "Strawberry"},
+ "capabilities": {"phases": ["routing", "thinking", "tool", "speaking", "run"],
+                  "sends": {"heard": true, "cancel": true}}}
+```
+
+The v1 fields and the version check of §2.1 stay as they are. Of the v2 fields the brain reads
+(`hub.py` `body_from_hello`):
+
+| Field | Meaning |
+|---|---|
+| `protocol` | 2, or absent / below 2 for v1. A higher number is served as 2 |
+| `body.id`, `body.name` | strings, at most 64 printable characters; for logs, `/health` and `welcome` |
+| `capabilities.phases` | the run event families it wants: `routing`, `thinking`, `tool` (both tool events), `speaking`, `run` (the terminal events). Others (`listening`, `subagent`, `token_rate`) are not produced yet and are not accepted |
+| `capabilities.sends.cancel` | `true`: it may send `run.cancel` (§11b) |
+
+Every other capability of §10 is accepted and ignored for now. The brain answers a v2 hello that is
+not refused (§2.1) with `welcome` (`server.py` `welcome`), on that socket only:
+
+```json
+{"type": "welcome", "protocol": 2, "brain": "0.2.0", "t": 81234.512, "rest_state": "idle",
+ "accepted": {"phases": ["routing", "run", "speaking", "thinking", "tool"], "cancel": true}, "body_id": "crab"}
+```
+
+`t` is brain monotonic time; `accepted` is what this body will get and may send. The v1 catch-up
+(§2 step 2) still goes out at connect, before the hello. `/health` lists each open socket under
+`bodies` (`protocol`, and for v2 `id`, `phases`, `cancel`) and the run book under `runs`.
+
+## 10b. Runs
+
+Every input the brain handles is a **run** (`runs.py`): a sentence the user says or types
+(`source` `voice` or `typed`; one at a time, the *foreground* run) or a notification it reacts to
+(`notification`, never foreground, never stopped). `job` is reserved. A run goes through
+
+```
+routing → thinking ⇄ tool → (awaiting_approval, stage 2) → speaking → completed | failed | cancelled
+```
+
+and each step is one event. `run_id` is `r-<n>`, counting from 1 at each daemon start.
+
+## 11b. Run events (brain → body)
+
+Every event has `type`, `run_id`, `seq` (1, 2, … within the run, no gaps) and `t` (brain monotonic
+seconds), and only the fields below (`runs.py` `FIELDS`, checked in `RunBook.emit`): anything else
+is dropped before it reaches a sink, numbers are rounded to 3 decimals, strings are cut to 64
+characters, and the fixed codes accept nothing outside their list. A v2 body gets the families it
+accepted; a v1 body gets none.
+
+| `type` | Fields | When (code) |
+|---|---|---|
+| `routing` | `kind`, `topic`, `decision`, `path` (`reflex` `escalate` `fixed` `chat`), `tool` (only with `reflex`: the gate's option, e.g. `skip`), `confidence`, `ms` | once the path is known: a reflex as it starts, the thinker before `thinking`, a fixed line, chat (`daemon.py` `_routing`). Not sent when the gate is off or did not answer, nor for a yes or no to her question, nor for "stop" |
+| `thinking` | `backend` (`builtin`), `model` | the thinker starts (`Thinker.run`) |
+| `tool.started` | `call_id` (`c1`, `c2`, … within the run), `tool` (`server.tool`; a reflex's is `server.option`, e.g. `spotify.skip`), `label`, `careful` | before each call, reflex (`Actor.act` `on_call`) or thinker (`Thinker._call`) |
+| `tool.completed` | `call_id`, `tool`, `duration`, `ok`, `error` (only when not ok: `timeout` `refused` `failed` `unavailable`) | after it. A call the thinker refuses (not offered, over a limit, a guard) is one `tool.completed` with `error: "refused"` and no `tool.started`; a made-up tool name is sent as `unknown` |
+| `speaking` | `duration` (the wav's length, or the bubble's reading pace when silent), `emotion` | the performance that answers the run goes out (`Daemon.perform`), after the run's earlier events |
+| `run.completed` | `duration`, `outcome` (`spoken` `nothing`) | terminal |
+| `run.failed` | `duration`, `error` (`timeout` `backend` `tools` `other`) | terminal: the thinker timed out or could not be reached, a reflex or a confirmed call failed, or an error. She has usually said so |
+| `run.cancelled` | `duration`, `reason` (`superseded` `stopped` `shutdown`) | terminal: a newer sentence replaced it, the user stopped it, or the daemon is stopping |
+
+`label` is how the widget's chip names the step: the adapter's own words for the tool
+(`searching the web…`), else the server's title and the tool's name (`Spotify: next`,
+`Player: pause` for MPRIS). It is written by code, never from an argument.
+
+**Exactly one terminal event ends each run** (`RunBook.finish`, idempotent, called in a `finally`).
+A run carries at most 200 events; past that only its terminal event goes out. A body that has
+seen nothing of a run for 60 s treats it as over.
+
+**Never on the bus** (§14.1, enforced by the whitelist): tool arguments, tool results, the user's
+sentence, her line, prompts, model output, server error messages. Her line still goes out as the
+performance's `text`, as in v1.
+
+The performance that answers a run carries `run_id` as an extra field, for v2 bodies only.
+
+Examples (a reflex, then a thinker run):
+
+```json
+{"type": "routing", "run_id": "r-1", "seq": 1, "t": 1496.23, "kind": "request", "topic": "music", "decision": "act", "path": "reflex", "tool": "skip", "confidence": 0.989, "ms": 119.324}
+{"type": "tool.started", "run_id": "r-1", "seq": 2, "t": 1496.23, "call_id": "c1", "tool": "spotify.skip", "label": "Spotify: skip", "careful": false}
+{"type": "tool.completed", "run_id": "r-1", "seq": 3, "t": 1496.852, "call_id": "c1", "tool": "spotify.skip", "duration": 0.623, "ok": true}
+{"type": "speaking", "run_id": "r-1", "seq": 4, "t": 1496.853, "duration": 2.69, "emotion": "happy"}
+{"type": "run.completed", "run_id": "r-1", "seq": 5, "t": 1496.853, "duration": 0.743, "outcome": "spoken"}
+
+{"type": "routing", "run_id": "r-2", "seq": 1, "t": 1442.728, "kind": "request", "topic": "music", "decision": "act", "path": "escalate", "confidence": 0.991, "ms": 120.694}
+{"type": "thinking", "run_id": "r-2", "seq": 2, "t": 1442.73, "backend": "builtin", "model": "qwen3.8:27b"}
+{"type": "tool.started", "run_id": "r-2", "seq": 3, "t": 1445.925, "call_id": "c1", "tool": "spotify.search", "label": "Spotify: search", "careful": false}
+{"type": "tool.completed", "run_id": "r-2", "seq": 4, "t": 1445.928, "call_id": "c1", "tool": "spotify.search", "duration": 0.003, "ok": true}
+{"type": "tool.started", "run_id": "r-2", "seq": 5, "t": 1447.889, "call_id": "c2", "tool": "spotify.play", "label": "Spotify: play", "careful": false}
+{"type": "tool.completed", "run_id": "r-2", "seq": 6, "t": 1447.892, "call_id": "c2", "tool": "spotify.play", "duration": 0.003, "ok": true}
+{"type": "speaking", "run_id": "r-2", "seq": 7, "t": 1448.959, "duration": 4.835, "emotion": "happy"}
+{"type": "run.completed", "run_id": "r-2", "seq": 8, "t": 1448.959, "duration": 6.352, "outcome": "spoken"}
+```
+
+A notification is `speaking → run.completed`.
+
+## 11c. Stopping a run (`run.cancel`, body → brain)
+
+```json
+{"type": "run.cancel", "run_id": "r-2"}
+```
+
+Taken only from a v2 body whose welcome said `cancel: true`, and only for the foreground run going
+on now (`server.py` `_cancel_from_body`). Anything else is ignored and logged; a v2 body that may
+cancel but named another run gets
+
+```json
+{"type": "input.refused", "ref": "r-2", "reason": "not_current"}
+```
+
+A cancel does nothing but stop that run: no line, no new run. The run ends with
+`run.cancelled` (`reason: "stopped"`) and she goes back to her resting state. A call that only
+reads (a search, a web page, a tool the server marks `readOnlyHint`, or one its adapter lists in
+`reads`) is dropped at once. A call that may change something is let finish first
+(`asyncio.shield` in `Thinker._call` and `Actor.act`): its `tool.completed` comes, she says
+"Stopped, but <label> had already gone through." (`speaking`), and then `run.cancelled`.
+
+The same stop comes from the Brain UI's Cancel (WIRING §17), from a whole-sentence "stop",
+"cancel that" or "never mind" while a run is busy (`runs.is_stop`; answered "Okay, stopped." as a
+run of its own), from a newer sentence (`superseded`, `[runs] supersede`), and from the daemon
+stopping (`shutdown`). A yes or no to her question never stops anything: it is the answer.
+
+## 12b. The clock in ping and pong
+
+A v2 body may put its own monotonic time in `ping.t`; the brain echoes it and adds its own
+(`server.py` `_on_widget_message`):
+
+```json
+{"type": "ping", "t": 1532.004}
+{"type": "pong", "t": 1532.004, "brain_t": 81250.117}
+```
+
+A ping without a number in `t` gets the v1 `{"type": "pong"}`. The mapping is §12.1's.
+
 ---
 
 # Part 2 — PROPOSED: protocol v2
 
-Everything below is a design, not code. It is versioned **protocol v2**. A v1 body (today's
-crab) keeps working unchanged: the brain sends it exactly the v1 traffic of Part 1 and nothing
-else (§15).
+The rest of protocol v2 is a design, not code; what is built is in Part 1b, and the sections below
+say where they overlap. A v1 body keeps working unchanged: the brain sends it exactly the v1
+traffic of Part 1 and nothing else (§15).
 
 ## 9. PROPOSED (v2): conventions
 
@@ -351,7 +502,10 @@ else (§15).
 - Durations are seconds as numbers (`duration`, matching Hermes), levels and confidences are 0–1.
 - Optional fields are omitted, never `null`, as in v1.
 
-## 10. PROPOSED (v2): the hello with capabilities, and `welcome`
+## 10. PROPOSED (v2), partly built: the hello with capabilities, and `welcome`
+
+*Built:* `protocol`, `body`, `capabilities.phases`, `capabilities.sends.cancel` and `welcome`
+(§9b). The rest of this section is proposed.
 
 A v2 body adds `protocol`, `body` and `capabilities` to the v1 hello. Old fields stay, so the
 version check of §2.1 still applies.
@@ -464,7 +618,12 @@ body that owns that entity performs it; other bodies apply only `state`. Absent 
 main entity. The brain chooses the entity from the event's topic: a track change goes to the entity
 with `topic = "music"` if there is one.
 
-## 11. PROPOSED (v2): agent phases
+## 11. PROPOSED (v2), partly built: agent phases
+
+*Built:* `routing`, `thinking`, `tool.started`, `tool.completed`, `speaking` and the three terminal
+events, as §11b says (with `label` on `tool.started`, `shutdown` as a cancel reason and `fixed`
+paths). Proposed still: `listening`, `subagent.*`, `token_rate`, `outcome: "silent"` and the
+`didnt_catch` reason.
 
 What the brain is doing, as it happens, so a body can show listening, deciding, thinking and tool
 use without waiting for the reply. These do not replace performances: the crab still gets its
@@ -556,7 +715,7 @@ built):
 predicted or detected downbeat), `breakdown`, `section`. Bodies ignore kinds they do not know.
 A later `bar` object on `beat` (`beats_per_bar`, `beat_in_bar`) is reserved the same way.
 
-### 12.1 Clock mapping
+### 12.1 Clock mapping (the ping and pong half is built, §12b)
 
 Brain and body clocks differ. v2 extends ping/pong, which v1 already sends every 5 s:
 
@@ -647,6 +806,8 @@ Rules:
 6. An input that supersedes the run (the user says something else) cancels its open approvals.
 
 ## 14. PROPOSED (v2): input from bodies
+
+(`run.cancel` is built: §11c.)
 
 `heard` stays as in v1. New, each only from a body that declared it in `sends`:
 
