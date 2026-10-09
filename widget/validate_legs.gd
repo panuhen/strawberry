@@ -1,7 +1,9 @@
 extends SceneTree
 ## The legs and pincers (WIRING.md §9, §13): the rig's bones and their skin, the clips driving the
 ## legs, the pincers following her voice with a spring, the procedural leg pass (dance, reactions,
-## touch). Real widget, isolated settings, no daemon (a stand-in socket).
+## touch), the gait under a drag, Wander's rules (direction, staying on her monitor, never while
+## busy, stopping when something starts, never while pressed).
+## Real widget, isolated settings, no daemon (a stand-in socket), a stand-in desktop for the window.
 ##
 ## godot --headless --path widget --script res://validate_legs.gd
 class FakeWs:
@@ -230,6 +232,154 @@ func run() -> void:
 	report["hold_settle"] = snappedf(sunk, 0.001)
 	check(sunk < -0.008, "a hold settles her legs (she sinks a little), %.3f" % sunk)
 	await wait(0.8)
+
+	# 6. The gait: her window moving (a drag here) sets the tripods going, at the drag's speed, and
+	# her toes stay put on the desktop through each stance; still, the feet settle back.
+	var wander: Node = widget.wander
+	widget.set_state("talking")   # legs at rest under her while the gait is measured
+	wander.desk = {"screens": [Rect2i(0, 0, 1920, 1040), Rect2i(1920, 0, 1280, 1024)], "pos": Vector2i(700, 400), "size": Vector2i(380, 560)}
+	await wait(0.3)
+	var falls: int = legs.footfalls
+	var stance_ok := true
+	var tripod_ok := true
+	var outside := 0
+	var hull := widget.passthrough_polygon()
+	waited = 0.0
+	while waited < 1.0:
+		var d := widget.get_process_delta_time()
+		wander.desk.pos += Vector2i(roundi(150.0 * maxf(d, 1.0 / 60.0)), 0)   # dragged right, ~150 px/s
+		await process_frame
+		waited += d
+		if legs.gait_weight >= 1.0:
+			tripod_ok = tripod_ok and legs.in_stance("L1") == legs.in_stance("R2") and legs.in_stance("R2") == legs.in_stance("L3") \
+				and legs.in_stance("L1") != legs.in_stance("R1") and legs.in_stance("R1") == legs.in_stance("L2")
+			# In stance the toe sweeps toward her +X (the screen's left) as the window goes right.
+			stance_ok = stance_ok and legs.stride < 0.0
+			for p in widget.body_points():
+				if not Geometry2D.is_point_in_polygon(p, hull):
+					outside += 1
+	var hz: float = (legs.footfalls - falls) / 2.0
+	report["drag_gait"] = {"motion": snappedf(legs.motion.x, 1.0), "cycles_per_s": hz, "stride": snappedf(legs.stride, 0.001), "outside_hull": outside}
+	check(legs.gait_weight > 0.99 and legs.motion.x > 100.0, "a drag should set her walking (%.2f, %.0f px/s)" % [legs.gait_weight, legs.motion.x])
+	check(hz > 1.5 and hz < legs.MAX_HZ + 0.5, "the cadence should follow the drag, %.1f cycles a second" % hz)
+	check(tripod_ok, "a tripod gait: L1, R2, L3 together, half a cycle from R1, L2, R3")
+	check(stance_ok, "she scuttles sideways, the stride along her X against the drag")
+	check(outside == 0, "her stepping legs should stay inside the click-through hull (%d points out)" % outside)
+	# Planted: a stance toe's screen position (window + toe) barely moves while the window goes on.
+	var leg := "L1" if legs.in_stance("L1") else "R1"
+	var screen_a: float = wander.desk.pos.x + widget.touch.world_to_pixel(skeleton.global_transform * legs.toe_now(leg)).x
+	var d2 := widget.get_process_delta_time()
+	wander.desk.pos += Vector2i(roundi(150.0 * maxf(d2, 1.0 / 60.0)), 0)
+	await process_frame
+	if legs.in_stance(leg):
+		var screen_b: float = wander.desk.pos.x + widget.touch.world_to_pixel(skeleton.global_transform * legs.toe_now(leg)).x
+		report["stance_toe_slip_px"] = snappedf(absf(screen_b - screen_a), 0.1)
+		check(absf(screen_b - screen_a) < 2.5, "a stance toe should stay put on the desktop, slipped %.1f px" % absf(screen_b - screen_a))
+	await wait(0.6)
+	check(legs.gait_weight == 0.0 and legs_turned() < deg_to_rad(0.5), "still again, her feet settle back under her")
+
+	# 7. Wander: on by default, saved, in the menu; the walk's direction by where she is; she stays on
+	# her monitor; never while busy; a walk stops when something starts; never while pressed.
+	widget.set_state("idle")
+	await wait(0.3)
+	check(widget.wander_enabled and wander.enabled, "Wander should be on by default")
+	widget.menu._refresh()
+	check(widget.menu.is_item_checked(widget.menu.get_item_index(widget.menu.WANDER)), "the menu should show Wander on")
+	widget.menu._on_pressed(widget.menu.WANDER)
+	var cfg := ConfigFile.new()
+	cfg.load(widget.settings_path())
+	check(not widget.wander_enabled and cfg.get_value("window", "wander", true) == false, "Wander off should be saved")
+	wander.until_walk = 0.0
+	await wait(0.2)
+	check(not wander.walking, "Wander off: no walk")
+	widget.menu._on_pressed(widget.menu.WANDER)
+	check(widget.wander_enabled, "the menu turns Wander back on")
+
+	var ranges := []
+	for start in [10, 1530, 700]:
+		wander.desk.pos = Vector2i(start, 400)
+		var dirs := {}
+		for i in 6:
+			wander.desk.pos = Vector2i(start, 400)
+			await process_frame
+			check(wander.wander(), "a walk should start from x %d" % start)
+			check(wander.until_walk >= wander.WANDER_S.x and wander.until_walk <= wander.WANDER_S.y, "the next walk is 5 to 15 minutes off")
+			dirs[wander.direction] = true
+			var lo: int = wander.desk.pos.x
+			var hi: int = lo
+			while wander.walking:
+				await process_frame
+				lo = mini(lo, wander.desk.pos.x)
+				hi = maxi(hi, wander.desk.pos.x)
+			ranges.append([start, lo, hi])
+			check(lo >= 0 and hi <= 1920 - 380, "she stays on her monitor (from %d: %d..%d)" % [start, lo, hi])
+		if start == 10:
+			check(dirs.keys() == [1.0], "near the left edge she walks right")
+		elif start == 1530:
+			check(dirs.keys() == [-1.0], "near the right edge she walks left (never onto the next display)")
+	report["walks"] = ranges
+	# The right-hand monitor's own edges hold her there too.
+	wander.desk.pos = Vector2i(1920 + 1280 - 380 - 2, 300)
+	check(wander.wander() and wander.direction < 0.0, "on the second monitor, at its right edge, she walks left")
+	while wander.walking:
+		await process_frame
+		check(wander.desk.pos.x >= 1920 and wander.desk.pos.x <= 1920 + 1280 - 380, "she stays on the second monitor")
+
+	wander.desk.pos = Vector2i(700, 400)
+	var busy_cases := {
+		"talking": func(on: bool): widget.set_state("talking" if on else "idle"),
+		"listening": func(on: bool): widget.set_state("listening" if on else "idle"),
+		"thinking": func(on: bool): widget.set_state("thinking" if on else "idle"),
+		"dancing": func(on: bool): widget.set_state("dancing" if on else "idle"),
+		"pressed": func(on: bool):
+			widget.pressing = on
+			widget.press_at = Time.get_ticks_msec() / 1000.0
+			if not on:
+				widget.touch.release_hold(),
+		"dragged": func(on: bool): widget.dragging = on,
+		"run": func(on: bool):
+			if on:
+				widget.step_chip.on_phase({"type": "thinking", "run_id": "r-walk"})
+			else:
+				widget.step_chip.on_phase({"type": "run.completed", "run_id": "r-walk"}),
+		"approval": func(on: bool):
+			if on:
+				widget.approval_card.welcomed({"approvals": true, "approval": true})
+				widget.approval_card.on_event({"type": "approval.request", "run_id": "r-ok", "seq": 1, "t": widget.brain_now(),
+					"approval_id": "a-walk-1", "risk": "change", "prompt": "Walk?", "timeout_s": 10.0, "expires_t": widget.brain_now() + 10.0, "hold": false})
+			else:
+				widget.approval_card.close("test"),
+		# Sleep itself never starts mid-walk (sleep_controller.can_sleep); asleep is set directly here.
+		"asleep": func(on: bool): widget.sleeper.phase = "sleeping" if on else "awake",
+	}
+	var stopped := {}
+	for name in busy_cases:
+		var toggle: Callable = busy_cases[name]
+		await calm_down()
+		# Busy first: no walk starts.
+		toggle.call(true)
+		await process_frame
+		var refused: bool = not wander.wander()
+		wander.until_walk = 0.0
+		await process_frame
+		refused = refused and not wander.walking
+		toggle.call(false)
+		await calm_down()
+		# Walking, then it starts: she stops at once and the window stays where it is.
+		check(wander.wander(), "a walk should start before %s (%s, %s)" % [name, wander.blocker(), widget.touch.recipe])
+		await wait(0.3)
+		toggle.call(true)
+		await process_frame
+		var held: int = wander.desk.pos.x
+		await wait(0.3)
+		stopped[name] = [refused, not wander.walking, wander.stop_reason, wander.desk.pos.x == held]
+		check(refused, "no walk while %s" % name)
+		check(not wander.walking and wander.desk.pos.x == held, "a walk should stop at once when %s starts (%s)" % [name, wander.stop_reason])
+		toggle.call(false)
+	report["walk_stops"] = stopped
+	await calm_down()
+
+	wander.desk = {}
 
 	var path: String = widget.settings_path()
 	widget.queue_free()
