@@ -20,6 +20,9 @@ const CONFIRM_MESSAGES := 2      # a new style has to win this many estimates in
 const CONFIRM_SWAY := 4          # dropping to sway takes longer: breakdowns are 4–8 s and the beat comes back
 const MIN_SPEED := 0.65
 const MAX_SPEED := 1.6
+const FADE_S := 0.3              # the moves ease in when she starts and out when the beat goes
+const SWITCH_S := 0.5            # a new style crossfades from the one before over this long
+const Easing = preload("res://easing.gd")
 
 var widget: Node3D
 var player: AnimationPlayer
@@ -39,6 +42,10 @@ var candidate_votes := 0
 var applied := false
 var styles_seen := {}
 var wrote_speed := false
+var presence := 0.0              # 0..1, how much of the moves she is doing (FADE_S)
+var previous_style := ""
+var since_switch := SWITCH_S
+var last_moves := {}
 
 func setup(owner: Node3D, animation_player: AnimationPlayer, model: Node, blink_controller: Node) -> void:
 	process_priority = 155
@@ -70,6 +77,8 @@ func set_tempo(data: Dictionary) -> void:
 		candidate_votes = 1
 	var needed := CONFIRM_SWAY if candidate == "sway" and style != "" else CONFIRM_MESSAGES
 	if candidate_votes >= needed and candidate != style:
+		previous_style = style
+		since_switch = 0.0
 		style = candidate
 		styles_seen[style] = true
 		print("dance style: ", style, " (%.0f bpm)" % float(data.get("bpm", 0.0)))
@@ -129,66 +138,98 @@ func clip_speed() -> float:
 		speed *= 2.0
 	return speed
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not active():
-		if applied:
+		if not applied:
+			return
+		# The beat is gone or she stopped dancing: the clip's speed returns at once, the moves ease out.
+		if wrote_speed:
+			player.speed_scale = 1.0
+			wrote_speed = false
+		presence = maxf(0.0, presence - delta / FADE_S)
+		if presence <= 0.0:
 			reset()
+		else:
+			layer(last_moves, Easing.in_out(presence))
 		return
+	presence = minf(1.0, presence + delta / FADE_S)
+	since_switch += delta
 	var now := Time.get_unix_time_from_system()
+	var m := moves(style, now)
+	if previous_style != "" and since_switch < SWITCH_S:
+		m = mix(moves(previous_style, now), m, Easing.in_out(since_switch / SWITCH_S))
+	player.speed_scale = m.speed
+	wrote_speed = true
+	last_moves = m
+	layer(m, Easing.in_out(presence))
+	applied = true
+
+## One style's moves at this moment, at full strength.
+func moves(name: String, now: float) -> Dictionary:
 	var phase := beat_phase(now)
 	var parity := beat_index(now) % 2
-	var pitch := 0.0
-	var roll := 0.0
-	var lift_l := 0.0
-	var lift_r := 0.0
-	var squash := 0.0
-	var speed := clip_speed()
-	match style:
+	var m := {"pitch": 0.0, "roll": 0.0, "lift_l": 0.0, "lift_r": 0.0, "squash": 0.0,
+		"wide": 0.0, "happy": 0.0, "squint": 0.0, "speed": clip_speed()}
+	match name:
 		"rave":
-			squash = 0.3 * pulse(phase, 7.0)
+			m.squash = 0.3 * pulse(phase, 7.0)
 			var swing := 0.5 - 0.5 * cos(TAU * phase)  # 0 on the beat, 1 between beats
-			lift_l = 1.0 * (swing if parity == 0 else 1.0 - swing) * 0.85 + 0.25
-			lift_r = 1.0 * (swing if parity == 1 else 1.0 - swing) * 0.85 + 0.25
-			roll = deg_to_rad(3.0) * (1.0 if parity == 0 else -1.0) * (1.0 - phase)
-			blink.extra_wide = 0.6
+			m.lift_l = 1.0 * (swing if parity == 0 else 1.0 - swing) * 0.85 + 0.25
+			m.lift_r = 1.0 * (swing if parity == 1 else 1.0 - swing) * 0.85 + 0.25
+			# A quick lean onto the beat's side that eases back by the next one (was a sawtooth).
+			var lean := Easing.out(phase / 0.12) * (1.0 - Easing.in_out((phase - 0.12) / 0.88))
+			m.roll = deg_to_rad(3.0) * (1.0 if parity == 0 else -1.0) * lean
+			m.wide = 0.6
 		"headbang":
-			pitch = -deg_to_rad(16.0) * pulse(phase, 5.0)
-			lift_l = 0.5
-			lift_r = 0.5
-			blink.extra_squint = 0.35
+			m.pitch = -deg_to_rad(16.0) * pulse(phase, 5.0)
+			m.lift_l = 0.5
+			m.lift_r = 0.5
+			m.squint = 0.35
 		"groove":
 			var bar := fposmod((now - float(tempo.get("next_beat", now))) / (2.0 * float(tempo.get("period_s", 0.5))), 1.0)
-			roll = deg_to_rad(5.0) * sin(TAU * bar)
-			squash = 0.18 * pulse(phase, 5.0) * (1.0 if parity == 0 else 0.5)
-			lift_l = 0.35 * pulse(phase, 4.0) if parity == 0 else 0.0
-			lift_r = 0.35 * pulse(phase, 4.0) if parity == 1 else 0.0
+			m.roll = deg_to_rad(5.0) * sin(TAU * bar)
+			m.squash = 0.18 * pulse(phase, 5.0) * (1.0 if parity == 0 else 0.5)
+			m.lift_l = 0.35 * pulse(phase, 4.0) if parity == 0 else 0.0
+			m.lift_r = 0.35 * pulse(phase, 4.0) if parity == 1 else 0.0
 		"bounce":
-			squash = 0.32 * pulse(phase, 6.0)
-			pitch = -deg_to_rad(4.0) * pulse(phase, 6.0)
+			m.squash = 0.32 * pulse(phase, 6.0)
+			m.pitch = -deg_to_rad(4.0) * pulse(phase, 6.0)
 		"sway":
-			speed = 0.75
-			roll = deg_to_rad(4.0) * sin(TAU * now / 3.2)
-			blink.extra_happy = 0.4
-	player.speed_scale = speed
-	wrote_speed = true
+			m.speed = 0.75
+			m.roll = deg_to_rad(4.0) * sin(TAU * now / 3.2)
+			m.happy = 0.4
+	return m
+
+static func mix(a: Dictionary, b: Dictionary, weight: float) -> Dictionary:
+	var out := {}
+	for key in b:
+		out[key] = lerpf(float(a[key]), float(b[key]), weight)
+	return out
+
+## Puts the moves on top of the clip's pose, scaled by `weight` (the clip's speed is the caller's).
+func layer(m: Dictionary, weight: float) -> void:
+	var pitch: float = m.pitch * weight
+	var roll: float = m.roll * weight
 	if pitch != 0.0 or roll != 0.0:
 		var q := Quaternion(Vector3.RIGHT, pitch) * Quaternion(Vector3.BACK, roll)
 		skeleton.set_bone_pose_rotation(body_i, skeleton.get_bone_pose_rotation(body_i) * q)
-	if lift_l != 0.0:
-		skeleton.set_bone_pose_rotation(claw_l_i, skeleton.get_bone_pose_rotation(claw_l_i) * Quaternion(Vector3.RIGHT, lift_l))
-	if lift_r != 0.0:
-		skeleton.set_bone_pose_rotation(claw_r_i, skeleton.get_bone_pose_rotation(claw_r_i) * Quaternion(Vector3.RIGHT, lift_r))
+	if m.lift_l != 0.0:
+		skeleton.set_bone_pose_rotation(claw_l_i, skeleton.get_bone_pose_rotation(claw_l_i) * Quaternion(Vector3.RIGHT, m.lift_l * weight))
+	if m.lift_r != 0.0:
+		skeleton.set_bone_pose_rotation(claw_r_i, skeleton.get_bone_pose_rotation(claw_r_i) * Quaternion(Vector3.RIGHT, m.lift_r * weight))
+	# The style's squash stands in for the clip's breath; while easing in or out the two are mixed.
 	for i in squashers.size():
-		squashers[i].set_blend_shape_value(squash_indices[i], squash)
-	applied = true
+		var clip_value := squashers[i].get_blend_shape_value(squash_indices[i])
+		squashers[i].set_blend_shape_value(squash_indices[i], lerpf(clip_value, m.squash, weight))
+	blink.set_layer("dance", m.wide * weight, m.happy * weight, m.squint * weight)
 
 func reset() -> void:
 	applied = false
+	presence = 0.0
+	last_moves = {}
 	if wrote_speed:
 		player.speed_scale = 1.0
 		wrote_speed = false
-	blink.extra_wide = 0.0
-	blink.extra_squint = 0.0
-	blink.extra_happy = 0.0
+	blink.set_layer("dance", 0.0, 0.0, 0.0)
 	for i in squashers.size():
 		squashers[i].set_blend_shape_value(squash_indices[i], 0.0)

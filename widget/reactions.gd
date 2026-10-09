@@ -12,6 +12,7 @@ extends Node
 ## get_bone_global_pose(), which the acceptance check reads.) Every bone touched here has a
 ## track in all seven clips, so the mixer resets it each frame and offsets never compound.
 
+const Easing = preload("res://easing.gd")
 const DURATIONS := {"wave": 1.5, "peek": 1.4, "shiver": 0.9, "double_hop": 1.6, "nod": 1.1}
 
 var recipe := ""
@@ -86,7 +87,8 @@ func _process(delta: float) -> void:
 	var squint := 0.0
 	match recipe:
 		"wave":
-			claw_l_lift = deg_to_rad(48.0) * env
+			# The claw snaps up a little past 48° and settles, then eases down with the envelope.
+			claw_l_lift = deg_to_rad(48.0) * Easing.back_out(p / 0.22) * (1.0 - smoothstep(0.78, 1.0, p))
 			claw_open.x = 0.9 * env * maxf(0.0, sin(TAU * 2.0 * p))  # two open-close beats
 			wide = 0.8 * env
 		"peek":

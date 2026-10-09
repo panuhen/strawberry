@@ -381,9 +381,10 @@ func run() -> void:
 	unsteady["steady"] = true
 	check(widget.dance.choose(unsteady) == "rave", "a steady tempo keeps its style")
 	await post("/tempo", {"silent": true})
-	await wait(0.2)
+	await wait(0.1)
+	check(absf(widget.player.speed_scale - 1.0) < 0.001, "clip speed should return to 1 at once")
+	await wait(widget.dance.FADE_S + 0.1)   # the moves ease out
 	check(not widget.dance.applied, "silence should stop the layers")
-	check(absf(widget.player.speed_scale - 1.0) < 0.001, "clip speed should return to 1")
 	report["dance_styles_seen"] = widget.dance.styles_seen.keys()
 	await post("/perform", {"state": "idle"})
 

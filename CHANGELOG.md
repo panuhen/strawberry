@@ -115,6 +115,11 @@ package and the widget binary.
 
 ### Changed
 
+- Her moves are eased. The baked clips use Bézier keys, `alert_snap` snaps her claws a little past
+  the mark and settles, and the end of `notify_perk` lands softly. In the widget the wave's claw
+  overshoots the same way, dance styles ease in and out and crossfade when the music changes
+  style, and the rave lean no longer jumps on every beat. Every bone, clip and shape-key name is
+  unchanged.
 - `strawberry gate use` takes effect in a running daemon within a few seconds, without a restart,
   and `strawberry learning rollback` can undo it.
 - The Spotify adapter no longer uses the server's local favourites list (`favorite_current`,

@@ -1,14 +1,17 @@
 """Reproducible Strawberry blockout. Run in Blender: exec(compile(open(...).read(),..., 'exec')); build(phase).
-import os
 build(n) regenerates phases 1..n; run_phase(n) reruns a phase on its prerequisites.
 Front is +Y; all mesh coordinates are baked into mesh data before rigging.
+
+Headless, on the saved scene (model/README.md):
+  blender -b model/strawberry_v2.blend --python model/build_strawberry.py -- --phase 6 --save --export widget/strawberry_v2.glb
 """
-import bpy, math, json, os
+import bpy, math, json, os, sys, tempfile
 from pathlib import Path
 from mathutils import Vector, Matrix
 
-OUT = Path(os.path.expanduser('~/strawberry/v2'))
-OUT.mkdir(exist_ok=True)
+# This file's folder (eye_claw_geometry.py lives beside it); checkpoint renders go to OUT.
+SRC = Path(globals().get('__file__') or os.path.expanduser('~/strawberry/model/build_strawberry.py')).resolve().parent
+OUT = Path(os.environ.get('STRAWBERRY_BUILD_OUT') or Path(tempfile.gettempdir())/'strawberry-build')
 COLORS = {'mat_shell':'cf2b28','mat_shell_dark':'7d1516','mat_claw':'e2402f','mat_cream':'f6e3cf','mat_eye':'fbf3e8','mat_ink':'201318'}
 CLIPS = {'idle_loop':90,'listen_loop':60,'think_loop':60,'talk_base':40,'alert_snap':32,'notify_perk':32,'dance_loop':121,'sleep_enter':76,'sleep_loop':241,'wake_up':46}
 
@@ -319,8 +322,8 @@ def phase6():
                 pb['eyestalk_R'].rotation_euler.z=.09*math.sin(w+.6)
             elif name=='talk_base': pb['body'].location.y=.004*(.5-.5*math.cos(w))
             elif name=='alert_snap':
-                rise=min(1,t/.08); fall=max(0,min(1,(t-.66)/.34))
-                v=rise*rise*(3-2*rise)*(1-fall*fall*(3-2*fall))
+                # Snap up past the mark (about 10%) and settle, hold, then ease back down.
+                v=back_out(t/.16)*(1-ease_in_out((t-.66)/.34))
                 for side in ['L','R']: pb['claw_arm_'+side].rotation_euler.x=.65*v
             elif name=='dance_loop':
                 beat=8*w
@@ -357,8 +360,13 @@ def phase6():
                     if 'sleep_fold' in owner.key_blocks:
                         owner.key_blocks['sleep_fold'].value=sleep_amount
                         owner.key_blocks['sleep_fold'].keyframe_insert('value',frame=frame)
+        # Every frame is a key: the motion's easing is in the pose functions above, and Bezier keys
+        # with auto-clamped handles keep the curve smooth between them (glTF samples it per frame).
         for fc in curve_list(action):
-            for kp in fc.keyframe_points: enum(kp,'interpolation','LINEAR')
+            for kp in fc.keyframe_points:
+                enum(kp,'interpolation','BEZIER'); enum(kp,'easing','AUTO')
+                enum(kp,'handle_left_type','AUTO_CLAMPED'); enum(kp,'handle_right_type','AUTO_CLAMPED')
+            fc.update()
             if name.endswith('_loop') or name=='talk_base': assert abs(fc.evaluate(1)-fc.evaluate(end))<1e-6
         for owner in clip_owners:
             slot=owner.animation_data.action_slot
@@ -382,6 +390,7 @@ def preview(name):
     bpy.context.scene.frame_end=CLIPS[name]; bpy.context.scene.frame_set(1)
 
 def checkpoint(phase):
+    OUT.mkdir(parents=True,exist_ok=True)
     scene=bpy.context.scene
     scene.render.filepath=str(OUT/f'phase_{phase:02d}.png')
     bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'strawberry_v2.blend'))
@@ -455,6 +464,18 @@ def animated_owners():
         if obj.type=='MESH' and obj.data.shape_keys and
         ('squash' in obj.data.shape_keys.key_blocks or 'leg_tuck' in obj.data.shape_keys.key_blocks or 'blink' in obj.data.shape_keys.key_blocks)]
 
+def clamp01(x): return max(0.0,min(1.0,x))
+
+def ease_in_out(x):
+    """Cubic ease in and out: slow start, slow landing."""
+    x=clamp01(x)
+    return 4*x*x*x if x<.5 else 1-(-2*x+2)**3/2
+
+def back_out(x,s=1.70158):
+    """Ease out with a small overshoot (about 10% at s=1.7) that settles on 1."""
+    x=clamp01(x)-1
+    return 1+(s+1)*x*x*x+s*x*x
+
 def notify_pose(t):
     def ease(x): return x*x*(3-2*x)
     if t<.18:
@@ -466,11 +487,11 @@ def notify_pose(t):
         return .085*rise, .28*(1-ease(min(q*4,1))), .92*math.sin(math.pi*q)**.7, .15+.85*rise
     if t<.78:
         q=(t-.62)/.16; pulse=math.sin(math.pi*q)
-        return -.008*pulse,.40*pulse,-.22*pulse,.12*(1-q)
+        return -.008*pulse,.40*pulse,-.22*pulse,.15*(1-ease(q))
     q=(t-.78)/.22
     return .003*math.sin(math.pi*q),0,0,0
 
-exec(compile((OUT/"eye_claw_geometry.py").read_text(),"eye_claw_geometry.py","exec"))
+exec(compile((SRC/"eye_claw_geometry.py").read_text(),"eye_claw_geometry.py","exec"))
 
 
 def leg_points(index,side):
@@ -514,3 +535,33 @@ def sleep_pose(name,t):
         breathe=.22-.10*ease(u)
     else: breathe=.22*q
     return q,breathe
+
+
+def export_glb(path):
+    """The widget's GLB: one glTF animation per clip (its Action), every channel kept at every frame,
+    +Y up. Active actions are cleared first, or the exporter mixes the one left assigned (the last
+    preview) into every clip's shape keys."""
+    path=Path(os.path.expanduser(str(path)))
+    for owner in animated_owners(): owner.animation_data.action=None
+    neutral()
+    bpy.ops.export_scene.gltf(filepath=str(path),export_format='GLB',export_yup=True,
+        export_animation_mode='ACTIONS',export_optimize_animation_size=False)
+    print('EXPORTED',path)
+
+
+def main(argv):
+    """`-- --phase N` reruns phases N..6 on the open scene, `--save` saves it, `--export PATH` writes the GLB."""
+    import argparse
+    parser=argparse.ArgumentParser(prog='build_strawberry.py')
+    parser.add_argument('--phase',type=int)
+    parser.add_argument('--save',action='store_true')
+    parser.add_argument('--export')
+    args=parser.parse_args(argv)
+    if args.phase:
+        for i in range(args.phase,7): globals()['phase'+str(i)]()
+    if args.save: bpy.ops.wm.save_mainfile()
+    if args.export: export_glb(Path(args.export).resolve())
+
+
+if '--' in sys.argv and bpy.app.background:
+    main(sys.argv[sys.argv.index('--')+1:])
