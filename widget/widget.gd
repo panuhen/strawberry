@@ -705,9 +705,10 @@ func setup_reactions() -> void:
 	reactions = Reactions.new()
 	add_child(reactions)
 	reactions.setup(model, blink_controller)
+	reactions.pincers = claw_controller
 	speech = SpeechPlayer.new()
 	add_child(speech)
-	speech.setup(model)
+	speech.setup(claw_controller)
 	speech.volume_db = linear_to_db(maxf(voice_volume, 0.001))
 	gaze = Gaze.new()
 	add_child(gaze)

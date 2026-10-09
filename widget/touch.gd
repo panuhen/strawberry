@@ -12,7 +12,7 @@ extends Node
 ##   asleep    a poke wakes her gently (the wake_up clip), nothing else.
 ##   busy      talking, listening, thinking, a run going on (the step chip), a one-shot or a
 ##             daemon reaction playing: only a blink. Nothing here plays a clip over a line,
-##             writes the claws while she speaks, or stops a drag.
+##             opens the claws while she speaks, or stops a drag.
 ##
 ## The recipes are envelopes over bone offsets and morphs, layered like reactions.gd: body
 ## rotation after the AnimationPlayer (process priority 157, after the reactions and dance
@@ -38,7 +38,6 @@ var skeleton: Skeleton3D
 var blink: Node
 var body_i := -1
 var claw_i := {}
-var claws := {}                  # side -> [mesh, blend shape index]
 var squashers: Array[MeshInstance3D] = []
 var squash_indices: Array[int] = []
 var triangles := {}              # mesh -> PackedVector3Array of its rest-space triangles (lazy)
@@ -56,7 +55,6 @@ var last_poke_at := -100.0
 var talked_at := -100.0
 var snapped_at := -100.0         # when her own annoyance played alert_snap (not a reason to stop counting)
 var claw_waves := 0
-var wrote_claws := false
 var wrote_squash := false
 var yaw := 0.0                   # read by turn.gd
 
@@ -78,8 +76,6 @@ func setup(owner: Node3D, model: Node, cam: Camera3D, blink_controller: Node) ->
 	body_i = skeleton.find_bone("body")
 	for s in ["L", "R"]:
 		claw_i[s] = skeleton.find_bone("claw_arm_" + s)
-		var claw := model.find_child("mesh_claw_lower_" + s, true, false) as MeshInstance3D
-		claws[s] = [claw, claw.find_blend_shape_by_name("claw_open_" + s)]
 	for mesh_name in ["mesh_shell", "mesh_spots", "mesh_belly"]:
 		var mesh := model.find_child(mesh_name, true, false) as MeshInstance3D
 		squashers.append(mesh)
@@ -268,12 +264,9 @@ func _process(delta: float) -> void:
 	var s := "L" if side > 0.0 else "R"
 	if lift != 0.0:
 		skeleton.set_bone_pose_rotation(claw_i[s], skeleton.get_bone_pose_rotation(claw_i[s]) * Quaternion(Vector3.RIGHT, lift))
-	# The claws are her voice's while she talks (speech_player.gd writes them after this node).
+	# The pincers are her voice's while she talks.
 	if claw_open > 0.0 and not widget.speech.playing:
-		claws[s][0].set_blend_shape_value(claws[s][1], claw_open)
-		wrote_claws = true
-	elif wrote_claws:
-		clear_claws()
+		widget.claw_controller.request(0 if s == "L" else 1, claw_open)
 	if squash > 0.0:
 		for i in squashers.size():
 			var base := squashers[i].get_blend_shape_value(squash_indices[i])
@@ -281,19 +274,10 @@ func _process(delta: float) -> void:
 		wrote_squash = true
 	blink.set_layer("touch", wide, happy, squint, closed)
 
-## Once nothing plays: the touch layer's eyes and claws go back to their owners.
+## Once nothing plays: the touch layer's eyes go back to their owner.
 func finish_writes() -> void:
 	blink.set_layer("touch", 0.0, 0.0, 0.0)
-	if wrote_claws:
-		clear_claws()
 	wrote_squash = false
-
-func clear_claws() -> void:
-	wrote_claws = false
-	if widget.speech.playing:
-		return
-	for s in claws:
-		claws[s][0].set_blend_shape_value(claws[s][1], 0.0)
 
 # --- where she was touched --------------------------------------------------------
 
@@ -315,8 +299,8 @@ func world_to_pixel(point: Vector3) -> Vector2:
 	return Vector2(w / 2.0 - (point.x - origin.x) * px_per_unit, h / 2.0 - (point.y - origin.y) * px_per_unit)
 
 ## What a press at `pixel` lands on: {zone: shell|belly|eye|claw|near, side: ±1, dx: px from her middle}.
-## Each mesh follows one bone rigidly (WIRING.md §13), so the ray goes into that bone's rest space
-## and meets the mesh's own triangles there; the nearest hit wins. The hat counts as her shell.
+## Each mesh but the legs follows one bone rigidly (WIRING.md §13), so the ray goes into that bone's
+## rest space and meets the mesh's own triangles there; the nearest hit wins. The hat counts as her shell.
 func hit_test(pixel: Vector2) -> Dictionary:
 	var origin := pixel_to_world(pixel)
 	var direction := (camera.global_transform.basis * Vector3.FORWARD).normalized()
@@ -328,29 +312,31 @@ func hit_test(pixel: Vector2) -> Dictionary:
 		var mesh := node as MeshInstance3D
 		if not mesh.is_visible_in_tree() or mesh.mesh == null:
 			continue
-		var to_world: Transform3D
+		var placements: Array[Transform3D] = []
 		if widget.bone_boxes.has(mesh):
-			var part: Array = widget.bone_boxes[mesh][0]
-			to_world = skeleton.global_transform * skeleton.get_bone_global_pose(part[0]) * part[1]
-			if not (to_world * (part[2] as AABB)).grow(0.01).intersects_ray(origin, direction):
-				continue
+			# A leg follows two bones (upper, lower): tested under each, close enough to tell it apart.
+			for part: Array in widget.bone_boxes[mesh]:
+				var placed: Transform3D = skeleton.global_transform * skeleton.get_bone_global_pose(part[0]) * part[1]
+				if (placed * (part[2] as AABB)).grow(0.01).intersects_ray(origin, direction):
+					placements.append(placed)
 		else:
-			to_world = mesh.global_transform   # the hat's parts
-		var from_world := to_world.affine_inverse()
-		var local_origin := from_world * origin
-		var local_direction := (from_world.basis * direction).normalized()
-		var tris := mesh_triangles(mesh)
-		for i in range(0, tris.size(), 3):
-			var at: Variant = Geometry3D.ray_intersects_triangle(local_origin, local_direction, tris[i], tris[i + 1], tris[i + 2])
-			if at == null:
-				continue
-			var world: Vector3 = to_world * (at as Vector3)
-			var depth := (world - origin).dot(direction)
-			if depth < best:
-				best = depth
-				found.zone = zone_of(mesh, world)
-				# Her left is model +X (the viewer's left).
-				found.side = 1.0 if (widget.model.global_transform.affine_inverse() * world).x >= 0.0 else -1.0
+			placements.append(mesh.global_transform)   # the hat's parts
+		for to_world in placements:
+			var from_world := to_world.affine_inverse()
+			var local_origin := from_world * origin
+			var local_direction := (from_world.basis * direction).normalized()
+			var tris := mesh_triangles(mesh)
+			for i in range(0, tris.size(), 3):
+				var at: Variant = Geometry3D.ray_intersects_triangle(local_origin, local_direction, tris[i], tris[i + 1], tris[i + 2])
+				if at == null:
+					continue
+				var world: Vector3 = to_world * (at as Vector3)
+				var depth := (world - origin).dot(direction)
+				if depth < best:
+					best = depth
+					found.zone = zone_of(mesh, world)
+					# Her left is model +X (the viewer's left).
+					found.side = 1.0 if (widget.model.global_transform.affine_inverse() * world).x >= 0.0 else -1.0
 	return found
 
 func zone_of(mesh: MeshInstance3D, world: Vector3) -> String:

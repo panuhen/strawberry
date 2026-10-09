@@ -165,6 +165,12 @@ package and the widget binary.
   overshoots the same way, dance styles ease in and out and crossfade when the music changes
   style, and the rave lean no longer jumps on every beat. Every bone, clip and shape-key name is
   unchanged.
+- Her claws and legs have bones. Each pincer hinges on its own bone (`pincer_L/R`) and each leg has
+  two (`leg_L1_upper`, `leg_L1_lower` … `leg_R3_lower`, WIRING.md §9). Her voice opens the pincers
+  through a spring, so the clack is snappier: a little past the mark when it opens, a small bounce
+  when it shuts. The hop, the dance and sleep move the leg bones where they used to stretch the
+  legs with shape keys, so a knee now bends. The `claw_open_L/R`, `leg_tuck` and `sleep_fold`
+  shape keys are gone. She looks the same at rest.
 - `strawberry gate use` takes effect in a running daemon within a few seconds, without a restart,
   and `strawberry learning rollback` can undo it.
 - The Spotify adapter no longer uses the server's local favourites list (`favorite_current`,
