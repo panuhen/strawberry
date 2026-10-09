@@ -410,7 +410,7 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
                 pending = daemon.approvals.open
                 if pending is not None and pending.request is not None and body.approvals:
                     await ws.send_str(json.dumps(pending.request, ensure_ascii=False))
-            _first_run_notice(daemon)
+            _first_run_notice(daemon, ws, body)
     elif kind == "ping":
         sent_t = data.get("t")
         if isinstance(sent_t, (int, float)) and not isinstance(sent_t, bool):
@@ -500,19 +500,33 @@ async def _answer_from_body(daemon: Daemon, ws: web.WebSocketResponse, data: dic
         await ws.send_str(json.dumps({"type": "input.refused", "ref": ref, "reason": reason}))
 
 
-def _first_run_notice(daemon: Daemon) -> None:
-    """The privacy note in her bubble, once per user: the marker is written before it is sent,
-    so two widgets saying hello together do not both get it (firstrun.py)."""
-    if not firstrun.pending():
+def _first_run_notice(daemon: Daemon, ws: web.WebSocketResponse, body) -> None:
+    """The privacy note in her bubble, once per user, to a body that shows text: every v1 body, and a
+    v2 body whose hello says `speech.bubble` (PROTOCOL §9b). A body that shows no text (the orbs) never
+    gets it and never uses it up. It goes to that body alone, and is marked shown once it reached it;
+    while one is on its way, a second hello does not start another (firstrun.py)."""
+    if not body.shows_text or daemon.privacy_note or not firstrun.pending():
+        return
+    daemon.privacy_note = "sending"
+    daemon.background(_say_first_run_notice(daemon, ws), "first-run privacy note")
+
+
+async def _say_first_run_notice(daemon: Daemon, ws: web.WebSocketResponse) -> None:
+    note = Performance(state="talking", anim=anim_for("happy"), text=firstrun.bubble_text(daemon.config),
+                       emotion="happy", reaction="wave")
+    sent = 0
+    try:
+        sent = await daemon.perform(note, to=(ws,))
+    finally:
+        daemon.privacy_note = "shown" if sent else ""
+    if not sent:
+        log.info("the privacy note did not reach the body that said hello; the next one that shows text gets it")
         return
     try:
         firstrun.mark_shown()
     except OSError as exc:
         log.warning("could not write %s (%s); the privacy note will show again next start",
                     paths.privacy_notice_marker(), exc)
-    note = Performance(state="talking", anim=anim_for("happy"), text=firstrun.bubble_text(daemon.config),
-                       emotion="happy", reaction="wave")
-    daemon.background(daemon.perform(note), "first-run privacy note")
 
 
 async def _check_version(daemon: Daemon, ws: web.WebSocketResponse, version: Any) -> str:

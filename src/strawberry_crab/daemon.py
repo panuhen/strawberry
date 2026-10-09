@@ -69,6 +69,8 @@ class Daemon:
         self.ears_said_at = -1e9
         self.started = time.monotonic()
         self.performed = 0
+        # The first-run privacy note this start (server.py): "" not yet, "sending", "shown".
+        self.privacy_note = ""
         # Her resting state (idle|dancing) outlives any one widget: a widget that (re)connects
         # while music plays gets it on arrival instead of standing still until the next pause.
         self.rest_state = "idle"
@@ -283,11 +285,12 @@ class Daemon:
         stats = getattr(self.reactor, "stats", None)
         return stats() if stats else {"model": None, "canned": True}
 
-    async def perform(self, performance: Performance) -> int:
+    async def perform(self, performance: Performance, to: Any = None) -> int:
         """Send one performance to the widget, voicing the line first when speech is on (§6).
 
         A caller that already supplies `audio` keeps it; a line with no audio gets Piper's wav,
         or stays silent when speech is off, quiet, or failing. The bubble shows either way.
+        `to`: only these sockets (the first-run note goes to the body that can show it); else all.
         """
         # A line that answers the run going on in this task (runs.active): its `speaking` event, and
         # the run's id on the performance for v2 bodies. Cover lines ("On it.") are `thinking`.
@@ -310,7 +313,7 @@ class Daemon:
         self.state_at = time.monotonic()
         payload = performance.to_dict()
         sent = await self.hub.send(payload, run_id=run.run_id if answering else "",
-                                   source=run.source if answering else "")
+                                   source=run.source if answering else "", to=to)
         self.performed += 1
         logged = payload | {"text": logtext.line(payload["text"])} if "text" in payload else payload
         if sent == 0:

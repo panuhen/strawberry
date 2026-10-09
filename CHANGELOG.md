@@ -50,6 +50,14 @@ package and the widget binary.
   something else, leaves the call undone. New settings: `[approvals] change_s` (the old `[actions]
   confirm_s`, still read), `sends_s`, `destructive_s`, `grace_s` (how much longer she waits while
   you are still answering, at most), `hold`, `risk`, and `[thinker] stream`.
+- Answer her on screen. When she asks before a change ("Remove 'Feeling Good' from Running? Say
+  yes."), a card shows under her line with the question, No and Yes, and a countdown. Tap Yes or No,
+  or press Y, N or Esc while she has focus; for something that sends a message or cannot be undone,
+  Yes is a press-and-hold of about a second that fills as you hold it (a tap or a key only says
+  "hold to confirm"). Answering by voice, by typing or in the Brain UI closes the card too, and the
+  step chip's ✕ still stops the whole thing. The card is the step chip's smoked glass with square
+  corners; her line moves up above it while it shows, and she leans in a little while she waits.
+  When the countdown runs out while you are still saying your answer, it says "waiting…".
 - Protocol v2, second part (PROTOCOL.md §11d, §13b): `approval.request` and `approval.resolved` for a
   body that says `approvals`, `approval.answer` from one that also says `sends.approval` (refused,
   with the reason, for anything but the open question), the open question again after `welcome`
@@ -219,7 +227,11 @@ package and the widget binary.
   into it: with mcp-searxng she answers from the results and reads no page. A refused call's log
   line names the rule. Snippets carry their published date when the engine gives one.
 - She glances up at every notification, not only one with an app icon.
-
+- The one-time privacy note now reaches a body that can show it. It went out on the first hello,
+  so a body that shows no text (the orbs) saying hello first used it up and the user never saw
+  it. It now goes only to a body that shows text (a v1 widget, or a v2 body whose hello says
+  `capabilities.speech.bubble`, which the crab now does; PROTOCOL.md §9b), on that body's socket,
+  and counts as shown only once it went out there.
 - Web search no longer reads a page whose site name points at a private address. The page
   address was checked as written (no IP addresses, no internal names), but a public-looking name
   can resolve to the machine itself or the home network (`localtest.me` is 127.0.0.1). The name

@@ -421,6 +421,11 @@ func run() -> void:
 		if int(body.get("protocol", 1)) == 2 and bool(body.get("cancel", false)) and "tool" in body.get("phases", []):
 			v2 = true
 	check(v2, "the widget should be a v2 body with run events and cancel, /health has %s" % str(bodies[2].get("bodies", [])))
+	var approvals := false
+	for body: Dictionary in bodies[2].get("bodies", []):
+		approvals = approvals or (bool(body.get("approvals", false)) and bool(body.get("approval", false)))
+	check(approvals, "the widget should show approvals and answer them (§19), /health has %s" % str(bodies[2].get("bodies", [])))
+	check(widget.approval_card.can_answer, "the welcome should let the approval card answer")
 	var chip = widget.step_chip
 	check(chip.can_cancel, "the welcome should let the widget offer the stop button")
 	report["runs_seen_by_chip"] = chip.runs_seen

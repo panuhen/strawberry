@@ -18,6 +18,7 @@ const GAP := 8.0                 # below the bubble's anchor
 const SHOW_AFTER := 0.35         # seconds of a run before the chip shows
 const STALE_S := 60.0            # no event for this long: the run is over (PROTOCOL §11)
 const THINKING := "thinking…"
+const WAITING := "waiting for you…"   # an approval card is up (approval_card.gd)
 
 var widget: Node3D
 var label: Label
@@ -118,6 +119,10 @@ func on_phase(data: Dictionary) -> void:
 				step = THINKING
 		"speaking":
 			pass
+		"approval.request":
+			step = WAITING
+		"approval.resolved":
+			step = THINKING
 		"run.completed", "run.failed", "run.cancelled":
 			end()
 			return

@@ -14,9 +14,11 @@ const TINTS := {
 const INK := Color("201318")
 const BASE_FONT_SIZE := 44
 const MIN_FONT_SIZE := 28
+const LIFTED_MIN_FONT_SIZE := 22   # while an approval card holds her line up (widget.gd lift_bubble)
 
 ## World-unit height available above the anchor; the widget sets it from the camera view.
 var max_height := 0.7
+var min_font_size := MIN_FONT_SIZE
 var speaking := false
 var line := ""
 var tween: Tween
@@ -74,7 +76,7 @@ func outline() -> PackedVector3Array:
 ## the font until the block fits in max_height. A long line reads better small than cut off.
 func fit_font(for_text: String) -> void:
 	font_size = BASE_FONT_SIZE
-	while font_size > MIN_FONT_SIZE and measured_height(for_text, font_size) > max_height:
+	while font_size > min_font_size and measured_height(for_text, font_size) > max_height:
 		font_size -= 2
 
 ## Height in world units of the wrapped text at `size`, outline included.

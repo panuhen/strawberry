@@ -128,8 +128,10 @@ version (`server.py:52-62`, `:416-430`):
 On `4001` the widget shows `My daemon and I don't match (<reason>). Update one of us.` once
 (`widget.gd:629-633`) and retries every 60 s.
 
-After a hello that is not refused, the brain may send the one-time privacy note as a performance
-(`server.py:385-386`, `:401-413`).
+After a hello that is not refused, the brain may send the one-time privacy note as a performance,
+to that socket only, when the body shows text: every v1 body does; a v2 body does when its hello
+says `capabilities.speech.bubble: true` (§9b). The note is marked shown once it went out
+(`server.py` `_first_run_notice`).
 
 ## 3. Performances (brain → body)
 
@@ -279,7 +281,7 @@ first (`widget.gd:650-652`).
 
 | Message | Fields | Brain's handling | Code |
 |---|---|---|---|
-| `{"type":"hello",…}` | §2.1 | version check, privacy note | `server.py:383-386` |
+| `{"type":"hello",…}` | §2.1 | version check, privacy note (to a body that shows text) | `server.py` `_on_widget_message` |
 | `{"type":"ping"}` | – | answers `{"type":"pong"}` | `server.py:387-388` |
 | `{"type":"heard","text":"…"}` | `text`: string, the sentence the user typed | trimmed; empty ignored; becomes `Event(source="voice", title=text)` and runs the same funnel as a spoken sentence, in the background. It is a foreground run (Part 1b): one at a time, and it stops the one before it unless it answers her question | `server.py:390-397`, sent by `widget.gd:411-417` |
 | `{"type":"run.cancel","run_id":"…"}` | v2 only | §11c; from a v1 body it is ignored | `server.py` `_cancel_from_body` |
@@ -354,7 +356,7 @@ What stays proposed is in Part 2.
 {"type": "hello", "client": "strawberry-widget", "version": "0.2.0", "godot": "4.7.2-stable (official)",
  "protocol": 2, "body": {"id": "crab", "name": "Strawberry"},
  "capabilities": {"phases": ["routing", "thinking", "tool", "speaking", "run"],
-                  "approvals": true,
+                  "approvals": true, "speech": {"bubble": true},
                   "sends": {"heard": true, "cancel": true, "approval": true}}}
 ```
 
@@ -369,6 +371,7 @@ The v1 fields and the version check of §2.1 stay as they are. Of the v2 fields 
 | `capabilities.sends.cancel` | `true`: it may send `run.cancel` (§11c) |
 | `capabilities.approvals` | `true`: it shows approvals, and gets `approval.request` and `approval.resolved` (§13b) |
 | `capabilities.sends.approval` | `true` (or Part 2's non-empty list of ways, e.g. `["click"]`): it may send `approval.answer` (§13b). Taken only together with `approvals: true`: the id to answer comes in a request |
+| `capabilities.speech.bubble` | `true`: it shows a performance's `text` (her bubble). Only the one-time privacy note (§2.1) looks at it today: it goes to a body that shows text, and a v2 body without this flag (the orbs) neither gets it nor uses it up. A v1 body counts as showing text |
 
 Every other capability of §10 is accepted and ignored for now. The brain answers a v2 hello that is
 not refused (§2.1) with `welcome` (`server.py` `welcome`), on that socket only:
@@ -516,7 +519,9 @@ A v2 body may put its own monotonic time in `ping.t`; the brain echoes it and ad
 {"type": "pong", "t": 1532.004, "brain_t": 81250.117}
 ```
 
-A ping without a number in `t` gets the v1 `{"type": "pong"}`. The mapping is §12.1's.
+A ping without a number in `t` gets the v1 `{"type": "pong"}`. The mapping is §12.1's. The crab pings
+once at connect and then every 5 s, and keeps the offset of the quickest of its last 8 pongs
+(`ws_client.gd` `brain_now`), with `welcome.t` as a rough first sample.
 
 ## 13b. Approvals (brain ⇄ body)
 
@@ -620,6 +625,12 @@ card mid-wait.
 4. Her spoken question arrives as an ordinary performance just before the request; the bubble and
    the card show together.
 
+The crab widget does all of this (`widget/approval_card.gd`, WIRING §13): its hello declares
+`approvals` and `sends.approval`, it maps `expires_t` with the ping and pong clock below, shows
+"waiting…" once the countdown has run out while the request is still open, keeps one card across a
+reconnect's replay (and drops it if no replay comes within 2 s of `welcome`), and times the hold
+itself (1 s).
+
 Examples, a removal answered on the card and one that ran out:
 
 ```json
@@ -663,8 +674,8 @@ traffic of Part 1 and nothing else (§15).
 ## 10. PROPOSED (v2), partly built: the hello with capabilities, and `welcome`
 
 *Built:* `protocol`, `body`, `capabilities.phases`, `capabilities.sends.cancel`,
-`capabilities.approvals`, `capabilities.sends.approval` (as `true` or a non-empty list) and
-`welcome`, with the open approval after it (§9b, §13b). The rest of this section is proposed.
+`capabilities.approvals`, `capabilities.sends.approval` (as `true` or a non-empty list),
+`capabilities.speech.bubble` (for the privacy note only) and `welcome`, with the open approval after it (§9b, §13b). The rest of this section is proposed.
 
 A v2 body adds `protocol`, `body` and `capabilities` to the v1 hello. Old fields stay, so the
 version check of §2.1 still applies.

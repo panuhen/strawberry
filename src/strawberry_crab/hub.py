@@ -43,6 +43,8 @@ class Body:
     approvals: bool = False                  # accepted: it shows approval.request / approval.resolved
     answers: bool = False                    # accepted: it may send approval.answer (needs `approvals`)
     asked: frozenset[str] = frozenset()      # which of approvals / answers its hello mentioned (welcome)
+    shows_text: bool = True                  # it shows a performance's `text`: every v1 body; a v2 body
+                                             # whose hello says `speech.bubble` (the orbs show none)
     connected: float = field(default_factory=time.monotonic)
 
     def wants(self, kind: str) -> bool:
@@ -83,6 +85,8 @@ def body_from_hello(data: dict[str, Any]) -> Body:
     about = data.get("body") if isinstance(data.get("body"), dict) else {}
     body.id, body.name = _text(about.get("id")), _text(about.get("name"))
     capabilities = data.get("capabilities") if isinstance(data.get("capabilities"), dict) else {}
+    speech = capabilities.get("speech") if isinstance(capabilities.get("speech"), dict) else {}
+    body.shows_text = speech.get("bubble") is True
     asked = capabilities.get("phases") if isinstance(capabilities.get("phases"), list) else []
     body.phases = frozenset(p for p in asked if isinstance(p, str) and p in PHASES)
     sends = capabilities.get("sends") if isinstance(capabilities.get("sends"), dict) else {}
@@ -162,10 +166,11 @@ class WidgetHub:
                 pass
         return closed
 
-    async def send(self, payload: dict[str, Any], run_id: str = "", source: str = "") -> int:
-        """Push one JSON object to every open widget. Returns how many received it. `run_id`: the run
-        this performance answers, and `source` what started it (voice, typed, notification), added for
-        v2 bodies only (a v1 body gets exactly `payload`)."""
+    async def send(self, payload: dict[str, Any], run_id: str = "", source: str = "",
+                   to: Any = None) -> int:
+        """Push one JSON object to every open widget (or only to the sockets in `to`). Returns how many
+        received it. `run_id`: the run this performance answers, and `source` what started it (voice,
+        typed, notification), added for v2 bodies only (a v1 body gets exactly `payload`)."""
         text = json.dumps(payload, ensure_ascii=False)
         tags = {"run_id": run_id} | ({"source": source} if source else {})
         tagged = json.dumps(payload | tags, ensure_ascii=False) if run_id else text
@@ -173,6 +178,8 @@ class WidgetHub:
         for ws in list(self._sockets):
             if ws.closed:
                 self._sockets.discard(ws)
+                continue
+            if to is not None and ws not in to:
                 continue
             try:
                 await ws.send_str(tagged if self.body(ws).protocol >= 2 else text)
