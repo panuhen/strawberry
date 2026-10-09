@@ -415,6 +415,7 @@ func run() -> void:
 	widget.queue_free()
 	await process_frame
 	DirAccess.remove_absolute(path)
+	DirAccess.remove_absolute(OS.get_user_data_dir().path_join("legs_tone_%s.wav" % OS.get_process_id()))
 	report["passed"] = failures.is_empty()
 	report["failures"] = failures
 	print(JSON.stringify(report))
