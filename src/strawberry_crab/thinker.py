@@ -41,6 +41,7 @@ from .contract import EMOTIONS
 from .ledger import as_context
 from . import confirm, logtext
 from .logtext import line, sentence
+from .runs import Run, emit
 from .tools import Toolbox, ToolResult, ToolSpec
 
 log = logging.getLogger("strawberryd.thinker")
@@ -394,31 +395,39 @@ class Thinker:
 
     async def run(self, text: str, context: str = "", careful: bool = False, topic: str = "",
                   tools: bool = True, recent: list[str] | None = None, route: Any = None,
-                  public_context: str = "") -> Outcome:
+                  public_context: str = "", run: Run | None = None) -> Outcome:
         """One sentence, start to finish: her reply, its mood, and whatever tools it took to get
         there. Never raises: a failure is an Outcome with ok=False and something to say about it.
         `tools=False` offers none (the latency probe, which must not change anything). `recent`
         is the ledger's lines, oldest first: the first thing to go when the prompt is too long.
         `route` is the gate's reading, for the adapters that decide by it (Thinker.offer).
         `public_context` is the part of `context` with nothing private in it (the date): all of it
-        that stays once a web result is in the conversation (_run)."""
+        that stays once a web result is in the conversation (_run). `run` is the run this sentence
+        is (runs.py): its `thinking` and tool events, and why it failed. A cancel is not caught here."""
         self.calls += 1
         started = time.perf_counter()
         calls: list[ToolResult] = []
+        emit(run, "thinking", backend="builtin", model=self.model)
+        error = ""
         try:
             outcome = await asyncio.wait_for(self._run(text, context, calls, careful, topic, tools, list(recent or []),
-                                                       route, public_context), self.config.timeout_s)
+                                                       route, public_context, run), self.config.timeout_s)
         except asyncio.TimeoutError:
+            error = "timeout"
             outcome = Outcome("thought about it too long", "I tried, but my thinking took too long. Sorry.", False,
                               tuple(calls), "alert")
         except PromptTooLong as exc:
             log.warning("thinker: %s", exc)
+            error = "other"
             outcome = Outcome("had too much to think about", "That's more than I can hold in my head at once. Sorry.",
                               False, tuple(calls), "alert")
         except ThinkerError as exc:
             log.warning("thinker: %s", exc)
+            error = "backend"
             outcome = Outcome("tried to think", "I tried, but my thinking part is not answering.", False,
                               tuple(calls), "alert")
+        if run is not None and not outcome.ok:
+            run.error = error or "other"
         self.last_s = time.perf_counter() - started
         if not outcome.ok:
             self.failures += 1
@@ -476,7 +485,7 @@ class Thinker:
 
     async def _run(self, text: str, context: str, calls: list[ToolResult], careful: bool, topic: str = "",
                    use_tools: bool = True, recent: list[str] | None = None, route: Any = None,
-                   public_context: str = "") -> Outcome:
+                   public_context: str = "", run: Run | None = None) -> Outcome:
         """The tool loop. Once a result from an `untrusted` server (a web search, a page) is in the
         conversation, the user's private context goes out of it: the ledger, the situation but its
         public part, and the other servers' results so far; the other servers' tools are refused
@@ -569,6 +578,9 @@ class Thinker:
                     refusal = await self._screen(spec, adapter, untrusted, states, arguments)
                 if refusal is not None:
                     # Not made, and not counted as a call: the brain is told why and to answer.
+                    # On the bus only the tool's name (a made-up one is "unknown") and the code.
+                    emit(run, "tool.completed", call_id=run.call_id() if run else "", tool=spec.key if spec else "unknown",
+                         duration=0.0, ok=False, error="refused")
                     messages.append({"role": "tool", "tool_name": name, "content": refusal})
                     continue
                 if spec is not None and self.toolbox.needs_confirm(spec.server, spec.name):
@@ -576,13 +588,13 @@ class Thinker:
                     # with her question, written by code. The call is kept exactly as it would have
                     # been sent; only the user's next sentence can make it. The rest of this reply's
                     # calls are not made.
-                    held = await confirm.hold(self.toolbox, adapter, spec.server, spec.name, arguments)
+                    held = await confirm.hold(self.toolbox, adapter, spec.server, spec.name, arguments, run=run)
                     log.info("thinker: %s held for a spoken yes", held.key)
                     did = f"asked before {spec.name}" if not used else f"{_did(used)}, then asked before {spec.name}"
                     return Outcome(did, held.question, True, tuple(calls), "neutral", held=held)
                 if spec:
                     per_server[spec.server] = per_server.get(spec.server, 0) + 1
-                result = await self.toolbox.call_function(name, arguments)
+                result = await self._call(run, spec, name, arguments)
                 calls.append(result)
                 used.append(name)
                 if adapter is not None and spec is not None:
@@ -609,6 +621,35 @@ class Thinker:
                     tool_message["content"] = WITHHELD   # a result of this round, after the web one
                 messages.append(tool_message)
         return Outcome(_did(used), "I got lost doing that, sorry.", False, tuple(calls), "alert")  # unreachable
+
+    async def _call(self, run: Run | None, spec: ToolSpec | None, name: str, arguments: dict[str, Any]) -> ToolResult:
+        """One tool call, between its `tool.started` and `tool.completed` events (names, timing and a
+        fixed code; never the arguments or the result). A cancel stops waiting for a call that only
+        reads; one that may change something is shielded: it finishes, its label goes on the run for
+        the line she says about it, and then the cancel goes on (runs.py)."""
+        key = spec.key if spec is not None else "unknown"
+        label = self.toolbox.label(spec.server, spec.name) if spec is not None else "a tool"
+        call_id = run.call_id() if run is not None else ""
+        careful = spec is not None and spec.name in getattr(self.toolbox.servers.get(spec.server), "careful", ())
+        emit(run, "tool.started", call_id=call_id, tool=key, label=label, careful=careful)
+        started = time.monotonic()
+        if spec is None or self.toolbox.reads(spec.server, spec.name):
+            result = await self.toolbox.call_function(name, arguments)
+        else:
+            work = asyncio.ensure_future(self.toolbox.call_function(name, arguments))
+            try:
+                result = await asyncio.shield(work)
+            except asyncio.CancelledError:
+                result = await work   # bounded by the server's call_timeout_s
+                emit(run, "tool.completed", call_id=call_id, tool=key, duration=time.monotonic() - started,
+                     ok=result.ok, error=None if result.ok else error_code(result))
+                if run is not None and run.cancel_reason and result.ok:
+                    run.shielded.append(label)
+                log.info("thinker: %s finished after a stop (a change is never left half made)", key)
+                raise
+        emit(run, "tool.completed", call_id=call_id, tool=key, duration=time.monotonic() - started, ok=result.ok,
+             error=None if result.ok else error_code(result))
+        return result
 
     def _untrusted(self, server: str) -> bool:
         return bool(getattr(self.toolbox.adapters.get(server), "untrusted", False))
@@ -664,6 +705,15 @@ class Thinker:
         return {"enabled": self.config.enabled, "model": self.model if self.config.enabled else None, "calls": self.calls,
                 "failures": self.failures, "last_s": round(self.last_s, 2) if self.last_s is not None else None,
                 "last": self.last}
+
+
+def error_code(result: ToolResult) -> str:
+    """A failed call as `tool.completed` says it: a fixed code, never the server's message."""
+    if f"{result.server}.{result.name}: no answer in " in result.text:
+        return "timeout"
+    if result.ms == 0.0 or result.text.startswith(f"{result.server}: "):
+        return "unavailable"     # never reached the tool: the server is missing, down or not connecting
+    return "failed"
 
 
 def _did(used: list[str]) -> str:

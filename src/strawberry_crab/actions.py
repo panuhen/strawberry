@@ -60,6 +60,11 @@ class Outcome:
 
 
 Reflex = Callable[[Toolbox, str], Awaitable[Outcome]]
+# Told about a reflex's call as it happens (Daemon: the run's tool events): (phase "started" or
+# "completed", server, tool, ok, error code). Never the arguments or the result.
+OnCall = Callable[..., None]
+# Reflexes that only read; any other one changes the player.
+READ_REFLEXES = frozenset({"now_playing"})
 
 
 # Words a bare "start the music again" sentence is made of. Anything else in a `resume` sentence
@@ -179,10 +184,19 @@ class Actor:
             return False
         return not self.has_catalogue()
 
-    async def act(self, text: str, route: Route) -> Outcome | None:
+    def label(self, server: str, tool: str) -> str:
+        """The reflex as the widget's step chip names it: "Spotify: skip", "Player: pause"."""
+        if server == "mpris":
+            return f"Player: {tool.replace('_', ' ')}"
+        return self.toolbox.label(server, tool)
+
+    async def act(self, text: str, route: Route, on_call: OnCall | None = None) -> Outcome | None:
         """Do what the sentence asks, if this tier can. Returns the outcome (its `fact` is what she
         says, `event()` lets the reaction path add a quip), or None when nothing here applies and
-        the caller treats the sentence as chat."""
+        the caller treats the sentence as chat. `on_call` hears the reflex start and end.
+
+        A reflex changes the player, so once it is under way a cancel lets it finish (asyncio.shield)
+        and only then stops the run: the user hears what was done instead of wondering."""
         if not self.config.enabled:
             return None
         said = await self.said_reflex_for(text, route)
@@ -200,11 +214,28 @@ class Actor:
                 return None
             (server, reflex), tool = found, route.tool
         started = time.perf_counter()
+        if on_call is not None:
+            on_call("started", server, tool)
+        work = asyncio.ensure_future(asyncio.wait_for(reflex(self.toolbox, server), self.config.timeout_s))
+        timed_out = False
         try:
-            outcome = await asyncio.wait_for(reflex(self.toolbox, server), self.config.timeout_s)
+            outcome = await asyncio.shield(work)
         except asyncio.TimeoutError:
+            timed_out = True
             verb = tool.replace("_", " ")
             outcome = Outcome(f"tried to {verb}", f"I tried to {verb}, but {server} did not answer in time.", False)
+        except asyncio.CancelledError:
+            # Stopped mid-reflex: it is let finish (bounded by timeout_s), then the stop goes on.
+            ok = False
+            try:
+                ok = (await work).ok
+            except Exception:   # noqa: BLE001 - a timeout or an error: it is reported as failed
+                pass
+            if on_call is not None:
+                on_call("completed", server, tool, ok, "" if ok else "failed")
+            raise
+        if on_call is not None:
+            on_call("completed", server, tool, outcome.ok, "" if outcome.ok else "timeout" if timed_out else "failed")
         ms = (time.perf_counter() - started) * 1000
         self.acted += 1
         if not outcome.ok:
