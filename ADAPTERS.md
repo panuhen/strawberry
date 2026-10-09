@@ -57,7 +57,11 @@ from the adapter (`risks = {"send": "sends"}`; its `reads`, and every tool of a 
 server, are `read`); else it is `change`. A server that marks a tool `destructiveHint` raises it to
 `destructive`; an annotation never lowers a tier, so `readOnlyHint` does not make a tool `read`
 here. The card shows one line, the adapter's `describe` (by default her question without "Say
-yes."), and never the call's arguments as they came.
+yes."), cut to 160 characters, and goes on the bus to every body that shows approvals. **Rule for
+`sends` and `destructive` tools:** neither `describe` nor the question `ask` writes may carry free
+text from the arguments: no message body, no note text, nothing being sent. Naming the target is
+fine (the song, the playlist, the recipient's display name): "Send your message to Sam?", never
+"Send 'running late, sorry' to Sam?".
 
 Check it: `strawberry tools` lists everything she can reach, `strawberry tool notes search
 '{"q": "garden"}'` calls one by hand, and `/health.tools` shows each server's state and which

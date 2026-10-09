@@ -770,6 +770,7 @@ keep = 50                        # finished runs kept in memory for the Brain UI
 change_s = 10.0                  # how long she waits for a yes to a `change` (the old [actions] confirm_s) (§19)
 sends_s = 30.0                   # …to a call that sends something to someone
 destructive_s = 30.0             # …to one that deletes or cannot be undone
+grace_s = 10.0                   # while the user is still answering, at most this much longer
 hold = ["sends", "destructive"]  # on her card, a yes to these tiers is a press-and-hold
 # risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }   # a tool's or a server's tier
 ```
@@ -998,22 +999,34 @@ one `RunBook.cancel` stops, and it ends the run:
 
 | outcome | what happens |
 |---|---|
-| `yes` | the stored call is checked against its digest (`ApprovalBook.verify`; a mismatch is never made: "That changed while I waited, so I've left it.", `run.failed`), then made between `tool.started` and `tool.completed`, shielded like any change (§18), and the adapter's `done` writes the fact with the quip after it (`Daemon.confirmed`); no model is asked again |
+| `yes` | a last look first: if the run was stopped, superseded or ended after the yes, nothing starts (below). Then the stored call is copied afresh and the copy checked against the digest (`confirm.run`; a mismatch is never made: "That changed while I waited, so I've left it.", `run.failed`), made between `tool.started` and `tool.completed`, shielded like any change (§18), and the adapter's `done` writes the fact with the quip after it (`Daemon.confirmed`); no model is asked again |
 | `no` | "Okay, I've left it." |
 | `timeout` | "No answer, so I've left it.", also in the ledger as `(no answer)` |
 | `superseded` | nothing; the newer sentence's line starts "I've left that, then." (`run.cancelled`, `superseded`) |
 | `cancelled` | the ✕, the Brain UI's Cancel or the daemon stopping: nothing is made (`run.cancelled`, `stopped` or `shutdown`) |
 
+**A stop between the yes and the call.** A ✕, a "stop" or a newer sentence can land after the yes
+and before the call starts. Then nothing is made: the approval keeps `yes` (it was the user's
+answer) with `made: false` in the Brain UI's history; on the bus the `yes` is followed by no
+`tool.started` and ends `run.cancelled`; she says "I stopped before doing it, so nothing changed."
+(for a newer sentence, ahead of its own line, and a "stop" says nothing over it), and the ledger
+keeps that too. Once the call has started it is let finish, as any change (§18).
+
 A late yes or no (within a minute of a no or a timeout) still gets the fixed line, not the thinker.
 
 **The call is bound.** `ApprovalBook.request` stores a deep copy of the call and its digest
-(sha256 of the server, the tool and the arguments, canonical JSON); only that copy is ever made,
-and only after `verify`. One approval is open at a time; a newer one supersedes it. There is no
-"always allow".
+(sha256 of the server, the tool and the arguments, canonical JSON). Just before the call that copy
+is copied again, the new copy checked against the digest, and only it goes to the server and to the
+adapter's `done` (`confirm.run`), so neither a server nor an adapter can change the stored call. One
+approval is open at a time; a newer one supersedes it. Ids are `a-<boot>-<n>`, `<boot>` 6 random hex
+digits per start, so a card left over from before a restart cannot answer a new question. There is
+no "always allow".
 
 **Timeouts.** No answer is a no: `[approvals] change_s` (10 s; also for a listed `read`), `sends_s`
-and `destructive_s` (30 s). The clock starts once she has asked, and it does not run out while the
-user is speaking (a voice capture or its transcription: the answer on its way decides).
+and `destructive_s` (30 s). The clock starts once she has asked. If the user is speaking at the
+deadline (a voice capture or its transcription: the answer on its way), it waits once more, for at
+most `[approvals] grace_s` (10 s), then it is `timeout` whatever the microphone does: a stuck
+listener or a noisy room cannot hold a question open.
 
 **Who answers** (`ApprovalBook.answer`; the first answer wins, later ones are refused with
 `resolved`):
@@ -1038,10 +1051,32 @@ any of the three.
 and `approval.resolved` (id, outcome, and `by` for a yes or no) are run events, whitelisted like the
 others (`runs.FIELDS`; the line is the one free-text field, cut to 160 characters, control
 characters removed). Only bodies with `capabilities.approvals` get them, and one that says hello
-while an approval is open gets it right after `welcome`. The call's arguments and result, and the
-user's sentence, never reach the bus, the Brain UI's approvals or a log line of `approvals.py` (it
-names the tool and the tier). `/health.approvals` has the open id, its tier and counts per outcome;
-`/health.confirm` the held tool and the wait.
+while an approval is open gets it right after `welcome`. The call's arguments as they came, its
+result and the user's sentence never reach the bus, the Brain UI's approvals or a log line of
+`approvals.py` (it names the tool and the tier). The card's line is the exception by design: like
+her spoken question, which goes out as her line anyway, it can carry names an adapter took from the
+call (a song, a playlist, a recipient's display name). For `sends` and `destructive` tools it must
+not carry free text from the arguments, such as a message body (ADAPTERS.md, `Adapter.describe`).
+`/health.approvals` has the open id, its tier and counts per outcome; `/health.confirm` the held
+tool and the wait.
+
+**What this protects against, and what it does not.** Approvals stop the model's mistakes and
+misheard speech: a call the user did not mean is never made without their yes, and only the call
+asked about is made. They do not stop local code running with the user's privileges. Such a process
+can already ask for a call (a typed `heard` on the websocket, or `POST /event`) and then answer it
+with a typed "yes", and any body can claim `hold: true`; the bus has no secret today (§2: the Origin
+rule keeps browsers out, not local programs). A per-install secret for the bus is planned for step
+6, stage 3: a 0600 file the widget reads, required for the `approvals` and `sends` capabilities, for
+`heard`, `/event` and `/ui-token`. It is not built yet.
+
+**Open items** (known, not fixed in stage 2):
+
+- MCP tools whose adapter has no `log_result` still have their result's first 160 characters, and
+  their arguments as `logtext.arguments` shows them, in the log (stage 3 closes this);
+- reflexes do not consult the approval tiers (they are fixed calls in adapters; a config that raises
+  a reflex's tool to `sends` or `destructive` does not make the reflex ask);
+- a whole-server `[approvals] risk` entry (`"notes" = "change"`) is taken as written and so lowers a
+  tool the server marks `destructiveHint`; only the per-tool entry should be able to.
 
 **The gauges and `didnt_catch`.** `listening` (a voice capture `started` and `ended`, with how long it
 recorded and whether it heard speech; no run, no audio, no words) and `token_rate` (tokens a second

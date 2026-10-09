@@ -528,13 +528,13 @@ UI; whichever answer comes first decides.
 ### The request (brain → body)
 
 ```json
-{"type": "approval.request", "run_id": "r-4", "seq": 4, "t": 1611.402, "approval_id": "a-1", "risk": "change",
+{"type": "approval.request", "run_id": "r-4", "seq": 4, "t": 1611.402, "approval_id": "a-3f9c1e-1", "risk": "change",
  "prompt": "Remove 'Feeling Good' from Running?", "timeout_s": 10.0, "expires_t": 1621.402, "hold": false}
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
-| `approval_id` | string, `a-<n>` | what an answer names. Counts from 1 at each daemon start |
+| `approval_id` | string, `a-<boot>-<n>` | what an answer names: `<boot>` is 6 hex digits drawn at each daemon start, `<n>` counts from 1, so a card left over from before a restart never matches a new question |
 | `run_id`, `seq`, `t` | | as for every run event (§11b); the request is a step of the run |
 | `risk` | `read` \| `change` \| `sends` \| `destructive` | the call's tier. `change`: it changes something that can be put back (a track off a playlist). `sends`: something reaches other people or leaves for someone (a message, an email). `destructive`: it deletes, or cannot be undone. `read` is possible for a tool on a `confirm` list |
 | `prompt` | string, one line, at most 160 characters | what the card shows: the adapter's `describe` line, by default her question without "Say yes.". Written by code for display; it says nothing her spoken question does not already say, and never carries the call's arguments as they came |
@@ -546,19 +546,20 @@ UI; whichever answer comes first decides.
 (`superseded`).
 
 **The countdown is a guide.** While the user is speaking at the deadline (a voice capture or its
-transcription), the brain waits for that answer, so the request can stay open past `expires_t`. A
-card shows until `approval.resolved` for its id, or until the run's terminal event, or for 60 s
-after `expires_t` at most if neither comes.
+transcription), the brain waits for that answer, once, for at most `[approvals] grace_s` (10 s)
+past `expires_t`; then it is `timeout` whatever the microphone does. A card shows until
+`approval.resolved` for its id, or until the run's terminal event, or for 60 s after `expires_t` at
+most if neither comes.
 
 ### The outcome (brain → body)
 
 ```json
-{"type": "approval.resolved", "run_id": "r-4", "seq": 5, "t": 1613.9, "approval_id": "a-1", "answer": "yes", "by": "body"}
+{"type": "approval.resolved", "run_id": "r-4", "seq": 5, "t": 1613.9, "approval_id": "a-3f9c1e-1", "answer": "yes", "by": "body"}
 ```
 
 | `answer` | Meaning | What follows on the run |
 |---|---|---|
-| `yes` | the user said yes | `tool.started`, `tool.completed` for the stored call, `speaking` (what came of it), `run.completed`; or, if the call failed, `run.failed` (`tools`) |
+| `yes` | the user said yes | `tool.started`, `tool.completed` for the stored call, `speaking` (what came of it), `run.completed`; or, if the call failed, `run.failed` (`tools`). If the run was stopped or superseded after the yes but before the call started, there is no `tool.started`: `speaking` ("I stopped before doing it, so nothing changed.", or that line ahead of the newer sentence's) and `run.cancelled`. The outcome stays `yes`, the user's answer; nothing was made (the Brain UI's history shows `made: false`) |
 | `no` | the user said no | `speaking` ("Okay, I've left it."), `run.completed` |
 | `timeout` | no answer in time | `speaking` ("No answer, so I've left it."), `run.completed` |
 | `cancelled` | the run was stopped (the ✕, the Brain UI's Cancel, the daemon stopping) | `run.cancelled` (`stopped` or `shutdown`) |
@@ -571,7 +572,7 @@ included, and hides the card on it.
 ### The answer (body → brain)
 
 ```json
-{"type": "approval.answer", "approval_id": "a-1", "answer": "yes", "hold": true}
+{"type": "approval.answer", "approval_id": "a-3f9c1e-1", "answer": "yes", "hold": true}
 ```
 
 | Field | Meaning |
@@ -593,7 +594,7 @@ and one of these reasons, and nothing else happens (a v1 body's is ignored, with
 | `hold_required` | a `yes` to a `hold: true` request without `hold: true` | stays open: the user can still hold, say yes, or say no |
 
 ```json
-{"type": "input.refused", "ref": "a-1", "reason": "hold_required"}
+{"type": "input.refused", "ref": "a-3f9c1e-1", "reason": "hold_required"}
 ```
 
 A body can only answer: no message lets it ask for a call, and only the call stored when the
@@ -620,16 +621,16 @@ Examples, a removal answered on the card and one that ran out:
 
 ```json
 {"type": "speaking", "run_id": "r-4", "seq": 3, "t": 1611.401, "duration": 2.61, "emotion": "neutral"}
-{"type": "approval.request", "run_id": "r-4", "seq": 4, "t": 1611.402, "approval_id": "a-1", "risk": "change", "prompt": "Remove 'Feeling Good' from Running?", "timeout_s": 10.0, "expires_t": 1621.402, "hold": false}
-{"type": "approval.answer", "approval_id": "a-1", "answer": "yes"}
-{"type": "approval.resolved", "run_id": "r-4", "seq": 5, "t": 1613.9, "approval_id": "a-1", "answer": "yes", "by": "body"}
+{"type": "approval.request", "run_id": "r-4", "seq": 4, "t": 1611.402, "approval_id": "a-3f9c1e-1", "risk": "change", "prompt": "Remove 'Feeling Good' from Running?", "timeout_s": 10.0, "expires_t": 1621.402, "hold": false}
+{"type": "approval.answer", "approval_id": "a-3f9c1e-1", "answer": "yes"}
+{"type": "approval.resolved", "run_id": "r-4", "seq": 5, "t": 1613.9, "approval_id": "a-3f9c1e-1", "answer": "yes", "by": "body"}
 {"type": "tool.started", "run_id": "r-4", "seq": 6, "t": 1613.9, "call_id": "c1", "tool": "spotify.remove_from_playlist", "label": "Spotify: remove from playlist", "careful": true}
 {"type": "tool.completed", "run_id": "r-4", "seq": 7, "t": 1613.93, "call_id": "c1", "tool": "spotify.remove_from_playlist", "duration": 0.03, "ok": true}
 {"type": "speaking", "run_id": "r-4", "seq": 8, "t": 1613.95, "duration": 3.2, "emotion": "neutral"}
 {"type": "run.completed", "run_id": "r-4", "seq": 9, "t": 1613.95, "duration": 8.7, "outcome": "spoken"}
 
-{"type": "approval.request", "run_id": "r-6", "seq": 4, "t": 1700.0, "approval_id": "a-2", "risk": "destructive", "prompt": "Shall I go ahead with shred?", "timeout_s": 30.0, "expires_t": 1730.0, "hold": true}
-{"type": "approval.resolved", "run_id": "r-6", "seq": 5, "t": 1730.01, "approval_id": "a-2", "answer": "timeout"}
+{"type": "approval.request", "run_id": "r-6", "seq": 4, "t": 1700.0, "approval_id": "a-3f9c1e-2", "risk": "destructive", "prompt": "Shall I go ahead with shred?", "timeout_s": 30.0, "expires_t": 1730.0, "hold": true}
+{"type": "approval.resolved", "run_id": "r-6", "seq": 5, "t": 1730.01, "approval_id": "a-3f9c1e-2", "answer": "timeout"}
 {"type": "speaking", "run_id": "r-6", "seq": 6, "t": 1730.4, "duration": 2.2, "emotion": "neutral"}
 {"type": "run.completed", "run_id": "r-6", "seq": 7, "t": 1730.4, "duration": 36.1, "outcome": "spoken"}
 ```

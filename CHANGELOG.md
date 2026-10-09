@@ -31,7 +31,8 @@ package and the widget binary.
   and how it was answered); the widget gets everything it needs to show the question as a card,
   where a yes to a `sends` or `destructive` call is a press-and-hold. Stopping the run, or saying
   something else, leaves the call undone. New settings: `[approvals] change_s` (the old `[actions]
-  confirm_s`, still read), `sends_s`, `destructive_s`, `hold`, `risk`, and `[thinker] stream`.
+  confirm_s`, still read), `sends_s`, `destructive_s`, `grace_s` (how much longer she waits while
+  you are still answering, at most), `hold`, `risk`, and `[thinker] stream`.
 - Protocol v2, second part (PROTOCOL.md §11d, §13b): `approval.request` and `approval.resolved` for a
   body that says `approvals`, `approval.answer` from one that also says `sends.approval` (refused,
   with the reason, for anything but the open question), the open question again after `welcome`
