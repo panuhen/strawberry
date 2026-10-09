@@ -13,6 +13,7 @@ from typing import Any
 
 from .actions import NO_CATALOGUE, READ_REFLEXES, Actor, Outcome
 from .adapters import gate_examples
+from .approvals import Approval, ApprovalBook
 from . import confirm
 from .confirm import Held
 from .config import Config
@@ -30,7 +31,7 @@ from . import runs
 from .runs import Run, RunBook, emit, is_stop
 from .speech import Speaker
 from .systemone import Gate, Route
-from .thinker import WEB_REPLY, Thinker
+from .thinker import WEB_REPLY, Thinker, error_code
 from .tools import Toolbox
 from .voice import EARS_LOADING, Listener
 from . import wake
@@ -102,10 +103,12 @@ class Daemon:
         self.voice_handling = 0              # sentences being handled right now
         self.trainer = IdleTrainer(self)
         self.background_tasks: set[asyncio.Task] = set()
-        # A call the thinker stopped at to ask first (confirm.py): made only if the user's next
-        # sentence is a yes, and dropped after [actions] confirm_s without one.
-        self.held: Held | None = None
-        self.held_task: asyncio.Task | None = None
+        # A call the thinker stopped at to ask first (confirm.py, approvals.py): the run that asked waits
+        # for the answer (the user's next sentence, her card on a body, the Brain UI) and makes the call
+        # only after a yes; no answer in [approvals] change_s (sends_s, destructive_s) is a no.
+        self.approvals = ApprovalBook(self.config.approvals)
+        if self.config.approvals.risk:
+            self.toolbox.risks = dict(self.config.approvals.risk)
         self.dropped_at = -1e9   # when a held call was last dropped by silence or a no (confirm.LATE_S)
         # Resume from suspend (logind on the system bus; Windows' power notification): the models
         # are loaded again before the first notification needs them (wake.py, winwake.py). No bus,
@@ -186,8 +189,11 @@ class Daemon:
         return task
 
     async def close(self) -> None:
-        # Each run still going ends with run.cancelled (shutdown); a change in flight finishes first.
+        # Each run still going ends with run.cancelled (shutdown); a change in flight finishes first. A
+        # question still open is cancelled with it: nothing waiting for a yes is ever made.
         self.runs.cancel_all("shutdown")
+        if self.approvals.open is not None:
+            self.approvals.resolve(self.approvals.open, "cancelled")
         if self.wake_task and not self.wake_task.done():
             # Awaited, so its system-bus socket is closed before the loop goes.
             self.wake_task.cancel()
@@ -250,6 +256,25 @@ class Daemon:
             return {"listening": False, "busy": self.listener.phase}
         self.listen_task = asyncio.get_running_loop().create_task(self.listener.session(self))
         return {"listening": True}
+
+    def listening(self, phase: str, seconds: float | None = None, speech: bool | None = None) -> None:
+        """The `listening` gauge (runs.RunBook.signal): a voice capture started or ended, with how long it
+        recorded and whether it heard speech. No audio, no transcript."""
+        self.runs.signal("listening", phase=phase, seconds=seconds, speech=speech)
+
+    async def didnt_catch(self, line: str) -> tuple[Performance, int]:
+        """A voice capture with nothing understood in it: a run of its own that says so and ends
+        `run.cancelled` with the reason `didnt_catch`. Never the foreground run: an empty capture stops
+        nothing and answers nothing (her question, if one is open, keeps waiting)."""
+        run = self.runs.start("voice", foreground=False)
+        run.cancel_reason = "didnt_catch"
+        token = runs.active.set(run)
+        try:
+            performance = Performance(state="talking", text=line)
+            return performance, await self.perform(performance)
+        finally:
+            runs.active.reset(token)
+            self.runs.finish(run)
 
     def brain_stats(self) -> dict[str, Any]:
         stats = getattr(self.reactor, "stats", None)
@@ -458,9 +483,28 @@ class Daemon:
         another is still going stops it first ([runs] supersede; "superseded"), unless it answers
         her question (confirm.py), and a whole-sentence "stop" or "never mind" stops it and is
         answered with a short line ("stopped"); a yes or no to her question is neither. Either way
-        it waits for that run to end."""
+        it waits for that run to end.
+
+        A yes or no while she waits for one (approvals.py) is no run of its own: it answers the run
+        that asked, which makes the call or leaves it, and this returns what that run said. Any other
+        sentence drops her question (`superseded`, whatever [runs] supersede says: nothing is under
+        way) and is handled as usual, after "I've left that, then.\""""
         self.voice_handling += 1
         self.voice_at = time.monotonic()
+        try:
+            pending = self.approvals.open
+            said = confirm.answer(event.title) if pending is not None else None
+            if pending is not None and said is not None:
+                answered = await self.answered(event, pending, said)
+                if answered is not None:
+                    return answered
+                pending = None   # it ran out (or was answered) a moment ago: a late answer, below
+            return await self._sentence(event, pending)
+        finally:
+            self.voice_handling -= 1
+            self.voice_at = time.monotonic()
+
+    async def _sentence(self, event: Event, pending: Approval | None) -> tuple[Performance, int]:
         previous = self.runs.busy()
         run = self.runs.start("voice" if event.spoken else "typed")
         live = self.feed.start(run.source)
@@ -468,6 +512,12 @@ class Daemon:
         try:
             answer = self.answers_question(event.title)
             stop = previous is not None and not answer and is_stop(event.title)
+            preface = ""
+            if pending is not None and self.approvals.resolve(pending, "superseded"):
+                if pending.run is not None:
+                    self.runs.cancel(pending.run.run_id, "superseded")
+                preface = confirm.LEFT_OTHER   # said ahead of whatever this sentence gets: one line, not two
+                log.info("confirm: %s not made (another sentence)", pending.held.key)
             if previous is not None:
                 if stop:
                     self.runs.cancel_all("stopped", but=run)
@@ -475,7 +525,7 @@ class Daemon:
                     self.runs.cancel(previous.run_id, "superseded")
                 await previous.finished.wait()
             with logtext.hearing(event.title):   # her lines in the log leave it out (log_sentences)
-                work = self._stopped(event, previous) if stop else self._handle_voice(event, live, run)
+                work = self._stopped(event, previous) if stop else self._handle_voice(event, live, run, preface)
                 return await self._in_run(run, work)
         except asyncio.CancelledError:
             run.cancel_reason = run.cancel_reason or "shutdown"
@@ -484,16 +534,38 @@ class Daemon:
             run.error = run.error or "other"
             raise
         finally:
-            self.voice_handling -= 1
-            self.voice_at = time.monotonic()
             self.feed.done(live)
-            self.runs.finish(run)
+            if not run.continued:   # else the wait for her answer ends it (Daemon.hold)
+                self.runs.finish(run)
+
+    async def answered(self, event: Event, approval: Approval, said: str) -> tuple[Performance, int] | None:
+        """The user's own yes or no to the open approval: the run that asked goes on (the call, or her line
+        that she left it) and its last line is the answer to this sentence too. None when the approval
+        closed a moment before (a timeout): the sentence is then a late answer like any other."""
+        by = "voice" if event.spoken else "typed"
+        live = self.feed.start(by)
+        live["run_id"] = approval.run_id
+        try:
+            if self.approvals.answer(approval.approval_id, said, by, text=event.title) is not None:
+                return None
+            log.info("confirm: %s answered %s (%s)", approval.held.key, said, by)
+            if approval.run is not None:
+                await approval.run.finished.wait()
+            return approval.reply or (Performance(state=self.rest_state), 0)
+        finally:
+            self.feed.done(live)
 
     def answers_question(self, text: str) -> bool:
-        """Is this sentence a yes or no to her question (held, or dropped a moment ago)? It never
+        """Is this sentence a yes or no to her question (open, or dropped a moment ago)? It never
         supersedes: it is the answer the run before it was waiting for."""
         late = time.monotonic() - self.dropped_at < confirm.LATE_S
-        return (self.held is not None or late) and confirm.answer(text) is not None
+        return (self.approvals.open is not None or late) and confirm.answer(text) is not None
+
+    @property
+    def held(self) -> Held | None:
+        """The call she is waiting for a yes to, exactly as it will be made (the open approval's)."""
+        pending = self.approvals.open
+        return pending.held if pending is not None else None
 
     async def _in_run(self, run: Run, work) -> tuple[Performance, int]:
         """`work` in a task of its own, the one RunBook.cancel cancels, with `run` as the active run
@@ -548,32 +620,18 @@ class Daemon:
         self.ledger.record(event.title, performance.text or "", did="stopped what she was doing")
         return performance, sent
 
-    async def _handle_voice(self, event: Event, live: dict[str, Any], run: Run | None = None) -> tuple[Performance, int]:
+    async def _handle_voice(self, event: Event, live: dict[str, Any], run: Run | None = None,
+                            preface: str = "") -> tuple[Performance, int]:
         text = event.title
-        preface = ""
-        held = self.take_held()
         late, self.dropped_at = time.monotonic() - self.dropped_at < confirm.LATE_S, -1e9
-        said = confirm.answer(text) if held is not None or late else None
-        if held is None and said is not None:
+        said = confirm.answer(text) if late else None
+        if said is not None:
             # A yes or no to a question she already dropped: hers to answer, not the thinker's.
             line = confirm.LATE_YES if said == "yes" else confirm.LEFT_NO
             performance = decorate(event, Performance(state="talking", text=line, emotion="neutral"))
             sent = await self.perform(performance)
             self.ledger.record(text, line, did="nothing; the question was already dropped")
             return performance, sent
-        if held is not None:
-            # Her question is open: this sentence is the answer. Only a sentence of the user's own
-            # gets here; nothing else can make the held call.
-            if said == "yes":
-                return await self.confirmed(text, held)
-            log.info("confirm: %s not made (%s)", held.key, "a no" if said == "no" else "another sentence")
-            if said == "no":
-                self.dropped_at = time.monotonic()
-                performance = decorate(event, Performance(state="talking", text=confirm.LEFT_NO, emotion="neutral"))
-                sent = await self.perform(performance)
-                self.ledger.record(text, performance.text or "", did=f"left {held.name} undone")
-                return performance, sent
-            preface = confirm.LEFT_OTHER   # said ahead of whatever this sentence gets: one line, not two
         route = await self.route(text)
         record = self.outcomes.heard(text, route, "voice" if event.spoken else "typed")
         self.feed.routed(live, text, route)
@@ -618,7 +676,7 @@ class Daemon:
                                                   emotion=outcome.emotion or "neutral"))
         sent = await self.perform(performance)
         if outcome.held is not None:
-            self.hold(outcome.held)   # the clock starts once she has asked
+            self.hold(outcome.held, run)   # the clock starts once she has asked
         # An answer from web results is not kept in her words: the ledger goes into the next
         # sentence's prompt before anything marks it as strangers' text (Thinker._run).
         web = self.thinker.used_untrusted(outcome) if hasattr(self.thinker, "used_untrusted") else False
@@ -692,50 +750,112 @@ class Daemon:
             self.ledger.record(event.title, performance.text or "")
         return performance, sent
 
-    def hold(self, held: Held) -> None:
-        """Wait for a yes to `held` (confirm.py): one at a time, a newer question replaces an older one."""
-        self.take_held()
-        self.held = held
-        self.held_task = self.background(self._drop_held(held), "confirmation timer")
-        log.info("confirm: %s waits up to %.0fs for a yes", held.key, self.config.actions.confirm_s)
+    # What the ledger says the user said when the answer was not a sentence of theirs.
+    ANSWERED_ON = {"body": "(answered {} on her card)", "ui": "(answered {} in the Brain UI)"}
 
-    def take_held(self) -> Held | None:
-        """The held call, if any, now answered or replaced: no longer waiting."""
-        held, self.held = self.held, None
-        if self.held_task is not None and self.held_task is not asyncio.current_task():
-            self.held_task.cancel()
-        self.held_task = None
-        return held
+    def hold(self, held: Held, run: Run | None) -> Approval:
+        """Wait for a yes to `held` (confirm.py, approvals.py): its approval opens on `run`
+        (`approval.request`, `awaiting_approval`) and the run goes on in a task of its own, which ends
+        it once the answer is in and acted on. One at a time: a newer question supersedes an older one."""
+        approval = self.approvals.request(run, held)
+        task = self.background(self._await_answer(run, approval), "the wait for a yes")
+        if run is not None:
+            run.continued = True
+            run.task = task   # what RunBook.cancel stops: the ✕, "stop", supersede, shutdown
+        return approval
 
-    async def _drop_held(self, held: Held) -> None:
-        """No answer in `confirm_s`: nothing is done and she says so. Not while she is listening or
-        transcribing: that is the answer on its way, and it is the one that decides."""
-        await asyncio.sleep(self.config.actions.confirm_s)
-        while getattr(self.listener, "busy", False):
-            await asyncio.sleep(0.25)
-        if self.held is not held:
-            return
-        self.held, self.held_task = None, None
-        self.dropped_at = time.monotonic()
-        log.info("confirm: no answer in %.0fs; %s not made", self.config.actions.confirm_s, held.key)
-        await self.perform(Performance(state="talking", text=confirm.LEFT_SILENT, emotion="neutral"))
-        # In her memory too: a late "yes" then reads as what it is to the thinker, not as the answer.
-        self.ledger.record("(no answer)", confirm.LEFT_SILENT, did=f"left {held.name} undone")
+    async def _await_answer(self, run: Run | None, approval: Approval) -> None:
+        """The rest of the run that asked: wait for the answer (not counted while the user is speaking:
+        that is the answer on its way), then make the call after a yes, or say she left it. A cancel of
+        the run resolves the approval as cancelled (superseded, for a newer sentence) and makes nothing."""
+        if run is not None:
+            runs.active.set(run)   # this task's own context: her lines answer this run
+        try:
+            outcome = await self.approvals.wait(approval, busy=lambda: bool(getattr(self.listener, "busy", False)))
+            approval.reply = await self._after_answer(run, approval, outcome)
+        except asyncio.CancelledError:
+            reason = run.cancel_reason if run is not None else ""
+            self.approvals.resolve(approval, "superseded" if reason == "superseded" else "cancelled")
+            if run is None or not reason or reason == "shutdown":
+                if run is not None:
+                    run.cancel_reason = "shutdown"
+                raise
+            approval.reply = await self._after_cancel(run)
+        finally:
+            if run is not None:
+                self.runs.finish(run)
 
-    async def confirmed(self, text: str, held: Held) -> tuple[Performance, int]:
-        """The yes: the held call, exactly as it was asked about, and no model asked again. Code writes
-        the fact and the reaction path adds the quip, as for a reflex."""
-        outcome = await confirm.run(self.toolbox, self.toolbox.adapters.get(held.server), held)
-        log.info("confirm: %s made after a yes -> %s", held.key, "ok" if outcome.ok else "failed")
-        run = runs.active.get()
+    async def _after_answer(self, run: Run | None, approval: Approval, outcome: str) -> tuple[Performance, int]:
+        """What the run does with the outcome: the call after a yes, her line after a no or a timeout,
+        nothing more when it was superseded or cancelled."""
+        held = approval.held
+        said = approval.text or self.ANSWERED_ON.get(approval.by, "({})").format(outcome)
+        if outcome == "yes":
+            return await self.confirmed(said, approval, run)
+        if outcome in ("no", "timeout"):
+            self.dropped_at = time.monotonic()
+            log.info("confirm: %s not made (%s)", held.key, "a no" if outcome == "no" else
+                     f"no answer in {approval.timeout_s:.0f}s")
+            if outcome == "no":
+                performance = decorate(Event(source="voice", title=said),
+                                       Performance(state="talking", text=confirm.LEFT_NO, emotion="neutral"))
+            else:
+                performance = Performance(state="talking", text=confirm.LEFT_SILENT, emotion="neutral")
+            sent = await self.perform(performance)
+            # In her memory too: a late "yes" then reads as what it is to the thinker, not as the answer.
+            self.ledger.record(said if outcome == "no" else "(no answer)", performance.text or "",
+                               did=f"left {held.name} undone")
+            return performance, sent
+        # Superseded by a newer question or sentence (which says she left it), or cancelled.
+        if run is not None:
+            run.cancel_reason = run.cancel_reason or ("superseded" if outcome == "superseded" else "stopped")
+            if outcome == "cancelled":
+                return await self._after_cancel(run)
+        return Performance(state=self.rest_state), 0
+
+    async def confirmed(self, text: str, approval: Approval, run: Run | None = None) -> tuple[Performance, int]:
+        """The yes: the stored call, exactly as it was asked about (its digest checked first), and no model
+        asked again. Its tool events go out like any call; once under way a stop lets it finish. Code
+        writes the fact and the reaction path adds the quip, as for a reflex."""
+        held = approval.held
+        if not self.approvals.verify(approval):
+            log.warning("confirm: %s not made: the stored call no longer matches what was asked about", held.key)
+            if run is not None:
+                run.error = "other"
+            performance = Performance(state="talking", text=confirm.LEFT_CHANGED, emotion="alert")
+            return performance, await self.perform(performance)
+        key, label = held.key, self.toolbox.label(held.server, held.name)
+        call_id = run.call_id() if run is not None else ""
+        careful = held.name in getattr(self.toolbox.servers.get(held.server), "careful", ())
+        emit(run, "tool.started", call_id=call_id, tool=key, label=label, careful=careful)
+        started = time.monotonic()
+        work = asyncio.ensure_future(confirm.run(self.toolbox, self.toolbox.adapters.get(held.server), held))
+        try:
+            outcome = await asyncio.shield(work)
+        except asyncio.CancelledError:
+            outcome = await work   # bounded by the server's call_timeout_s: a yes is never left half made
+            self._call_done(run, call_id, key, started, outcome)
+            if run is not None and outcome.ok:
+                run.shielded.append(label)
+            raise
+        self._call_done(run, call_id, key, started, outcome)
+        log.info("confirm: %s made after a yes -> %s", key, "ok" if outcome.ok else "failed")
         if run is not None and not outcome.ok:
             run.error = "tools"
         performance, sent = await self.report(outcome.event(text), outcome.ok)
         self.ledger.record(text, performance.text or "", did=outcome.did)
         return performance, sent
 
+    @staticmethod
+    def _call_done(run: Run | None, call_id: str, key: str, started: float, outcome: Outcome) -> None:
+        result = outcome.calls[0] if outcome.calls else None
+        emit(run, "tool.completed", call_id=call_id, tool=key, duration=time.monotonic() - started, ok=outcome.ok,
+             error=None if outcome.ok else (error_code(result) if result is not None else "failed"))
+
     def confirm_stats(self) -> dict[str, Any]:
-        return {"waiting": self.held.key if self.held is not None else None, "timeout_s": self.config.actions.confirm_s}
+        pending = self.approvals.open
+        return {"waiting": pending.held.key if pending is not None else None,
+                "timeout_s": pending.timeout_s if pending is not None else self.config.approvals.change_s}
 
     async def think(self, text: str, route: Route | None, run: Run | None = None) -> Outcome:
         """Qwen, with cover that scales with the wait: the thinking pose at once and nothing said (a

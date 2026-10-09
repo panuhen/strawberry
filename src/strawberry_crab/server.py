@@ -181,6 +181,7 @@ async def health(request: web.Request) -> web.Response:
             "tools": daemon.toolbox.stats(),
             "actions": daemon.actor.stats(),
             "confirm": daemon.confirm_stats(),
+            "approvals": daemon.approvals.stats(),
             "thinker": daemon.thinker.stats(),
             "learning": daemon.outcomes.stats() | daemon.trainer.health(),
             "ledger": daemon.ledger.to_list(),
@@ -403,6 +404,11 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
         if await _check_version(daemon, ws, data.get("version")) != "major":
             if body.protocol >= 2:
                 await ws.send_str(json.dumps(welcome(daemon, body), ensure_ascii=False))
+                # A body that (re)connects while she waits for a yes gets the open approval now, so its
+                # card shows (PROTOCOL §13b): the request as it went out, with the time left.
+                pending = daemon.approvals.open
+                if pending is not None and pending.request is not None and body.approvals:
+                    await ws.send_str(json.dumps(pending.request, ensure_ascii=False))
             _first_run_notice(daemon)
     elif kind == "ping":
         sent_t = data.get("t")
@@ -413,6 +419,8 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
             await ws.send_str('{"type": "pong"}')
     elif kind == "run.cancel":
         await _cancel_from_body(daemon, ws, data)
+    elif kind == "approval.answer":
+        await _answer_from_body(daemon, ws, data)
     elif kind == "heard":
         # Typed into the widget's box: the same funnel as a spoken sentence (§8b). In the background,
         # so the socket keeps answering pings while Qwen thinks (the widget drops a silent socket).
@@ -429,7 +437,8 @@ def welcome(daemon: Daemon, body) -> dict[str, Any]:
     """The answer to a v2 hello (PROTOCOL §10): what the brain will send this body."""
     message: dict[str, Any] = {"type": "welcome", "protocol": body.protocol, "brain": __version__,
                                "t": round(time.monotonic(), 6), "rest_state": daemon.rest_state,
-                               "accepted": {"phases": sorted(body.phases), "cancel": body.cancel}}
+                               "accepted": {"phases": sorted(body.phases), "cancel": body.cancel}
+                               | body.accepted_approvals()}
     if body.id:
         message["body_id"] = body.id
     return message
@@ -450,6 +459,25 @@ async def _cancel_from_body(daemon: Daemon, ws: web.WebSocketResponse, data: dic
                                       "reason": "not_current"}))
         return
     daemon.runs.cancel(run_id, "stopped")
+
+
+async def _answer_from_body(daemon: Daemon, ws: web.WebSocketResponse, data: dict[str, Any]) -> None:
+    """`approval.answer {approval_id, answer, hold}` (her card's Yes or No): a yes or no to the open
+    approval, and nothing else. Ignored from a v1 body (its bytes never change); refused to a v2 body
+    that did not declare `sends.approval`, for an id that is not the open one, for one already answered
+    (the first answer wins) and for a yes to a hold tier without `hold: true` (approvals.py)."""
+    body = daemon.hub.body(ws)
+    approval_id = data.get("approval_id")
+    ref = approval_id[:32] if isinstance(approval_id, str) else ""
+    if body.protocol < 2:
+        log.info("approval.answer from a v1 body; ignored")
+        return
+    reason = "not_declared" if not body.answers else daemon.approvals.answer(
+        approval_id, data.get("answer"), "body", hold=data.get("hold") is True)
+    if reason is not None:
+        if reason == "not_declared":
+            log.info("approval.answer from a body that did not declare it; refused")
+        await ws.send_str(json.dumps({"type": "input.refused", "ref": ref, "reason": reason}))
 
 
 def _first_run_notice(daemon: Daemon) -> None:

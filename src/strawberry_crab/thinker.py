@@ -30,6 +30,7 @@ import json
 import logging
 import re
 import time
+from contextvars import ContextVar
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
@@ -242,6 +243,90 @@ class ThinkerError(RuntimeError):
     pass
 
 
+class Meter:
+    """Counts what the model writes for a run's `token_rate` (runs.RunBook.rate): numbers, never the text.
+    `tick` per streamed piece (one token, near enough), `round_done` after each reply: Ollama's own
+    eval_count and eval_duration then, when the reply has them, for the round's exact rate."""
+
+    MIN_S = 0.1    # a rate over less than this is noise
+
+    def __init__(self, run: Run | None) -> None:
+        self.run = run
+        self.tokens = 0            # in this run so far
+        self.round = 0             # in this reply so far
+        self.first: float | None = None
+
+    def _send(self, rate: float, force: bool = False) -> None:
+        if self.run is not None and self.run.book is not None:
+            self.run.book.rate(self.run, rate, self.tokens, force=force)
+
+    def tick(self, pieces: int = 1) -> None:
+        now = time.monotonic()
+        if self.first is None:
+            self.first = now
+        self.tokens += pieces
+        self.round += pieces
+        elapsed = now - self.first
+        if elapsed >= self.MIN_S:
+            self._send((self.round - 1) / elapsed)
+
+    def round_done(self, reply: dict[str, Any]) -> None:
+        count, ns = reply.get("eval_count"), reply.get("eval_duration")
+        exact = isinstance(count, int) and isinstance(ns, (int, float)) and count > 0 and ns > 0
+        if exact:
+            # Ollama's count stands for the pieces seen (a tool call comes as one piece, or none streamed).
+            self.tokens += count - self.round
+            self._send(count / (ns / 1e9), force=True)
+        elif self.round > 1 and self.first is not None and time.monotonic() - self.first >= self.MIN_S:
+            self._send((self.round - 1) / (time.monotonic() - self.first), force=True)
+        self.round, self.first = 0, None
+
+
+# The meter of the run whose reply is being read (Thinker.run sets it; _ollama_chat ticks it).
+metering: ContextVar[Meter | None] = ContextVar("strawberry_meter", default=None)
+
+
+async def read_stream(lines: Any, meter: Meter | None = None) -> dict[str, Any]:
+    """Ollama's streamed /api/chat reply (one JSON object a line) put back together as the reply it would
+    have sent whole: the content and any thinking joined, the tool calls collected, and the last line's
+    counts (eval_count, eval_duration). Each piece ticks `meter`; nothing of the text goes anywhere else."""
+    content: list[str] = []
+    thinking: list[str] = []
+    calls: list[Any] = []
+    last: dict[str, Any] = {}
+    async for raw in lines:
+        line = raw.strip() if isinstance(raw, (bytes, str)) else b""
+        if not line:
+            continue
+        try:
+            chunk = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ThinkerError("a streamed reply line was not JSON") from exc
+        if not isinstance(chunk, dict):
+            continue
+        if chunk.get("error"):
+            raise ThinkerError(str(chunk["error"])[:200])
+        last = chunk
+        message = chunk.get("message") if isinstance(chunk.get("message"), dict) else {}
+        piece, thought, called = message.get("content") or "", message.get("thinking") or "", message.get("tool_calls")
+        content.append(piece if isinstance(piece, str) else "")
+        thinking.append(thought if isinstance(thought, str) else "")
+        if isinstance(called, list):
+            calls += called
+        if meter is not None and (piece or thought or called):
+            meter.tick()
+        if chunk.get("done"):
+            break
+    reply = {k: v for k, v in last.items() if k != "message"}
+    message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
+    if any(thinking):
+        message["thinking"] = "".join(thinking)
+    if calls:
+        message["tool_calls"] = calls
+    reply["message"] = message
+    return reply
+
+
 class PromptTooLong(ThinkerError):
     """Even with nothing left to trim the prompt does not fit num_ctx."""
 
@@ -276,12 +361,15 @@ class Thinker:
     async def _ollama_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.session:
             raise ThinkerError("thinker not started")
+        stream = bool(self.config.stream)
         try:
-            async with self.session.post("/api/chat", json=payload,
+            async with self.session.post("/api/chat", json=payload | {"stream": stream},
                                          timeout=aiohttp.ClientTimeout(total=self.config.timeout_s)) as response:
                 if response.status != 200:
                     raise ThinkerError(f"HTTP {response.status}: {(await response.text())[:200]}")
-                return await response.json()
+                if not stream:
+                    return await response.json()
+                return await read_stream(response.content, metering.get())
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise ThinkerError(str(exc) or type(exc).__name__) from exc
 
@@ -409,6 +497,7 @@ class Thinker:
         calls: list[ToolResult] = []
         emit(run, "thinking", backend="builtin", model=self.model)
         error = ""
+        metered = metering.set(Meter(run))   # the task wait_for starts takes a copy of it
         try:
             outcome = await asyncio.wait_for(self._run(text, context, calls, careful, topic, tools, list(recent or []),
                                                        route, public_context, run), self.config.timeout_s)
@@ -426,6 +515,8 @@ class Thinker:
             error = "backend"
             outcome = Outcome("tried to think", "I tried, but my thinking part is not answering.", False,
                               tuple(calls), "alert")
+        finally:
+            metering.reset(metered)
         if run is not None and not outcome.ok:
             run.error = error or "other"
         self.last_s = time.perf_counter() - started
@@ -525,6 +616,9 @@ class Thinker:
             # Every round: the last round's tool results made the prompt longer.
             self.fit_prompt(messages, payload.get("tools") or [], text, context, recent, note)
             reply = await self.chat(payload)
+            meter = metering.get()
+            if meter is not None:
+                meter.round_done(reply)
             message = reply.get("message") or {}
             tool_calls = message.get("tool_calls") or []
             content = (message.get("content") or "").strip()
@@ -583,13 +677,15 @@ class Thinker:
                          duration=0.0, ok=False, error="refused")
                     messages.append({"role": "tool", "tool_name": name, "content": refusal})
                     continue
-                if spec is not None and self.toolbox.needs_confirm(spec.server, spec.name):
-                    # A tool she asks about first (confirm.py): not made, and the sentence ends here
-                    # with her question, written by code. The call is kept exactly as it would have
-                    # been sent; only the user's next sentence can make it. The rest of this reply's
+                # Stage 3 of brain step 6 adds `foreign=tainted` here (approvals.needed): every call that
+                # is not a read waits for a yes once strangers' text is in the conversation.
+                if spec is not None and self.toolbox.needs_approval(spec.server, spec.name):
+                    # A tool she asks about first (confirm.py, approvals.py): not made, and the thinking
+                    # ends here with her question, written by code. The call is kept exactly as it
+                    # would have been sent; only the user's yes can make it. The rest of this reply's
                     # calls are not made.
                     held = await confirm.hold(self.toolbox, adapter, spec.server, spec.name, arguments, run=run)
-                    log.info("thinker: %s held for a spoken yes", held.key)
+                    log.info("thinker: %s (%s) held for a yes", held.key, held.risk)
                     did = f"asked before {spec.name}" if not used else f"{_did(used)}, then asked before {spec.name}"
                     return Outcome(did, held.question, True, tuple(calls), "neutral", held=held)
                 if spec:

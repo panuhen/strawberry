@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import math
 import re
 import time
 from collections import deque
@@ -40,29 +41,47 @@ TERMINAL = {"run.completed": "completed", "run.failed": "failed", "run.cancelled
 STATE_OF = {"routing": "routing", "thinking": "thinking", "tool.started": "tool", "tool.completed": "thinking",
             "approval.request": "awaiting_approval", "speaking": "speaking", **TERMINAL}
 
-# What each event may carry (PROTOCOL.md §11), besides type, run_id, seq and t.
+# What each event may carry (PROTOCOL.md §11b, §13b), besides type, run_id, seq and t.
 FIELDS: dict[str, frozenset[str]] = {
     "routing": frozenset({"kind", "topic", "decision", "path", "tool", "confidence", "ms"}),
     "thinking": frozenset({"backend", "model"}),
     "tool.started": frozenset({"call_id", "tool", "label", "careful"}),
     "tool.completed": frozenset({"call_id", "tool", "duration", "ok", "error"}),
+    "approval.request": frozenset({"approval_id", "risk", "prompt", "timeout_s", "expires_t", "hold"}),
+    "approval.resolved": frozenset({"approval_id", "answer", "by"}),
     "speaking": frozenset({"duration", "emotion"}),
     "run.completed": frozenset({"duration", "outcome"}),
     "run.failed": frozenset({"duration", "error"}),
     "run.cancelled": frozenset({"duration", "reason"}),
 }
+# Gauges: not steps of a run, so no seq and not kept on it (RunBook.rate, RunBook.signal). `listening`
+# belongs to no run (the sentence is not heard yet); `token_rate` carries the run_id it measures.
+GAUGES: dict[str, frozenset[str]] = {
+    "listening": frozenset({"phase", "seconds", "speech"}),
+    "token_rate": frozenset({"tokens_per_s", "tokens"}),
+}
 # Fields that are fixed codes: any other value is dropped.
 CODES: dict[tuple[str, str], frozenset[str]] = {
     ("routing", "path"): frozenset({"reflex", "escalate", "fixed", "chat"}),
     ("tool.completed", "error"): frozenset({"timeout", "refused", "failed", "unavailable"}),
+    ("approval.request", "risk"): frozenset({"read", "change", "sends", "destructive"}),
+    ("approval.resolved", "answer"): frozenset({"yes", "no", "timeout", "cancelled", "superseded"}),
+    ("approval.resolved", "by"): frozenset({"voice", "typed", "body", "ui"}),
     ("run.completed", "outcome"): frozenset({"spoken", "silent", "nothing"}),
     ("run.failed", "error"): frozenset({"timeout", "backend", "tools", "other"}),
     ("run.cancelled", "reason"): frozenset({"superseded", "stopped", "didnt_catch", "shutdown"}),
+    ("listening", "phase"): frozenset({"started", "ended"}),
 }
-NUMBERS = frozenset({"confidence", "ms", "duration"})
-FLAGS = frozenset({"careful", "ok"})
+NUMBERS = frozenset({"confidence", "ms", "duration", "timeout_s", "expires_t", "seconds", "tokens_per_s"})
+COUNTS = frozenset({"tokens"})
+FLAGS = frozenset({"careful", "ok", "hold", "speech"})
+# Display text written by code for one purpose: the line her approval card shows (Adapter.describe).
+# Longer than MAX_TEXT, punctuation kept, control characters and line breaks never.
+PROSE = frozenset({("approval.request", "prompt")})
+MAX_PROSE = 160
 MAX_TEXT = 64          # a tool name, a label, a model name: never a sentence
 MAX_EVENTS = 200       # per run; the terminal event always goes out
+RATE_EVERY = 0.25      # token_rate: at most 4 a second per run
 QUEUE = 256            # events a sink may lag behind before it misses some
 KEEP = 50              # finished runs kept for the Brain UI ([runs] keep)
 _PLAIN = re.compile(r"[^\w .:/+@…-]")
@@ -88,6 +107,9 @@ class Run:
     cancel_reason: str = ""
     spoke: bool = False
     shielded: list[str] = field(default_factory=list)     # labels of change calls finished after a cancel
+    # Handed on to the wait for an approval (Daemon.hold): that task ends the run, not handle_voice.
+    continued: bool = False
+    rate_at: float = -1e9                                 # when its last token_rate went out
     events: list[dict[str, Any]] = field(default_factory=list)
     ended: float | None = None
     calls: itertools.count = field(default_factory=lambda: itertools.count(1))
@@ -116,7 +138,7 @@ class Run:
 
 def clean(kind: str, fields: dict[str, Any]) -> dict[str, Any]:
     """The fields `kind` may carry, each a plain scalar; anything else is dropped."""
-    allowed = FIELDS.get(kind, frozenset())
+    allowed = FIELDS.get(kind) or GAUGES.get(kind) or frozenset()
     out: dict[str, Any] = {}
     for key, value in fields.items():
         if key not in allowed or value is None:
@@ -125,9 +147,9 @@ def clean(kind: str, fields: dict[str, Any]) -> dict[str, Any]:
             if isinstance(value, bool):
                 out[key] = value
             continue
-        if key in NUMBERS:
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                out[key] = round(float(value), 3)
+        if key in NUMBERS or key in COUNTS:
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+                out[key] = int(value) if key in COUNTS else round(float(value), 3)
             continue
         if not isinstance(value, str):
             continue
@@ -136,7 +158,12 @@ def clean(kind: str, fields: dict[str, Any]) -> dict[str, Any]:
             if value in codes:
                 out[key] = value
             continue
-        text = _PLAIN.sub("", value)[:MAX_TEXT]
+        if (kind, key) in PROSE:
+            from .confirm import card_line   # local: confirm imports the tools, which import the config
+
+            text = card_line(value)[:MAX_PROSE]
+        else:
+            text = _PLAIN.sub("", value)[:MAX_TEXT]
         if text:
             out[key] = text
     return out
@@ -229,11 +256,36 @@ class RunBook:
         run.events.append(message)
         if not self.events:
             return message
+        self._send(message)
+        return message
+
+    def _send(self, message: dict[str, Any]) -> None:
         for sink in list(self.sinks):
             try:
                 sink.put_nowait(message)
             except asyncio.QueueFull:
                 self.dropped += 1
+
+    def rate(self, run: Run, tokens_per_s: float, tokens: int, force: bool = False) -> dict[str, Any] | None:
+        """`token_rate` for a run while the thinker writes: a gauge, at most every RATE_EVERY seconds
+        (`force`: the round's last count), with no seq and not kept on the run. Numbers only."""
+        now = time.monotonic()
+        if run.done or not self.events or (now - run.rate_at < RATE_EVERY and not force):
+            return None
+        run.rate_at = now
+        message = {"type": "token_rate", "run_id": run.run_id, "t": round(now, 3)}
+        message.update(clean("token_rate", {"tokens_per_s": tokens_per_s, "tokens": tokens}))
+        self._send(message)
+        return message
+
+    def signal(self, kind: str, /, **fields: Any) -> dict[str, Any] | None:
+        """A gauge that belongs to no run (`listening`: a voice capture started or ended): type, t and
+        its whitelisted fields."""
+        if kind not in GAUGES or kind == "token_rate" or not self.events:
+            return None
+        message = {"type": kind, "t": round(time.monotonic(), 3)}
+        message.update(clean(kind, fields))
+        self._send(message)
         return message
 
     def finish(self, run: Run, error: str = "") -> dict[str, Any] | None:
