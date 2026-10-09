@@ -157,3 +157,65 @@ def fake_gate(toolbox: Toolbox):
 
     return Gate(GateConfig(query_prefix="", document_prefix=""), embedder=FakeEmbedder(),
                 examples=gate_examples(toolbox.adapters))
+
+
+def serve() -> None:
+    """The fake as a real stdio MCP server, for a throwaway daemon's end-to-end runs (never the user's
+    player): `python -m tests.fake_spotify` from the repo root, as `[tools.servers.spotify]`."""
+    from mcp.server.mcpserver import MCPServer
+    from mcp.types import ToolAnnotations
+
+    server = MCPServer("fake-spotify")
+    spotify = FakeSpotify()
+    reads = ToolAnnotations(read_only_hint=True)
+
+    async def run(name: str, arguments: dict) -> str:
+        return (await spotify.handle(name, arguments)).content[0].text
+
+    @server.tool(name="next")
+    async def next_track() -> str:
+        """Skip to the next track."""
+        return await run("next", {})
+
+    @server.tool()
+    async def previous() -> str:
+        """Go back to the previous track."""
+        return await run("previous", {})
+
+    @server.tool()
+    async def pause() -> str:
+        """Pause playback."""
+        return await run("pause", {})
+
+    @server.tool()
+    async def play(uri: str = "") -> str:
+        """Resume playback, or play a track, album or playlist by its Spotify URI."""
+        if uri:
+            spotify.index = next((i for i, t in enumerate(TRACKS) if t["uri"] == uri), spotify.index)
+        return await run("play", {})
+
+    @server.tool(annotations=reads)
+    async def search(query: str, type: str = "track") -> str:
+        """Search the catalogue; returns tracks with their URIs."""
+        return json.dumps({"tracks": TRACKS})
+
+    @server.tool(annotations=reads)
+    async def get_current_track() -> str:
+        """What is playing now."""
+        return await run("get_current_track", {})
+
+    @server.tool()
+    async def add_to_queue(uri: str) -> str:
+        """Add a track to the queue by its URI."""
+        return json.dumps({"success": True})
+
+    @server.tool()
+    async def set_volume(volume: int) -> str:
+        """Set the volume, 0-100."""
+        return await run("set_volume", {"volume": volume})
+
+    server.run("stdio")
+
+
+if __name__ == "__main__":
+    serve()

@@ -201,6 +201,8 @@ td.sentence { min-width: 180px; max-width: 420px; overflow-wrap: anywhere; }
 td .sub { display: block; color: var(--ink-faint); font-size: 0.78rem; }
 .up { color: var(--good); }
 .down { color: var(--berry-ink); }
+.steps { display: flex; gap: 4px; flex-wrap: wrap; }
+.steps .chip { font-size: 0.75rem; }
 tr.fresh { animation: fresh 1.6s ease-out; }
 @keyframes fresh { from { background: var(--berry-wash); } to { background: transparent; } }
 

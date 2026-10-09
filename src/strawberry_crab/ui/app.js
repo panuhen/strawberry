@@ -8,13 +8,17 @@
 
 (() => {
   const CSRF = document.querySelector('meta[name="csrf"]').content;
-  const SECTIONS = ["learning", "router", "data", "settings", "system"];
+  const SECTIONS = ["learning", "router", "runs", "data", "settings", "system"];
   const MAX_ROUTES = 100;
+  const MAX_RUNS = 50;
+  const TERMINAL = { "run.completed": "completed", "run.failed": "failed", "run.cancelled": "cancelled" };
 
   const state = {
     section: "learning",
     learning: null,
     routes: [],
+    runs: [],
+    runEvents: true,
     logging: false,
     data: null,
     settings: null,
@@ -22,6 +26,7 @@
     filter: "all",
     ended: false,
     fresh: new Set(),
+    freshRuns: new Set(),
     busy: false,
   };
 
@@ -445,7 +450,7 @@
       const calls = (r.calls || []).map((c) => `${c.server}.${c.name}${c.ok ? "" : " (failed)"}`).join(", ");
       const handled = r.path === "reflex" ? (r.reflex || "reflex") : r.path === "thinker" ? (calls ? `thinker: ${calls}` : "thinker, no tools") : r.path;
       return el("tr", { class: state.fresh.has(r.id) ? "fresh" : null },
-        td(clock(r.at)),
+        td([clock(r.at), r.run_id ? el("span", { class: "sub", text: r.run_id }) : null]),
         el("td", { class: "sentence" }, typeof r.text === "string" ? r.text
           : el("span", { class: "faint", text: state.logging ? "not kept (private or not for her)" : "hidden" })),
         td(r.source),
@@ -462,6 +467,88 @@
       state.logging ? null : el("p", { class: "note", text: "Sentences are hidden while outcome logging is off. The routes still show." }),
       table(["Time", "Sentence", "From", "Kind", "Topic", "Decision", "Tool", "Handled by", { label: "Gate ms", num: true }, { label: "Total ms", num: true }], rows,
         { empty: "Nothing routed since the daemon started. Say something, or type to her." })));
+  }
+
+  // --------------------------------------------------------------------------- 2b. runs
+
+  // One step of a run as a chip: its name, what it was about (a path, a tool) and when, counted
+  // from the run's first step. Only what runs.emit lets through reaches the page: names and timings.
+  function stepChip(e, t0) {
+    const at = typeof e.t === "number" && typeof t0 === "number" ? `+${(e.t - t0).toFixed(2)} s` : "";
+    let text = e.type;
+    let kind = null;
+    if (e.type === "routing") text = `routing: ${e.path || dash}${e.tool ? ` (${e.tool})` : ""}`;
+    else if (e.type === "thinking") text = `thinking${e.model ? `: ${e.model}` : ""}`;
+    else if (e.type === "tool.started") { text = `${e.tool || "tool"} started`; kind = "berry"; }
+    else if (e.type === "tool.completed") {
+      text = `${e.tool || "tool"} ${e.ok ? "ok" : e.error || "failed"}${typeof e.duration === "number" ? ` ${e.duration.toFixed(2)} s` : ""}`;
+      kind = e.ok ? "good" : "warn";
+    } else if (e.type === "speaking") text = `speaking ${num(e.duration, 1)} s`;
+    else if (TERMINAL[e.type]) {
+      text = `${TERMINAL[e.type]}: ${e.outcome || e.error || e.reason || dash}`;
+      kind = e.type === "run.completed" ? "good" : "warn";
+    }
+    return chip(at ? `${text} · ${at}` : text, kind, e.label || null);
+  }
+
+  function runDuration(r) {
+    if (r.outcome && typeof r.duration === "number") return `${r.duration.toFixed(2)} s`;
+    const ev = r.events || [];
+    if (ev.length >= 2 && typeof ev[0].t === "number") return `${(ev[ev.length - 1].t - ev[0].t).toFixed(2)} s so far`;
+    return "going";
+  }
+
+  function cancelRun(button, runId) {
+    button.disabled = true;
+    api("cancel", { run_id: runId })
+      .then(() => toast(`Stopping ${runId}.`))
+      .catch((e) => { toast(e.message, true); button.disabled = false; });
+  }
+
+  function renderRuns() {
+    const root = $("#runs");
+    const rows = state.runs.map((r) => {
+      const events = r.events || [];
+      const t0 = events.length ? events[0].t : null;
+      const going = !r.outcome;
+      return el("tr", { class: state.freshRuns.has(r.run_id) ? "fresh" : null },
+        td([clock(r.at), el("span", { class: "sub", text: r.run_id })]),
+        td(r.source || dash),
+        el("td", null, el("div", { class: "steps" }, events.map((e) => stepChip(e, t0)))),
+        td((r.tools || []).length ? r.tools.join(", ") : dash),
+        td(going ? chip(r.state || "going", "berry") : chip(`${r.outcome}${r.detail ? `: ${r.detail}` : ""}`,
+          r.outcome === "completed" ? "good" : "warn")),
+        td(runDuration(r), "num"),
+        td(going && r.foreground !== false ? actionButton("Cancel", (b) => cancelRun(b, r.run_id), "small danger") : null));
+    });
+    root.replaceChildren(panel("Runs", "each sentence she handles, step by step; newest first",
+      state.runEvents ? null : el("p", { class: "note", text: "Run events are off ([runs] events = false): runs show once they end." }),
+      table(["Time", "From", "Steps", "Tools", "Outcome", { label: "Duration", num: true }, ""], rows,
+        { empty: "No runs since the daemon started. Say something, or type to her." })));
+    state.freshRuns.clear();
+  }
+
+  // A step from the stream: the run it belongs to is updated in place (or started, if it is new).
+  function onRunStep(e) {
+    let r = state.runs.find((x) => x.run_id === e.run_id);
+    if (!r) {
+      r = { run_id: e.run_id, source: e.source, at: Date.now() / 1000, events: [], tools: [], outcome: null,
+            state: "routing", foreground: e.source !== "notification" };
+      state.runs.unshift(r);
+      state.runs.length = Math.min(state.runs.length, MAX_RUNS);
+    }
+    r.events.push(e);
+    if (e.type === "tool.started" && e.tool) r.tools.push(e.tool);
+    if (TERMINAL[e.type]) {
+      r.outcome = TERMINAL[e.type];
+      r.detail = e.outcome || e.error || e.reason || null;
+      r.duration = e.duration;
+      r.state = r.outcome;
+    } else {
+      r.state = { "tool.started": "tool", "tool.completed": "thinking" }[e.type] || e.type;
+    }
+    state.freshRuns.add(e.run_id);
+    rerender("runs");
   }
 
   // --------------------------------------------------------------------------- 3. data and scores
@@ -683,6 +770,15 @@
     rerender("router");
   }
 
+  async function refreshRuns() {
+    try {
+      const r = await api("runs");
+      state.runEvents = r.events;
+      state.runs = r.runs.slice(0, MAX_RUNS);
+    } catch (e) { /* the stream will say */ }
+    rerender("runs");
+  }
+
   async function refreshData() {
     try { state.data = await api("data"); } catch (e) { if (!state.ended) toast(e.message, true); }
     rerender("data");
@@ -698,8 +794,10 @@
     rerender("system");
   }
 
-  const RENDER = { learning: renderLearning, router: renderRouter, data: renderData, settings: renderSettings, system: renderSystem };
-  const REFRESH = { learning: refreshLearning, router: refreshRoutes, data: refreshData, settings: refreshSettings, system: refreshSystem };
+  const RENDER = { learning: renderLearning, router: renderRouter, runs: renderRuns, data: renderData, settings: renderSettings,
+                   system: renderSystem };
+  const REFRESH = { learning: refreshLearning, router: refreshRoutes, runs: refreshRuns, data: refreshData,
+                    settings: refreshSettings, system: refreshSystem };
 
   function show(section, anchor) {
     if (!SECTIONS.includes(section)) section = "learning";
@@ -722,6 +820,8 @@
       state.routes.length = Math.min(state.routes.length, MAX_ROUTES);
       state.fresh.add(data.id);
       rerender("router");
+    } else if (name === "run") {
+      onRunStep(data);
     } else if (name === "learning") {
       clearTimeout(learningSoon);
       learningSoon = setTimeout(() => {
@@ -753,6 +853,7 @@
         if (!res.ok || !res.body) throw new Error(`events ${res.status}`);
         setLive(true);
         refreshRoutes();
+        refreshRuns();
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
