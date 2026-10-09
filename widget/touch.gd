@@ -7,25 +7,25 @@ extends Node
 ##             shell top = pat, body/belly/legs = tickle, eye or eyestalk = flinch, claw = pinch back
 ##             (every other time a wave with that claw). A hold anywhere: she leans into it.
 ##   how often pokes in a row escalate: curious (the zone's reaction), then mildly annoyed
-##             (alert_snap and a squint). The third level, scuttling away, needs legs (a later
-##             stage): scuttle_away() is the hook, and until it does something she stays annoyed.
+##             (alert_snap and a squint), then on the sixth she scuttles a short step away from the
+##             poke (wander.gd, the gait) and the annoyance starts over.
 ##   asleep    a poke wakes her gently (the wake_up clip), nothing else.
 ##   busy      talking, listening, thinking, a run going on (the step chip), a one-shot or a
 ##             daemon reaction playing: only a blink. Nothing here plays a clip over a line,
-##             writes the claws while she speaks, or stops a drag.
+##             opens the claws while she speaks, or stops a drag.
 ##
 ## The recipes are envelopes over bone offsets and morphs, layered like reactions.gd: body
 ## rotation after the AnimationPlayer (process priority 157, after the reactions and dance
 ## styles), eyes through the blink controller's "touch" layer, yaw through turn.gd.
 
-signal scuttle_wanted   # level 3: the hook for scuttling away once she has legs that walk
+signal scuttle_wanted   # level 3: she scuttles away (emitted whether or not she could move)
 
 const Easing = preload("res://easing.gd")
 const DURATIONS := {"pat": 1.2, "tickle": 1.1, "flinch": 0.75, "pinch": 1.0, "claw_wave": 1.3,
 	"annoyed": 1.1, "curious": 1.0, "noticed": 0.35, "hold": 0.0}
 const STREAK_S := 4.0            # a poke within this long of the last one continues the streak
 const ANNOYED_AT := 3            # the streak's poke that makes her annoyed
-const SCUTTLE_AT := 6            # ... and the one that would send her scuttling away
+const SCUTTLE_AT := 6            # ... and the one that sends her scuttling away
 const SHELL_TOP_Y := 0.40        # model space: above this the shell is "top" (pat), below "body"
 const HOLD_IN_S := 0.4
 const HOLD_OUT_S := 0.5
@@ -38,7 +38,6 @@ var skeleton: Skeleton3D
 var blink: Node
 var body_i := -1
 var claw_i := {}
-var claws := {}                  # side -> [mesh, blend shape index]
 var squashers: Array[MeshInstance3D] = []
 var squash_indices: Array[int] = []
 var triangles := {}              # mesh -> PackedVector3Array of its rest-space triangles (lazy)
@@ -56,7 +55,6 @@ var last_poke_at := -100.0
 var talked_at := -100.0
 var snapped_at := -100.0         # when her own annoyance played alert_snap (not a reason to stop counting)
 var claw_waves := 0
-var wrote_claws := false
 var wrote_squash := false
 var yaw := 0.0                   # read by turn.gd
 
@@ -66,6 +64,7 @@ var played := {}
 var last_zone := ""
 var last_level := 0
 var scuttles := 0
+var poked_at := Vector2.ZERO     # the last poke, window pixels (the scuttle goes away from it)
 var lines_asked := 0
 
 func setup(owner: Node3D, model: Node, cam: Camera3D, blink_controller: Node) -> void:
@@ -78,8 +77,6 @@ func setup(owner: Node3D, model: Node, cam: Camera3D, blink_controller: Node) ->
 	body_i = skeleton.find_bone("body")
 	for s in ["L", "R"]:
 		claw_i[s] = skeleton.find_bone("claw_arm_" + s)
-		var claw := model.find_child("mesh_claw_lower_" + s, true, false) as MeshInstance3D
-		claws[s] = [claw, claw.find_blend_shape_by_name("claw_open_" + s)]
 	for mesh_name in ["mesh_shell", "mesh_spots", "mesh_belly"]:
 		var mesh := model.find_child(mesh_name, true, false) as MeshInstance3D
 		squashers.append(mesh)
@@ -111,6 +108,7 @@ func poke(pixel: Vector2) -> void:
 		return
 	var hit := hit_test(pixel)
 	last_zone = str(hit.zone)
+	poked_at = pixel
 	if busy():
 		play("noticed")
 		last_level = 0
@@ -125,18 +123,28 @@ func poke(pixel: Vector2) -> void:
 			last_level = 2
 	elif streak >= ANNOYED_AT:
 		last_level = 2
-	if last_level >= 2:
+	if last_level == 3:
+		play("annoyed")      # a squint as she goes; the scuttle is the reaction
+		streak = 0           # and the annoyance starts over
+	elif last_level == 2:
 		annoyed()
 	else:
 		react(hit)
-	maybe_talk(str(hit.zone), last_level)
+	maybe_talk(str(hit.zone), mini(last_level, 2))
 
-## Level 3. Scuttling off needs legs that walk (the crab plan's later stages); until then the hook
-## is announced and she stays annoyed. Return true once she really does it.
+## Level 3: a short scuttle away from the poke (wander.gd moves her window with the gait). False
+## when she may not move now (dragged, busy, no room is fine: she scrabbles in place); then she
+## stays annoyed.
 func scuttle_away() -> bool:
 	scuttles += 1
 	scuttle_wanted.emit()
-	return false
+	if widget.wander == null:
+		return false
+	var middle := world_to_pixel(skeleton.global_transform * skeleton.get_bone_global_pose(body_i).origin).x
+	var away := 1.0 if poked_at.x < middle else -1.0
+	if absf(poked_at.x - middle) < 4.0:
+		away = 1.0 if rng.randf() < 0.5 else -1.0
+	return widget.wander.scuttle(away)
 
 func annoyed() -> void:
 	if widget.one_shot == "" and widget.state in ["idle", "dancing"]:
@@ -218,6 +226,10 @@ func _process(delta: float) -> void:
 		body_pitch = deg_to_rad(-6.0) * h
 		squint = 0.6 * h
 		squash = 0.12 * (0.5 - 0.5 * cos(TAU * now() / 2.4)) * h
+		if widget.legs:
+			# Her legs settle: she sinks a little and the toes spread.
+			widget.legs.lift(-0.014 * h)
+			widget.legs.add_all(Vector3.ZERO, -0.012 * h)
 		if hold_amount <= 0.0 and not holding and recipe == "hold":
 			recipe = ""
 	if recipe != "" and recipe != "hold":
@@ -235,6 +247,12 @@ func _process(delta: float) -> void:
 				squash = 0.35 * absf(sin(TAU * 4.0 * t)) * env
 				body_roll = deg_to_rad(2.5) * sin(TAU * 12.0 * t) * env
 				squint = 0.8 * env    # eyes screwed up, giggling
+				if widget.legs:
+					# The legs scrabble a little: the tripods kick up in turn, toes skittering sideways.
+					for leg in widget.legs.LEGS:
+						var turn_of := 0.0 if leg in widget.legs.TRIPOD_A else PI
+						var kick := maxf(0.0, sin(TAU * 7.0 * t + turn_of))
+						widget.legs.add(leg, Vector3(0.008 * sin(TAU * 7.0 * t + turn_of + 1.2), 0.018 * kick, 0.0) * env)
 			"flinch":
 				# Eyes shut at once, a jerk back and away, then open again.
 				closed = 1.0 - Easing.in_out((p - 0.35) / 0.4)
@@ -268,12 +286,9 @@ func _process(delta: float) -> void:
 	var s := "L" if side > 0.0 else "R"
 	if lift != 0.0:
 		skeleton.set_bone_pose_rotation(claw_i[s], skeleton.get_bone_pose_rotation(claw_i[s]) * Quaternion(Vector3.RIGHT, lift))
-	# The claws are her voice's while she talks (speech_player.gd writes them after this node).
+	# The pincers are her voice's while she talks.
 	if claw_open > 0.0 and not widget.speech.playing:
-		claws[s][0].set_blend_shape_value(claws[s][1], claw_open)
-		wrote_claws = true
-	elif wrote_claws:
-		clear_claws()
+		widget.claw_controller.request(0 if s == "L" else 1, claw_open)
 	if squash > 0.0:
 		for i in squashers.size():
 			var base := squashers[i].get_blend_shape_value(squash_indices[i])
@@ -281,19 +296,10 @@ func _process(delta: float) -> void:
 		wrote_squash = true
 	blink.set_layer("touch", wide, happy, squint, closed)
 
-## Once nothing plays: the touch layer's eyes and claws go back to their owners.
+## Once nothing plays: the touch layer's eyes go back to their owner.
 func finish_writes() -> void:
 	blink.set_layer("touch", 0.0, 0.0, 0.0)
-	if wrote_claws:
-		clear_claws()
 	wrote_squash = false
-
-func clear_claws() -> void:
-	wrote_claws = false
-	if widget.speech.playing:
-		return
-	for s in claws:
-		claws[s][0].set_blend_shape_value(claws[s][1], 0.0)
 
 # --- where she was touched --------------------------------------------------------
 
@@ -315,8 +321,8 @@ func world_to_pixel(point: Vector3) -> Vector2:
 	return Vector2(w / 2.0 - (point.x - origin.x) * px_per_unit, h / 2.0 - (point.y - origin.y) * px_per_unit)
 
 ## What a press at `pixel` lands on: {zone: shell|belly|eye|claw|near, side: ±1, dx: px from her middle}.
-## Each mesh follows one bone rigidly (WIRING.md §13), so the ray goes into that bone's rest space
-## and meets the mesh's own triangles there; the nearest hit wins. The hat counts as her shell.
+## Each mesh but the legs follows one bone rigidly (WIRING.md §13), so the ray goes into that bone's
+## rest space and meets the mesh's own triangles there; the nearest hit wins. The hat counts as her shell.
 func hit_test(pixel: Vector2) -> Dictionary:
 	var origin := pixel_to_world(pixel)
 	var direction := (camera.global_transform.basis * Vector3.FORWARD).normalized()
@@ -328,29 +334,31 @@ func hit_test(pixel: Vector2) -> Dictionary:
 		var mesh := node as MeshInstance3D
 		if not mesh.is_visible_in_tree() or mesh.mesh == null:
 			continue
-		var to_world: Transform3D
+		var placements: Array[Transform3D] = []
 		if widget.bone_boxes.has(mesh):
-			var part: Array = widget.bone_boxes[mesh][0]
-			to_world = skeleton.global_transform * skeleton.get_bone_global_pose(part[0]) * part[1]
-			if not (to_world * (part[2] as AABB)).grow(0.01).intersects_ray(origin, direction):
-				continue
+			# A leg follows two bones (upper, lower): tested under each, close enough to tell it apart.
+			for part: Array in widget.bone_boxes[mesh]:
+				var placed: Transform3D = skeleton.global_transform * skeleton.get_bone_global_pose(part[0]) * part[1]
+				if (placed * (part[2] as AABB)).grow(0.01).intersects_ray(origin, direction):
+					placements.append(placed)
 		else:
-			to_world = mesh.global_transform   # the hat's parts
-		var from_world := to_world.affine_inverse()
-		var local_origin := from_world * origin
-		var local_direction := (from_world.basis * direction).normalized()
-		var tris := mesh_triangles(mesh)
-		for i in range(0, tris.size(), 3):
-			var at: Variant = Geometry3D.ray_intersects_triangle(local_origin, local_direction, tris[i], tris[i + 1], tris[i + 2])
-			if at == null:
-				continue
-			var world: Vector3 = to_world * (at as Vector3)
-			var depth := (world - origin).dot(direction)
-			if depth < best:
-				best = depth
-				found.zone = zone_of(mesh, world)
-				# Her left is model +X (the viewer's left).
-				found.side = 1.0 if (widget.model.global_transform.affine_inverse() * world).x >= 0.0 else -1.0
+			placements.append(mesh.global_transform)   # the hat's parts
+		for to_world in placements:
+			var from_world := to_world.affine_inverse()
+			var local_origin := from_world * origin
+			var local_direction := (from_world.basis * direction).normalized()
+			var tris := mesh_triangles(mesh)
+			for i in range(0, tris.size(), 3):
+				var at: Variant = Geometry3D.ray_intersects_triangle(local_origin, local_direction, tris[i], tris[i + 1], tris[i + 2])
+				if at == null:
+					continue
+				var world: Vector3 = to_world * (at as Vector3)
+				var depth := (world - origin).dot(direction)
+				if depth < best:
+					best = depth
+					found.zone = zone_of(mesh, world)
+					# Her left is model +X (the viewer's left).
+					found.side = 1.0 if (widget.model.global_transform.affine_inverse() * world).x >= 0.0 else -1.0
 	return found
 
 func zone_of(mesh: MeshInstance3D, world: Vector3) -> String:

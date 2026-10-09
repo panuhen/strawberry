@@ -39,6 +39,15 @@ func morph(name: String, key: String) -> float:
 	var mesh: MeshInstance3D = widget.model.find_child(name, true, false)
 	return mesh.get_blend_shape_value(mesh.find_blend_shape_by_name(key))
 
+## How far a leg is folded away from its rest (radians): the larger turn of its two bones.
+func knee_fold(leg: String) -> float:
+	var skeleton: Skeleton3D = widget.model.find_child("Skeleton3D", true, false)
+	var most := 0.0
+	for part in ["_upper", "_lower"]:
+		var bone := skeleton.find_bone(leg + part)
+		most = maxf(most, skeleton.get_bone_pose_rotation(bone).angle_to(skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()))
+	return most
+
 func capture(name: String) -> void:
 	if capture_dir == "":
 		return
@@ -78,7 +87,7 @@ func run() -> void:
 	for side in ["L", "R"]:
 		check(morph("mesh_eye_" + side, "blink") > 0.999, "Sleeping eye should stay shut")
 		for i in range(1, 4):
-			check(morph("mesh_leg_%s%d" % [side, i], "sleep_fold") > 0.999, "Leg should stay tucked")
+			check(knee_fold("leg_%s%d" % [side, i]) > deg_to_rad(25.0), "Leg should stay folded")
 	await capture("sleep_rest")
 	var minimum := 1.0
 	var maximum := 0.0
@@ -97,7 +106,7 @@ func run() -> void:
 	await capture("sleep_waking")
 	advance(1.0)
 	check(sleep.phase == "awake" and widget.player.assigned_animation == "idle_loop", "Wake should return to idle")
-	check(morph("mesh_leg_L1", "sleep_fold") < 0.0001, "Leg fold leaked into idle")
+	check(knee_fold("leg_L1") < deg_to_rad(6.0), "Leg fold leaked into idle")
 	# Interrupt at several points; reversing the descent must not teleport the body.
 	var skeleton: Skeleton3D = widget.model.find_child("Skeleton3D", true, false)
 	for progress in [0.01, 0.25, 0.5, 0.9]:

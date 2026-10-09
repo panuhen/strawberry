@@ -24,6 +24,8 @@ const StepChip = preload("res://step_chip.gd")
 const ApprovalCard = preload("res://approval_card.gd")
 const Turn = preload("res://turn.gd")
 const Touch = preload("res://touch.gd")
+const Legs = preload("res://legs.gd")
+const Wander = preload("res://wander.gd")
 const Paths = preload("res://paths.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
@@ -89,6 +91,8 @@ var blink_controller: Node
 var claw_controller: Node
 var turn: Node
 var touch: Node                 # touch reactions (touch.gd)
+var legs: Node                  # the procedural leg layer and the gait (legs.gd)
+var wander: Node                # walking: the drag's speed, wandering, scuttling (wander.gd)
 var pending_hops := 0
 var one_shots_played := 0
 var window_hops := 0
@@ -102,6 +106,7 @@ var always_on_top := true
 var turn_to_screen := true      # her view follows where the window sits (turn.gd)
 var touch_reactions := true     # pokes, pats and holds get a reaction (touch.gd)
 var touch_talk := false         # ... and now and then a short spoken line (the daemon's)
+var wander_enabled := true      # now and then she walks a short way on her own (wander.gd)
 var state := "idle"
 var rest_state := "idle"
 var one_shot := ""
@@ -130,6 +135,7 @@ func _ready() -> void:
 	apply_appearance()
 	setup_controllers()
 	setup_reactions()
+	setup_legs()
 	setup_turn()
 	setup_touch()
 	setup_bubble()
@@ -705,9 +711,10 @@ func setup_reactions() -> void:
 	reactions = Reactions.new()
 	add_child(reactions)
 	reactions.setup(model, blink_controller)
+	reactions.pincers = claw_controller
 	speech = SpeechPlayer.new()
 	add_child(speech)
-	speech.setup(model)
+	speech.setup(claw_controller)
 	speech.volume_db = linear_to_db(maxf(voice_volume, 0.001))
 	gaze = Gaze.new()
 	add_child(gaze)
@@ -716,6 +723,25 @@ func setup_reactions() -> void:
 	dance = DanceStyle.new()
 	add_child(dance)
 	dance.setup(self, player, model, blink_controller)
+
+func setup_legs() -> void:
+	legs = Legs.new()
+	add_child(legs)
+	legs.setup(self, model, camera)
+	reactions.legs = legs
+	reactions.player = player
+	dance.legs = legs
+	wander = Wander.new()
+	add_child(wander)
+	wander.setup(self, legs)
+	wander.enabled = wander_enabled
+
+func set_wander(value: bool) -> void:
+	wander_enabled = value
+	wander.enabled = value
+	if not value and wander.walking:
+		wander.stop("setting")
+	save_settings()
 
 func setup_turn() -> void:
 	turn = Turn.new()
@@ -1011,6 +1037,7 @@ func restore_settings() -> void:
 		turn_to_screen = bool(config.get_value("window", "turn_to_screen", true))
 		touch_reactions = bool(config.get_value("touch", "reactions", true))
 		touch_talk = bool(config.get_value("touch", "talk", false))
+		wander_enabled = bool(config.get_value("window", "wander", true))
 	if is_headless():
 		return
 	get_window().always_on_top = always_on_top
@@ -1043,6 +1070,7 @@ func save_settings() -> void:
 	config.set_value("audio", "volume", voice_volume)
 	config.set_value("window", "always_on_top", always_on_top)
 	config.set_value("window", "turn_to_screen", turn_to_screen)
+	config.set_value("window", "wander", wander_enabled)
 	config.set_value("touch", "reactions", touch_reactions)
 	config.set_value("touch", "talk", touch_talk)
 	if not is_headless():

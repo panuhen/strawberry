@@ -6,6 +6,8 @@ extends Node
 ## recipe is a dozen lines you can tune live. Bone axes come from the rig:
 ## claw lift = local +X, eyestalk sway = local Z, body pitch = local X, body roll = local Z.
 ## Turning (yaw) is not a bone: a recipe sets `yaw` and turn.gd turns the whole model by it.
+## Legs go through legs.gd: a recipe asks for toe offsets and body lifts, and the legs are solved
+## after every layer (shiver trembles them, peek goes on tiptoe, double_hop crouches and lands).
 ##
 ## Runs as a plain node at process priority 150, after the AnimationPlayer has written the
 ## frame's pose, the same way blink_controller and claw_controller layer their morphs.
@@ -30,11 +32,11 @@ var eye_l_i := -1
 var eye_r_i := -1
 var eye_rest_scale := Vector3.ONE
 var blink_controller: Node
-var claws: Array[MeshInstance3D] = []
-var claw_indices: Array[int] = []
+var pincers: Node               # claw_controller.gd: the wave's claw opens through it
+var legs: Node                  # legs.gd: toe offsets and body lifts (the leg pass)
+var player: AnimationPlayer     # double_hop's crouch and landing follow the notify_perk clip
 var squashers: Array[MeshInstance3D] = []
 var squash_indices: Array[int] = []
-var wrote_claws := false
 var wrote_squash := false
 
 # The offsets for this frame, computed once in _process and applied in the modifier pass.
@@ -54,10 +56,6 @@ func setup(model: Node, blink: Node) -> void:
 	eye_r_i = skeleton.find_bone("eyestalk_R")
 	eye_rest_scale = skeleton.get_bone_pose_scale(eye_l_i)
 	blink_controller = blink
-	for suffix in ["L", "R"]:
-		var claw := model.find_child("mesh_claw_lower_" + suffix, true, false) as MeshInstance3D
-		claws.append(claw)
-		claw_indices.append(claw.find_blend_shape_by_name("claw_open_" + suffix))
 	for mesh_name in ["mesh_shell", "mesh_spots"]:
 		var mesh := model.find_child(mesh_name, true, false) as MeshInstance3D
 		squashers.append(mesh)
@@ -103,22 +101,35 @@ func _process(delta: float) -> void:
 			yaw = turn_side * deg_to_rad(10.0) * Easing.there_and_back(p / 0.55)
 			body_pitch = deg_to_rad(-7.0) * env  # lean toward the viewer
 			wide = 0.5 * env
+			if legs:
+				# On tiptoe: up a little, the toes drawn in under her to reach.
+				legs.lift(0.02 * env)
+				legs.add_all(Vector3.ZERO, 0.035 * env)
 		"shiver":
 			body_roll = deg_to_rad(3.0) * sin(TAU * 18.0 * t) * env
 			squash_extra = 0.3 * absf(sin(TAU * 9.0 * t)) * env
 			squint = 0.6 * env
+			if legs:
+				# Every leg trembles on its own.
+				for i in legs.LEGS.size():
+					var k := float(i) * 1.7
+					legs.add(legs.LEGS[i], Vector3(sin(TAU * 21.0 * t + k), 0.6 * absf(sin(TAU * 17.0 * t + k * 2.0)), cos(TAU * 19.0 * t + k)) * 0.005 * env)
 		"double_hop":
 			wide = 0.9 * env  # the hops themselves are the notify_perk clip, played twice by the widget
+			if legs and player and player.assigned_animation == "notify_perk" and player.is_playing():
+				# A crouch before each jump and a knee bend as she lands: the body drops, the toes stay.
+				var hop := player.current_animation_position / player.get_animation("notify_perk").length
+				var crouch := sin(PI * clampf(hop / 0.18, 0.0, 1.0))
+				var land := sin(PI * clampf((hop - 0.6) / 0.24, 0.0, 1.0))
+				legs.lift(-0.03 * crouch - 0.034 * land)
 		"nod":
 			body_pitch = deg_to_rad(10.0) * sin(TAU * 2.0 * p) * env
 			happy = env
 	blink_controller.extra_wide = wide
 	blink_controller.extra_happy = happy
 	blink_controller.extra_squint = squint
-	if claw_open != Vector2.ZERO or wrote_claws:
-		for i in claws.size():
-			claws[i].set_blend_shape_value(claw_indices[i], claw_open[i])
-		wrote_claws = claw_open != Vector2.ZERO
+	if claw_open != Vector2.ZERO and pincers:
+		pincers.request_both(claw_open)
 	if squash_extra > 0.0 or wrote_squash:
 		for i in squashers.size():
 			var base := squashers[i].get_blend_shape_value(squash_indices[i])

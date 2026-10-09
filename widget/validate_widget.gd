@@ -240,14 +240,14 @@ func run() -> void:
 	widget.set_muted(false)
 	widget.set_quiet_until(0.0)
 	var claw_idle: float = widget.speech.claw_value()
-	check(absf(claw_idle) < 0.01, "claw_open should be 0 before speech, was %.2f" % claw_idle)
+	check(absf(claw_idle) < 0.01, "the pincers should be shut before speech, was %.2f" % claw_idle)
 	await post("/perform", {"state": "talking", "text": "Testing, one two three.", "audio": wav_path})
 	await wait(0.6)
 	check(widget.speech.playing, "speech wav should be playing")
 	var claw_mid: float = widget.speech.claw_value()
 	report["speech_claw_mid"] = snappedf(claw_mid, 0.01)
 	report["speech_level_mid"] = snappedf(widget.speech.level, 0.01)
-	check(claw_mid > 0.05, "claw_open should follow the audio, was %.2f" % claw_mid)
+	check(claw_mid > 0.05, "the pincers should follow the audio, was %.2f" % claw_mid)
 	# The bubble reveal is timed to the wav (1.6 s), so it is still revealing at 1.2 s
 	# where the text-length heuristic (1.9 s for this line) would also be; check the length
 	# the widget used instead.
@@ -256,9 +256,9 @@ func run() -> void:
 	check(absf(wav_len - 1.6) < 0.02, "widget should read the wav length")
 	await wait(1.4)
 	check(not widget.speech.playing, "speech wav should have finished")
-	await wait(0.1)
+	await wait(0.3)   # the pincer's spring settles shut
 	var claw_end: float = widget.speech.claw_value()
-	check(absf(claw_end) < 0.01, "claw_open should return to 0 after speech, was %.2f" % claw_end)
+	check(absf(claw_end) < 0.01, "the pincers should return to 0 after speech, was %.2f" % claw_end)
 	report["speech_peak_level"] = snappedf(widget.speech.peak_level, 0.01)
 	await wait_speech_end()
 	check(widget.state == widget.rest_state, "she should rest after a spoken line")

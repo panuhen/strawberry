@@ -67,7 +67,8 @@ func accept_idle(sample: Dictionary) -> void:
 func can_sleep() -> bool:
 	return widget.state == "idle" and widget.rest_state == "idle" and widget.one_shot == "" \
 		and not widget.speech.playing and not widget.bubble.speaking \
-		and widget.reactions.recipe == "" and not widget.dragging and not widget.menu.visible
+		and widget.reactions.recipe == "" and not widget.dragging and not widget.menu.visible \
+		and (widget.wander == null or not widget.wander.walking)
 
 func tick(delta: float) -> void:
 	if not can_sleep():

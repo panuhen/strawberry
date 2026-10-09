@@ -4,12 +4,32 @@
 `strawberry_v2.blend` is the editable scene, and `build_strawberry.py` (with `eye_claw_geometry.py`)
 is the procedural source it was built from: no textures, no external assets, no add-ons.
 
-One armature, six bones (`root`, `body`, `eyestalk_L`, `eyestalk_R`, `claw_arm_L`, `claw_arm_R`), 17
-meshes, six flat-colour materials, and seven clips (`idle_loop`, `listen_loop`, `think_loop`,
-`talk_base`, `dance_loop`, `alert_snap`, `notify_perk`, plus `sleep_enter` / `sleep_loop` /
-`wake_up`). Morphs: `blink`, `squint`, `eye_wide`, `claw_open_L`, `claw_open_R`, `squash`,
-`leg_tuck` per leg. No clip animates the claw morphs: the clack is driven live from the audio
-(WIRING.md §9 holds the contract the daemon and widget rely on).
+One armature, 20 bones: `root`, `body`, `eyestalk_L/R`, `claw_arm_L/R`, a pincer per lower claw
+(`pincer_L/R`, under the claw arm) and two per leg (`leg_L1_upper`, `leg_L1_lower` … `leg_R3_lower`;
+legs numbered front to back, the upper under `body`, the lower under its upper). 17 meshes, six
+flat-colour materials, and ten clips (`idle_loop`, `listen_loop`, `think_loop`, `talk_base`,
+`dance_loop`, `alert_snap`, `notify_perk`, `sleep_enter`, `sleep_loop`, `wake_up`). Morphs: `blink`,
+`squint`, `eye_wide`, `happy`, `squash`. No clip animates the pincers: the clack is driven live from
+the audio (WIRING.md §9 holds the contract the daemon and widget rely on).
+
+## The rig
+
+Every mesh but the legs follows one bone with weight 1 (`rigid_check` asserts it, posed). The
+pincer's head is the lower claw's `hinge` and its local X is the front axis, so opening is a turn
+about X; at 48° it gives exactly the shape the old `claw_open` key did (asserted too). A leg is one
+tube from root to toe around a rounded knee (`curved_leg`): rings up to the bend follow the upper
+bone, rings past it the lower, and the weight passes between them over `KNEE_BLEND` with smoothstep
+weights, so a bent knee stays round under the cel shading and the outline. Each leg bone's local X
+is the leg plane's normal, the knee's hinge.
+
+The clips pose the legs by where each toe should be (`pose_leg`: two-bone IK in the body's rest
+frame, the knee bending the way it bends at rest, the reach clamped). The targets reproduce the old
+keys: `tuck_toe` pulls a toe toward its root as `leg_tuck` did (`notify_perk`'s hop,
+`dance_loop`'s alternating lifts), and `fold_toe` (asleep) splays the toes out and down beside the
+lowered body. `idle_loop` shifts her weight from side to side with every toe `planted` where it
+stands, and in `think_loop` the front left toe taps four times a loop (`tap_lift`). A toe at rest
+leaves both bones at identity, so the rest pose is the mesh as built. Everything else the legs do
+(taps and stomps on the beat, crouches, the gait) is procedural in the widget (WIRING.md §13).
 
 ## Easing
 
@@ -22,11 +42,12 @@ layers use the same curves (`widget/easing.gd`).
 
 ## Rebuild
 
-Headless, on the saved scene (reruns the clips, saves the scene, writes the GLB):
+Headless, on the saved scene (rebuilds the rig, the morphs and the clips, saves the scene, writes the
+GLB; `--phase 6` reruns only the clips; `--factory-startup` keeps the user's add-ons out of it):
 
 ```bash
-blender -b model/strawberry_v2.blend --python model/build_strawberry.py -- \
-  --phase 6 --save --export widget/strawberry_v2.glb
+blender -b --factory-startup model/strawberry_v2.blend --python model/build_strawberry.py -- \
+  --phase 4 --save --export widget/strawberry_v2.glb
 godot --headless --path widget --editor --import
 ```
 

@@ -169,17 +169,18 @@ func run() -> void:
 	await calm()
 	await tap(aim(spots.claw_R[0]))
 	check(touch.recipe == "pinch", "a claw should pinch back, got %s" % touch.recipe)
-	var pinch := await peak_over(1.0, func(): return morph("mesh_claw_lower_R", "claw_open_R"))
+	var pinch := await peak_over(1.0, func(): return widget.claw_controller.value(1))
 	report["pinch_open"] = snappedf(pinch, 0.01)
-	check(pinch > 0.4 and morph("mesh_claw_lower_L", "claw_open_L") < 0.01, "the touched claw (only) should snap, %.2f" % pinch)
+	check(pinch > 0.4 and widget.claw_controller.value(0) < 0.01, "the touched claw (only) should snap, %.2f" % pinch)
 	await calm()
-	await wait(0.1)
-	check(morph("mesh_claw_lower_R", "claw_open_R") < 0.01, "the claw should close after the pinch")
+	await wait(0.25)
+	check(widget.claw_controller.value(1) < 0.01, "the claw should close after the pinch")
 	await tap(aim(spots.claw_L[0]))
 	check(touch.recipe == "claw_wave", "every other claw poke is a wave, got %s" % touch.recipe)
 	await calm()
 
-	# 6. Pokes in a row: curious, then annoyed (alert_snap), then the scuttle hook.
+	# 6. Pokes in a row: curious, then annoyed (alert_snap), then the scuttle. Headless there is no window
+	# to move (validate_legs.gd gives her a stand-in desktop and sees her go), so here she stays annoyed.
 	var shots: int = widget.one_shots_played
 	for i in 2:
 		await tap(shell)
@@ -193,7 +194,7 @@ func run() -> void:
 		await wait(0.2)
 		await tap(shell)
 	report["streak"] = touch.streak
-	check(touch.scuttles == 1 and scuttle_signals[0] == 1 and touch.last_level == 2, "the sixth should ask for the scuttle hook and stay annoyed")
+	check(touch.scuttles == 1 and scuttle_signals[0] == 1 and touch.last_level == 2, "the sixth should try to scuttle; with no window to move she stays annoyed")
 	await calm()
 
 	# 7. Nothing over a line, a run or the step chip: only a blink.
@@ -202,7 +203,7 @@ func run() -> void:
 	shots = widget.one_shots_played
 	await tap(shell)
 	check(touch.recipe == "noticed" and widget.one_shots_played == shots and widget.state == "talking", "a poke while she talks is only noticed")
-	check(morph("mesh_claw_lower_L", "claw_open_L") < 0.01, "a poke while she talks leaves the claws alone")
+	check(widget.claw_controller.value(0) < 0.01, "a poke while she talks leaves the claws alone")
 	widget.bubble.hide()
 	widget.bubble.speaking = false
 	widget.set_state("idle")
