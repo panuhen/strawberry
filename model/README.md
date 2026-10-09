@@ -26,7 +26,10 @@ The clips pose the legs by where each toe should be (`pose_leg`: two-bone IK in 
 frame, the knee bending the way it bends at rest, the reach clamped). The targets reproduce the old
 keys: `tuck_toe` pulls a toe toward its root as `leg_tuck` did (`notify_perk`'s hop,
 `dance_loop`'s alternating lifts), and `fold_toe` (asleep) splays the toes out and down beside the
-lowered body. A toe at rest leaves both bones at identity, so the rest pose is the mesh as built.
+lowered body. `idle_loop` shifts her weight from side to side with every toe `planted` where it
+stands, and in `think_loop` the front left toe taps four times a loop (`tap_lift`). A toe at rest
+leaves both bones at identity, so the rest pose is the mesh as built. Everything else the legs do
+(taps and stomps on the beat, crouches, the gait) is procedural in the widget (WIRING.md §13).
 
 ## Easing
 

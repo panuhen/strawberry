@@ -25,6 +25,17 @@ package and the widget binary.
   ✕ always wins. *Touch reactions* in her menu (on by default) turns it off; *Talk when poked*
   (off by default) lets her answer a poke now and then with a short line of her own (the widget
   sends `poked`, PROTOCOL.md §6; the lines are fixed, no model is asked).
+- Her legs move. She taps and stomps to the beat (a front leg tapping in bounce and groove, a
+  side's legs stomping in rave, both front legs with the nod in headbang), crouches before a
+  double hop and bends her knees landing, trembles her legs in a shiver, goes on tiptoe to peek,
+  scrabbles when tickled and settles into a long hold. Idle, she shifts her weight from side to
+  side; thinking, she taps a foot; asleep, her legs fold. Her toes stay planted while her body
+  moves above them.
+- She walks. Drag her and her legs scuttle sideways at the drag's speed. *Wander* in her menu (on
+  by default): every 5 to 15 minutes she walks a short way on her own, away from the nearer edge
+  of her monitor, or either way (sometimes out and back) from the middle. She stays on her monitor,
+  never walks while she is busy, talking, dancing, asleep, showing a card or being touched, and
+  stops at once if any of that starts. Poke her six times in a row and she scuttles a step away.
 
 - Runs you can watch and stop. Every sentence she handles, and every notification she reacts to,
   is a run with its steps: how the gate read it, thinking, each tool call and how long it took,
@@ -225,6 +236,8 @@ package and the widget binary.
 
 ### Fixed
 
+- Dance styles: for the beat before each new tempo estimate's `next_beat` the beat's parity came
+  out as −1, so the rave's arms pumped together and the groove's right claw skipped its pump.
 - She can read a page from her web search again. With web-mcp the adapter took each result's
   snippet for its URL, so every page read was refused and she answered from snippets alone. The
   results' URLs are now read from the server's whole answer, before it is compacted and cut
