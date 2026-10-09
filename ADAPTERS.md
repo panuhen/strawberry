@@ -39,13 +39,29 @@ misread a sentence and these cannot be taken back. When the brain calls one, the
 she says what she is about to do in one line ("Shall I go ahead with delete note? Say yes.", or the
 adapter's own wording) and keeps the call exactly as it was. The user's next sentence decides: a
 yes (yes, sure, do it, go ahead…) makes that one call with those arguments and no model is asked
-again; a no, any other sentence, or no answer within `[actions] confirm_s` (10 s, not counted while
+again; a no, any other sentence, or no answer within `[approvals] change_s` (10 s, not counted while
 she is listening) leaves it undone and she says so, and any other sentence is then handled as
-usual. Only the user's own sentence (spoken or typed) can answer: a notification, a media change, a
-tool result or a web page never can. Without the key a server gets its adapter's list (`confirm`
-on the adapter; the Spotify one asks about its two removals) or none; `confirm = []` asks about
-nothing. A tool can be on both lists, on one, or on neither. `/health.confirm` shows what she is
-waiting for.
+usual. Only the user's own sentence (spoken or typed) can answer, or the user's own click: her card
+on a body that declared it can show approvals, and the Brain UI (WIRING §19); a notification, a
+media change, a tool result or a web page never can. Without the key a server gets its adapter's
+list (`confirm` on the adapter; the Spotify one asks about its two removals) or none; `confirm = []`
+asks about nothing. A tool can be on both lists, on one, or on neither. `/health.confirm` shows what
+she is waiting for.
+
+Every tool also has an approval tier: `read`, `change`, `sends` (something reaches other people, or
+leaves the machine for someone: a message, an email) or `destructive` (deletes, or cannot be
+undone). A `sends` or `destructive` call is always asked about, confirm list or not, and waits 30 s
+(`sends_s`, `destructive_s`); on her card its yes is a press-and-hold. The tier comes from
+`[approvals] risk` (`"notes.send" = "sends"`, or a whole `"notes" = "read"`), taken as written; else
+from the adapter (`risks = {"send": "sends"}`; its `reads`, and every tool of a look-up-only
+server, are `read`); else it is `change`. A server that marks a tool `destructiveHint` raises it to
+`destructive`; an annotation never lowers a tier, so `readOnlyHint` does not make a tool `read`
+here. The card shows one line, the adapter's `describe` (by default her question without "Say
+yes."), cut to 160 characters, and goes on the bus to every body that shows approvals. **Rule for
+`sends` and `destructive` tools:** neither `describe` nor the question `ask` writes may carry free
+text from the arguments: no message body, no note text, nothing being sent. Naming the target is
+fine (the song, the playlist, the recipient's display name): "Send your message to Sam?", never
+"Send 'running late, sorry' to Sam?".
 
 Check it: `strawberry tools` lists everything she can reach, `strawberry tool notes search
 '{"q": "garden"}'` calls one by hand, and `/health.tools` shows each server's state and which
@@ -76,7 +92,8 @@ An adapter is for a server you use every day, where the generic path is not good
 | `max_calls` | how many calls to its tools one sentence may make |
 | `untrusted`, `guard`, `forward`, `screen`, `observe` | its results are strangers' text: what may follow one, in what form a call is sent, and a last check that may wait on the network |
 | `claims_tools` | tool names that give a server this adapter whatever it is called |
-| `confirm`, `ask`, `done` | the tools asked about before they run (when the config has no `confirm`), the question with the call pinned ("current" as the playing track), and the sentence after the yes |
+| `confirm`, `ask`, `describe`, `done` | the tools asked about before they run (when the config has no `confirm`), the question with the call pinned ("current" as the playing track), the one line her approval card shows (by default the question without "Say yes."), and the sentence after the yes |
+| `risks`, `risk` | each tool's approval tier where it is not the default: `sends` or `destructive` always wait for a yes (WIRING §19); `reads` and a `looks_up_only` adapter's tools are `read`, the rest `change`. `[approvals] risk` in the config decides over it |
 | `title`, `labels` | how the widget's step chip names a call while it runs: the adapter's words for a tool ("searching the web…"), else `<title>: <tool>` ("Spotify: play"); written by you, never from an argument (WIRING §18) |
 | `reads` | tools that only look things up: a stop drops one at once, where any other call is let finish first. A tool the server marks `readOnlyHint` counts too, and so does every tool of a `looks_up_only` adapter |
 
@@ -189,7 +206,9 @@ says "Removed Teardrop by Massive Attack from Gym." or that it was not on the pl
 Songs removal whose ID the server could not read (the model made one up from the track's name) is
 sent back to the model to look the track up first, so the question names a track a yes can remove.
 `confirm = []` in the table turns the question off; `confirm = ["remove_saved_tracks"]` keeps it
-for one of them.
+for one of them. Both are of the `change` tier (a track can be added back): a 10 s wait and a plain
+tap on her card. `[approvals] risk = { "spotify.remove_saved_tracks" = "destructive" }` makes one
+wait 30 s for a held yes instead, and asks about it even with `confirm = []`.
 
 The library by name (spotify-mcp's `like_current`, `add_current_to_playlist`, `find_playlist`,
 `remove_from_playlist`, `create_playlist`, `play_liked`, and `play` with `playlist`):

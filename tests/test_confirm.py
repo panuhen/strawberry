@@ -72,14 +72,19 @@ def test_the_config_key_is_checked(tmp_path):
 
     config = loads('[tools.servers.spotify]\ntopic = "music"\ncommand = "spotify"\nconfirm = ["remove_saved_tracks"]\n')
     assert config.tools.servers["spotify"]["confirm"] == ["remove_saved_tracks"]
-    assert config.actions.confirm_s == 10.0
+    assert config.approvals.change_s == 10.0
     with pytest.raises(ConfigError, match="confirm must be a list"):
         loads('[tools.servers.spotify]\ncommand = "spotify"\nconfirm = "remove_saved_tracks"\n')
-    with pytest.raises(ConfigError, match="confirm_s"):
+    with pytest.raises(ConfigError, match="change_s"):
+        loads("[approvals]\nchange_s = 0\n")
+    # The old [actions] confirm_s is read as [approvals] change_s (and checked as it).
+    assert loads("[actions]\nconfirm_s = 4.0\n").approvals.change_s == 4.0
+    with pytest.raises(ConfigError, match="change_s"):
         loads("[actions]\nconfirm_s = 0\n")
+    assert loads("[actions]\nconfirm_s = 4.0\n[approvals]\nchange_s = 7.0\n").approvals.change_s == 7.0
     # The shipped template documents both, and still loads.
     assert "# confirm = [\"remove_from_playlist\", \"remove_saved_tracks\"]" in default_toml()
-    assert loads(default_toml()).actions.confirm_s == 10.0
+    assert loads(default_toml()).approvals.change_s == 10.0
 
 
 def thinker_over(script: list, **server: Any):
@@ -175,7 +180,7 @@ async def test_an_adapter_that_fails_to_word_it_still_holds_the_call_as_it_came(
 def daemon_over(script: list, routes: dict[str, Any] | None = None, confirm_s: float = 10.0, **server: Any):
     spotify, toolbox, actor, qwen, thinker = thinker_over(script, **server)
     config = plain_config()
-    config.actions.confirm_s = confirm_s
+    config.approvals.change_s = confirm_s
     config.thinker = ThinkerConfig(ack_after_s=30.0, still_on_it_s=60.0)
     thinker.config = config.thinker
     gate = ScriptedGate({REMOVE: reading(REMOVE, kind="request", topic="music", decision="offer", tool="other",

@@ -561,6 +561,8 @@ class SpotifyAdapter(Adapter):
                     "set_volume", "shuffle")
     guide = GUIDE
     confirm = CONFIRM
+    # No `risks`: the removals are `change` (a track can be added back), asked about through `confirm`
+    # with the short wait; `[approvals] risk` can make them `destructive` (a 30 s wait, a hold on the card).
     title = "Spotify"
     # Only look things up: a cancel stops waiting for these at once (runs.py); the rest finish first.
     reads = ("search", "get_current_track", "get_playback_state", "get_queue", "get_devices", "get_playlists",

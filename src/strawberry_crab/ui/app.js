@@ -19,6 +19,7 @@
     routes: [],
     runs: [],
     runEvents: true,
+    approvals: { open: null, history: [] },
     logging: false,
     data: null,
     settings: null,
@@ -483,6 +484,10 @@
     else if (e.type === "tool.completed") {
       text = `${e.tool || "tool"} ${e.ok ? "ok" : e.error || "failed"}${typeof e.duration === "number" ? ` ${e.duration.toFixed(2)} s` : ""}`;
       kind = e.ok ? "good" : "warn";
+    } else if (e.type === "approval.request") { text = `asks for a yes (${e.risk || dash})`; kind = "berry"; }
+    else if (e.type === "approval.resolved") {
+      text = `answer: ${e.answer || dash}${e.by ? ` by ${e.by}` : ""}`;
+      kind = e.answer === "yes" ? "good" : "warn";
     } else if (e.type === "speaking") text = `speaking ${num(e.duration, 1)} s`;
     else if (TERMINAL[e.type]) {
       text = `${TERMINAL[e.type]}: ${e.outcome || e.error || e.reason || dash}`;
@@ -505,32 +510,77 @@
       .catch((e) => { toast(e.message, true); button.disabled = false; });
   }
 
+  // The approval she is waiting on, with Yes and No: the fallback for her card and her question.
+  function answerApproval(button, approvalId, answer) {
+    button.disabled = true;
+    api("approval", { approval_id: approvalId, answer })
+      .then(() => { toast(answer === "yes" ? "Yes sent." : "No sent."); refreshRuns(); })
+      .catch((e) => { toast(e.message, true); refreshRuns(); });
+  }
+
+  function pendingApproval() {
+    const a = state.approvals.open;
+    if (!a) return null;
+    const left = typeof a.expires_in === "number" ? `${Math.ceil(a.expires_in)} s left when loaded` : null;
+    return el("div", { class: "approval" },
+      el("p", { class: "prompt", text: a.prompt || a.tool }),
+      el("p", { class: "dim" }, chip(a.risk, a.risk === "change" || a.risk === "read" ? null : "warn"), ` ${a.tool} · ${a.approval_id} for ${a.run_id}`,
+        left ? ` · ${left}` : null, a.hold ? " · a hold on her card" : null),
+      el("div", { class: "actions" },
+        actionButton("Yes", (b) => answerApproval(b, a.approval_id, "yes"), "primary"),
+        actionButton("No", (b) => answerApproval(b, a.approval_id, "no"), "danger")));
+  }
+
   function renderRuns() {
     const root = $("#runs");
     const rows = state.runs.map((r) => {
       const events = r.events || [];
       const t0 = events.length ? events[0].t : null;
       const going = !r.outcome;
+      const rate = going && typeof r.rate === "number" ? el("span", { class: "sub", text: `${r.rate.toFixed(0)} tokens/s` }) : null;
       return el("tr", { class: state.freshRuns.has(r.run_id) ? "fresh" : null },
         td([clock(r.at), el("span", { class: "sub", text: r.run_id })]),
         td(r.source || dash),
         el("td", null, el("div", { class: "steps" }, events.map((e) => stepChip(e, t0)))),
         td((r.tools || []).length ? r.tools.join(", ") : dash),
-        td(going ? chip(r.state || "going", "berry") : chip(`${r.outcome}${r.detail ? `: ${r.detail}` : ""}`,
+        td(going ? [chip(r.state || "going", "berry"), rate] : chip(`${r.outcome}${r.detail ? `: ${r.detail}` : ""}`,
           r.outcome === "completed" ? "good" : "warn")),
         td(runDuration(r), "num"),
         td(going && r.foreground !== false ? actionButton("Cancel", (b) => cancelRun(b, r.run_id), "small danger") : null));
     });
-    root.replaceChildren(panel("Runs", "each sentence she handles, step by step; newest first",
-      state.runEvents ? null : el("p", { class: "note", text: "Run events are off ([runs] events = false): runs show once they end." }),
-      table(["Time", "From", "Steps", "Tools", "Outcome", { label: "Duration", num: true }, ""], rows,
-        { empty: "No runs since the daemon started. Say something, or type to her." })));
+    const history = (state.approvals.history || []).map((a) => el("tr", null,
+      td([clock(a.at), el("span", { class: "sub", text: a.approval_id })]),
+      td(a.run_id || dash),
+      td(a.tool),
+      td(chip(a.risk, a.risk === "change" || a.risk === "read" ? null : "warn")),
+      td(chip(a.outcome || "open", a.outcome === "yes" ? "good" : a.outcome ? "warn" : "berry")),
+      td(a.by || dash),
+      td(`${num(a.waited, 1)} s`, "num")));
+    root.replaceChildren(...[
+      state.approvals.open ? panel("Waiting for a yes", "she asked first; answer here if her card and her question are out of reach",
+        pendingApproval()) : null,
+      panel("Runs", "each sentence she handles, step by step; newest first",
+        state.runEvents ? null : el("p", { class: "note", text: "Run events are off ([runs] events = false): runs show once they end." }),
+        table(["Time", "From", "Steps", "Tools", "Outcome", { label: "Duration", num: true }, ""], rows,
+          { empty: "No runs since the daemon started. Say something, or type to her." })),
+      panel("Approvals", "the calls she asked about first and how each was answered; never what they carried",
+        table(["Time", "Run", "Tool", "Risk", "Outcome", "By", { label: "Waited", num: true }], history,
+          { empty: "Nothing asked about since the daemon started." }))].filter(Boolean));
     state.freshRuns.clear();
   }
 
   // A step from the stream: the run it belongs to is updated in place (or started, if it is new).
+  let approvalsSoon = null;
   function onRunStep(e) {
     let r = state.runs.find((x) => x.run_id === e.run_id);
+    if (e.type === "token_rate") {   // a gauge, not a step: shown beside the run's state
+      if (r && typeof e.tokens_per_s === "number") { r.rate = e.tokens_per_s; rerender("runs"); }
+      return;
+    }
+    if (e.type === "approval.request" || e.type === "approval.resolved") {
+      clearTimeout(approvalsSoon);
+      approvalsSoon = setTimeout(refreshRuns, 150);   // the open one and the history come from the API
+    }
     if (!r) {
       r = { run_id: e.run_id, source: e.source, at: Date.now() / 1000, events: [], tools: [], outcome: null,
             state: "routing", foreground: e.source !== "notification" };
@@ -775,6 +825,7 @@
       const r = await api("runs");
       state.runEvents = r.events;
       state.runs = r.runs.slice(0, MAX_RUNS);
+      state.approvals = r.approvals || { open: null, history: [] };
     } catch (e) { /* the stream will say */ }
     rerender("runs");
   }

@@ -200,8 +200,8 @@ class ActionsConfig:
     reflex: float = 0.6            # tool confidence at which a plain command fires the tool directly
     argument: float = 0.5          # p(has_argument) above this needs the thinker (Qwen) to fill it in
     timeout_s: float = 25.0        # the whole action, tools included; then she says it failed
-    confirm_s: float = 10.0        # how long she waits for a yes to a tool on a server's `confirm` list
-                                   # (confirm.py); not counted while she is listening to the answer
+                                   # (how long she waits for a yes is [approvals] change_s now; an old
+                                   # `confirm_s` here is read as it, _migrate_actions)
     ledger_turns: int = 6          # her memory: this many recent exchanges…
     ledger_age_s: float = 600.0    # …no older than this, given to both models
 
@@ -214,6 +214,8 @@ class ThinkerConfig:
     model: str = ""                # "" = brain.action_model
     think: bool | str = False      # Ollama: false | "low" | "medium" | true (= xhigh); off: the gate routed already
     keep_alive: int | str = "30m"  # stays loaded this long after a request; a cold load is 7-17 s
+    stream: bool = True            # read Ollama's reply as it is written, to count the run's tokens per
+                                   # second (token_rate, numbers only); false: one reply at the end
     num_ctx: int = 8192
     num_predict: int = 300
     max_tools: int = 30            # more schemas than this and the list is cut: the gate's topic first,
@@ -258,6 +260,28 @@ class RunsConfig:
     keep: int = 50                 # finished runs kept in memory for the Brain UI
 
 
+RISKS = ("read", "change", "sends", "destructive")
+
+
+@dataclass
+class ApprovalsConfig:
+    """Approvals (WIRING.md §19): a call she asks about first waits for a yes, bound to that exact call.
+    A yes is needed for a server's `confirm` list and for every call of the `sends` or `destructive`
+    tier; no answer in time is a no."""
+
+    change_s: float = 10.0         # how long she waits for a yes to a `change` call (or a listed `read`)…
+    sends_s: float = 30.0          # …to one that sends something to someone (a message, an email)…
+    destructive_s: float = 30.0    # …and to one that deletes or cannot be undone. Not counted while she
+                                   # is listening to the answer…
+    grace_s: float = 10.0          # …for at most this much longer past the wait (a stuck mic cannot hold it open)
+    hold: list[str] = field(default_factory=lambda: ["sends", "destructive"])
+                                   # tiers whose yes on a body's card must be a press-and-hold
+    # A tool's tier, by "server.tool" or a whole "server": read | change | sends | destructive, taken as
+    # written. Without one: the adapter's own tier, else `change`, raised to `destructive` when the server
+    # marks the tool destructiveHint (an annotation only ever raises a tier).
+    risk: dict[str, str] = field(default_factory=dict)
+
+
 @dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
@@ -273,6 +297,7 @@ class Config:
     thinker: ThinkerConfig = field(default_factory=ThinkerConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
     runs: RunsConfig = field(default_factory=RunsConfig)
+    approvals: ApprovalsConfig = field(default_factory=ApprovalsConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -290,6 +315,7 @@ class Config:
             "thinker": asdict(self.thinker),
             "learning": asdict(self.learning),
             "runs": asdict(self.runs),
+            "approvals": asdict(self.approvals),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -309,6 +335,7 @@ _SECTIONS = {
     "thinker": ThinkerConfig,
     "learning": LearningConfig,
     "runs": RunsConfig,
+    "approvals": ApprovalsConfig,
 }
 
 
@@ -423,8 +450,25 @@ def _validate(config: Config) -> None:
         raise ConfigError("actions.reflex and actions.argument must be between 0 and 1")
     if config.actions.ledger_turns < 1 or config.actions.ledger_age_s <= 0:
         raise ConfigError("actions.ledger_turns >= 1 and actions.ledger_age_s > 0 are required")
-    if config.actions.confirm_s <= 0:
-        raise ConfigError("actions.confirm_s must be positive (how long she waits for a yes)")
+    approvals = config.approvals
+    if min(approvals.change_s, approvals.sends_s, approvals.destructive_s) <= 0:
+        raise ConfigError("approvals.change_s, sends_s and destructive_s must be positive (how long she waits for a yes)")
+    if approvals.grace_s < 0:
+        raise ConfigError("approvals.grace_s must not be negative")
+    if not all(tier in RISKS for tier in approvals.hold):
+        raise ConfigError(f"approvals.hold must list tiers of {', '.join(RISKS)}")
+    # `spotify.remove_saved_tracks = "…"` unquoted in a [approvals.risk] table is a nested table in TOML.
+    flat: dict[str, Any] = {}
+    for key, tier in approvals.risk.items():
+        if isinstance(tier, dict):
+            flat |= {f"{key}.{tool}": inner for tool, inner in tier.items()}
+        else:
+            flat[key] = tier
+    approvals.risk = flat
+    for key, tier in approvals.risk.items():
+        if not key.strip() or tier not in RISKS:
+            raise ConfigError(f"approvals.risk.{key} must be one of {', '.join(RISKS)} "
+                              "(a key is \"server.tool\" or \"server\")")
     if config.thinker.max_rounds < 1 or config.thinker.timeout_s <= 0 or config.thinker.num_ctx < 1024:
         raise ConfigError("thinker.max_rounds >= 1, timeout_s > 0 and num_ctx >= 1024 are required")
     if not (1 <= config.thinker.num_predict <= config.thinker.num_ctx // 2):
@@ -471,6 +515,24 @@ def _migrate_notifications(values: dict[str, Any]) -> dict[str, Any]:
     return values
 
 
+def _migrate_actions(data: dict[str, Any]) -> dict[str, Any]:
+    """`[actions] confirm_s` (until brain step 6, stage 2) reads as `[approvals] change_s`, with a warning."""
+    actions = data.get("actions")
+    if not isinstance(actions, dict) or "confirm_s" not in actions:
+        return data
+    data, actions = dict(data), dict(actions)
+    old = actions.pop("confirm_s")
+    data["actions"] = actions
+    approvals = data.get("approvals") if isinstance(data.get("approvals"), dict) else {}
+    if "change_s" in approvals:
+        log.warning("config: actions.confirm_s is deprecated and ignored; approvals.change_s = %r is set",
+                    approvals["change_s"])
+    else:
+        data["approvals"] = approvals | {"change_s": old}
+        log.warning("config: actions.confirm_s is deprecated; read as approvals.change_s = %r (WIRING.md §19)", old)
+    return data
+
+
 def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     path = path or default_path()
@@ -480,6 +542,7 @@ def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
             data = tomllib.loads(path.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError as exc:
             raise ConfigError(f"{path}: {exc}") from exc
+        data = _migrate_actions(data)
         for section_name, values in data.items():
             if section_name not in _SECTIONS:
                 log.warning("config: unknown section [%s] ignored", section_name)
@@ -508,6 +571,7 @@ def default_toml() -> str:
     g = GateConfig()
     lr = LearningConfig()
     ru = RunsConfig()
+    ap = ApprovalsConfig()
     lines = [
         "# Strawberry settings. Every key is optional; these are the defaults.",
         "# Restart the daemon after editing: bin/strawberry stop && bin/strawberry daemon",
@@ -630,7 +694,6 @@ def default_toml() -> str:
         "enabled = true                 # the reflexes: skip, pause, what's playing… (needs [gate])",
         "mpris = true                   # do the bare music commands over MPRIS (SMTC on Windows) when no server covers them",
         "reflex = 0.6                   # how sure the gate must be to fire a plain command straight away",
-        "confirm_s = 10.0               # how long she waits for a yes to a tool on a server's confirm list",
         "ledger_turns = 6               # her memory: this many recent exchanges, given to whoever answers",
         "",
         "[thinker]",
@@ -638,6 +701,7 @@ def default_toml() -> str:
         'model = ""                     # empty = brain.action_model',
         'think = false                  # false | "low" | "medium" | true; off is fine, the gate already routed',
         'keep_alive = "30m"             # a cold load is 7-17 s; she says an acknowledgement while it happens',
+        "stream = true                  # read the reply as it is written (tokens per second for the widget)",
         "max_tools = 30                 # more tool schemas than this and the least likely are cut (§8b)",
         "",
         "[learning]",
@@ -668,6 +732,18 @@ def default_toml() -> str:
         f"events = {str(ru.events).lower()}                  # send the steps to the widget and the Brain UI",
         f"supersede = {str(ru.supersede).lower()}               # a new sentence stops the one she is on (not a yes or no to her question)",
         f"keep = {ru.keep}                      # finished runs the Brain UI can show",
+        "",
+        "[approvals]",
+        "# Some calls wait for your yes first, bound to that exact call: a server's confirm list, and every",
+        "# call that sends something to someone (sends) or deletes or cannot be undone (destructive). Say or",
+        "# type yes or no, answer the card in her bubble, or use the Brain UI. No answer in time is a no.",
+        f"change_s = {ap.change_s}                # how long she waits for a yes to a change (Spotify's removals)",
+        f"sends_s = {ap.sends_s}                 # …to a call that sends something",
+        f"destructive_s = {ap.destructive_s}           # …to one that deletes or cannot be undone",
+        f"grace_s = {ap.grace_s}                # while you are still answering, at most this much longer",
+        f"hold = {json.dumps(ap.hold)}   # on her card, a yes to these tiers is a press-and-hold",
+        '# risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }',
+        "#                              # a tool's (or a whole server's) tier: read | change | sends | destructive",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

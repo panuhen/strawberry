@@ -458,7 +458,7 @@ Read-only on a throwaway daemon (port 8783, temp dirs, every tool that changes a
 - Forced through the thinker instead, "add this to my favourites" called `like_current` 5/5 and "play my favourites" `play_liked` 5/5 (the old tools: `favorite_current` 5/5, `play_favorites` 5/5). Sentences the reflexes do not take get a line under them, as playlist sentences do ("They asked to play their favourites, which are their Liked Songs: do it with a tool call now. …"): "I think you should add this one to my favourites" and "put on some of my favourite songs while I work" 8/8. Naming the tool in that line ("call like_current now") was worse: 1/12. "Hey could you save this song to my favourites for later" was answered "Saved" with no call 4/6 even with the line: Qwen reads "for later" as no call now, so the reflexes take polite wrappers ("can/could/will you", "please") and "for later"; "would you like this song" stays a question. Small talk ("what's your favourite song", "would you like this song") made no call 6/6; "what are my favourites" read `get_saved_tracks` 3/3.
 - Known gap, not new: "I like this" forced through the thinker is answered "Saved" with no call (4/5 now, 5/5 on the old tools). Live it never gets there: the reflex takes it whenever the server lists `like_current`.
 
-**A spoken yes before a removal (2026-10-08, `strawberry/confirm.py`).** `careful` decides only whether the thinker is *offered* a tool, on the gate's `wants_library_change`; once offered, a misread sentence (or "remove this from my gym playlist" said loosely) removed at once with nothing said first. Now each server has a `confirm` list too: the config's `[tools.servers.<name>] confirm`, else its adapter's `confirm` (Spotify: `remove_from_playlist`, `remove_saved_tracks`), else none; `confirm = []` turns it off. In `Thinker._run`, a call to a listed tool that has passed every other check (offered, the guards, `forward`, `screen`) is not made: `confirm.hold` asks the adapter's `ask` for her line and the arguments to keep, the thinker returns at once with that line as her reply and the `Held` call on the `Outcome` (the rest of that reply's calls are not made, no second round); the ledger keeps a placeholder for the line, not her words. The Spotify `ask` pins what could change by the answer: `track = "current"` (the server's own words for it) becomes the playing track's URI, a playlist name with exactly one `find_playlist` match becomes its URI and is said by its own name ("Remove 'Teardrop' from Gym? Say yes."); both are read-only calls. The daemon keeps one `held` call and a timer of `[actions] confirm_s` (10 s) from when she asked, paused while the listener is busy (the answer is being recorded or transcribed). The next sentence through `_handle_voice`, before the gate, is the answer: `confirm.answer` reads the whole sentence against word lists (yes / no / filler phrases, multi-word first), so "yes, go ahead" is a yes, "okay, never mind" a no, and "yes and play some jazz" or "thank you" (what whisper often hears in silence) neither. A yes makes the held call exactly (`toolbox.call(server, name, arguments)`), and the adapter's `done` writes the fact ("Removed Teardrop by Massive Attack from Gym.") with the usual quip after it; no model is asked again. A no says "Okay, I've left it." and stops there. Any other sentence drops the held call and is handled as usual, with "I've left that, then." said first as part of the same line (the widget cuts a line short when the next arrives, so a reflex 0.3 s later would have swallowed a separate one). No answer: "No answer, so I've left it.", also kept in the ledger. A bare yes or no in the minute after a timeout or a no gets a fixed line ("I've already left that one. Ask me again if you still want it.") and not the thinker: live, with her question in the ledger, Qwen answered a late "yes" with "Removed Teardrop from Gym." and a `play` call, removing nothing. Only `source: voice` events reach `_handle_voice` (spoken, typed into the widget, or posted by a local process as the user, which could as well have asked for the removal itself); notifications, media, git and action events, tool results and web pages have no path to it. `/health.confirm` has the held tool (never its arguments) and the wait; the log names the tool only. `strawberryd --think` never makes a held call. Measured live on a throwaway daemon (port 8791, temp dirs, a stand-in MCP server with the Spotify tool names, `qwen3.8:27b`): "take this off my gym playlist" and "remove this from my liked songs" were held and asked about by the playing track's name; "Sure, do it." made exactly the held call; "skip this" while waiting said "I've left that, then. Skipped. Now Blue Monday by New Order."; a notification titled "yes" left the question open; silence dropped it after 10 s. Qwen first sent `remove_saved_tracks` a made-up ID ("spotify:track:teardrop-massive-attack"); the adapter's `guard` now sends it back to look the track up (`get_current_track`), and it then asked about the right one 2/2. With her question in the ledger in her words, Qwen copied it ("Remove Blue Monday from your Liked Songs? Say yes.") with no call held, so the ledger keeps it as `confirm.LEDGER_HELD` instead; after that, three rounds of ask/no, ask/silence/late yes, ask/yes held 9/9 asks and removed only after the three yeses. Tests: `tests/test_confirm.py` (fake Ollama, fake Spotify).
+**A spoken yes before a removal (2026-10-08, `strawberry/confirm.py`).** `careful` decides only whether the thinker is *offered* a tool, on the gate's `wants_library_change`; once offered, a misread sentence (or "remove this from my gym playlist" said loosely) removed at once with nothing said first. Now each server has a `confirm` list too: the config's `[tools.servers.<name>] confirm`, else its adapter's `confirm` (Spotify: `remove_from_playlist`, `remove_saved_tracks`), else none; `confirm = []` turns it off. In `Thinker._run`, a call to a listed tool that has passed every other check (offered, the guards, `forward`, `screen`) is not made: `confirm.hold` asks the adapter's `ask` for her line and the arguments to keep, the thinker returns at once with that line as her reply and the `Held` call on the `Outcome` (the rest of that reply's calls are not made, no second round); the ledger keeps a placeholder for the line, not her words. The Spotify `ask` pins what could change by the answer: `track = "current"` (the server's own words for it) becomes the playing track's URI, a playlist name with exactly one `find_playlist` match becomes its URI and is said by its own name ("Remove 'Teardrop' from Gym? Say yes."); both are read-only calls. The daemon keeps one `held` call and a timer of `[actions] confirm_s` (10 s) from when she asked, paused while the listener is busy (the answer is being recorded or transcribed). The next sentence through `_handle_voice`, before the gate, is the answer: `confirm.answer` reads the whole sentence against word lists (yes / no / filler phrases, multi-word first), so "yes, go ahead" is a yes, "okay, never mind" a no, and "yes and play some jazz" or "thank you" (what whisper often hears in silence) neither. A yes makes the held call exactly (`toolbox.call(server, name, arguments)`), and the adapter's `done` writes the fact ("Removed Teardrop by Massive Attack from Gym.") with the usual quip after it; no model is asked again. A no says "Okay, I've left it." and stops there. Any other sentence drops the held call and is handled as usual, with "I've left that, then." said first as part of the same line (the widget cuts a line short when the next arrives, so a reflex 0.3 s later would have swallowed a separate one). No answer: "No answer, so I've left it.", also kept in the ledger. A bare yes or no in the minute after a timeout or a no gets a fixed line ("I've already left that one. Ask me again if you still want it.") and not the thinker: live, with her question in the ledger, Qwen answered a late "yes" with "Removed Teardrop from Gym." and a `play` call, removing nothing. Only `source: voice` events reach `_handle_voice` (spoken, typed into the widget, or posted by a local process as the user, which could as well have asked for the removal itself); notifications, media, git and action events, tool results and web pages have no path to it. `/health.confirm` has the held tool (never its arguments) and the wait; the log names the tool only. `strawberryd --think` never makes a held call. Measured live on a throwaway daemon (port 8791, temp dirs, a stand-in MCP server with the Spotify tool names, `qwen3.8:27b`): "take this off my gym playlist" and "remove this from my liked songs" were held and asked about by the playing track's name; "Sure, do it." made exactly the held call; "skip this" while waiting said "I've left that, then. Skipped. Now Blue Monday by New Order."; a notification titled "yes" left the question open; silence dropped it after 10 s. Qwen first sent `remove_saved_tracks` a made-up ID ("spotify:track:teardrop-massive-attack"); the adapter's `guard` now sends it back to look the track up (`get_current_track`), and it then asked about the right one 2/2. With her question in the ledger in her words, Qwen copied it ("Remove Blue Monday from your Liked Songs? Say yes.") with no call held, so the ledger keeps it as `confirm.LEDGER_HELD` instead; after that, three rounds of ask/no, ask/silence/late yes, ask/yes held 9/9 asks and removed only after the three yeses. Tests: `tests/test_confirm.py` (fake Ollama, fake Spotify). *Since brain step 6, stage 2 (§19):* the run that asked waits for the answer instead of ending with the question, the timer is `[approvals] change_s` (the old `[actions] confirm_s` is read as it), and the answer can also come from her card on a body or the Brain UI; what she says at each turn is unchanged.
 
 **Why one brain (2026-09-22).** The tiers between the reflex and chat were where every live failure came from: a wrong reflex on a sentence that carried a name, "it's already playing" when she had misheard, and offers nobody had asked for. Gemma keeps what it is good at — the desktop events (§3, §4) and the quip after a reflex — and the user gets one voice for everything else. `[thinker] enabled = false` (the unit tests, `scripts/check_config.toml`, a machine without Qwen) falls back to the old Gemma chat path, so voice still works with a 1B model and no MCP servers.
 
@@ -796,7 +796,17 @@ max_share = 0.25                 # the user's labels weigh at most this share of
 events = true                    # each run's steps go to the bodies that ask (the widget's chip) and the Brain UI (§18)
 supersede = true                 # a new sentence stops the one she is on (never a yes or no to her question); false: it waits
 keep = 50                        # finished runs kept in memory for the Brain UI
+
+[approvals]
+change_s = 10.0                  # how long she waits for a yes to a `change` (the old [actions] confirm_s) (§19)
+sends_s = 30.0                   # …to a call that sends something to someone
+destructive_s = 30.0             # …to one that deletes or cannot be undone
+grace_s = 10.0                   # while the user is still answering, at most this much longer
+hold = ["sends", "destructive"]  # on her card, a yes to these tiers is a press-and-hold
+# risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }   # a tool's or a server's tier
 ```
+
+`[thinker] stream = true` (the default) reads Ollama's reply as it is written, only to count tokens for the run's `token_rate` (§19); `false` asks for one reply at the end, as before.
 
 `strawberry config` creates the file from a commented template (`strawberryd --init-config`) and opens it in `$EDITOR`; `strawberry restart` applies it; `strawberry config --init` only writes the template if missing and prints the path (the widget's *Settings file…* runs that). `STRAWBERRYD_PORT` still overrides the port for scripts. The widget's own preferences (skin, window position, …) are `~/.config/strawberry/widget.cfg` (§13).
 
@@ -822,6 +832,7 @@ src/strawberry_crab/          the package: contract, events/reactor, brain, spee
 src/strawberry_crab/doorways/ notify_watch.py, mpris_watch.py, beat_watch.py + beat_track.py with its captures beat_pipewire.py (Linux) and beat_loopback.py (Windows), smtc_watch.py and toast_watch.py (Windows), notifications.py (what both notification doorways share) (`strawberry-doorway <name>`, or python -m strawberry_crab.doorways.<name>; `for_system()` says which run where)
 src/strawberry_crab/assets/icons/  the tray icon PNGs (package data), rendered by scripts/render_icons.py
 src/strawberry_crab/runs.py  runs (§18): Run, RunBook, the event whitelist, `is_stop`; hub.py keeps a Body per socket (protocol v2)
+src/strawberry_crab/approvals.py  approvals (§19): ApprovalBook, the digest, `needed`; confirm.py words the question and keeps the call
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, turn.gd, touch.gd, easing.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), paths.gd (XDG, the CLI, the version), validate_*.gd
@@ -862,7 +873,7 @@ A local web page, served by the daemon, that shows what the router decides and w
 2. *Router live*: each sentence as it is handled: kind and topic with confidence, the decision, the tool and its confidence, what handled it (the reflex, the thinker and its tool calls, no_catalogue, chat), the gate's ms and the whole sentence's ms. `routefeed.py` keeps the last 100 in memory (`Daemon.feed`, filled in `handle_voice` beside the outcome log) and the page gets them over a stream.
 3. *Data and scores*: the training and held-out set sizes, the learned examples, what review and the privacy check removed, what the last run trained on and left out, and the held-out score of every head the loop built, as an SVG chart drawn by the page (no library) with the shipped head as a line.
 4. *Settings and privacy*: outcome logging, `log_sentences` and the notification body modes, each with what it means now and the line in `config.toml` that changes it; the learning settings; the whole effective config (env values and anything named like a secret shown as `(set)`). Read-only in this version. **Forget** (`Learning.forget`, optionally with every head) is here, behind a second click.
-5. *Runs* (§18): each run, newest first, with its steps as a timeline (routing and its path, thinking and the model, each tool started and completed with its duration and code, speaking, the end and why), the tools by name, the outcome and the duration, and **Cancel** on a run that is going on (the widget's ✕ by another way: `RunBook.cancel(…, "stopped")`). The stream's `run` events fill it as they happen; `GET /ui/api/runs` gives the last `[runs] keep`. Names and timings only: what the page gets is what `runs.emit` let through.
+5. *Runs* (§18): each run, newest first, with its steps as a timeline (routing and its path, thinking and the model, each tool started and completed with its duration and code, speaking, the end and why), the tools by name, the outcome and the duration, and **Cancel** on a run that is going on (the widget's ✕ by another way: `RunBook.cancel(…, "stopped")`). The stream's `run` events fill it as they happen (a `token_rate` shows beside the run's state, not as a step); `GET /ui/api/runs` gives the last `[runs] keep`. Names and timings only: what the page gets is what `runs.emit` let through. Above it, while she waits for a yes (§19), **Waiting for a yes**: the card's line, the tier, the tool, the time left when loaded, and **Yes** and **No** (the fallback for her card and her question); below it, **Approvals**: each one asked about, with its id, run, tool, tier, outcome, who answered and how long it waited, never the call's arguments.
 6. *System*: the version and uptime, where the gate embeds (ONNX or the Ollama fallback, and why), the scorer and the head in use with its thresholds, the reaction model, the thinker, speech, voice, the MCP servers and the trainer. `/health` has no VRAM or CPU figures, so neither does the page.
 
 **Routes.**
@@ -876,6 +887,7 @@ A local web page, served by the daemon, that shows what the router decides and w
 | `GET /ui/api/learning`, `routes`, `runs`, `data`, `settings`, `system` | JSON for each section | the page |
 | `GET /ui/api/events` | server-sent events: `route` (one entry, with its `run_id`), `run` (one run event, §18, with the run's `source`), `learning` (a file of the loop changed; the page asks again), a keep-alive comment every 15 s | the page |
 | `POST /ui/api/cancel` (`{run_id}`) | stops that run if it is going on (`{"cancelled": id}`), else 409 | the page |
+| `POST /ui/api/approval` (`{approval_id, answer}`) | a yes or no to the open approval (`{"answered": id, "answer": …}`); 409 with `reason` (`not_open`, `resolved`) when it is not open; `GET /ui/api/runs` carries `approvals` (`open`, with its line, and `history`) | the page |
 | `POST /ui/api/accept`, `reject` (`{version?}`), `rollback`, `use` (`{version}`), `review` (`{key, verdict}`), `train`, `forget` (`{confirm: "forget", everything}`) | `Learning`'s own calls; a refusal from it ("no candidate is waiting", "a training run is already going") is a 409 with the reason | the page |
 
 **The security model.** Every other route refuses any request with an `Origin` header (§2), so no web page the user visits can make her talk, read `/health` or open `/ws`. `/ui` is the one place a browser is let in, on these terms (`brainui.checked`, one decorator on every UI handler; `server.local_only` lets a handler through only when it carries the decorator's mark, so a new route cannot open itself by accident, and an unmatched path such as `/ui/../health` still meets the Origin rule):
@@ -920,8 +932,8 @@ call is one `tool.completed` with `error: "refused"`. `Daemon.perform` sends `sp
 line that answers the run going on in its task (`runs.active`, a context variable set in the run's
 own task), and first waits up to 0.5 s for the run's earlier events to go out, so a body sees them
 in order with the line. `RunBook.finish` sends the terminal event, once, from the `finally` of
-`handle_voice` (and of `handle_notification`). `confirm.hold` takes the run too: stage 2 sends
-`approval.request` there.
+`handle_voice` (and of `handle_notification`), or, for a run that waits for a yes, from the task
+that waits (§19).
 
 **What may go out.** `RunBook.emit` keeps, per event type, only the fields PROTOCOL §11 lists, as
 plain numbers, booleans and short strings, and codes only from their lists. A tool's arguments and
@@ -959,8 +971,9 @@ that to the sentence after it). The cover lines ("On it.", "Still on it.") are n
 is under way. `CancelledError` is caught nowhere on the way: the thinker catches only timeouts and
 its own errors, and the tool client only `ToolError`.
 
-**Not built yet (later stages):** approvals bound to the exact call (stage 2), `listening` events
-from the microphone, `token_rate`, several foreground runs, scheduled jobs.
+**Built in stage 2 (§19):** approvals bound to the exact call, the `listening` and `token_rate`
+gauges, the `didnt_catch` end. **Not built yet (later stages):** several foreground runs, scheduled
+jobs.
 
 Measured end to end (2026-10-09, a throwaway daemon on port 8797 with temp XDG dirs, the gate on
 Ollama's embeddinggemma, the real thinker, the fake Spotify (`python -m tests.fake_spotify`) and
@@ -981,3 +994,151 @@ the privacy canaries; the v1 golden bytes; welcome and the clock in pong; who ma
 UI's list, stream and Cancel), `tests/test_tools.py` (`readOnlyHint`, labels),
 `widget/validate_widget.gd` §18.
 
+
+---
+
+## 19. Approvals — `strawberry/approvals.py` (brain step 6, stage 2)
+
+Some calls wait for the user's yes, bound to that exact call. confirm.py (§8b) words the question
+and keeps the call; `approvals.py` keeps the one open question, who may answer it and how; the run
+that asked waits for it (§18).
+
+**What waits for a yes** (`approvals.needed`, asked in `Thinker._run` through
+`Toolbox.needs_approval`): a tool on its server's `confirm` list, and every call of the `sends` or
+`destructive` tier. Stage 3 adds every call that is not `read` once text from strangers is in the
+conversation: the hook is `needed(..., foreign=True)`, and nothing passes it yet. A reflex is a
+fixed call written in an adapter, never a `sends` or `destructive` one, and never waits.
+
+**The tiers** (`Server.risk`): `read`, `change`, `sends` (something reaches other people or leaves
+for someone: a message, an email), `destructive` (deletes, or cannot be undone). `[approvals] risk`
+decides first, by `"server.tool"` or a whole `"server"`, taken as written; else the adapter's
+(`Adapter.risk`: its `risks`, and `read` for its `reads` and every tool of a look-up-only server);
+else `change`. A tool the server marks `destructiveHint` is then raised to `destructive`. An
+annotation never lowers a tier: `readOnlyHint` makes no tool `read` here (a server cannot talk its
+way out of a yes), though a cancel still drops such a call at once (§18). MCP's default of
+`destructiveHint: true` for any tool that is not read-only is not applied: only a server that says
+it raises a tier. Spotify's two removals are `change` (a track can be added back): asked about
+through `confirm`, with the short wait.
+
+**The flow.** The thinker stops at the call and returns her question (`confirm.hold` gives the
+`Held` call its tier and the card's line, `Adapter.describe`, by default the question without "Say
+yes."). `Daemon._handle_voice` says the question (`speaking`), then `Daemon.hold` opens the
+approval on the run (`ApprovalBook.request`: `approval.request`, the run `awaiting_approval`) and
+hands the run to a task of its own (`Daemon._await_answer`), so the sentence's handler returns at
+once (the voice session ends, the hotkey is free for the answer). That task becomes `run.task`, the
+one `RunBook.cancel` stops, and it ends the run:
+
+| outcome | what happens |
+|---|---|
+| `yes` | a last look first: if the run was stopped, superseded or ended after the yes, nothing starts (below). Then the stored call is copied afresh and the copy checked against the digest (`confirm.run`; a mismatch is never made: "That changed while I waited, so I've left it.", `run.failed`), made between `tool.started` and `tool.completed`, shielded like any change (§18), and the adapter's `done` writes the fact with the quip after it (`Daemon.confirmed`); no model is asked again |
+| `no` | "Okay, I've left it." |
+| `timeout` | "No answer, so I've left it.", also in the ledger as `(no answer)` |
+| `superseded` | nothing; the newer sentence's line starts "I've left that, then." (`run.cancelled`, `superseded`) |
+| `cancelled` | the ✕, the Brain UI's Cancel or the daemon stopping: nothing is made (`run.cancelled`, `stopped` or `shutdown`) |
+
+**A stop between the yes and the call.** A ✕, a "stop" or a newer sentence can land after the yes
+and before the call starts. Then nothing is made: the approval keeps `yes` (it was the user's
+answer) with `made: false` in the Brain UI's history; on the bus the `yes` is followed by no
+`tool.started` and ends `run.cancelled`; she says "I stopped before doing it, so nothing changed."
+(for a newer sentence, ahead of its own line, and a "stop" says nothing over it), and the ledger
+keeps that too. Once the call has started it is let finish, as any change (§18).
+
+A late yes or no (within a minute of a no or a timeout) still gets the fixed line, not the thinker.
+
+**The call is bound.** `ApprovalBook.request` stores a deep copy of the call and its digest
+(sha256 of the server, the tool and the arguments, canonical JSON). Just before the call that copy
+is copied again, the new copy checked against the digest, and only it goes to the server and to the
+adapter's `done` (`confirm.run`), so neither a server nor an adapter can change the stored call. One
+approval is open at a time; a newer one supersedes it. Ids are `a-<boot>-<n>`, `<boot>` 6 random hex
+digits per start, so a card left over from before a restart cannot answer a new question. There is
+no "always allow".
+
+**Timeouts.** No answer is a no: `[approvals] change_s` (10 s; also for a listed `read`), `sends_s`
+and `destructive_s` (30 s). The clock starts once she has asked. If the user is speaking at the
+deadline (a voice capture or its transcription: the answer on its way), it waits once more, for at
+most `[approvals] grace_s` (10 s), then it is `timeout` whatever the microphone does: a stuck
+listener or a noisy room cannot hold a question open.
+
+**Who answers** (`ApprovalBook.answer`; the first answer wins, later ones are refused with
+`resolved`):
+
+- the user's own sentence, said or typed (`Daemon.handle_voice`): a yes or no read by
+  `confirm.answer` while an approval is open is **no run of its own**: it answers the run that asked,
+  which goes on, and the sentence returns that run's last line. Any other sentence supersedes the
+  question, whatever `[runs] supersede` says (nothing is under way), and is handled as usual. Any
+  tier; today's wording throughout;
+- a v2 body (her card in the widget): `approval.answer {approval_id, answer, hold}` (PROTOCOL §13b),
+  only from a body whose hello declared `approvals: true` and `sends.approval`, only for the open id;
+  for a tier in `[approvals] hold` (`sends`, `destructive`) a yes must say `hold: true` (the body
+  times the ~1 s press; the brain checks the flag). Anything else is `input.refused` (`not_declared`,
+  `not_open`, `resolved`, `bad_answer`, `hold_required`); a v1 body's is ignored. A body can only
+  answer: no message asks for a call;
+- the Brain UI (§17): `POST /ui/api/approval`, with the session and the CSRF header.
+
+Notifications, media and git events, tool results and web pages never answer: they have no path to
+any of the three.
+
+**What goes out.** `approval.request` (id, tier, the card's line, `timeout_s`, `expires_t`, `hold`)
+and `approval.resolved` (id, outcome, and `by` for a yes or no) are run events, whitelisted like the
+others (`runs.FIELDS`; the line is the one free-text field, cut to 160 characters, control
+characters removed). Only bodies with `capabilities.approvals` get them, and one that says hello
+while an approval is open gets it right after `welcome`. The call's arguments as they came, its
+result and the user's sentence never reach the bus, the Brain UI's approvals or a log line of
+`approvals.py` (it names the tool and the tier). The card's line is the exception by design: like
+her spoken question, which goes out as her line anyway, it can carry names an adapter took from the
+call (a song, a playlist, a recipient's display name). For `sends` and `destructive` tools it must
+not carry free text from the arguments, such as a message body (ADAPTERS.md, `Adapter.describe`).
+`/health.approvals` has the open id, its tier and counts per outcome; `/health.confirm` the held
+tool and the wait.
+
+**What this protects against, and what it does not.** Approvals stop the model's mistakes and
+misheard speech: a call the user did not mean is never made without their yes, and only the call
+asked about is made. They do not stop local code running with the user's privileges. Such a process
+can already ask for a call (a typed `heard` on the websocket, or `POST /event`) and then answer it
+with a typed "yes", and any body can claim `hold: true`; the bus has no secret today (§2: the Origin
+rule keeps browsers out, not local programs). A per-install secret for the bus is planned for step
+6, stage 3: a 0600 file the widget reads, required for the `approvals` and `sends` capabilities, for
+`heard`, `/event` and `/ui-token`. It is not built yet.
+
+**Open items** (known, not fixed in stage 2):
+
+- MCP tools whose adapter has no `log_result` still have their result's first 160 characters, and
+  their arguments as `logtext.arguments` shows them, in the log (stage 3 closes this);
+- reflexes do not consult the approval tiers (they are fixed calls in adapters; a config that raises
+  a reflex's tool to `sends` or `destructive` does not make the reflex ask);
+- a whole-server `[approvals] risk` entry (`"notes" = "change"`) is taken as written and so lowers a
+  tool the server marks `destructiveHint`; only the per-tool entry should be able to.
+
+**The gauges and `didnt_catch`.** `listening` (a voice capture `started` and `ended`, with how long it
+recorded and whether it heard speech; no run, no audio, no words) and `token_rate` (tokens a second
+while the thinker writes, at most 4 a second per run, and once per reply with Ollama's own count;
+`[thinker] stream` reads the reply as it is written for it, the text going nowhere else) are sent
+without `seq` and are not kept on the run (`RunBook.signal`, `RunBook.rate`; PROTOCOL §11d). A voice
+capture with nothing understood in it is a run of its own that says "Sorry, I didn't catch that." and
+ends `run.cancelled` with the reason `didnt_catch` (`Daemon.didnt_catch`); it is never the foreground
+run, so it stops nothing and leaves an open question waiting.
+
+Measured end to end (2026-10-09, a throwaway daemon on port 8797 with temp XDG dirs, the gate on
+Ollama's embeddinggemma, the real thinker (`qwen3.8:27b`), the fake Spotify (`python -m
+tests.fake_spotify`, which now lists `find_playlist` and `remove_from_playlist`) and the echo server
+(`shred`, marked `destructiveHint`), a scripted v2 body that declared `approvals` and
+`sends.approval`, `[approvals] change_s = 8`): "take this off my running playlist" asked "Remove
+'Feeling Good' from Running? Say yes." after 3.9 s, `approval.request` (`change`, 8 s, no hold)
+followed the question's `speaking`, and a typed "yes, go ahead" made the stored call (`tool.started`
+/ `tool.completed`, then "Removed Feeling Good by Nina Simone from Running.", `run.completed`); the
+same answered on the card a second later did the same with `by: body`, and a second answer to it
+got `input.refused` (`resolved`); left alone, it resolved `timeout` after 8.0 s and she said "No
+answer, so I've left it."; "shred my note called groceries" asked with `destructive`, 30 s and
+`hold: true`, a tap got `hold_required` and a held yes made the call. Each Qwen round sent one
+`token_rate` (36-37 tokens a second); a spoken reply streamed four, about a quarter of a second
+apart. In headless Chrome the Brain UI's Runs section showed "Waiting for a yes" with the card's
+line, its Yes answered it (`by: ui`) and the Approvals history listed it. No argument was in the
+daemon's log.
+
+Tests: `tests/test_approvals.py` (the digest and the stored copy; the tiers from the config, the
+adapter and the annotations, which only raise; the timeouts per tier and the clock while the user
+speaks; first answer wins; the hold flag; refusals from undeclared and v1 bodies, wrong and stale
+ids; the ✕, supersede (also with it off), "stop" as a no, shutdown, a stop after the yes; the card
+after a reconnect; no argument on the bus, in the Brain UI or the log; the Brain UI's Yes and No; the
+gauges, the stream and `didnt_catch`), `tests/test_confirm.py` (the spoken flow, unchanged),
+`tests/test_runs.py` (an answer never superseding), `tests/test_tools.py` (`destructiveHint`).

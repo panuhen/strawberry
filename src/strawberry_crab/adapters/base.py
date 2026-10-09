@@ -21,7 +21,10 @@ earns once you use it every day:
     untrusted       its results are outside text; with `guard`, `forward`, `screen` and `observe`,
                     what may follow one, and in what form it is sent
     confirm         the tools she asks about before calling, unless the config's `confirm` says
-                    otherwise; `ask` words the question (and pins the call), `done` the result
+                    otherwise; `ask` words the question (and pins the call), `describe` the line
+                    on her approval card, `done` the result
+    risks           each tool's approval tier (read / change / sends / destructive), where it is not
+                    the default: `reads` and a look-up-only server are `read`, the rest `change`
 
 Every one of them is optional; the base class answers "nothing to add" to all of them. An
 adapter is loaded only when a configured server matches it, by name or by an explicit
@@ -83,6 +86,19 @@ class Adapter:
     labels: dict[str, str] = {}
     #: tools that only read: a cancel stops waiting for them, where any other call is let finish first
     reads: tuple[str, ...] = ()
+    #: tool -> its approval tier (approvals.py) when it is not what `risk` gives by default: `sends`
+    #: for a tool that sends something to someone, `destructive` for one that deletes or cannot be
+    #: undone. Both always wait for a yes; `[approvals] risk` in the config decides over this
+    risks: dict[str, str] = {}
+
+    def risk(self, name: str) -> str | None:
+        """The tool's approval tier: `risks`, else `read` for a look-up-only server or a tool in `reads`,
+        else None (the core's `change`)."""
+        if name in self.risks:
+            return self.risks[name]
+        if self.looks_up_only or name in self.reads:
+            return "read"
+        return None
 
     def matches(self, server_name: str, server_config: dict[str, Any]) -> bool:
         """Is this adapter for that configured server? An explicit `adapter` key decides alone."""
@@ -164,6 +180,18 @@ class Adapter:
         from ..confirm import generic_question   # local: confirm imports the tools, as this module does
 
         return generic_question(name), arguments
+
+    def describe(self, name: str, arguments: dict[str, Any], question: str) -> str:
+        """The one line her approval card shows (PROTOCOL §13b `prompt`): what is about to happen, for
+        display, from the pinned call and the question `ask` wrote, and nothing the spoken question does
+        not already say (it goes on the bus as her line anyway). The question without its "Say yes." by
+        default: "Remove 'Teardrop' from Gym?". It goes on the bus to every body that shows approvals,
+        cut to 160 characters (confirm.card_line, runs.clean). For a `sends` or `destructive` tool it
+        must carry no free text from the arguments (a message's body, a note's text): naming the target
+        is fine (the song, the playlist, the recipient's display name), quoting what is sent is not."""
+        from ..confirm import card_line   # local, as in `ask`
+
+        return card_line(question)
 
     def done(self, name: str, arguments: dict[str, Any], result: Any) -> Any:
         """After the yes: an Outcome saying what came of the call, or None for the core's "Done."."""

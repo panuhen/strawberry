@@ -7,7 +7,8 @@ language, without importing any brain code.
 
 **Three parts.** Part 1 is protocol v1 as the code does it; every statement there is taken from
 the code and cites it as `file:line`. Part 1b is the part of protocol v2 that is built (runs and
-their events, stopping a run, the clock in ping and pong); it cites functions rather than lines.
+their events, stopping a run, approvals and their answers, the clock in ping and pong); it cites
+functions rather than lines.
 Part 2 is the rest of v2, **PROPOSED**: designs for new message families, not code. Each of its
 sections says in its heading whether it is proposed or partly built.
 
@@ -283,6 +284,7 @@ first (`widget.gd:650-652`).
 | `{"type":"heard","text":"…"}` | `text`: string, the sentence the user typed | trimmed; empty ignored; becomes `Event(source="voice", title=text)` and runs the same funnel as a spoken sentence, in the background. It is a foreground run (Part 1b): one at a time, and it stops the one before it unless it answers her question | `server.py:390-397`, sent by `widget.gd:411-417` |
 | `{"type":"run.cancel","run_id":"…"}` | v2 only | §11c; from a v1 body it is ignored | `server.py` `_cancel_from_body` |
 | `{"type":"poked","zone":"…","level":1}` | `zone`: `shell` `belly` `eye` `claw` `near`; `level`: 1 (curious) or 2 (annoyed) | from any body. The widget sends it now and then only with its *Talk when poked* setting on (off by default; WIRING.md §13, Touch); it has already reacted itself. The brain may answer with one short line written in `pokes.py` (no model, nothing in the ledger) as an ordinary `talking` performance without `anim` or `reaction`, unless a run is going on, its state is not `idle` or `dancing`, or it said one in the last 20 s. Anything else in the fields: logged at DEBUG, ignored. Not the proposed v2 `touch` (§14), which maps to bindings and never speaks | `server.py` `_poked`, sent by `touch.gd` `maybe_talk` |
+| `{"type":"approval.answer",…}` | v2 only | §13b; from a v1 body it is ignored | `server.py` `_answer_from_body` |
 | anything else | – | logged at DEBUG, ignored | `server.py:398-399` |
 | not JSON | – | logged at DEBUG, ignored | `server.py:379-381` |
 
@@ -340,8 +342,8 @@ These are v1 as it stands; some are gaps, noted for fixing. The numbers stay whe
 
 # Part 1b — Protocol v2, as built (runs)
 
-Built in brain step 6, stage 1. A body that says `protocol: 2` in its hello gets what it asks for
-from this part; a body that does not is a v1 body and gets exactly the Part 1 traffic, byte for
+Built in brain step 6, stages 1 (runs) and 2 (approvals, `listening`, `token_rate`, `didnt_catch`).
+A body that says `protocol: 2` in its hello gets what it asks for from this part; a body that does not is a v1 body and gets exactly the Part 1 traffic, byte for
 byte (`tests/test_runs.py` `test_v1_bodies_get_exactly_the_bytes_they_always_did`, recorded from the
 code before runs existed). The crab widget speaks v2 from this stage on (`ws_client.gd` `hello`).
 What stays proposed is in Part 2.
@@ -352,7 +354,8 @@ What stays proposed is in Part 2.
 {"type": "hello", "client": "strawberry-widget", "version": "0.2.0", "godot": "4.7.2-stable (official)",
  "protocol": 2, "body": {"id": "crab", "name": "Strawberry"},
  "capabilities": {"phases": ["routing", "thinking", "tool", "speaking", "run"],
-                  "sends": {"heard": true, "cancel": true}}}
+                  "approvals": true,
+                  "sends": {"heard": true, "cancel": true, "approval": true}}}
 ```
 
 The v1 fields and the version check of §2.1 stay as they are. Of the v2 fields the brain reads
@@ -362,20 +365,27 @@ The v1 fields and the version check of §2.1 stay as they are. Of the v2 fields 
 |---|---|
 | `protocol` | 2, or absent / below 2 for v1. A higher number is served as 2 |
 | `body.id`, `body.name` | strings, at most 64 printable characters; for logs, `/health` and `welcome` |
-| `capabilities.phases` | the run event families it wants: `routing`, `thinking`, `tool` (both tool events), `speaking`, `run` (the terminal events). Others (`listening`, `subagent`, `token_rate`) are not produced yet and are not accepted |
-| `capabilities.sends.cancel` | `true`: it may send `run.cancel` (§11b) |
+| `capabilities.phases` | the event families it wants: `listening` (§11d), `routing`, `thinking`, `tool` (both tool events), `token_rate` (§11d), `speaking`, `run` (the terminal events). `subagent` is not produced yet and is not accepted |
+| `capabilities.sends.cancel` | `true`: it may send `run.cancel` (§11c) |
+| `capabilities.approvals` | `true`: it shows approvals, and gets `approval.request` and `approval.resolved` (§13b) |
+| `capabilities.sends.approval` | `true` (or Part 2's non-empty list of ways, e.g. `["click"]`): it may send `approval.answer` (§13b). Taken only together with `approvals: true`: the id to answer comes in a request |
 
 Every other capability of §10 is accepted and ignored for now. The brain answers a v2 hello that is
 not refused (§2.1) with `welcome` (`server.py` `welcome`), on that socket only:
 
 ```json
 {"type": "welcome", "protocol": 2, "brain": "0.2.0", "t": 81234.512, "rest_state": "idle",
- "accepted": {"phases": ["routing", "run", "speaking", "thinking", "tool"], "cancel": true}, "body_id": "crab"}
+ "accepted": {"phases": ["routing", "run", "speaking", "thinking", "tool"], "cancel": true,
+              "approvals": true, "approval": true}, "body_id": "crab"}
 ```
 
-`t` is brain monotonic time; `accepted` is what this body will get and may send. The v1 catch-up
-(§2 step 2) still goes out at connect, before the hello. `/health` lists each open socket under
-`bodies` (`protocol`, and for v2 `id`, `phases`, `cancel`) and the run book under `runs`.
+`t` is brain monotonic time; `accepted` is what this body will get and may send. `approvals` and
+`approval` are in `accepted` only when the hello mentioned them (a stage 1 hello gets the stage 1
+shape). Right after `welcome`, a body with `approvals` gets the approval that is open now, if one is
+(§13b). The v1 catch-up (§2 step 2) still goes out at connect, before the hello. `/health` lists
+each open socket under `bodies` (`protocol`, and for v2 `id`, `phases`, `cancel`, and `approvals` /
+`approval` as in `accepted`), the run book under `runs` and the approvals under `approvals` (the
+open id and tier, counts per outcome; never a prompt or an argument).
 
 ## 10b. Runs
 
@@ -384,10 +394,13 @@ Every input the brain handles is a **run** (`runs.py`): a sentence the user says
 (`notification`, never foreground, never stopped). `job` is reserved. A run goes through
 
 ```
-routing → thinking ⇄ tool → (awaiting_approval, stage 2) → speaking → completed | failed | cancelled
+routing → thinking ⇄ tool → speaking → awaiting_approval → (tool) → speaking → completed | failed | cancelled
 ```
 
-and each step is one event. `run_id` is `r-<n>`, counting from 1 at each daemon start.
+and each step is one event. `run_id` is `r-<n>`, counting from 1 at each daemon start. A run that
+stops at a call needing a yes says the question (`speaking`), then waits in `awaiting_approval`
+(§13b) and goes on when it is answered: the call and her line about it after a yes, her line that
+she left it after a no or a timeout, nothing more when it is cancelled.
 
 ## 11b. Run events (brain → body)
 
@@ -403,10 +416,12 @@ accepted; a v1 body gets none.
 | `thinking` | `backend` (`builtin`), `model` | the thinker starts (`Thinker.run`) |
 | `tool.started` | `call_id` (`c1`, `c2`, … within the run), `tool` (`server.tool`; a reflex's is `server.option`, e.g. `spotify.skip`), `label`, `careful` | before each call, reflex (`Actor.act` `on_call`) or thinker (`Thinker._call`) |
 | `tool.completed` | `call_id`, `tool`, `duration`, `ok`, `error` (only when not ok: `timeout` `refused` `failed` `unavailable`) | after it. A call the thinker refuses (not offered, over a limit, a guard) is one `tool.completed` with `error: "refused"` and no `tool.started`; a made-up tool name is sent as `unknown` |
+| `approval.request` | `approval_id`, `risk`, `prompt`, `timeout_s`, `expires_t`, `hold` | the run stops at a call that needs a yes (§13b); the run is now `awaiting_approval`. Family `approval`: only to bodies with `capabilities.approvals` |
+| `approval.resolved` | `approval_id`, `answer`, `by` (only for `yes` and `no`) | the answer, or why there is none (§13b) |
 | `speaking` | `duration` (the wav's length, or the bubble's reading pace when silent), `emotion` | the performance that answers the run goes out (`Daemon.perform`), after the run's earlier events |
 | `run.completed` | `duration`, `outcome` (`spoken` `nothing`) | terminal |
 | `run.failed` | `duration`, `error` (`timeout` `backend` `tools` `other`) | terminal: the thinker timed out or could not be reached, a reflex or a confirmed call failed, or an error. She has usually said so |
-| `run.cancelled` | `duration`, `reason` (`superseded` `stopped` `shutdown`) | terminal: a newer sentence replaced it, the user stopped it, or the daemon is stopping |
+| `run.cancelled` | `duration`, `reason` (`superseded` `stopped` `shutdown` `didnt_catch`) | terminal: a newer sentence replaced it, the user stopped it, the daemon is stopping, or a voice capture had nothing in it she could understand (`didnt_catch`: she said "Sorry, I didn't catch that." as the run's `speaking`; such a run is never the foreground one and stops nothing) |
 
 `label` is how the widget's chip names the step: the adapter's own words for the tool
 (`searching the web…`), else the server's title and the tool's name (`Spotify: next`,
@@ -441,7 +456,8 @@ Examples (a reflex, then a thinker run):
 {"type": "run.completed", "run_id": "r-2", "seq": 8, "t": 1448.959, "duration": 6.352, "outcome": "spoken"}
 ```
 
-A notification is `speaking → run.completed`.
+A notification is `speaking → run.completed`. An empty voice capture is `speaking → run.cancelled`
+(`didnt_catch`).
 
 ## 11c. Stopping a run (`run.cancel`, body → brain)
 
@@ -467,7 +483,26 @@ reads (a search, a web page, a tool the server marks `readOnlyHint`, or one its 
 The same stop comes from the Brain UI's Cancel (WIRING §17), from a whole-sentence "stop",
 "cancel that" or "never mind" while a run is busy (`runs.is_stop`; answered "Okay, stopped." as a
 run of its own), from a newer sentence (`superseded`, `[runs] supersede`), and from the daemon
-stopping (`shutdown`). A yes or no to her question never stops anything: it is the answer.
+stopping (`shutdown`). A yes or no to her question never stops anything: it is the answer. A run
+that waits for a yes is stopped the same way: its approval resolves `cancelled` and the call is
+never made (§13b).
+
+## 11d. Gauges: `listening` and `token_rate` (brain → body)
+
+Two messages are measurements, not steps: they carry **no `seq`**, are not kept on the run (the
+Brain UI's timeline does not list them), and a body that misses one loses nothing. Each goes only
+to a v2 body that put its family in `capabilities.phases`.
+
+```json
+{"type": "listening", "t": 1501.2, "phase": "started"}
+{"type": "listening", "t": 1504.7, "phase": "ended", "seconds": 3.4, "speech": true}
+{"type": "token_rate", "run_id": "r-7", "t": 1506.31, "tokens_per_s": 31.5, "tokens": 48}
+```
+
+| `type` | Fields | When (code) |
+|---|---|---|
+| `listening` | `phase` (`started` `ended`); with `ended`: `seconds` (how long it recorded), `speech` (whether it heard speech at all) | a voice capture starts and ends (`Listener.session`, `Daemon.listening`). It belongs to no run (the sentence is not heard yet), so it has no `run_id`. Never the audio, a level or the words. A capture that fails still ends (`seconds: 0`) |
+| `token_rate` | `tokens_per_s`, `tokens` (written by the model in this run so far) | while the thinker writes: at most 4 a second per run (`RunBook.rate`), and once per reply with Ollama's own count (`eval_count` / `eval_duration`). Counted from Ollama's stream (`[thinker] stream`, on); with it off, once per reply. Numbers only: the text is never forwarded |
 
 ## 12b. The clock in ping and pong
 
@@ -480,6 +515,126 @@ A v2 body may put its own monotonic time in `ping.t`; the brain echoes it and ad
 ```
 
 A ping without a number in `t` gets the v1 `{"type": "pong"}`. The mapping is §12.1's.
+
+## 13b. Approvals (brain ⇄ body)
+
+Some calls wait for the user's yes before they are made (`approvals.py`, WIRING §19): the tools on
+a server's `confirm` list (Spotify's two removals), and every call of the `sends` or `destructive`
+tier. The run that reached the call says her question as a performance, as in v1 ("Remove
+'Teardrop' from Gym? Say yes."), then opens an approval and waits. A body that declared
+`capabilities.approvals` (§9b) gets the request and can show it as a card; one that also declared
+`sends.approval` may answer it. The user can answer by voice or by typing as well, or in the Brain
+UI; whichever answer comes first decides.
+
+### The request (brain → body)
+
+```json
+{"type": "approval.request", "run_id": "r-4", "seq": 4, "t": 1611.402, "approval_id": "a-3f9c1e-1", "risk": "change",
+ "prompt": "Remove 'Feeling Good' from Running?", "timeout_s": 10.0, "expires_t": 1621.402, "hold": false}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `approval_id` | string, `a-<boot>-<n>` | what an answer names: `<boot>` is 6 hex digits drawn at each daemon start, `<n>` counts from 1, so a card left over from before a restart never matches a new question |
+| `run_id`, `seq`, `t` | | as for every run event (§11b); the request is a step of the run |
+| `risk` | `read` \| `change` \| `sends` \| `destructive` | the call's tier. `change`: it changes something that can be put back (a track off a playlist). `sends`: something reaches other people or leaves for someone (a message, an email). `destructive`: it deletes, or cannot be undone. `read` is possible for a tool on a `confirm` list |
+| `prompt` | string, one line, at most 160 characters | what the card shows: the adapter's `describe` line, by default her question without "Say yes.". Written by code for display; it says nothing her spoken question does not already say, and never carries the call's arguments as they came |
+| `timeout_s` | number | how long she waits: 10 s for `change` (and `read`), 30 s for `sends` and `destructive` (`[approvals] change_s`, `sends_s`, `destructive_s`) |
+| `expires_t` | number | brain monotonic time when it runs out (`t` + `timeout_s`); map it to the body's clock with §12.1 for a countdown |
+| `hold` | boolean | `true` for `sends` and `destructive` (`[approvals] hold`): the card's Yes must be a press-and-hold of about a second, and the answer must say so (below). `false`: a tap |
+
+**Exactly one approval is open at a time.** A newer request resolves the older one first
+(`superseded`).
+
+**The countdown is a guide.** While the user is speaking at the deadline (a voice capture or its
+transcription), the brain waits for that answer, once, for at most `[approvals] grace_s` (10 s)
+past `expires_t`; then it is `timeout` whatever the microphone does. A card shows until
+`approval.resolved` for its id, or until the run's terminal event, or for 60 s after `expires_t` at
+most if neither comes.
+
+### The outcome (brain → body)
+
+```json
+{"type": "approval.resolved", "run_id": "r-4", "seq": 5, "t": 1613.9, "approval_id": "a-3f9c1e-1", "answer": "yes", "by": "body"}
+```
+
+| `answer` | Meaning | What follows on the run |
+|---|---|---|
+| `yes` | the user said yes | `tool.started`, `tool.completed` for the stored call, `speaking` (what came of it), `run.completed`; or, if the call failed, `run.failed` (`tools`). If the run was stopped or superseded after the yes but before the call started, there is no `tool.started`: `speaking` ("I stopped before doing it, so nothing changed.", or that line ahead of the newer sentence's) and `run.cancelled`. The outcome stays `yes`, the user's answer; nothing was made (the Brain UI's history shows `made: false`) |
+| `no` | the user said no | `speaking` ("Okay, I've left it."), `run.completed` |
+| `timeout` | no answer in time | `speaking` ("No answer, so I've left it."), `run.completed` |
+| `cancelled` | the run was stopped (the ✕, the Brain UI's Cancel, the daemon stopping) | `run.cancelled` (`stopped` or `shutdown`) |
+| `superseded` | the user said something else, or a newer question replaced it | `run.cancelled` (`superseded`); her next line starts "I've left that, then." |
+
+`by` is there only for `yes` and `no`: `voice` (said), `typed` (the widget's box, `/event`), `body` (a
+card), `ui` (the Brain UI). Every body with `approvals` gets the outcome, the one that answered
+included, and hides the card on it.
+
+### The answer (body → brain)
+
+```json
+{"type": "approval.answer", "approval_id": "a-3f9c1e-1", "answer": "yes", "hold": true}
+```
+
+| Field | Meaning |
+|---|---|
+| `approval_id` | the open request's id |
+| `answer` | `yes` \| `no` |
+| `hold` | `true` when the Yes was a press-and-hold (the body times the ~1 s itself). Needed for a yes when the request said `hold: true`; ignored otherwise. A No never needs it |
+
+The brain takes it only from a v2 body whose `welcome` said `approval: true`, and only for the open
+request. Otherwise a v2 body gets `input.refused` with the id it sent as `ref` (cut to 32 characters)
+and one of these reasons, and nothing else happens (a v1 body's is ignored, with no reply):
+
+| `reason` | When | The request |
+|---|---|---|
+| `not_declared` | the body did not declare `approvals` and `sends.approval` | unchanged |
+| `not_open` | no such id, or not the open one | unchanged |
+| `resolved` | that id was answered already: the first answer won | already ended |
+| `bad_answer` | `answer` is not `yes` or `no` | stays open |
+| `hold_required` | a `yes` to a `hold: true` request without `hold: true` | stays open: the user can still hold, say yes, or say no |
+
+```json
+{"type": "input.refused", "ref": "a-3f9c1e-1", "reason": "hold_required"}
+```
+
+A body can only answer: no message lets it ask for a call, and only the call stored when the
+request was made is ever made, a copy checked against its digest (the server, the tool and the
+arguments) just before. There is no "always allow".
+
+### Reconnecting
+
+A v2 body with `approvals` that says hello while a request is open gets that request right after
+`welcome`, exactly as it first went out (its `seq`, `t` and `expires_t` too), so it can show the
+card mid-wait.
+
+### What a card needs, in order
+
+1. On `approval.request`: show `prompt`, a Yes and a No, and a countdown to `expires_t` (§12.1).
+   With `hold: true`, the Yes fills while pressed and fires after about a second.
+2. On Yes: send `approval.answer` with `hold: true` if it was held; on No: `answer: "no"`.
+3. On `approval.resolved` for that id (any `answer`), or the run's terminal event: hide it. An
+   `input.refused` with `hold_required` means the press was too short: keep the card.
+4. Her spoken question arrives as an ordinary performance just before the request; the bubble and
+   the card show together.
+
+Examples, a removal answered on the card and one that ran out:
+
+```json
+{"type": "speaking", "run_id": "r-4", "seq": 3, "t": 1611.401, "duration": 2.61, "emotion": "neutral"}
+{"type": "approval.request", "run_id": "r-4", "seq": 4, "t": 1611.402, "approval_id": "a-3f9c1e-1", "risk": "change", "prompt": "Remove 'Feeling Good' from Running?", "timeout_s": 10.0, "expires_t": 1621.402, "hold": false}
+{"type": "approval.answer", "approval_id": "a-3f9c1e-1", "answer": "yes"}
+{"type": "approval.resolved", "run_id": "r-4", "seq": 5, "t": 1613.9, "approval_id": "a-3f9c1e-1", "answer": "yes", "by": "body"}
+{"type": "tool.started", "run_id": "r-4", "seq": 6, "t": 1613.9, "call_id": "c1", "tool": "spotify.remove_from_playlist", "label": "Spotify: remove from playlist", "careful": true}
+{"type": "tool.completed", "run_id": "r-4", "seq": 7, "t": 1613.93, "call_id": "c1", "tool": "spotify.remove_from_playlist", "duration": 0.03, "ok": true}
+{"type": "speaking", "run_id": "r-4", "seq": 8, "t": 1613.95, "duration": 3.2, "emotion": "neutral"}
+{"type": "run.completed", "run_id": "r-4", "seq": 9, "t": 1613.95, "duration": 8.7, "outcome": "spoken"}
+
+{"type": "approval.request", "run_id": "r-6", "seq": 4, "t": 1700.0, "approval_id": "a-3f9c1e-2", "risk": "destructive", "prompt": "Shall I go ahead with shred?", "timeout_s": 30.0, "expires_t": 1730.0, "hold": true}
+{"type": "approval.resolved", "run_id": "r-6", "seq": 5, "t": 1730.01, "approval_id": "a-3f9c1e-2", "answer": "timeout"}
+{"type": "speaking", "run_id": "r-6", "seq": 6, "t": 1730.4, "duration": 2.2, "emotion": "neutral"}
+{"type": "run.completed", "run_id": "r-6", "seq": 7, "t": 1730.4, "duration": 36.1, "outcome": "spoken"}
+```
 
 ---
 
@@ -505,8 +660,9 @@ traffic of Part 1 and nothing else (§15).
 
 ## 10. PROPOSED (v2), partly built: the hello with capabilities, and `welcome`
 
-*Built:* `protocol`, `body`, `capabilities.phases`, `capabilities.sends.cancel` and `welcome`
-(§9b). The rest of this section is proposed.
+*Built:* `protocol`, `body`, `capabilities.phases`, `capabilities.sends.cancel`,
+`capabilities.approvals`, `capabilities.sends.approval` (as `true` or a non-empty list) and
+`welcome`, with the open approval after it (§9b, §13b). The rest of this section is proposed.
 
 A v2 body adds `protocol`, `body` and `capabilities` to the v1 hello. Old fields stay, so the
 version check of §2.1 still applies.
@@ -621,10 +777,11 @@ with `topic = "music"` if there is one.
 
 ## 11. PROPOSED (v2), partly built: agent phases
 
-*Built:* `routing`, `thinking`, `tool.started`, `tool.completed`, `speaking` and the three terminal
-events, as §11b says (with `label` on `tool.started`, `shutdown` as a cancel reason and `fixed`
-paths). Proposed still: `listening`, `subagent.*`, `token_rate`, `outcome: "silent"` and the
-`didnt_catch` reason.
+*Built:* `routing`, `thinking`, `tool.started`, `tool.completed`, `speaking`, the three terminal
+events with the `didnt_catch` reason, as §11b says (with `label` on `tool.started`, `shutdown` as a
+cancel reason and `fixed` paths), and `listening` and `token_rate` as gauges without `seq` (§11d:
+`listening` is `started` / `ended` with no level, and has no `run_id`). Proposed still:
+`subagent.*`, a `listening` level per chunk and `outcome: "silent"`.
 
 What the brain is doing, as it happens, so a body can show listening, deciding, thinking and tool
 use without waiting for the reply. These do not replace performances: the crab still gets its
@@ -756,7 +913,13 @@ The body shows beat `k` at `b0 + k × period_s + output_latency_s − display_la
 visual lands when the sound is heard. Speech the body plays itself is the body's own business
 (Godot: `AudioServer.get_output_latency()`).
 
-## 13. PROPOSED (v2): confirmations
+## 13. PROPOSED (v2), partly built: confirmations
+
+*Built* as §13b says, with these differences from the design below: the tiers are `read`, `change`,
+`sends` and `destructive` (`low` became `change`); the request has `hold` instead of `accepts`, and
+the answer `hold` instead of `via` (there are no gestures yet); `by` is a fixed code (`voice`,
+`typed`, `body`, `ui`), not a body id; and `superseded` is an outcome of its own. Rule 3 (gestures)
+waits for the gesture watcher. The rest stands.
 
 For an action that needs a yes or no before it happens ("Send these?"). Hermes calls the same
 thing `approval.request`, so the name is shared. The brain asks by voice as usual (a performance
@@ -808,7 +971,7 @@ Rules:
 
 ## 14. PROPOSED (v2): input from bodies
 
-(`run.cancel` is built: §11c.)
+(`run.cancel` is built: §11c; `approval.answer`: §13b.)
 
 `heard` stays as in v1. New, each only from a body that declared it in `sends`:
 

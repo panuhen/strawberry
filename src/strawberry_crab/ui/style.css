@@ -203,6 +203,9 @@ td .sub { display: block; color: var(--ink-faint); font-size: 0.78rem; }
 .down { color: var(--berry-ink); }
 .steps { display: flex; gap: 4px; flex-wrap: wrap; }
 .steps .chip { font-size: 0.75rem; }
+.approval { border: 1px solid var(--berry); background: var(--berry-wash); padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+.approval .prompt { font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; margin: 0; }
+.approval .dim { margin: 0; }
 tr.fresh { animation: fresh 1.6s ease-out; }
 @keyframes fresh { from { background: var(--berry-wash); } to { background: transparent; } }
 

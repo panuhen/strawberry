@@ -5,7 +5,8 @@ a reconnecting widget, or a second dev instance, from fighting over the connecti
 
 Each socket is a `Body`: protocol 1 until its hello says 2 (PROTOCOL §10). A v1 body gets exactly
 the v1 traffic, byte for byte; a v2 body also gets the run events it accepted in `welcome`
-(`send_phase`), and the performance that answers a run carries that run's id.
+(`send_phase`: the phase families, and the approval events when it said `approvals`), and the
+performance that answers a run carries that run's id.
 """
 
 from __future__ import annotations
@@ -22,9 +23,9 @@ from aiohttp import WSCloseCode, web
 log = logging.getLogger("strawberryd.hub")
 
 PROTOCOL = 2                     # the highest protocol the brain speaks
-# The phase families of PROTOCOL §11 this brain sends. `listening`, `subagent` and `token_rate`
-# are not produced yet, so a body that asks for them is not told it gets them.
-PHASES = ("routing", "thinking", "tool", "speaking", "run")
+# The phase families of PROTOCOL §11b this brain sends. `subagent` is not produced yet, so a body that
+# asks for it is not told it gets it. Approvals are their own capability (`approvals`, §13b).
+PHASES = ("listening", "routing", "thinking", "tool", "token_rate", "speaking", "run")
 MAX_ID = 64
 
 
@@ -39,10 +40,25 @@ class Body:
     version: str = ""
     phases: frozenset[str] = frozenset()     # accepted: the families it asked for that we send
     cancel: bool = False                     # accepted: it may send run.cancel
+    approvals: bool = False                  # accepted: it shows approval.request / approval.resolved
+    answers: bool = False                    # accepted: it may send approval.answer (needs `approvals`)
+    asked: frozenset[str] = frozenset()      # which of approvals / answers its hello mentioned (welcome)
     connected: float = field(default_factory=time.monotonic)
 
     def wants(self, kind: str) -> bool:
-        return self.protocol >= 2 and family(kind) in self.phases
+        if self.protocol < 2:
+            return False
+        return self.approvals if family(kind) == "approval" else family(kind) in self.phases
+
+    def accepted_approvals(self) -> dict[str, bool]:
+        """`approvals` and `approval` for welcome's `accepted` and /health, when its hello mentioned them
+        (a body that did not ask gets the stage 1 shape, unchanged)."""
+        out: dict[str, bool] = {}
+        if "approvals" in self.asked or "approval" in self.asked:
+            out["approvals"] = self.approvals
+        if "approval" in self.asked:
+            out["approval"] = self.answers
+        return out
 
 
 def family(kind: str) -> str:
@@ -71,6 +87,13 @@ def body_from_hello(data: dict[str, Any]) -> Body:
     body.phases = frozenset(p for p in asked if isinstance(p, str) and p in PHASES)
     sends = capabilities.get("sends") if isinstance(capabilities.get("sends"), dict) else {}
     body.cancel = sends.get("cancel") is True
+    # Approvals (PROTOCOL §13b): shown with `approvals: true`, answered with `sends.approval` (true, or
+    # Part 2's list of ways, e.g. ["click"]). Answering needs showing: the id only comes in a request.
+    body.approvals = capabilities.get("approvals") is True
+    answer = sends.get("approval")
+    body.answers = body.approvals and (answer is True or (isinstance(answer, list) and bool(answer)))
+    body.asked = frozenset(k for k, v in (("approvals", capabilities.get("approvals")), ("approval", answer))
+                           if v is not None)
     return body
 
 
@@ -120,7 +143,7 @@ class WidgetHub:
             body = self.body(ws)
             row: dict[str, Any] = {"protocol": body.protocol}
             if body.protocol >= 2:
-                row |= {"id": body.id, "phases": sorted(body.phases), "cancel": body.cancel}
+                row |= {"id": body.id, "phases": sorted(body.phases), "cancel": body.cancel} | body.accepted_approvals()
             out.append(row)
         return out
 

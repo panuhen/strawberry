@@ -1,28 +1,34 @@
-"""A spoken yes before a tool that cannot be taken back (WIRING.md §8b, ADAPTERS.md).
+"""A yes before a tool that cannot be taken back (WIRING.md §8b, §19, ADAPTERS.md).
 
 Each server's `confirm` list (`[tools.servers.<name>] confirm = [...]`, else its adapter's own
-default, Spotify's two removals) names the tools she asks about first. When the thinker calls one
-of them, the call is not made: the thinker stops there and she says what she is about to do in one
-line written by code ("Remove 'Teardrop' from Strawberry? Say yes."). The call is kept exactly as
-it would have been sent, a `Held`, and the daemon waits for the user's next sentence:
+default, Spotify's two removals) names the tools she asks about first, and every call of the `sends`
+or `destructive` tier is asked about too (approvals.py). When the thinker calls one of them, the call
+is not made: the thinker stops there and she says what she is about to do in one line written by
+code ("Remove 'Teardrop' from Strawberry? Say yes."). The call is kept exactly as it would have been
+sent, a `Held`; the run that asked waits for the answer (`approval.request`, `awaiting_approval`),
+and the user's next sentence is it:
 
     yes, sure, do it, go ahead…   that one call is made, with those arguments; no model is asked again
     no, cancel, leave it…         nothing is done; she says she left it
     anything else                 nothing is done; she says she left it and the sentence is handled as usual
-    no answer in [actions] confirm_s (10 s; not while she is listening)
+    no answer in [approvals] change_s (10 s; 30 s for sends and destructive; not while she is listening)
                                   nothing is done; she says she left it
 
+The same yes or no can come from her card on a body (the widget) or the Brain UI (approvals.py).
 A bare yes (or no) within a minute after she gave up waiting, or after a no, gets a fixed line that
 she left it and to ask again, never the thinker, which would read her question in the ledger.
 
 Only the user's own sentences (said or typed, `source: voice`) reach `Daemon.handle_voice`, which is
-the only place a held call is answered: a notification, a media change, a tool result or a web page
-never confirms one. The yes and the no are read off the whole sentence by word lists (`answer`), so
-"yes, and play some jazz" is not a yes: it cancels and goes on to the jazz.
+where a sentence answers: a notification, a media change, a tool result or a web page never confirms
+one. The yes and the no are read off the whole sentence by word lists (`answer`), so "yes, and play
+some jazz" is not a yes: it cancels and goes on to the jazz.
 """
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -35,12 +41,15 @@ log = logging.getLogger("strawberryd.confirm")
 
 @dataclass(frozen=True)
 class Held:
-    """A call the user is asked about, exactly as it will be made after a yes."""
+    """A call the user is asked about, exactly as it will be made after a yes. `risk` is its approval
+    tier and `prompt` the line her card shows (`Adapter.describe`); neither is part of the call."""
 
     server: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
     question: str = ""
+    risk: str = field(default="change", compare=False)
+    prompt: str = field(default="", compare=False)
 
     @property
     def key(self) -> str:
@@ -54,6 +63,10 @@ LEFT_OTHER = "I've left that, then."
 # A yes that comes after she gave up waiting (or after a no): said by code, because the thinker, reading
 # her question in the ledger, answered a late "yes" with "Removed Teardrop from Gym." and no removal.
 LATE_YES = "I've already left that one. Ask me again if you still want it."
+# A yes whose stored call no longer matches what was asked about (approvals.ApprovalBook.verify): never made.
+LEFT_CHANGED = "That changed while I waited, so I've left it."
+# A yes that a stop or a newer sentence overtook before the call started: nothing was made.
+LEFT_UNMADE = "I stopped before doing it, so nothing changed."
 LATE_S = 60.0   # how long after a dropped question a bare yes or no is still about it
 # What the ledger keeps of her question: the code asks it, and in her words in the ledger the thinker
 # copied it, asking for a yes with nothing held, so the next "yes" did nothing (or the wrong thing).
@@ -111,17 +124,27 @@ def generic_question(name: str) -> str:
     return f"Shall I go ahead with {name.replace('_', ' ')}? Say yes."
 
 
+SAY_YES = re.compile(r"\s*Say yes\.?\s*$", re.IGNORECASE)
+CARD_CHARS = 160
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ​-‏‪-‮⁦-⁩]")
+
+
+def card_line(question: str) -> str:
+    """Her question as her card shows it: without "Say yes.", one line, no control characters, short."""
+    line = " ".join(_CONTROL.sub(" ", SAY_YES.sub("", question or "")).split())
+    return line if len(line) <= CARD_CHARS else line[:CARD_CHARS - 1].rstrip() + "…"
+
+
 async def hold(toolbox: Toolbox, adapter: Any, server: str, name: str, arguments: dict[str, Any],
                run: Any = None) -> Held:
-    """The call as it will be made after a yes, and the line that asks about it. The server's adapter
-    writes the line and may pin what would change by then ("current" becomes the playing track's
-    URI, so a yes after the song has changed removes the one she named); without one, or if it
-    fails, the call is kept as it came and the line names the tool.
+    """The call as it will be made after a yes, the line that asks about it, its approval tier and
+    the line her card shows. The server's adapter writes the line and may pin what would change by
+    then ("current" becomes the playing track's URI, so a yes after the song has changed removes the
+    one she named); without one, or if it fails, the call is kept as it came and the line names the
+    tool.
 
-    `run` is the run that asks (runs.py). Brain step 6, stage 2 emits its `approval.request` here
-    (PROTOCOL §13: the approval id, the risk, the question as written for display, the expiry) and
-    the run waits in `awaiting_approval`; today the run ends with the question and the next sentence
-    answers it."""
+    `run` is the run that asks (runs.py). The daemon opens the approval for it once she has said the
+    question (`Daemon.hold`: `approval.request`, and the run waits in `awaiting_approval`)."""
     question, kept = generic_question(name), dict(arguments)
     ask = getattr(adapter, "ask", None) if adapter is not None else None
     if ask is not None:
@@ -131,18 +154,41 @@ async def hold(toolbox: Toolbox, adapter: Any, server: str, name: str, arguments
                 question, kept = said, pinned
         except Exception as exc:   # an adapter must never cost the sentence its answer
             log.warning("confirm: %s adapter could not word the question (%s)", server, type(exc).__name__)
-    return Held(server, name, kept, question)
+    prompt = card_line(question)
+    describe = getattr(adapter, "describe", None) if adapter is not None else None
+    if describe is not None:
+        try:
+            line = describe(name, dict(kept), question)
+            if isinstance(line, str) and line.strip():
+                prompt = card_line(line)
+        except Exception as exc:
+            log.warning("confirm: %s adapter could not describe the call (%s)", server, type(exc).__name__)
+    risk = toolbox.risk(server, name) if hasattr(toolbox, "risk") else "change"
+    return Held(server, name, kept, question, risk=risk, prompt=prompt)
 
 
-async def run(toolbox: Toolbox, adapter: Any, held: Held) -> Any:
-    """After a yes: the held call, exactly, and the Outcome that says what came of it."""
+def digest(server: str, name: str, arguments: dict[str, Any]) -> str:
+    """sha256 of the call: the server, the tool and the arguments in a canonical form."""
+    canonical = json.dumps({"server": server, "name": name, "arguments": arguments}, sort_keys=True,
+                           ensure_ascii=False, separators=(",", ":"), default=repr)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def run(toolbox: Toolbox, adapter: Any, held: Held, expected: str = "") -> Any:
+    """After a yes: the held call, exactly, and the Outcome that says what came of it. The arguments are
+    copied first and, with `expected` (the approval's digest), that copy is checked against it; the
+    call and the adapter's `done` get the copy only, so nothing can change what is made in between."""
     from .actions import Outcome   # local: actions imports the config and the tools, not this module
 
-    result = await toolbox.call(held.server, held.name, held.arguments)
+    arguments = copy.deepcopy(held.arguments)
+    if expected and digest(held.server, held.name, arguments) != expected:
+        log.warning("confirm: %s not made: the call no longer matches what was asked about", held.key)
+        return Outcome(f"left {held.name} undone: it changed", LEFT_CHANGED, False)
+    result = await toolbox.call(held.server, held.name, arguments)
     done = getattr(adapter, "done", None) if adapter is not None else None
     if done is not None:
         try:
-            outcome = done(held.name, held.arguments, result)
+            outcome = done(held.name, copy.deepcopy(arguments), result)
             if isinstance(outcome, Outcome):
                 return outcome
         except Exception as exc:

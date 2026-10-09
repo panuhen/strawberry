@@ -13,7 +13,7 @@ import pytest
 
 from strawberry_crab import runs
 from strawberry_crab.config import ThinkerConfig, default_toml, load
-from strawberry_crab.confirm import LEFT_NO, Held
+from strawberry_crab.confirm import LEFT_NO
 from strawberry_crab.contract import Performance
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
@@ -158,7 +158,7 @@ def test_a_whole_sentence_stop(text, stop):
 
 def test_a_hello_without_protocol_is_v1_whatever_else_it_says():
     assert body_from_hello({"type": "hello", "capabilities": {"phases": PHASES, "sends": {"cancel": True}}}).protocol == 1
-    body = body_from_hello(HELLO_V2 | {"capabilities": {"phases": ["tool", "token_rate", 3], "sends": {"cancel": "yes"}}})
+    body = body_from_hello(HELLO_V2 | {"capabilities": {"phases": ["tool", "subagent", 3], "sends": {"cancel": "yes"}}})
     assert body.protocol == 2 and body.phases == {"tool"} and body.cancel is False
     assert body_from_hello(HELLO_V2 | {"protocol": 9}).protocol == 2
 
@@ -393,19 +393,28 @@ async def test_with_supersede_off_the_newer_one_waits_its_turn(aiohttp_client):
 
 
 async def test_an_answer_to_her_question_never_supersedes(aiohttp_client):
-    client, daemon, spotify, qwen, sink, v1 = await thinker_daemon(aiohttp_client, [])
-    daemon.thinker.chat = SlowQwen(["[happy] all done"], seconds=0.3)
-    pending = asyncio.ensure_future(say(client, JAZZ))
-    await until(lambda: "thinking" in kinds(sink))
-    daemon.held = Held("spotify", "remove_saved_tracks", {"track_ids": ["x"]}, "Remove it? Say yes.")
-    answer = await asyncio.wait_for(say(client, "no"), 3.0)
-    first = await pending
-    by_run = well_formed(sink)
-    assert [events[-1]["type"] for events in by_run.values()] == ["run.completed", "run.completed"]
-    assert first["performance"]["text"] == "all done" and answer["performance"]["text"] == LEFT_NO
-    # "cancel" is a no to her question too, not a stop, while she waits for the answer.
-    daemon.held = Held("spotify", "remove_saved_tracks", {"track_ids": ["x"]}, "Remove it? Say yes.")
+    """Stage 2: the run that asked waits for the answer (approvals.py); a yes or no is no run of its own
+    and never stops it: the asking run takes the answer and ends."""
+    from tests.test_confirm import REMOVE, REMOVE_CALL, daemon_over
+
+    spotify, qwen, daemon, _ = daemon_over([REMOVE_CALL])
+    sink = v2_sink(daemon, HELLO_V2 | {"capabilities": {"phases": PHASES, "approvals": True}})
+    client = await aiohttp_client(create_app(daemon))
+    await daemon.start()
+    await say(client, REMOVE)
+    asking = daemon.runs.busy()
+    assert asking is not None and asking.state == "awaiting_approval"
+    # "cancel" is a no to her question, not a stop, while she waits for the answer.
     assert daemon.answers_question("cancel") and not daemon.answers_question("play some jazz")
+    answer = await asyncio.wait_for(say(client, "cancel"), 3.0)
+    assert answer["performance"]["text"] == LEFT_NO and spotify.removed == []
+    assert daemon.runs.started == 1 and daemon.runs.busy() is None
+    by_run = well_formed(sink)
+    assert list(by_run) == [asking.run_id]
+    assert kinds(sink) == ["routing", "thinking", "speaking", "approval.request", "approval.resolved", "speaking",
+                           "run.completed"]
+    resolved = steps(sink)[4]
+    assert resolved["answer"] == "no" and resolved["by"] == "typed"
     await daemon.close()
 
 
@@ -510,7 +519,7 @@ async def test_v1_bodies_get_exactly_the_bytes_they_always_did(aiohttp_client):
 async def test_a_v2_hello_is_welcomed_and_pings_carry_the_clock(aiohttp_client):
     client, daemon, spotify, qwen, sink, _ = await thinker_daemon(aiohttp_client, ["[happy] Hi."])
     ws = await client.ws_connect("/ws")
-    await ws.send_str(json.dumps(HELLO_V2 | {"capabilities": {"phases": ["tool", "run", "listening"],
+    await ws.send_str(json.dumps(HELLO_V2 | {"capabilities": {"phases": ["tool", "run", "subagent"],
                                                               "sends": {"cancel": True}}}))
     welcome = json.loads((await ws.receive(timeout=1.0)).data)
     assert welcome["type"] == "welcome" and welcome["protocol"] == 2 and welcome["body_id"] == "t-1"

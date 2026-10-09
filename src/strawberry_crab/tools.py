@@ -31,7 +31,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from .config import ToolsConfig
+from .config import RISKS, ToolsConfig
 from . import logtext
 
 log = logging.getLogger("strawberryd.tools")
@@ -182,6 +182,8 @@ class Server:
         # Tools the server marks as only reading (MCP's readOnlyHint): a cancel stops waiting for one,
         # where a call that may change something is let finish first (runs.py, Thinker._call).
         self.read_only: frozenset[str] = frozenset()
+        # Tools the server marks destructiveHint: their approval tier is raised to `destructive` (risk).
+        self.destructive: frozenset[str] = frozenset()
         self.calls = 0
         self.failures = 0
         self.last_ms: float | None = None
@@ -223,6 +225,7 @@ class Server:
                 listed = await session.list_tools()
                 self._claim([t.name for t in listed.tools])
                 self.read_only = frozenset(t.name for t in listed.tools if _read_only(t))
+                self.destructive = frozenset(t.name for t in listed.tools if _destructive(t))
                 self.tools = self._offer([
                     ToolSpec(self.name, t.name, (t.description or "").strip(), dict(getattr(t, "input_schema", None) or {}))
                     for t in listed.tools
@@ -291,6 +294,20 @@ class Server:
         except Exception as exc:
             log.warning("tools: %s: %s.%s failed (%s)", self.name, getattr(self.adapter, "name", "?"), method, exc)
             return default
+
+    def risk(self, name: str, overrides: dict[str, str] | None = None) -> str:
+        """The approval tier of one of this server's tools (approvals.py): read | change | sends |
+        destructive. `[approvals] risk` decides when it names the tool ("server.tool") or the whole
+        server, taken as written; else the adapter's own tier (`Adapter.risk`), else `change`. A tool
+        the server marks destructiveHint is then raised to `destructive`; an annotation never lowers a
+        tier (readOnlyHint is not believed here: a server cannot talk its way out of a yes)."""
+        overrides = overrides or {}
+        configured = overrides.get(f"{self.name}.{name}") or overrides.get(self.name)
+        if configured in RISKS:
+            return configured
+        tier = self._adapted("risk", None, name)
+        tier = tier if tier in RISKS else "change"
+        return "destructive" if name in self.destructive else tier
 
     def _drain(self, error: Exception) -> None:
         while not self.queue.empty():
@@ -378,6 +395,13 @@ def _read_only(tool: Any) -> bool:
     return annotations is not None and _field(annotations, "read_only_hint", "readOnlyHint") is True
 
 
+def _destructive(tool: Any) -> bool:
+    """MCP's destructiveHint, only when the server says it: its default of true for any tool that is not
+    read-only would make every unannotated tool wait for a yes."""
+    annotations = _field(tool, "annotations")
+    return annotations is not None and _field(annotations, "destructive_hint", "destructiveHint") is True
+
+
 def _describe(exc: BaseException) -> str:
     if isinstance(exc, BaseExceptionGroup):
         inner = [_describe(e) for e in exc.exceptions]
@@ -404,6 +428,7 @@ class Toolbox:
             for name, server in (config.servers.items() if config.enabled else ())
         }
         self.functions: dict[str, ToolSpec] = {}   # model-facing function name -> spec, per last tools_for
+        self.risks: dict[str, str] = {}             # [approvals] risk, set by the daemon (Server.risk)
         for server in self.servers.values():
             server.on_adapter = self.adapters.__setitem__
 
@@ -484,6 +509,18 @@ class Toolbox:
         """Is this tool on its server's `confirm` list: a spoken yes first (confirm.py)?"""
         found = self.servers.get(server)
         return found is not None and name in found.confirm
+
+    def risk(self, server: str, name: str) -> str:
+        """The tool's approval tier (Server.risk, with `[approvals] risk`); `change` for an unknown server."""
+        found = self.servers.get(server)
+        return found.risk(name, self.risks) if found is not None else "change"
+
+    def needs_approval(self, server: str, name: str) -> bool:
+        """Does this call wait for a yes (approvals.needed): on its server's `confirm` list, or `sends` or
+        `destructive`?"""
+        from .approvals import needed   # local: approvals imports confirm, which imports this module
+
+        return needed(self.needs_confirm(server, name), self.risk(server, name))
 
     async def call_function(self, function: str, arguments: dict[str, Any] | None = None) -> ToolResult:
         """By the model-facing name from the last `tools_for`."""

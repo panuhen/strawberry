@@ -655,12 +655,19 @@ class Listener:
         self.stop.clear()
         started = time.perf_counter()
         restore: Callable[[], None] = lambda: None
+        # The `listening` gauge for v2 bodies (PROTOCOL §11b): the capture started and ended, how long it
+        # recorded and whether it heard speech. Never the audio or the words.
+        listening = getattr(daemon, "listening", None) or (lambda *a, **k: None)
+        ended = False
         try:
             self.phase = "listening"
+            listening("started")
             await daemon.perform(Performance(state="listening"))
             source, restore = await asyncio.to_thread(self.microphone, self.config.source, self.config.bluetooth and self.bluetooth_ok)
             if source is None:
                 log.warning("voice: no microphone source found (preferred %r)", self.config.source)
+                listening("ended", seconds=0.0, speech=False)
+                ended = True
                 await daemon.perform(Performance(state="talking", text="I can't find a microphone.", emotion="alert"))
                 return {"transcript": None, "error": "no microphone"}
             try:
@@ -670,6 +677,8 @@ class Listener:
                 )
             finally:
                 await asyncio.to_thread(restore)  # hi-fi profile back before she starts talking
+            listening("ended", seconds=rec.seconds, speech=rec.speech_seconds > 0.0)
+            ended = True
             log.info("voice: recorded %.1fs (%.1fs speech, stopped by %s) from %s", rec.seconds, rec.speech_seconds,
                      rec.stopped_by, source)
             if rec.stopped_by == "error" and source.startswith("bluez_input"):
@@ -688,12 +697,19 @@ class Listener:
             self.last_transcript = text or None
             if not text:
                 self.empty += 1
-                await daemon.perform(Performance(state="talking", text=DIDNT_CATCH))
+                # A run of its own that ends `didnt_catch` (Daemon.didnt_catch), where the daemon has runs.
+                caught = getattr(daemon, "didnt_catch", None)
+                if caught is not None:
+                    await caught(DIDNT_CATCH)
+                else:
+                    await daemon.perform(Performance(state="talking", text=DIDNT_CATCH))
                 return {"transcript": "", "seconds": rec.seconds}
             log.info("voice: heard %s in %.0f ms", sentence(text), self.last_ms)
             performance, _sent = await daemon.handle_event(Event(source="voice", title=text, spoken=True))
             return {"transcript": text, "seconds": rec.seconds, "performance": performance.to_dict()}
         finally:
+            if not ended:
+                listening("ended", seconds=0.0, speech=False)   # a capture that failed still ends
             self.phase = "idle"
             self.busy = False
 
