@@ -9,6 +9,22 @@ package and the widget binary.
 
 ### Added
 
+- Runs you can watch and stop. Every sentence she handles, and every notification she reacts to,
+  is a run with its steps: how the gate read it, thinking, each tool call and how long it took,
+  what she said, and how it ended. While a slower one is going on, a chip under her bubble says
+  what she is doing ("thinking…", "searching the web…", "Spotify: play"), in her smoked glass with
+  square corners, and its ✕ stops it. "Stop", "cancel that" or "never mind" stops it too, and a new
+  sentence takes over from the one she was on (`[runs] supersede`; a yes or no to her question
+  never does). A call that only looks something up is dropped at once; one that changes something
+  is let finish, and she says it had already gone through. One sentence is handled at a time now:
+  two typed in a row no longer run side by side. The Brain UI has a Runs section with each run's
+  timeline and a Cancel button. The steps carry tool names and timings only, never what you said,
+  a tool's arguments or its results. New settings: `[runs] events`, `supersede`, `keep`.
+- Protocol v2, first part (PROTOCOL.md Part 1b): a body that says `protocol: 2` in its hello gets
+  `welcome`, the run events it asks for, the run's id on the performance that answers it, the
+  brain's clock in each pong, and may send `run.cancel` if it said so. A v1 body gets exactly the
+  bytes it always did. The widget speaks v2. `/health` lists the bodies and the runs.
+
 - The Brain UI (`strawberry ui`, README: *Brain UI*): a page in your browser, served by the
   daemon, that shows the router live (each sentence's reading, confidence, what handled it and
   how long it took) and what the learning loop learned: the candidate against the head in use

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 import re
@@ -10,7 +11,7 @@ import time
 from dataclasses import replace
 from typing import Any
 
-from .actions import NO_CATALOGUE, Actor, Outcome
+from .actions import NO_CATALOGUE, READ_REFLEXES, Actor, Outcome
 from .adapters import gate_examples
 from . import confirm
 from .confirm import Held
@@ -25,6 +26,8 @@ from . import logtext, media, privacy
 from .outcomes import OutcomeLog
 from .reactions import decorate, is_burst
 from .routefeed import RouteFeed
+from . import runs
+from .runs import Run, RunBook, emit, is_stop
 from .speech import Speaker
 from .systemone import Gate, Route
 from .thinker import WEB_REPLY, Thinker
@@ -89,6 +92,10 @@ class Daemon:
         self.outcomes = OutcomeLog(self.config.learning)
         # The same sentences as they are routed, in memory, for the Brain UI's live view (routefeed.py).
         self.feed = RouteFeed(self.config.learning)
+        # Every input she handles is a run (runs.py, WIRING.md §18): its steps go to the bodies that
+        # asked for them and to the Brain UI, and a run can be stopped. One foreground run at a time.
+        self.runs = RunBook(keep=self.config.runs.keep, events=self.config.runs.events)
+        self.phases: asyncio.Queue | None = None    # the hub's feed of run events (start)
         # Its second half (§8d): labels from those outcomes, a candidate head trained on them when she
         # has been idle a while, and the gate following the heads dir's `current` without a restart.
         self.voice_at = time.monotonic()     # the last sentence handled (or the start): the trainer waits for quiet
@@ -136,6 +143,9 @@ class Daemon:
                 await start()
         await self.toolbox.start()
         await self.thinker.start()
+        if self.hub.pump_task is None:
+            self.phases = self.runs.subscribe()
+            self.hub.pump_task = asyncio.get_running_loop().create_task(self.hub.pump(self.phases))
         self.outcomes.start()
         self.trainer.start()
         if self.config.voice.enabled and self.config.voice.hotwords and self.toolbox.servers:
@@ -176,6 +186,8 @@ class Daemon:
         return task
 
     async def close(self) -> None:
+        # Each run still going ends with run.cancelled (shutdown); a change in flight finishes first.
+        self.runs.cancel_all("shutdown")
         if self.wake_task and not self.wake_task.done():
             # Awaited, so its system-bus socket is closed before the loop goes.
             self.wake_task.cancel()
@@ -203,6 +215,9 @@ class Daemon:
             self.vocabulary_task.cancel()
         if self.listen_task and not self.listen_task.done():
             self.listen_task.cancel()
+        if self.hub.pump_task is not None:
+            self.hub.pump_task.cancel()
+            self.hub.pump_task = None
 
     POKE_GAP_S = 0.5
     EARS_GAP_S = 5.0     # "still getting my ears on" at most this often
@@ -246,16 +261,27 @@ class Daemon:
         A caller that already supplies `audio` keeps it; a line with no audio gets Piper's wav,
         or stays silent when speech is off, quiet, or failing. The bubble shows either way.
         """
+        # A line that answers the run going on in this task (runs.active): its `speaking` event, and
+        # the run's id on the performance for v2 bodies. Cover lines ("On it.") are `thinking`.
+        run = runs.active.get()
+        answering = (run is not None and not run.done and performance.state == "talking"
+                     and bool(performance.text or performance.audio))
         if performance.text and not performance.audio:
             audio = await self.speaker.say(performance.text)
             if audio:
                 performance = replace(performance, audio=audio)
+        if answering:
+            emit(run, "speaking", duration=speech_seconds(performance), emotion=performance.emotion)
+        if self.phases is not None:
+            # The run's steps so far go out first, so a body sees them in order with the line.
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self.phases.join(), self.PHASES_WAIT_S)
         if performance.state in PERSISTENT_STATES:
             self.rest_state = performance.state
         self.state = performance.state
         self.state_at = time.monotonic()
         payload = performance.to_dict()
-        sent = await self.hub.send(payload)
+        sent = await self.hub.send(payload, run_id=run.run_id if answering else "")
         self.performed += 1
         logged = payload | {"text": logtext.line(payload["text"])} if "text" in payload else payload
         if sent == 0:
@@ -264,6 +290,7 @@ class Daemon:
             log.info("perform -> %d widget(s): %s", sent, logged)
         return sent
 
+    PHASES_WAIT_S = 0.5
     TRANSIENT_S = 6.0
 
     def current_state(self) -> str:
@@ -354,6 +381,23 @@ class Daemon:
     GLANCE_QUIP_WORDS = 8
 
     async def handle_notification(self, event: Event) -> tuple[Performance, int]:
+        """A notification is a run of its own (runs.py): `speaking` and its end, beside whatever
+        sentence is being handled (it is never the foreground run, and a sentence never stops it)."""
+        run = self.runs.start("notification")
+        token = runs.active.set(run)
+        try:
+            return await self._handle_notification(event)
+        except asyncio.CancelledError:
+            run.cancel_reason = run.cancel_reason or "shutdown"
+            raise
+        except Exception:
+            run.error = run.error or "other"
+            raise
+        finally:
+            runs.active.reset(token)
+            self.runs.finish(run)
+
+    async def _handle_notification(self, event: Event) -> tuple[Performance, int]:
         """A desktop notification, by the app's body mode (WIRING.md §4).
 
         off: the body is dropped (the watcher should not have sent it; this holds the line too).
@@ -408,19 +452,103 @@ class Daemon:
 
     async def handle_voice(self, event: Event) -> tuple[Performance, int]:
         """A sentence the user said or typed: the gate (§8a), a bare reflex if it is plainly one,
-        otherwise Qwen in her own voice with the tools (§8b). Gemma answers only if Qwen is off."""
+        otherwise Qwen in her own voice with the tools (§8b). Gemma answers only if Qwen is off.
+
+        Each sentence is a foreground run (runs.py), and there is one at a time. A sentence while
+        another is still going stops it first ([runs] supersede; "superseded"), unless it answers
+        her question (confirm.py), and a whole-sentence "stop" or "never mind" stops it and is
+        answered with a short line ("stopped"); a yes or no to her question is neither. Either way
+        it waits for that run to end."""
         self.voice_handling += 1
         self.voice_at = time.monotonic()
-        live = self.feed.start("voice" if event.spoken else "typed")
+        previous = self.runs.busy()
+        run = self.runs.start("voice" if event.spoken else "typed")
+        live = self.feed.start(run.source)
+        live["run_id"] = run.run_id
         try:
+            answer = self.answers_question(event.title)
+            stop = previous is not None and not answer and is_stop(event.title)
+            if previous is not None:
+                if stop:
+                    self.runs.cancel_all("stopped", but=run)
+                elif self.config.runs.supersede and not answer:
+                    self.runs.cancel(previous.run_id, "superseded")
+                await previous.finished.wait()
             with logtext.hearing(event.title):   # her lines in the log leave it out (log_sentences)
-                return await self._handle_voice(event, live)
+                work = self._stopped(event, previous) if stop else self._handle_voice(event, live, run)
+                return await self._in_run(run, work)
+        except asyncio.CancelledError:
+            run.cancel_reason = run.cancel_reason or "shutdown"
+            raise
+        except Exception:
+            run.error = run.error or "other"
+            raise
         finally:
             self.voice_handling -= 1
             self.voice_at = time.monotonic()
             self.feed.done(live)
+            self.runs.finish(run)
 
-    async def _handle_voice(self, event: Event, live: dict[str, Any]) -> tuple[Performance, int]:
+    def answers_question(self, text: str) -> bool:
+        """Is this sentence a yes or no to her question (held, or dropped a moment ago)? It never
+        supersedes: it is the answer the run before it was waiting for."""
+        late = time.monotonic() - self.dropped_at < confirm.LATE_S
+        return (self.held is not None or late) and confirm.answer(text) is not None
+
+    async def _in_run(self, run: Run, work) -> tuple[Performance, int]:
+        """`work` in a task of its own, the one RunBook.cancel cancels, with `run` as the active run
+        (what perform answers). A cancel of the run ends here: she leaves the thinking pose, or says
+        what had already gone through. A cancel of this task itself (shutdown) goes on up."""
+        if run.cancel_reason:   # stopped while it waited its turn
+            work.close()
+            return Performance(state=self.rest_state), 0
+
+        async def as_run():
+            runs.active.set(run)   # in this task's own context only
+            return await work
+
+        task = asyncio.get_running_loop().create_task(as_run())
+        run.task = task
+        try:
+            return await task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if (current is not None and current.cancelling()) or not run.cancel_reason or not task.cancelled():
+                raise
+        return await self._after_cancel(run)
+
+    STOPPED = "Okay, stopped."
+
+    async def _after_cancel(self, run: Run) -> tuple[Performance, int]:
+        """After a stop: one short line if a change had gone through before it (a shielded call),
+        else her resting pose again (a newer sentence takes over by itself)."""
+        if run.shielded:
+            done = ", ".join(dict.fromkeys(label.replace(":", "") for label in run.shielded))
+            performance = Performance(state="talking", text=f"Stopped, but {done} had already gone through.",
+                                      emotion="neutral")
+            token = runs.active.set(run)
+            try:
+                sent = await self.perform(performance)
+            finally:
+                runs.active.reset(token)
+            self.ledger.record("(stopped)", performance.text or "", did=f"stopped after {done}")
+            return performance, sent
+        performance = Performance(state=self.rest_state)
+        if run.cancel_reason == "superseded":
+            return performance, 0
+        return performance, await self.perform(performance)
+
+    async def _stopped(self, event: Event, previous: Run | None) -> tuple[Performance, int]:
+        """"Stop" while she was on something: that run is stopped already; she says so, briefly. If a
+        change had gone through first, the stopped run says that instead and this one stays quiet."""
+        if previous is not None and previous.shielded:
+            return Performance(state=self.rest_state), 0
+        performance = decorate(event, Performance(state="talking", text=self.STOPPED, emotion="neutral"))
+        sent = await self.perform(performance)
+        self.ledger.record(event.title, performance.text or "", did="stopped what she was doing")
+        return performance, sent
+
+    async def _handle_voice(self, event: Event, live: dict[str, Any], run: Run | None = None) -> tuple[Performance, int]:
         text = event.title
         preface = ""
         held = self.take_held()
@@ -454,9 +582,12 @@ class Daemon:
             # Set before acting: the MPRIS doorway reports the new track while the skip is still
             # confirming it, and that reaction would come out ahead of hers.
             self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
-        outcome = await self.actor.act(text, route) if route is not None else None
+        routing = self._routing(run, route)
+        outcome = await self.actor.act(text, route, on_call=self._reflex_events(run, routing)) if route is not None else None
         if outcome is not None:
             # A reflex: code wrote the fact, the reaction path adds the quip.
+            if not outcome.ok and run is not None:
+                run.error = "tools"
             self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
             last = getattr(self.actor, "last", None) or {}
             # The reflex's own name: the gate's tool, or one read off the words ("spotify.like").
@@ -466,14 +597,17 @@ class Daemon:
             self.ledger.record(text, performance.text or "", did=outcome.did)
             return performance, sent
         if route is not None and self.actor.needs_catalogue(route):
+            routing("fixed")
             self.acted(record, live, "no_catalogue", True)
             return await self.no_catalogue(event, route, preface)
         if not self.thinker.enabled:
+            routing("chat")
             if music:
                 self.quiet_media_until = 0.0  # Gemma cannot touch the music; it is not hers to explain
             self.acted(record, live, "chat", True)
             return await self.chat(event, preface)
-        outcome = await self.think(text, route)
+        routing("escalate")
+        outcome = await self.think(text, route, run)
         self.acted(record, live, "thinker", outcome.ok, calls=outcome.calls)
         if music and not outcome.calls:
             self.quiet_media_until = 0.0  # she only talked; a track change now is somebody else's
@@ -493,6 +627,41 @@ class Daemon:
         said = WEB_REPLY if web else confirm.LEDGER_HELD if outcome.held is not None else performance.text or ""
         self.ledger.record(text, said, did=outcome.did)
         return performance, sent
+
+    @staticmethod
+    def _routing(run: Run | None, route: Route | None):
+        """routing(path, tool=""): the run's `routing` event, once, when the path is known (a reflex
+        says so as it starts). None from the gate (off, or no answer in time) sends none."""
+        sent = False
+
+        def routing(path: str, tool: str = "") -> None:
+            nonlocal sent
+            if sent or route is None:
+                return
+            sent = True
+            emit(run, "routing", kind=route.kind, topic=route.topic, decision=route.decision, path=path,
+                 tool=tool or None, confidence=route.confidence, ms=route.ms)
+
+        return routing
+
+    def _reflex_events(self, run: Run | None, routing):
+        """Actor.act's on_call: the reflex's tool events, and the routing ahead of them."""
+        started: dict[str, Any] = {}
+
+        def on_call(phase: str, server: str, tool: str, ok: bool | None = None, error: str = "") -> None:
+            key = f"{server}.{tool}"
+            if phase == "started":
+                routing("reflex", tool)
+                started.update(call_id=run.call_id() if run is not None else "", at=time.monotonic(),
+                               label=self.actor.label(server, tool))
+                emit(run, "tool.started", call_id=started["call_id"], tool=key, label=started["label"], careful=False)
+                return
+            emit(run, "tool.completed", call_id=started.get("call_id", ""), tool=key,
+                 duration=time.monotonic() - started.get("at", time.monotonic()), ok=bool(ok), error=error or None)
+            if run is not None and run.cancel_reason and ok and tool not in READ_REFLEXES:
+                run.shielded.append(started.get("label", key))
+
+        return on_call
 
     def acted(self, record, live: dict[str, Any], path: str, ok: bool, reflex: str = "", calls=()) -> None:
         """How a sentence was handled: for the outcome log (§8c) and the live view (routefeed.py)."""
@@ -558,6 +727,9 @@ class Daemon:
         the fact and the reaction path adds the quip, as for a reflex."""
         outcome = await confirm.run(self.toolbox, self.toolbox.adapters.get(held.server), held)
         log.info("confirm: %s made after a yes -> %s", held.key, "ok" if outcome.ok else "failed")
+        run = runs.active.get()
+        if run is not None and not outcome.ok:
+            run.error = "tools"
         performance, sent = await self.report(outcome.event(text), outcome.ok)
         self.ledger.record(text, performance.text or "", did=outcome.did)
         return performance, sent
@@ -565,7 +737,7 @@ class Daemon:
     def confirm_stats(self) -> dict[str, Any]:
         return {"waiting": self.held.key if self.held is not None else None, "timeout_s": self.config.actions.confirm_s}
 
-    async def think(self, text: str, route: Route | None) -> Outcome:
+    async def think(self, text: str, route: Route | None, run: Run | None = None) -> Outcome:
         """Qwen, with cover that scales with the wait: the thinking pose at once and nothing said (a
         warm round is ~2 s, and "On it." before an answer to "what's up?" reads odd), a spoken
         acknowledgement from `acks` only after `ack_after_s`, "Still on it." after `still_on_it_s`
@@ -573,10 +745,13 @@ class Daemon:
         await self.perform(Performance(state="thinking"))
 
         async def cover() -> None:
+            # Not once the run is being stopped (a change finishing first): she is not still on it.
             await asyncio.sleep(self.config.thinker.ack_after_s)
-            await self.perform(Performance(state="thinking", text=self.rng.choice(self.config.thinker.acks)))
+            if run is None or not run.cancel_reason:
+                await self.perform(Performance(state="thinking", text=self.rng.choice(self.config.thinker.acks)))
             await asyncio.sleep(max(self.config.thinker.still_on_it_s - self.config.thinker.ack_after_s, 0.1))
-            await self.perform(Performance(state="thinking", text="Still on it."))
+            if run is None or not run.cancel_reason:
+                await self.perform(Performance(state="thinking", text="Still on it."))
 
         reminder = asyncio.get_running_loop().create_task(cover())
         try:
@@ -584,7 +759,7 @@ class Daemon:
             today = self.today()
             return await self.thinker.run(text, await self.situation(today), careful=careful,
                                           topic=route.topic if route is not None else "", recent=self.ledger.lines(),
-                                          route=route, public_context=today)
+                                          route=route, public_context=today, run=run)
         finally:
             reminder.cancel()
 
@@ -687,6 +862,19 @@ def read_wav_16k(path: str) -> Any:
         return samples
     positions = np.arange(0, len(samples), rate / RATE)
     return np.interp(positions, np.arange(len(samples)), samples).astype(np.float32)
+
+
+def speech_seconds(performance: Performance) -> float:
+    """How long the line takes: the wav's length, else the widget's reading pace (bubble.gd)."""
+    if performance.audio:
+        import wave
+
+        try:
+            with wave.open(str(performance.audio), "rb") as wav:
+                return wav.getnframes() / float(wav.getframerate() or 1)
+        except (OSError, EOFError, wave.Error):
+            pass
+    return min(max(0.6 + len(performance.text or "") * 0.055, 1.6), 9.0)
 
 
 def prefaced(preface: str, text: str) -> str:

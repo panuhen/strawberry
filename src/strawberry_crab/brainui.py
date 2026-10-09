@@ -6,10 +6,11 @@ nothing here decides anything.
                               (server.local_only) and answers a loopback client only
     GET  /ui/login?token=     swaps the token for a session cookie, then redirects to /ui
     GET  /ui                  the page; /ui/app.js, /ui/style.css, /ui/icon.svg beside it
-    GET  /ui/api/learning | routes | data | settings | system
-    GET  /ui/api/events       server-sent events: `route` (a sentence routed), `learning` (a file
-                              of the loop changed), a comment line as a keep-alive
-    POST /ui/api/accept | reject | rollback | use | review | train | forget
+    GET  /ui/api/learning | routes | runs | data | settings | system
+    GET  /ui/api/events       server-sent events: `route` (a sentence routed), `run` (a step of a run,
+                              runs.py), `learning` (a file of the loop changed), a comment line as a
+                              keep-alive
+    POST /ui/api/accept | reject | rollback | use | review | train | forget | cancel
 
 Everything else on the port refuses a request with an Origin header, so no web page can reach
 it. The routes under /ui are the one place a browser is let in, and only this way:
@@ -200,6 +201,7 @@ def setup(app: web.Application, daemon) -> BrainUI:
         web.get(r"/ui/{name:app\.js|style\.css|icon\.svg}", asset),
         web.get("/ui/api/learning", api_learning),
         web.get("/ui/api/routes", api_routes),
+        web.get("/ui/api/runs", api_runs),
         web.get("/ui/api/data", api_data),
         web.get("/ui/api/settings", api_settings),
         web.get("/ui/api/system", api_system),
@@ -211,6 +213,7 @@ def setup(app: web.Application, daemon) -> BrainUI:
         web.post("/ui/api/review", api_review),
         web.post("/ui/api/train", api_train),
         web.post("/ui/api/forget", api_forget),
+        web.post("/ui/api/cancel", api_cancel),
     ])
     return ui
 
@@ -495,6 +498,15 @@ async def api_routes(request: web.Request, ui: BrainUI, session: Session) -> web
 
 
 @checked("get")
+async def api_runs(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """The runs going on and the last [runs] keep finished ones, each with its steps (tool names and
+    timings only: runs.emit whitelists them)."""
+    book = ui.daemon.runs
+    return web.json_response({"events": ui.daemon.config.runs.events,
+                              "runs": [run.view() for run in book.recent(ui.daemon.config.runs.keep)]})
+
+
+@checked("get")
 async def api_data(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
     return await json_of(lambda: data_view(ui))
 
@@ -521,24 +533,37 @@ async def api_events(request: web.Request, ui: BrainUI, session: Session) -> web
     await response.prepare(request)
     feed = ui.daemon.feed
     queue = feed.subscribe()
+    book = ui.daemon.runs
+    steps = book.subscribe()
     wake = asyncio.Event()
     ui.wake.add(wake)
     ui.streams += 1
     signature = ui.learning.signature()
     quiet_since = time.monotonic()
+    getter: asyncio.Future | None = None
+    stepper: asyncio.Future | None = None
     try:
         await response.write(b"retry: 3000\n\n")
         while not ui.closing and ui.sessions.alive(session):
-            getter = asyncio.ensure_future(queue.get())
+            # Each queue's get stays pending across turns, so nothing taken off a queue is lost.
+            getter = getter or asyncio.ensure_future(queue.get())
+            stepper = stepper or asyncio.ensure_future(steps.get())
             waker = asyncio.ensure_future(wake.wait())
-            done, _ = await asyncio.wait({getter, waker}, timeout=STREAM_TICK_S, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait({getter, stepper, waker}, timeout=STREAM_TICK_S, return_when=asyncio.FIRST_COMPLETED)
             waker.cancel()
-            if getter in done:
+            if getter.done():
                 entry = routefeed.view(getter.result(), ui.logging_on)
+                getter = None
                 await response.write(_event("route", entry))
                 quiet_since = time.monotonic()
-            else:
-                getter.cancel()
+            if stepper.done():
+                step = dict(stepper.result())
+                stepper = None
+                run = book.get(step.get("run_id", ""))
+                if run is not None:
+                    step["source"] = run.source
+                await response.write(_event("run", step))
+                quiet_since = time.monotonic()
             now = ui.learning.signature()
             if now != signature:
                 signature = now
@@ -550,7 +575,11 @@ async def api_events(request: web.Request, ui: BrainUI, session: Session) -> web
     except (ConnectionResetError, asyncio.CancelledError):
         pass
     finally:
+        for pending in (getter, stepper):
+            if pending is not None:
+                pending.cancel()
         feed.unsubscribe(queue)
+        book.unsubscribe(steps)
         ui.wake.discard(wake)
         ui.streams -= 1
     with contextlib.suppress(ConnectionResetError, RuntimeError):
@@ -670,3 +699,15 @@ async def api_forget(request: web.Request, ui: BrainUI, session: Session) -> web
         await _then_follow(ui, {})
         log.info("ui: learning forgotten%s", " with the heads" if everything else "")
     return response
+
+
+@checked("post")
+async def api_cancel(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """Stop a run going on, as the widget's ✕ does (a change already under way finishes first)."""
+    run_id = (await _payload(request)).get("run_id")
+    if not isinstance(run_id, str) or not re.fullmatch(r"r-\d{1,9}", run_id):
+        raise web.HTTPBadRequest(text="run_id must be a run's id")
+    if not ui.daemon.runs.cancel(run_id, "stopped"):
+        return web.json_response({"error": "that run is not going on"}, status=409)
+    log.info("ui: run %s stopped by hand", run_id)
+    return web.json_response({"cancelled": run_id})

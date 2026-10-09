@@ -404,6 +404,8 @@ class WebAdapter(Adapter):
     # other tools. The thinker does its half for every `untrusted` server (Thinker._run); `guard`
     # pins a page read to this question's search results, and after that one page nothing more.
     untrusted = True
+    title = "Web"
+    labels = {**{name: "searching the web…" for name in SEARCH_TOOLS}, **{name: "reading a page…" for name in READ_TOOLS}}
 
     def wanted(self, text: str, route: Any) -> bool | None:
         # Asked outright, or a question about something that changes: offered with a note under the

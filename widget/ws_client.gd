@@ -72,8 +72,7 @@ func _process(delta: float) -> void:
 				backoff = 1.0
 				since_activity = 0.0
 				since_ping = 0.0
-				send({"type": "hello", "client": "strawberry-widget", "version": Paths.version(),
-					"godot": Engine.get_version_info().string})
+				send(hello())
 				connected.emit()
 			while peer.get_available_packet_count() > 0:
 				since_activity = 0.0
@@ -91,7 +90,7 @@ func _process(delta: float) -> void:
 			since_ping += delta
 			if since_ping >= PING_INTERVAL:
 				since_ping = 0.0
-				send({"type": "ping"})
+				send({"type": "ping", "t": Time.get_ticks_msec() / 1000.0})
 			if since_activity >= SILENCE_TIMEOUT:
 				_drop("silent for %.0fs" % since_activity)
 		WebSocketPeer.STATE_CONNECTING:
@@ -111,6 +110,15 @@ func _process(delta: float) -> void:
 			_schedule_retry()
 		_:
 			pass  # CLOSING: keep polling until CLOSED
+
+## Protocol v2 (PROTOCOL.md §10): the v1 fields, then what this body is and what it wants. It
+## asks for the run events its step chip shows and says it may send run.cancel (the chip's ✕).
+func hello() -> Dictionary:
+	return {"type": "hello", "client": "strawberry-widget", "version": Paths.version(),
+		"godot": Engine.get_version_info().string, "protocol": 2,
+		"body": {"id": "crab", "name": "Strawberry"},
+		"capabilities": {"phases": ["routing", "thinking", "tool", "speaking", "run"],
+			"sends": {"heard": true, "cancel": true}}}
 
 func send(data: Dictionary) -> void:
 	if peer.get_ready_state() == WebSocketPeer.STATE_OPEN:

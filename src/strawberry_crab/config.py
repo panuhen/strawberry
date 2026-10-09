@@ -249,6 +249,16 @@ class LearningConfig:
 
 
 @dataclass
+class RunsConfig:
+    """Runs (WIRING.md §18): every sentence she handles, its steps on the bus and a way to stop it."""
+
+    events: bool = True            # each run's steps go to the bodies that ask (the widget's chip) and the Brain UI
+    supersede: bool = True         # a new sentence stops the one she is still on (not an answer to her question);
+                                   # false: it waits its turn
+    keep: int = 50                 # finished runs kept in memory for the Brain UI
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
@@ -262,6 +272,7 @@ class Config:
     actions: ActionsConfig = field(default_factory=ActionsConfig)
     thinker: ThinkerConfig = field(default_factory=ThinkerConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
+    runs: RunsConfig = field(default_factory=RunsConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -278,6 +289,7 @@ class Config:
             "actions": asdict(self.actions),
             "thinker": asdict(self.thinker),
             "learning": asdict(self.learning),
+            "runs": asdict(self.runs),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -296,6 +308,7 @@ _SECTIONS = {
     "actions": ActionsConfig,
     "thinker": ThinkerConfig,
     "learning": LearningConfig,
+    "runs": RunsConfig,
 }
 
 
@@ -431,6 +444,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("learning.idle_minutes must be positive and learning.min_new_labels >= 1")
     if not (0.0 < learning.max_share <= 1.0):
         raise ConfigError("learning.max_share must be above 0 and at most 1")
+    if not (1 <= config.runs.keep <= 1000):
+        raise ConfigError("runs.keep must be between 1 and 1000")
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
 
     try:
@@ -492,6 +507,7 @@ def default_toml() -> str:
     s = SpeechConfig()
     g = GateConfig()
     lr = LearningConfig()
+    ru = RunsConfig()
     lines = [
         "# Strawberry settings. Every key is optional; these are the defaults.",
         "# Restart the daemon after editing: bin/strawberry stop && bin/strawberry daemon",
@@ -645,6 +661,13 @@ def default_toml() -> str:
         f"auto_switch = {str(lr.auto_switch).lower()}            # true: a candidate that passes is put in use without asking",
         f"weekly_line = {str(lr.weekly_line).lower()}            # true: once a week she says what she learned (never in quiet hours)",
         f"max_share = {lr.max_share}              # your labels weigh at most this share of the data set's, per option",
+        "",
+        "[runs]",
+        "# Each sentence she handles is a run: its steps (deciding, thinking, a tool) show as a chip under her",
+        "# bubble with a stop button, and in the Brain UI. Tool names and timings only, never what was said.",
+        f"events = {str(ru.events).lower()}                  # send the steps to the widget and the Brain UI",
+        f"supersede = {str(ru.supersede).lower()}               # a new sentence stops the one she is on (not a yes or no to her question)",
+        f"keep = {ru.keep}                      # finished runs the Brain UI can show",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

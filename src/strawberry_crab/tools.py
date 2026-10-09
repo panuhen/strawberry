@@ -179,6 +179,9 @@ class Server:
         self.ready = asyncio.Event()
         self.failed = ""
         self.tools: list[ToolSpec] = []
+        # Tools the server marks as only reading (MCP's readOnlyHint): a cancel stops waiting for one,
+        # where a call that may change something is let finish first (runs.py, Thinker._call).
+        self.read_only: frozenset[str] = frozenset()
         self.calls = 0
         self.failures = 0
         self.last_ms: float | None = None
@@ -219,6 +222,7 @@ class Server:
                 session = await self.connect(stack, self.config)
                 listed = await session.list_tools()
                 self._claim([t.name for t in listed.tools])
+                self.read_only = frozenset(t.name for t in listed.tools if _read_only(t))
                 self.tools = self._offer([
                     ToolSpec(self.name, t.name, (t.description or "").strip(), dict(getattr(t, "input_schema", None) or {}))
                     for t in listed.tools
@@ -369,6 +373,11 @@ class Server:
                 "confirm": sorted(self.confirm)}
 
 
+def _read_only(tool: Any) -> bool:
+    annotations = _field(tool, "annotations")
+    return annotations is not None and _field(annotations, "read_only_hint", "readOnlyHint") is True
+
+
 def _describe(exc: BaseException) -> str:
     if isinstance(exc, BaseExceptionGroup):
         inner = [_describe(e) for e in exc.exceptions]
@@ -451,6 +460,25 @@ class Toolbox:
         if server not in self.servers:
             return ToolResult(server, name, False, f"no server named {server!r} in [tools.servers]", 0.0, arguments=arguments or {})
         return await self.servers[server].call(name, arguments, result_chars or self.config.result_chars)
+
+    def label(self, server: str, name: str) -> str:
+        """The tool as the widget's step chip names it ("Spotify: next", "searching the web…"): the
+        adapter's own words for it, else the server's title and the tool's name. Never an argument."""
+        adapter = self.adapters.get(server)
+        own = (getattr(adapter, "labels", None) or {}).get(name) if adapter is not None else None
+        if isinstance(own, str) and own:
+            return own
+        title = (getattr(adapter, "title", "") if adapter is not None else "") or server.replace("_", " ").capitalize()
+        return f"{title}: {name.replace('_', ' ')}"
+
+    def reads(self, server: str, name: str) -> bool:
+        """Does this tool only read? A server that only looks things up (web search), a tool its adapter
+        lists in `reads`, or one the server marks read-only. Anything else may change something."""
+        adapter = self.adapters.get(server)
+        if adapter is not None and (getattr(adapter, "looks_up_only", False) or name in (getattr(adapter, "reads", ()) or ())):
+            return True
+        found = self.servers.get(server)
+        return found is not None and name in found.read_only
 
     def needs_confirm(self, server: str, name: str) -> bool:
         """Is this tool on its server's `confirm` list: a spoken yes first (confirm.py)?"""

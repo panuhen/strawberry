@@ -168,6 +168,8 @@ async def health(request: web.Request) -> web.Response:
             "ok": True,
             "widgets": daemon.hub.count,
             "widget_versions": daemon.hub.versions,
+            "bodies": daemon.hub.bodies(),
+            "runs": daemon.runs.stats(),
             "version": __version__,
             "performed": daemon.performed,
             "uptime_s": round(daemon.uptime, 1),
@@ -387,8 +389,8 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
 
 
 async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str) -> None:
-    # The widget introduces itself, pings for liveness, and relays typed sentences ("heard");
-    # anything else is logged, not acted on.
+    # The widget introduces itself, pings for liveness, and relays typed sentences ("heard"); a v2
+    # body may also stop the run going on ("run.cancel"). Anything else is logged, not acted on.
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -396,11 +398,21 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
         return
     kind = data.get("type") if isinstance(data, dict) else None
     if kind == "hello":
-        log.info("widget hello: %s", {k: v for k, v in data.items() if k != "type"})
+        log.info("widget hello: %s", {k: v for k, v in data.items() if k not in ("type", "capabilities")})
+        body = daemon.hub.hello(ws, data)
         if await _check_version(daemon, ws, data.get("version")) != "major":
+            if body.protocol >= 2:
+                await ws.send_str(json.dumps(welcome(daemon, body), ensure_ascii=False))
             _first_run_notice(daemon)
     elif kind == "ping":
-        await ws.send_str('{"type": "pong"}')
+        sent_t = data.get("t")
+        if isinstance(sent_t, (int, float)) and not isinstance(sent_t, bool):
+            # v2 clock sample (PROTOCOL §12.1): the body's time back, and ours.
+            await ws.send_str(json.dumps({"type": "pong", "t": sent_t, "brain_t": round(time.monotonic(), 6)}))
+        else:
+            await ws.send_str('{"type": "pong"}')
+    elif kind == "run.cancel":
+        await _cancel_from_body(daemon, ws, data)
     elif kind == "heard":
         # Typed into the widget's box: the same funnel as a spoken sentence (§8b). In the background,
         # so the socket keeps answering pings while Qwen thinks (the widget drops a silent socket).
@@ -411,6 +423,33 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
                               f"typed {sentence(text)}")
     else:
         log.debug("widget message: %s", data)
+
+
+def welcome(daemon: Daemon, body) -> dict[str, Any]:
+    """The answer to a v2 hello (PROTOCOL §10): what the brain will send this body."""
+    message: dict[str, Any] = {"type": "welcome", "protocol": body.protocol, "brain": __version__,
+                               "t": round(time.monotonic(), 6), "rest_state": daemon.rest_state,
+                               "accepted": {"phases": sorted(body.phases), "cancel": body.cancel}}
+    if body.id:
+        message["body_id"] = body.id
+    return message
+
+
+async def _cancel_from_body(daemon: Daemon, ws: web.WebSocketResponse, data: dict[str, Any]) -> None:
+    """`run.cancel {run_id}` (the widget's ✕): only from a v2 body that declared it can, and only for
+    the run going on now. It stops that run and nothing else: no line, no new run."""
+    body = daemon.hub.body(ws)
+    run_id = data.get("run_id")
+    if body.protocol < 2 or not body.cancel:
+        log.info("run.cancel from a body that did not declare it; ignored")
+        return
+    current = daemon.runs.busy()
+    if not isinstance(run_id, str) or current is None or current.run_id != run_id:
+        log.info("run.cancel for a run that is not the one going on; ignored")
+        await ws.send_str(json.dumps({"type": "input.refused", "ref": run_id[:32] if isinstance(run_id, str) else "",
+                                      "reason": "not_current"}))
+        return
+    daemon.runs.cancel(run_id, "stopped")
 
 
 def _first_run_notice(daemon: Daemon) -> None:

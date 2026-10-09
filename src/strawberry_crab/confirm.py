@@ -111,11 +111,17 @@ def generic_question(name: str) -> str:
     return f"Shall I go ahead with {name.replace('_', ' ')}? Say yes."
 
 
-async def hold(toolbox: Toolbox, adapter: Any, server: str, name: str, arguments: dict[str, Any]) -> Held:
+async def hold(toolbox: Toolbox, adapter: Any, server: str, name: str, arguments: dict[str, Any],
+               run: Any = None) -> Held:
     """The call as it will be made after a yes, and the line that asks about it. The server's adapter
     writes the line and may pin what would change by then ("current" becomes the playing track's
     URI, so a yes after the song has changed removes the one she named); without one, or if it
-    fails, the call is kept as it came and the line names the tool."""
+    fails, the call is kept as it came and the line names the tool.
+
+    `run` is the run that asks (runs.py). Brain step 6, stage 2 emits its `approval.request` here
+    (PROTOCOL §13: the approval id, the risk, the question as written for display, the expiry) and
+    the run waits in `awaiting_approval`; today the run ends with the question and the next sentence
+    answers it."""
     question, kept = generic_question(name), dict(arguments)
     ask = getattr(adapter, "ask", None) if adapter is not None else None
     if ask is not None:

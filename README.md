@@ -19,6 +19,10 @@ model runs on your own computer through [Ollama](https://ollama.com); nothing is
   Ctrl+Alt+Space): press it, speak, and she answers. Or right-click her and choose *Chat with
   Strawberry…* (or press T) to type. A plain music
   command is done in well under a second; anything else goes to the larger local model.
+  While she works on something slower, a small chip under her bubble says what she is doing
+  ("thinking…", "searching the web…", "Spotify: play") and its ✕ stops it. Saying "stop" or
+  "never mind" does the same, and a new sentence takes over from the one she was on. Something
+  already under way that changes things (a track starting) is let finish, and she says so.
 - **Tools.** You can give her MCP servers (a calendar, notes, Spotify) in the config. None is
   configured out of the box. See [ADAPTERS.md](ADAPTERS.md).
 - **Web search (optional).** With a local SearXNG and its MCP server configured, she searches
@@ -147,6 +151,7 @@ The settings you are most likely to change:
 | `[daemon]` | `log_sentences` | write what you say or type to the log (off: only its length); see [Privacy](#privacy) |
 | `[learning]` | `log_outcomes` | keep what you say and how it was routed, locally, so she can learn from it (off); see [Learning](#learning) |
 | `[learning]` | `auto_switch`, `weekly_line` | put a better router in use without asking (off); say once a week what she learned (off) |
+| `[runs]` | `events`, `supersede`, `keep` | the chip under her bubble and the Brain UI's Runs (`events`); whether a new sentence stops the one she is on (`supersede`, on) or waits; how many finished runs the Brain UI keeps |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
 Files she keeps: settings in `~/.config/strawberry/`, the widget binary and voices in
@@ -270,6 +275,9 @@ say and what she has learned from it:
   learned from, each with Approve and Reject; the learning log; every head, with Use; the week.
 - **Router live**: each sentence as she routes it: what she read it as, how sure she was, what
   handled it and how long it took.
+- **Runs**: each thing she did, step by step (how she read it, thinking, each tool and how long it
+  took, what she said, how it ended), with Cancel on the one going on. Tool names and timings
+  only: never what you said, what a tool was given or what it found.
 - **Data and scores**: what a head is trained and tested on, and each head's test score over time.
 - **Settings and privacy**: what is kept and logged, and the line in `config.toml` that changes
   it (the page does not change settings), and Forget.

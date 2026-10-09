@@ -77,6 +77,12 @@ class Adapter:
     #: tools she asks about first, out loud, and calls only after a spoken yes (confirm.py), when the
     #: server's config has no `confirm` list of its own
     confirm: tuple[str, ...] = ()
+    #: how the widget's step chip names this server ("Spotify"); empty: the server's name, capitalised
+    title: str = ""
+    #: tool -> the chip's words for it while it runs ("searching the web…"); others are "<title>: <tool>"
+    labels: dict[str, str] = {}
+    #: tools that only read: a cancel stops waiting for them, where any other call is let finish first
+    reads: tuple[str, ...] = ()
 
     def matches(self, server_name: str, server_config: dict[str, Any]) -> bool:
         """Is this adapter for that configured server? An explicit `adapter` key decides alone."""
