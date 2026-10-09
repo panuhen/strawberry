@@ -611,7 +611,8 @@ async def test_the_brain_ui_shows_the_open_approval_and_answers_it(aiohttp_clien
     assert (await signed.post("/ui/api/approval", {"approval_id": approval_id, "answer": "yes"}, csrf=False)).status == 403
     assert (await signed.post("/ui/api/approval", {"approval_id": "<b>", "answer": "yes"})).status == 400
     assert (await signed.post("/ui/api/approval", {"approval_id": approval_id, "answer": "sure"})).status == 400
-    assert (await signed.post("/ui/api/approval", {"approval_id": "a-55", "answer": "yes"})).status == 409
+    assert (await signed.post("/ui/api/approval", {"approval_id": "a-000000-55", "answer": "yes"})).status == 409
+    assert (await signed.post("/ui/api/approval", {"approval_id": "a-55", "answer": "yes"})).status == 400
     response = await signed.post("/ui/api/approval", {"approval_id": approval_id, "answer": "yes"})
     assert response.status == 200 and (await response.json()) == {"answered": approval_id, "answer": "yes"}
     again = await signed.post("/ui/api/approval", {"approval_id": approval_id, "answer": "no"})

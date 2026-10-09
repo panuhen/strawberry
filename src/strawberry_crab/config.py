@@ -272,7 +272,8 @@ class ApprovalsConfig:
     change_s: float = 10.0         # how long she waits for a yes to a `change` call (or a listed `read`)…
     sends_s: float = 30.0          # …to one that sends something to someone (a message, an email)…
     destructive_s: float = 30.0    # …and to one that deletes or cannot be undone. Not counted while she
-                                   # is listening to the answer
+                                   # is listening to the answer…
+    grace_s: float = 10.0          # …for at most this much longer past the wait (a stuck mic cannot hold it open)
     hold: list[str] = field(default_factory=lambda: ["sends", "destructive"])
                                    # tiers whose yes on a body's card must be a press-and-hold
     # A tool's tier, by "server.tool" or a whole "server": read | change | sends | destructive, taken as
@@ -452,6 +453,8 @@ def _validate(config: Config) -> None:
     approvals = config.approvals
     if min(approvals.change_s, approvals.sends_s, approvals.destructive_s) <= 0:
         raise ConfigError("approvals.change_s, sends_s and destructive_s must be positive (how long she waits for a yes)")
+    if approvals.grace_s < 0:
+        raise ConfigError("approvals.grace_s must not be negative")
     if not all(tier in RISKS for tier in approvals.hold):
         raise ConfigError(f"approvals.hold must list tiers of {', '.join(RISKS)}")
     # `spotify.remove_saved_tracks = "…"` unquoted in a [approvals.risk] table is a nested table in TOML.
@@ -737,6 +740,7 @@ def default_toml() -> str:
         f"change_s = {ap.change_s}                # how long she waits for a yes to a change (Spotify's removals)",
         f"sends_s = {ap.sends_s}                 # …to a call that sends something",
         f"destructive_s = {ap.destructive_s}           # …to one that deletes or cannot be undone",
+        f"grace_s = {ap.grace_s}                # while you are still answering, at most this much longer",
         f"hold = {json.dumps(ap.hold)}   # on her card, a yes to these tiers is a press-and-hold",
         '# risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }',
         "#                              # a tool's (or a whole server's) tier: read | change | sends | destructive",

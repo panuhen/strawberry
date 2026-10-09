@@ -16,26 +16,33 @@ conversation (`needed(..., foreign=True)`; nothing passes it yet).
     book.verify(approval)                   # the stored call is still the one asked about
 
 One approval is open at a time; a newer request supersedes the older one. Only the call stored at
-the request is ever made, a deep copy of it, checked against its digest (sha256 of the server, the
-tool and the arguments) just before. Timeout is no: [approvals] change_s (10 s), sends_s and
-destructive_s (30 s), not counted while the user is speaking (the answer on its way). There is no
-"always allow".
+the request is ever made: a deep copy of it, copied again just before the call and checked against
+its digest (sha256 of the server, the tool and the arguments; confirm.run). Timeout is no:
+[approvals] change_s (10 s), sends_s and destructive_s (30 s); while the user is speaking at the
+deadline (the answer on its way) it waits once more, for at most [approvals] grace_s (10 s). Ids are
+`a-<boot>-<n>`, the boot part random at each start. There is no "always allow".
 
 Who answers: the user's own sentence, said or typed (Daemon.handle_voice); a v2 body that declared
 `sends.approval` in its hello, only for the open id, and for a tier in `[approvals] hold` only with
 `hold: true` (the widget enforces the ~1 s press; the brain checks the flag); the Brain UI (session
 and CSRF). A body can only answer: nothing here asks for an action. The bus gets the ids, the tier,
 the adapter's `describe` line, the times and the outcome (runs.emit whitelists them); never the
-arguments, a result or a sentence. The log names the tool, never its arguments.
+arguments as they came, a result or the user's sentence. The card line can carry names an adapter
+took from the call (a song, a playlist, a recipient), as her spoken question does; for `sends` and
+`destructive` tools never the free text being sent (Adapter.describe). The log names the tool, never
+its arguments.
+
+What this protects against: the model's mistakes and misheard speech. Not against local code with
+the user's privileges, which can already ask for a call (ws `heard`, POST /event) and say yes to it,
+and can claim `hold: true`; a per-install secret for the bus is planned for stage 3 (WIRING §19).
 """
 
 from __future__ import annotations
 
 import asyncio
 import copy
-import hashlib
 import itertools
-import json
+import secrets
 import logging
 import time
 from collections import deque
@@ -43,7 +50,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from .config import RISKS, ApprovalsConfig
-from .confirm import Held
+from .confirm import Held, digest
 from .runs import Run, emit
 
 log = logging.getLogger("strawberryd.approvals")
@@ -60,13 +67,6 @@ def needed(listed: bool, risk: str, foreign: bool = False) -> bool:
     tier. `foreign` is stage 3's rule (WIRING §19): once foreign text is in the conversation, every call
     that is not `read`. No caller passes it yet."""
     return listed or risk in ALWAYS or (foreign and risk != "read")
-
-
-def digest(server: str, name: str, arguments: dict[str, Any]) -> str:
-    """sha256 of the call: the server, the tool and the arguments in a canonical form."""
-    canonical = json.dumps({"server": server, "name": name, "arguments": arguments}, sort_keys=True,
-                           ensure_ascii=False, separators=(",", ":"), default=repr)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 @dataclass(eq=False)
@@ -89,6 +89,7 @@ class Approval:
     future: asyncio.Future | None = None
     request: dict[str, Any] | None = None   # the approval.request as it went out, for a body that connects later
     reply: Any = None              # (performance, sent) of what the run did after the answer
+    made: bool = False             # the call was started after a yes (a yes cancelled before it: False)
     run: Run | None = None         # the run that asked: approval.resolved goes out on it
 
     @property
@@ -100,7 +101,7 @@ class Approval:
         one (`prompt`), which the page shows with Yes and No; never the arguments."""
         out = {"approval_id": self.approval_id, "run_id": self.run_id, "risk": self.risk, "tool": self.held.key,
                "at": round(self.at, 3), "timeout_s": self.timeout_s, "hold": self.hold,
-               "outcome": self.outcome or None, "by": self.by or None,
+               "outcome": self.outcome or None, "by": self.by or None, "made": self.made,
                "waited": round((self.resolved_at or time.monotonic()) - self.asked, 3)}
         if prompt and self.open:
             out["prompt"] = self.prompt
@@ -113,6 +114,9 @@ class ApprovalBook:
 
     def __init__(self, config: ApprovalsConfig | None = None) -> None:
         self.config = config or ApprovalsConfig()
+        # a-<boot>-<n>: the boot part is new at each start, so a card left over from before a restart
+        # can never answer a new question that happens to have the same number.
+        self.boot = secrets.token_hex(3)
         self.ids = itertools.count(1)
         self.current: Approval | None = None
         self.history: deque[Approval] = deque(maxlen=HISTORY)
@@ -136,7 +140,7 @@ class ApprovalBook:
         risk = held.risk if held.risk in RISKS else "change"
         stored = replace(held, arguments=copy.deepcopy(held.arguments))
         timeout = self.timeout_for(risk)
-        approval = Approval(f"a-{next(self.ids)}", run.run_id if run is not None else "", stored,
+        approval = Approval(f"a-{self.boot}-{next(self.ids)}", run.run_id if run is not None else "", stored,
                             digest(stored.server, stored.name, stored.arguments), risk, held.prompt or held.question,
                             timeout, risk in self.config.hold, run=run)
         approval.expires = approval.asked + timeout
@@ -195,14 +199,18 @@ class ApprovalBook:
 
     async def wait(self, approval: Approval, busy: Callable[[], bool] = lambda: False) -> str:
         """Its outcome: an answer, or `timeout` once it has expired and the user is not speaking (the
-        answer on its way decides). A cancel of the waiting task leaves it open for the caller to resolve."""
+        answer on its way decides). The wait for a speaking user is one extension of at most
+        `[approvals] grace_s` past the expiry: a stuck listener or a noisy microphone cannot keep it open.
+        A cancel of the waiting task leaves it open for the caller to resolve."""
         assert approval.future is not None
+        last = approval.expires + max(self.config.grace_s, 0.0)
         while not approval.future.done():
-            left = approval.expires - time.monotonic()
-            if left <= 0 and not busy():
+            now = time.monotonic()
+            left = approval.expires - now
+            if left <= 0 and (now >= last or not busy()):
                 self.resolve(approval, "timeout")
                 break
-            await asyncio.wait({approval.future}, timeout=left if left > 0 else TICK_S)
+            await asyncio.wait({approval.future}, timeout=left if left > 0 else min(TICK_S, max(last - now, 0.01)))
         return approval.future.result()
 
     def verify(self, approval: Approval) -> bool:

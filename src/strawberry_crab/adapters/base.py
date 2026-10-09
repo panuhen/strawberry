@@ -185,7 +185,10 @@ class Adapter:
         """The one line her approval card shows (PROTOCOL §13b `prompt`): what is about to happen, for
         display, from the pinned call and the question `ask` wrote, and nothing the spoken question does
         not already say (it goes on the bus as her line anyway). The question without its "Say yes." by
-        default: "Remove 'Teardrop' from Gym?"."""
+        default: "Remove 'Teardrop' from Gym?". It goes on the bus to every body that shows approvals,
+        cut to 160 characters (confirm.card_line, runs.clean). For a `sends` or `destructive` tool it
+        must carry no free text from the arguments (a message's body, a note's text): naming the target
+        is fine (the song, the playlist, the recipient's display name), quoting what is sent is not."""
         from ..confirm import card_line   # local, as in `ask`
 
         return card_line(question)

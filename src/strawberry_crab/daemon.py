@@ -110,6 +110,7 @@ class Daemon:
         if self.config.approvals.risk:
             self.toolbox.risks = dict(self.config.approvals.risk)
         self.dropped_at = -1e9   # when a held call was last dropped by silence or a no (confirm.LATE_S)
+        self.unmade_line = ""    # "I stopped before doing it…", for the sentence that overtook a yes
         # Resume from suspend (logind on the system bus; Windows' power notification): the models
         # are loaded again before the first notification needs them (wake.py, winwake.py). No bus,
         # no registration: one log line, nothing else.
@@ -524,6 +525,8 @@ class Daemon:
                 elif self.config.runs.supersede and not answer:
                     self.runs.cancel(previous.run_id, "superseded")
                 await previous.finished.wait()
+            if self.unmade_line:   # a yes this sentence overtook before its call started (_await_answer)
+                preface, self.unmade_line = f"{self.unmade_line} {preface}".strip(), ""
             with logtext.hearing(event.title):   # her lines in the log leave it out (log_sentences)
                 work = self._stopped(event, previous) if stop else self._handle_voice(event, live, run, preface)
                 return await self._in_run(run, work)
@@ -615,6 +618,9 @@ class Daemon:
         change had gone through first, the stopped run says that instead and this one stays quiet."""
         if previous is not None and previous.shielded:
             return Performance(state=self.rest_state), 0
+        if previous is not None and any(a.run is previous and a.outcome == "yes" and not a.made
+                                        for a in self.approvals.history):
+            return Performance(state=self.rest_state), 0   # it said "I stopped before doing it" itself
         performance = decorate(event, Performance(state="talking", text=self.STOPPED, emotion="neutral"))
         sent = await self.perform(performance)
         self.ledger.record(event.title, performance.text or "", did="stopped what she was doing")
@@ -776,11 +782,26 @@ class Daemon:
         except asyncio.CancelledError:
             reason = run.cancel_reason if run is not None else ""
             self.approvals.resolve(approval, "superseded" if reason == "superseded" else "cancelled")
+            # A yes that a stop or a newer sentence overtook before the call started: the approval keeps
+            # its `yes` (the user's answer), `made` stays False, the run ends cancelled with no
+            # tool.started, and the user is told nothing was done.
+            unmade = approval.outcome == "yes" and not approval.made
+            if unmade:
+                log.info("confirm: %s not made: %s after the yes, before the call", approval.held.key,
+                         reason or "shutdown")
+                self.ledger.record("(stopped)", confirm.LEFT_UNMADE, did=f"left {approval.held.name} undone after a yes")
             if run is None or not reason or reason == "shutdown":
                 if run is not None:
                     run.cancel_reason = "shutdown"
                 raise
-            approval.reply = await self._after_cancel(run)
+            if unmade and reason == "superseded":
+                self.unmade_line = confirm.LEFT_UNMADE   # said ahead of the newer sentence's line
+                approval.reply = Performance(state=self.rest_state), 0
+            elif unmade:
+                performance = Performance(state="talking", text=confirm.LEFT_UNMADE, emotion="neutral")
+                approval.reply = performance, await self.perform(performance)
+            else:
+                approval.reply = await self._after_cancel(run)
         finally:
             if run is not None:
                 self.runs.finish(run)
@@ -825,11 +846,22 @@ class Daemon:
             performance = Performance(state="talking", text=confirm.LEFT_CHANGED, emotion="alert")
             return performance, await self.perform(performance)
         key, label = held.key, self.toolbox.label(held.server, held.name)
+        # Last look before anything is made: the yes still stands and the run is still going, neither
+        # stopped nor superseded on the way here. If not, nothing starts (_await_answer says so). A newer
+        # sentence that only waits its turn ([runs] supersede = false) does not stop it.
+        stopped = run.cancel_reason if run is not None else ""
+        if run is not None and not stopped and (run.done or self.runs.live.get(run.run_id) is not run):
+            stopped = run.cancel_reason = "stopped"
+        if stopped or approval.outcome != "yes":
+            log.info("confirm: %s not made: the run was %s after the yes", key, stopped or "ended")
+            raise asyncio.CancelledError
         call_id = run.call_id() if run is not None else ""
         careful = held.name in getattr(self.toolbox.servers.get(held.server), "careful", ())
         emit(run, "tool.started", call_id=call_id, tool=key, label=label, careful=careful)
         started = time.monotonic()
-        work = asyncio.ensure_future(confirm.run(self.toolbox, self.toolbox.adapters.get(held.server), held))
+        approval.made = True
+        work = asyncio.ensure_future(confirm.run(self.toolbox, self.toolbox.adapters.get(held.server), held,
+                                                 expected=approval.digest))
         try:
             outcome = await asyncio.shield(work)
         except asyncio.CancelledError:

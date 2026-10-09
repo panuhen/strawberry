@@ -294,29 +294,39 @@ async def read_stream(lines: Any, meter: Meter | None = None) -> dict[str, Any]:
     thinking: list[str] = []
     calls: list[Any] = []
     last: dict[str, Any] = {}
-    async for raw in lines:
-        line = raw.strip() if isinstance(raw, (bytes, str)) else b""
-        if not line:
-            continue
-        try:
-            chunk = json.loads(line)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise ThinkerError("a streamed reply line was not JSON") from exc
-        if not isinstance(chunk, dict):
-            continue
-        if chunk.get("error"):
-            raise ThinkerError(str(chunk["error"])[:200])
-        last = chunk
-        message = chunk.get("message") if isinstance(chunk.get("message"), dict) else {}
-        piece, thought, called = message.get("content") or "", message.get("thinking") or "", message.get("tool_calls")
-        content.append(piece if isinstance(piece, str) else "")
-        thinking.append(thought if isinstance(thought, str) else "")
-        if isinstance(called, list):
-            calls += called
-        if meter is not None and (piece or thought or called):
-            meter.tick()
-        if chunk.get("done"):
-            break
+    finished = False
+    try:
+        async for raw in lines:
+            line = raw.strip() if isinstance(raw, (bytes, str)) else b""
+            if not line:
+                continue
+            try:
+                chunk = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise ThinkerError("a streamed reply line was not JSON") from exc
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("error"):
+                raise ThinkerError(str(chunk["error"])[:200])
+            last = chunk
+            message = chunk.get("message") if isinstance(chunk.get("message"), dict) else {}
+            piece, thought, called = message.get("content") or "", message.get("thinking") or "", message.get("tool_calls")
+            content.append(piece if isinstance(piece, str) else "")
+            thinking.append(thought if isinstance(thought, str) else "")
+            if isinstance(called, list):
+                calls += called
+            if meter is not None and (piece or thought or called):
+                meter.tick()
+            if chunk.get("done"):
+                finished = True
+                break
+    except (ThinkerError, aiohttp.ClientError, asyncio.TimeoutError):
+        raise
+    except Exception as exc:   # an over-long line (ValueError from the reader), anything else in reading
+        raise ThinkerError(f"the streamed reply could not be read ({type(exc).__name__})") from exc
+    if not finished:
+        # A reply cut off half way is never answered from: it may lack the tool call or the end of a line.
+        raise ThinkerError("stream ended early")
     reply = {k: v for k, v in last.items() if k != "message"}
     message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
     if any(thinking):

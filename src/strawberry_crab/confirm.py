@@ -26,6 +26,9 @@ some jazz" is not a yes: it cancels and goes on to the jazz.
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -62,6 +65,8 @@ LEFT_OTHER = "I've left that, then."
 LATE_YES = "I've already left that one. Ask me again if you still want it."
 # A yes whose stored call no longer matches what was asked about (approvals.ApprovalBook.verify): never made.
 LEFT_CHANGED = "That changed while I waited, so I've left it."
+# A yes that a stop or a newer sentence overtook before the call started: nothing was made.
+LEFT_UNMADE = "I stopped before doing it, so nothing changed."
 LATE_S = 60.0   # how long after a dropped question a bare yes or no is still about it
 # What the ledger keeps of her question: the code asks it, and in her words in the ledger the thinker
 # copied it, asking for a yes with nothing held, so the next "yes" did nothing (or the wrong thing).
@@ -162,15 +167,28 @@ async def hold(toolbox: Toolbox, adapter: Any, server: str, name: str, arguments
     return Held(server, name, kept, question, risk=risk, prompt=prompt)
 
 
-async def run(toolbox: Toolbox, adapter: Any, held: Held) -> Any:
-    """After a yes: the held call, exactly, and the Outcome that says what came of it."""
+def digest(server: str, name: str, arguments: dict[str, Any]) -> str:
+    """sha256 of the call: the server, the tool and the arguments in a canonical form."""
+    canonical = json.dumps({"server": server, "name": name, "arguments": arguments}, sort_keys=True,
+                           ensure_ascii=False, separators=(",", ":"), default=repr)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def run(toolbox: Toolbox, adapter: Any, held: Held, expected: str = "") -> Any:
+    """After a yes: the held call, exactly, and the Outcome that says what came of it. The arguments are
+    copied first and, with `expected` (the approval's digest), that copy is checked against it; the
+    call and the adapter's `done` get the copy only, so nothing can change what is made in between."""
     from .actions import Outcome   # local: actions imports the config and the tools, not this module
 
-    result = await toolbox.call(held.server, held.name, held.arguments)
+    arguments = copy.deepcopy(held.arguments)
+    if expected and digest(held.server, held.name, arguments) != expected:
+        log.warning("confirm: %s not made: the call no longer matches what was asked about", held.key)
+        return Outcome(f"left {held.name} undone: it changed", LEFT_CHANGED, False)
+    result = await toolbox.call(held.server, held.name, arguments)
     done = getattr(adapter, "done", None) if adapter is not None else None
     if done is not None:
         try:
-            outcome = done(held.name, held.arguments, result)
+            outcome = done(held.name, copy.deepcopy(arguments), result)
             if isinstance(outcome, Outcome):
                 return outcome
         except Exception as exc:

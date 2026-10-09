@@ -721,7 +721,7 @@ async def api_approval(request: web.Request, ui: BrainUI, session: Session) -> w
     it (approvals.py): only the open one, and the first answer wins (409 otherwise)."""
     data = await _payload(request)
     approval_id, answer = data.get("approval_id"), data.get("answer")
-    if not isinstance(approval_id, str) or not re.fullmatch(r"a-\d{1,9}", approval_id):
+    if not isinstance(approval_id, str) or not re.fullmatch(r"a-[0-9a-f]{6}-\d{1,9}", approval_id):
         raise web.HTTPBadRequest(text="approval_id must be an approval's id")
     if answer not in ("yes", "no"):
         raise web.HTTPBadRequest(text="answer must be yes or no")
