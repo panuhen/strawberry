@@ -193,6 +193,7 @@ async def test_a_reflex_routes_calls_speaks_and_completes(aiohttp_client):
     # The answering performance carries the run's id for a v2 body only.
     performance = [m for m in sink.got if m.get("state") == "talking"][-1]
     assert performance["run_id"] == done["run_id"] and "run_id" not in body["performance"]
+    assert performance["source"] in ("voice", "typed") and "source" not in body["performance"]
     well_formed(sink)
     await daemon.close()
 

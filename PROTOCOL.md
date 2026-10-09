@@ -435,7 +435,9 @@ seen nothing of a run for 60 s treats it as over.
 sentence, her line, prompts, model output, server error messages. Her line still goes out as the
 performance's `text`, as in v1.
 
-The performance that answers a run carries `run_id` as an extra field, for v2 bodies only.
+The performance that answers a run carries `run_id` and `source` (`voice`, `typed` or
+`notification`: what started the run) as extra fields, for v2 bodies only. The crab glances toward
+where the desktop shows notifications on a performance whose `source` is `notification`.
 
 Examples (a reflex, then a thinker run):
 

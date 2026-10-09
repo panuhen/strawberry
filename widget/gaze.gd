@@ -27,6 +27,8 @@ var last_mouse := Vector2i(-1, -1)
 var still_for := 0.0
 var look_override := Vector2(-1, -1)  # viewport pixel to look at; (-1,-1) = the real cursor
 var enabled := true
+var held := Vector2.ZERO           # look(): a direction held for a while, over the cursor
+var held_left := 0.0
 var frames := 0
 
 func setup(model: Node, cam: Camera3D) -> void:
@@ -88,6 +90,11 @@ func pixel_to_world(pixel: Vector2, z: float) -> Vector3:
 	var origin := camera.global_position
 	return Vector3(origin.x - (pixel.x - w / 2.0) * units_per_px, origin.y - (pixel.y - h / 2.0) * units_per_px, z)
 
+## Look in `direction` (yaw, pitch; radians, as `gaze`) for `seconds`, then follow the cursor again.
+func look(direction: Vector2, seconds: float) -> void:
+	held = Vector2(clampf(direction.x, -MAX_ANGLE, MAX_ANGLE), clampf(direction.y, -MAX_ANGLE, MAX_ANGLE))
+	held_left = seconds
+
 func target_for(pixel: Vector2) -> Vector2:
 	# Both eyes share one gaze; aim from the midpoint between them so they stay parallel.
 	var mid := (eye_world("L") + eye_world("R")) * 0.5
@@ -107,7 +114,11 @@ func _process(delta: float) -> void:
 	if meshes.is_empty():
 		return
 	frames += 1
-	if enabled and (look_override.x >= 0.0 or DisplayServer.get_name() != "headless"):
+	if held_left > 0.0:
+		held_left -= delta
+	if enabled and held_left > 0.0:
+		target = held
+	elif enabled and (look_override.x >= 0.0 or DisplayServer.get_name() != "headless"):
 		var mouse := Vector2i(cursor_in_viewport())
 		if mouse != last_mouse:
 			last_mouse = mouse

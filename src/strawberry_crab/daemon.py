@@ -309,7 +309,8 @@ class Daemon:
         self.state = performance.state
         self.state_at = time.monotonic()
         payload = performance.to_dict()
-        sent = await self.hub.send(payload, run_id=run.run_id if answering else "")
+        sent = await self.hub.send(payload, run_id=run.run_id if answering else "",
+                                   source=run.source if answering else "")
         self.performed += 1
         logged = payload | {"text": logtext.line(payload["text"])} if "text" in payload else payload
         if sent == 0:

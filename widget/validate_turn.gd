@@ -82,13 +82,24 @@ func run() -> void:
 	widget.perform({"state": "idle", "anim": "notify_perk"})
 	check(turn.glances == 1, "a notification should start a glance")
 	var peak := 0.0
+	var up := 0.0
 	var waited := 0.0
 	while waited < 2.6:
 		await process_frame
 		waited += widget.get_process_delta_time()
 		peak = maxf(peak, absf(turn.yaw - turn.place.x))
+		up = maxf(up, turn.pitch - turn.place.y)
 	report["glance_peak_deg"] = deg(peak)
+	report["glance_up_deg"] = deg(up)
 	check(peak > deg_to_rad(9.0) and peak <= turn.MAX_YAW + 0.001, "a glance should turn about 12°, got %.1f°" % rad_to_deg(peak))
+	check(up > deg_to_rad(3.0) and up <= turn.MAX_PITCH + 0.001, "a notification's glance should look up, got %.1f°" % rad_to_deg(up))
+	check(widget.gaze.held_left > 0.0 or widget.gaze.held.y > 0.0, "her pupils should look up")
+	# Any performance that answers a notification's run glances, icon or not (PROTOCOL Part 1b, source).
+	await wait(0.5)
+	widget.perform({"state": "talking", "text": "x", "source": "notification", "run_id": "r-9"})
+	check(turn.glances == 2, "a notification's performance should start a glance")
+	widget.set_state("idle")
+	await wait(2.3)   # that glance runs its course
 	widget.set_state("thinking")
 	await wait(1.8)   # the idle drift eases out too
 	check(absf(turn.yaw) < deg_to_rad(0.5), "she should face the user again after a glance, at %.1f°" % rad_to_deg(turn.yaw))

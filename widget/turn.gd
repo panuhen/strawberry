@@ -24,6 +24,8 @@ const PLACE_DEAD := 0.25                # the middle of the monitor (normalised)
 const PLACE_RATE := 5.0                 # per second, toward the place's angles
 const DRIFT_YAW := deg_to_rad(4.0)
 const GLANCE_YAW := deg_to_rad(12.0)
+const GLANCE_UP := MAX_PITCH           # a notification: she tips back to look up at it
+const GLANCE_UP_PUPILS := 0.6           # and her pupils go up (gaze.gd radians)
 const GLANCE_IN_S := 0.35
 const GLANCE_OUT_S := 0.55
 const CENTRE_EVERY_S := Vector2(25.0, 50.0)   # idle: a look toward the middle of the screen
@@ -41,6 +43,7 @@ var idle_weight := 0.0
 var glance_to := 0.0                    # the glance's yaw, its clock and length (0: none)
 var glance_t := 0.0
 var glance_len := 0.0
+var glance_up := 0.0                    # the glance's pitch (only a notification's looks up)
 var glances := 0
 var until_centre := 30.0
 var cursor_last := Vector2i(-99999, -99999)
@@ -81,16 +84,19 @@ func advance(delta: float) -> void:
 			glance_at_centre(1.8)
 	watch_cursor(delta, idle)
 	var glance := 0.0
+	var glance_pitch := 0.0
 	if glance_len > 0.0:
 		glance_t += delta
-		glance = glance_to * Easing.envelope(glance_t / glance_len, GLANCE_IN_S / glance_len, GLANCE_OUT_S / glance_len)
+		var envelope := Easing.envelope(glance_t / glance_len, GLANCE_IN_S / glance_len, GLANCE_OUT_S / glance_len)
+		glance = glance_to * envelope
+		glance_pitch = glance_up * envelope
 		if glance_t >= glance_len:
 			glance_len = 0.0
 	var layered: float = widget.reactions.yaw + widget.dance.yaw
 	if widget.touch:
 		layered += widget.touch.yaw
 	yaw = clampf(place.x + drift * Easing.in_out(idle_weight) + glance + layered, -MAX_YAW, MAX_YAW)
-	pitch = clampf(place.y, -MAX_PITCH, MAX_PITCH)
+	pitch = clampf(place.y + glance_pitch, -MAX_PITCH, MAX_PITCH)
 	apply()
 
 ## Her rotation: yaw about her own up, then the view's tilt about the screen's horizontal.
@@ -129,6 +135,7 @@ func glance_at(point: Vector2, hold := 1.4) -> void:
 ## A glance toward the viewer's right (side > 0) or left, `side` -1..1 of GLANCE_YAW.
 func glance_side(side: float, hold := 1.4) -> void:
 	glance_to = clampf(side, -1.0, 1.0) * GLANCE_YAW
+	glance_up = 0.0
 	glance_t = 0.0
 	glance_len = GLANCE_IN_S + hold + GLANCE_OUT_S
 	glances += 1
@@ -141,14 +148,22 @@ func glance_at_centre(hold := 1.4) -> void:
 	else:
 		glance_side(-signf(where.x) * clampf(absf(where.x) * 1.5, 0.5, 1.0), hold)
 
-## A notification arriving: toward the top middle of her monitor, where the desktop shows them.
+## A notification arriving: up toward the top middle of her monitor, where the desktop shows them.
+## She turns toward it (not at all when it is straight above her), tips back and looks up.
 func glance_at_notification() -> void:
-	var where := location()
-	if where.x == INF or widget.is_headless():
-		glance_at_centre(1.2)
-		return
-	var usable := DisplayServer.screen_get_usable_rect(widget.screen_at(DisplayServer.window_get_position() + DisplayServer.window_get_size() / 2))
-	glance_at(Vector2(usable.position.x + usable.size.x / 2.0, usable.position.y), 1.2)
+	var side := 1.0 if rng.randf() < 0.5 else -1.0     # headless: she picks a side
+	if location().x != INF and not widget.is_headless():
+		side = 0.0
+		var center := Vector2(DisplayServer.window_get_position() + DisplayServer.window_get_size() / 2)
+		var usable := DisplayServer.screen_get_usable_rect(widget.screen_at(Vector2i(center)))
+		var dx := usable.position.x + usable.size.x / 2.0 - center.x
+		if absf(dx) >= 40.0:
+			side = signf(dx) * smoothstep(40.0, 500.0, absf(dx))
+	glance_side(side, 1.2)
+	glance_up = GLANCE_UP
+	if widget.gaze:
+		# Pupil yaw is negative toward the viewer's right (gaze.gd target_for).
+		widget.gaze.look(Vector2(-side * 0.35, GLANCE_UP_PUPILS), glance_len)
 
 ## The cursor coming to rest near her (and not on her): a glance toward it, now and then.
 func watch_cursor(delta: float, idle: bool) -> void:

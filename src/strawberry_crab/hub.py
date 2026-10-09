@@ -162,11 +162,13 @@ class WidgetHub:
                 pass
         return closed
 
-    async def send(self, payload: dict[str, Any], run_id: str = "") -> int:
+    async def send(self, payload: dict[str, Any], run_id: str = "", source: str = "") -> int:
         """Push one JSON object to every open widget. Returns how many received it. `run_id`: the run
-        this performance answers, added for v2 bodies only (a v1 body gets exactly `payload`)."""
+        this performance answers, and `source` what started it (voice, typed, notification), added for
+        v2 bodies only (a v1 body gets exactly `payload`)."""
         text = json.dumps(payload, ensure_ascii=False)
-        tagged = json.dumps(payload | {"run_id": run_id}, ensure_ascii=False) if run_id else text
+        tags = {"run_id": run_id} | ({"source": source} if source else {})
+        tagged = json.dumps(payload | tags, ensure_ascii=False) if run_id else text
         sent = 0
         for ws in list(self._sockets):
             if ws.closed:

@@ -805,7 +805,8 @@ func perform(data: Dictionary) -> void:
 	var reaction := str(data.get("reaction", ""))
 	# Something arrived for her (an app's icon, a perk, a burst): a glance toward where the desktop
 	# shows notifications, then back to the user.
-	if data.has("icon") or anim == "notify_perk" or reaction == "double_hop":
+	if data.has("icon") or anim == "notify_perk" or reaction == "double_hop" \
+			or str(data.get("source", "")) == "notification":
 		turn.glance_at_notification()
 	if reaction != "":
 		if reaction == "double_hop":
