@@ -39,7 +39,9 @@ export_glb('~/strawberry/widget/strawberry_v2.glb')
 ```
 
 `build(n)` regenerates phases 1 through n; `run_phase(n)` reruns one when its prerequisites exist and
-renders a checkpoint to `$STRAWBERRY_BUILD_OUT` (default: `strawberry-build` in the temp dir).
+saves and renders a checkpoint to `$STRAWBERRY_BUILD_OUT`, by default your own
+`$XDG_CACHE_HOME/strawberry-build` (`~/.cache/strawberry-build`), created private (0700). An existing
+one that is a symlink, not a directory or not yours is refused; set `STRAWBERRY_BUILD_OUT` then.
 `export_glb` writes one animation per clip (its Action) with every channel at every frame, +Y up.
 It clears the active actions first: with one left assigned (the last `preview`), the exporter
 mixes its shape-key curves into every other clip. Re-exporting the scene this way reproduces the

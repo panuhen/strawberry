@@ -5,13 +5,12 @@ Front is +Y; all mesh coordinates are baked into mesh data before rigging.
 Headless, on the saved scene (model/README.md):
   blender -b model/strawberry_v2.blend --python model/build_strawberry.py -- --phase 6 --save --export widget/strawberry_v2.glb
 """
-import bpy, math, json, os, sys, tempfile
+import bpy, math, json, os, stat, sys
 from pathlib import Path
 from mathutils import Vector, Matrix
 
-# This file's folder (eye_claw_geometry.py lives beside it); checkpoint renders go to OUT.
+# This file's folder (eye_claw_geometry.py lives beside it); checkpoint renders go to out_dir().
 SRC = Path(globals().get('__file__') or os.path.expanduser('~/strawberry/model/build_strawberry.py')).resolve().parent
-OUT = Path(os.environ.get('STRAWBERRY_BUILD_OUT') or Path(tempfile.gettempdir())/'strawberry-build')
 COLORS = {'mat_shell':'cf2b28','mat_shell_dark':'7d1516','mat_claw':'e2402f','mat_cream':'f6e3cf','mat_eye':'fbf3e8','mat_ink':'201318'}
 CLIPS = {'idle_loop':90,'listen_loop':60,'think_loop':60,'talk_base':40,'alert_snap':32,'notify_perk':32,'dance_loop':121,'sleep_enter':76,'sleep_loop':241,'wake_up':46}
 
@@ -389,15 +388,34 @@ def preview(name):
         owner.update_tag()
     bpy.context.scene.frame_end=CLIPS[name]; bpy.context.scene.frame_set(1)
 
+def out_dir():
+    """Where checkpoints go: $STRAWBERRY_BUILD_OUT, else the user's own cache dir
+    ($XDG_CACHE_HOME or ~/.cache)/strawberry-build, created 0700. An existing one that is a symlink,
+    not a directory, or another user's is refused: a shared path could be planted first."""
+    override=os.environ.get('STRAWBERRY_BUILD_OUT')
+    if override:
+        path=Path(override).expanduser(); path.mkdir(parents=True,exist_ok=True)
+        return path
+    cache=os.environ.get('XDG_CACHE_HOME','')
+    base=Path(cache) if os.path.isabs(cache) else Path(os.path.expanduser('~'))/'.cache'
+    base.mkdir(parents=True,exist_ok=True)
+    path=base/'strawberry-build'
+    try: path.mkdir(mode=0o700)
+    except FileExistsError: pass
+    info=os.lstat(path)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or (hasattr(os,'getuid') and info.st_uid!=os.getuid()):
+        raise RuntimeError(f'{path} is a symlink, not a directory, or not yours; set STRAWBERRY_BUILD_OUT')
+    return path
+
 def checkpoint(phase):
-    OUT.mkdir(parents=True,exist_ok=True)
+    out=out_dir()
     scene=bpy.context.scene
-    scene.render.filepath=str(OUT/f'phase_{phase:02d}.png')
-    bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'strawberry_v2.blend'))
+    scene.render.filepath=str(out/f'phase_{phase:02d}.png')
+    bpy.ops.wm.save_as_mainfile(filepath=str(out/'strawberry_v2.blend'))
     bpy.ops.render.render(write_still=True)
     enum(scene.render.image_settings,"file_format","JPEG")
     scene.render.image_settings.quality=85
-    bpy.data.images["Render Result"].save_render(str(OUT/f"phase_{phase:02d}.jpg"),scene=scene)
+    bpy.data.images["Render Result"].save_render(str(out/f"phase_{phase:02d}.jpg"),scene=scene)
     enum(scene.render.image_settings,"file_format","PNG")
     print('CHECKPOINT',phase,scene.render.filepath)
 
