@@ -519,7 +519,9 @@ A v2 body may put its own monotonic time in `ping.t`; the brain echoes it and ad
 {"type": "pong", "t": 1532.004, "brain_t": 81250.117}
 ```
 
-A ping without a number in `t` gets the v1 `{"type": "pong"}`. The mapping is §12.1's.
+A ping without a number in `t` gets the v1 `{"type": "pong"}`. The mapping is §12.1's. The crab pings
+once at connect and then every 5 s, and keeps the offset of the quickest of its last 8 pongs
+(`ws_client.gd` `brain_now`), with `welcome.t` as a rough first sample.
 
 ## 13b. Approvals (brain ⇄ body)
 
@@ -622,6 +624,12 @@ card mid-wait.
    `input.refused` with `hold_required` means the press was too short: keep the card.
 4. Her spoken question arrives as an ordinary performance just before the request; the bubble and
    the card show together.
+
+The crab widget does all of this (`widget/approval_card.gd`, WIRING §13): its hello declares
+`approvals` and `sends.approval`, it maps `expires_t` with the ping and pong clock below, shows
+"waiting…" once the countdown has run out while the request is still open, keeps one card across a
+reconnect's replay (and drops it if no replay comes within 2 s of `welcome`), and times the hold
+itself (1 s).
 
 Examples, a removal answered on the card and one that ran out:
 

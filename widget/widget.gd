@@ -3,8 +3,9 @@ extends Node3D
 ## whatever strawberryd sends over the websocket (WIRING.md §1, §6, §13).
 ##
 ## Drag the crab to move her; a quick tap pokes her (touch.gd). Q quits, C cycles skins, T opens the
-## type box. Outlines are always on.
-## Command-line (after `--`): --ws=ws://host:port/ws   --capture=/path/out.png (--chip: with the step chip)
+## type box; while an approval card shows, Y answers yes (a tap tier), N or Esc no. Outlines are always on.
+## Command-line (after `--`): --ws=ws://host:port/ws   --capture=/path/out.png (--chip: with the step chip;
+##   --approval=change|hold|waiting: with an approval card)
 ##   --acceptance=res://validate_widget.gd  run a validator instead (the exported binary has no --script)
 
 const CelStyle = preload("res://cel_style.gd")
@@ -20,6 +21,7 @@ const DanceStyle = preload("res://dance_style.gd")
 const TopHat = preload("res://top_hat.gd")
 const TypeBox = preload("res://type_box.gd")
 const StepChip = preload("res://step_chip.gd")
+const ApprovalCard = preload("res://approval_card.gd")
 const Turn = preload("res://turn.gd")
 const Touch = preload("res://touch.gd")
 const Paths = preload("res://paths.gd")
@@ -36,6 +38,7 @@ const ONE_SHOTS := ["alert_snap", "notify_perk"]
 const LOOPING := ["idle_loop", "listen_loop", "think_loop", "talk_base", "dance_loop", "sleep_loop"]
 # States she settles back into after talking. listening/thinking are pipeline transients.
 const PERSISTENT := ["idle", "dancing"]
+const BUBBLE_ANCHOR := Vector3(0, 0.98, 0)   # the bottom of her line; it moves up while a card shows
 # Preferences live in $XDG_CONFIG_HOME/strawberry/widget.cfg (paths.gd); headless runs keep
 # their own file in Godot's user dir, so acceptance runs never touch the live prefs.
 const HEADLESS_SETTINGS_PATH := "user://widget_headless.cfg"
@@ -60,6 +63,7 @@ var look_at := Vector2(-1, -1)   # --look=x,y pins the cursor position (captures
 var capture_dance := ""          # --dance=rave: capture that style mid-beat instead of the wave
 var capture_typing := false      # --typing: capture with the glass type box open
 var capture_chip := false        # --chip: capture with the step chip of a run under way
+var capture_approval := ""       # --approval=change|hold|waiting: capture with an approval card
 var place_at := Vector2(INF, INF)  # --at=u,v: pretend her window sits there on its monitor (-1..1)
 
 var model: Node3D
@@ -72,6 +76,7 @@ var speech: AudioStreamPlayer
 var menu: PopupMenu
 var type_box: PanelContainer
 var step_chip: PanelContainer
+var approval_card: PanelContainer
 var gaze: Node
 var dance: Node
 var top_hat: Node3D
@@ -131,6 +136,7 @@ func _ready() -> void:
 	setup_menu()
 	setup_type_box()
 	setup_step_chip()
+	setup_approval_card()
 	setup_sleep()
 	setup_ws()
 	set_state("idle")
@@ -154,6 +160,8 @@ func parse_args() -> void:
 			capture_typing = true
 		elif arg == "--chip":
 			capture_chip = true
+		elif arg.begins_with("--approval="):
+			capture_approval = arg.trim_prefix("--approval=")
 		elif arg.begins_with("--at="):
 			var at := arg.trim_prefix("--at=").split(",")
 			if at.size() == 2:
@@ -211,25 +219,25 @@ func update_passthrough() -> void:
 		return
 	if menu and menu.visible:
 		return     # the open menu takes the whole window; popup_hide brings the polygon back
+	var padded := passthrough_polygon()
+	if padded.size() >= 3:
+		get_window().mouse_passthrough_polygon = padded
+
+## Linux's click-through polygon: the padded hull of her meshes at every turn, the open type box,
+## the step chip and the approval card. Empty when there is too little to make one.
+func passthrough_polygon() -> PackedVector2Array:
 	var points := hull_points()
 	if type_box and type_box.visible:
 		# The glass box sits below her; while it is open it takes clicks as well.
 		var rect := type_box.get_global_rect()
 		for i in 4:
 			points.append(rect.position + Vector2(rect.size.x * (i % 2), rect.size.y * (i >> 1)))
-	# The step chip and its ✕, while a run shows it.
+	# The step chip and its ✕, while a run shows it; the approval card and its buttons.
 	points.append_array(chip_points())
+	points.append_array(card_points())
 	if points.size() < 3:
-		return
-	var hull := Geometry2D.convex_hull(points)
-	var center := Vector2.ZERO
-	for p in hull:
-		center += p
-	center /= hull.size()
-	var padded := PackedVector2Array()
-	for p in hull:
-		padded.append(p + (p - center).normalized() * PASSTHROUGH_PADDING)
-	get_window().mouse_passthrough_polygon = padded
+		return PackedVector2Array()
+	return padded_hull(points, PASSTHROUGH_PADDING)
 
 ## Her meshes' corners on screen, at every turn and tilt she can take (turn.gd: MAX_YAW and MAX_PITCH
 ## either way). X11's input shape is set now and then, not every frame, so it holds all of them
@@ -276,6 +284,7 @@ func follow_pose(force := false) -> void:
 		for i in 4:
 			points.append(rect.position + Vector2(rect.size.x * (i % 2), rect.size.y * (i >> 1)))
 	points.append_array(chip_points())
+	points.append_array(card_points())
 	if points.size() < 3:
 		return
 	var now := Time.get_ticks_msec() / 1000.0
@@ -415,8 +424,9 @@ static func area(polygon: PackedVector2Array) -> float:
 		sum += polygon[i].cross(polygon[(i + 1) % polygon.size()])
 	return absf(sum) / 2.0
 
-## Left press: a poke, a hold or a drag (TAP_S, TAP_SLOP_PX, HOLD_S). The step chip's ✕ and the type
-## box are Controls that take their clicks before this sees them; a press on them is never a poke.
+## Left press: a poke, a hold or a drag (TAP_S, TAP_SLOP_PX, HOLD_S). The step chip's ✕, the approval
+## card and the type box are Controls that take their clicks before this sees them; a press on them is
+## never a poke.
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -444,9 +454,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if dragging:
 			DisplayServer.window_set_position(DisplayServer.mouse_get_position() - drag_offset)
 
-## The step chip and the open type box win over her: a press on them is theirs.
+## The step chip, the approval card and the open type box win over her: a press on them is theirs.
 func on_controls(point: Vector2) -> bool:
-	for control: Control in [step_chip, type_box]:
+	for control: Control in [step_chip, approval_card, type_box]:
 		if control and control.visible and control.get_global_rect().has_point(point):
 			return true
 	return false
@@ -489,21 +499,51 @@ func setup_step_chip() -> void:
 func chip_points() -> PackedVector2Array:
 	return step_chip.corners() if step_chip else PackedVector2Array()
 
-## Where the bubble's anchor (the bottom of her line) is in the window.
+## Where the bubble's anchor (the bottom of her line) usually is in the window. The chip hangs under
+## it and the approval card stands on it, whether or not the card has moved her line up.
 func bubble_anchor_on_screen() -> Vector2:
-	return camera.unproject_position(bubble.global_position)
+	return camera.unproject_position(BUBBLE_ANCHOR)
 
-## A protocol v2 message (it has a `type`; a performance never does): the welcome, a run event,
-## or the daemon declining a run.cancel. Anything else is not for this body and is ignored.
+# --- the approval card (§19) ----------------------------------------------------------
+
+func setup_approval_card() -> void:
+	approval_card = ApprovalCard.new()
+	add_child(approval_card)
+	approval_card.setup(self)
+
+func card_points() -> PackedVector2Array:
+	return approval_card.corners() if approval_card else PackedVector2Array()
+
+## Her line moves up by `pixels` while the card shows (0: back to its anchor), and fits what is left.
+func lift_bubble(pixels: float) -> void:
+	var w := float(ProjectSettings.get_setting("display/window/size/viewport_width"))
+	bubble.position = BUBBLE_ANCHOR + Vector3(0, pixels * camera.size / w, 0)
+	bubble.max_height = view_top() - bubble.position.y - 0.04
+	bubble.min_font_size = bubble.MIN_FONT_SIZE if pixels <= 0.0 else bubble.LIFTED_MIN_FONT_SIZE
+	if bubble.visible and bubble.line != "":
+		bubble.fit_font(bubble.line)
+
+## The brain's monotonic time now (PROTOCOL §12.1, ws_client.gd), for the card's countdown.
+func brain_now() -> float:
+	if ws != null and ws.has_method("brain_now"):
+		return ws.brain_now()
+	return Time.get_ticks_msec() / 1000.0
+
+## A protocol v2 message (it has a `type`; a performance never does): the welcome, a run event (the
+## approval card's included), or the daemon declining a run.cancel or an answer. Anything else is not
+## for this body and is ignored.
 func on_typed(data: Dictionary) -> void:
 	var kind := str(data.get("type", ""))
 	if kind == "welcome":
 		var accepted: Variant = data.get("accepted", {})
 		step_chip.welcomed(accepted if accepted is Dictionary else {})
+		approval_card.welcomed(accepted if accepted is Dictionary else {})
 	elif kind == "input.refused":
 		step_chip.on_refused(data)
+		approval_card.on_refused(data)
 	elif data.has("run_id"):
 		step_chip.on_phase(data)
+		approval_card.on_event(data)
 
 ## A typed line goes to the daemon as a heard sentence: the same funnel as speech (§8b).
 func send_typed(text: String) -> void:
@@ -578,6 +618,8 @@ func set_skin(id: String) -> void:
 		save_settings()
 		if type_box:
 			type_box.apply_skin()
+		if approval_card:
+			approval_card.apply_skin()
 
 func reset_position() -> void:
 	if is_headless():
@@ -597,6 +639,14 @@ func screen_at(point: Vector2i) -> int:
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
+		return
+	if approval_card and approval_card.is_open() and event.keycode in [KEY_Y, KEY_N, KEY_ESCAPE]:
+		# The card's keys, only while it shows (and the window has focus: these are its keys).
+		if event.keycode == KEY_Y:
+			approval_card.key_yes()
+		else:
+			approval_card.answer("no")
+		get_viewport().set_input_as_handled()
 		return
 	match event.keycode:
 		KEY_Q:
@@ -694,7 +744,7 @@ func set_turn_to_screen(value: bool) -> void:
 
 func setup_bubble() -> void:
 	bubble = Bubble.new()
-	bubble.position = Vector3(0, 0.98, 0)
+	bubble.position = BUBBLE_ANCHOR
 	add_child(bubble)
 	bubble.finished.connect(_on_speech_finished)
 	# Everything from the anchor to the top edge of the view, minus a small margin.
@@ -743,7 +793,10 @@ func setup_ws() -> void:
 	add_child(ws)
 	ws.message_received.connect(_on_message)
 	ws.connected.connect(func(): print("strawberryd connected: ", ws_url))
-	ws.disconnected.connect(func(): print("strawberryd disconnected; reconnecting"))
+	ws.disconnected.connect(func():
+		print("strawberryd disconnected; reconnecting")
+		if approval_card:
+			approval_card.refresh())
 	ws.refused.connect(_on_refused)
 
 var told_refused := false
@@ -865,6 +918,8 @@ func run_command(data: Dictionary) -> void:
 				close_type_box()
 			if step_chip:
 				step_chip.refresh()
+			if approval_card:
+				approval_card.refresh()
 			if not is_headless():
 				if shown:
 					update_passthrough()
@@ -1007,7 +1062,9 @@ func capture() -> void:
 	if capture_typing:
 		type_box.open()
 		type_box.field.text = "play some nina simone"
-	if capture_chip:
+	if capture_approval != "":
+		await capture_card()
+	elif capture_chip:
 		# A run under way: her thinking pose and cover line, the chip naming the tool, its ✕.
 		perform({"state": "thinking", "text": "On it.", "emotion": "neutral"})
 		step_chip.welcomed({"cancel": true})
@@ -1036,3 +1093,37 @@ func capture() -> void:
 	var err := image.save_png(capture_path)
 	print("capture %s -> %s" % [capture_path, error_string(err)])
 	get_tree().quit()
+
+## --approval=change|hold|waiting: her question in the bubble and its card, as a run that waits for a
+## yes shows them. `hold`: a destructive one with Yes held half way; `waiting`: the countdown has run
+## out while she still waits (the user speaking), her line gone.
+func capture_card() -> void:
+	var clock := brain_now()
+	var hold := capture_approval == "hold"
+	var line := "Shred your note called groceries? Say yes." if hold else "Remove 'Feeling Good' from Running? Say yes."
+	var prompt := "Shred your note called groceries?" if hold else "Remove 'Feeling Good' from Running?"
+	perform({"state": "talking", "text": line, "emotion": "neutral"})
+	step_chip.welcomed({"cancel": true})
+	approval_card.welcomed({"approvals": true, "approval": true})
+	step_chip.on_phase({"type": "thinking", "run_id": "r-4"})
+	var timeout := 30.0 if hold else 10.0
+	var expires := clock + (-1.0 if capture_approval == "waiting" else timeout - 1.6)
+	var request := {"type": "approval.request", "run_id": "r-4", "seq": 4, "t": clock, "approval_id": "a-3f9c1e-1",
+		"risk": "destructive" if hold else "change", "prompt": prompt, "timeout_s": timeout, "expires_t": expires, "hold": hold}
+	step_chip.on_phase(request)
+	approval_card.on_event(request)
+	if capture_approval == "waiting":
+		await get_tree().create_timer(7.0).timeout   # her line said and gone
+	elif hold:
+		await get_tree().create_timer(2.9).timeout   # her line nearly revealed when the fill is half way
+	else:
+		await get_tree().create_timer(3.4).timeout   # her line fully revealed
+	if hold:
+		approval_card.holding = true
+		approval_card.hold_t = 0.0
+		while approval_card.hold_t < approval_card.HOLD_S * 0.5:
+			await get_tree().process_frame
+		approval_card.holding = false
+		approval_card.hold_t = approval_card.HOLD_S * 0.5
+		approval_card.set_process(false)
+		approval_card.refresh()
