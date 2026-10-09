@@ -9,6 +9,23 @@ package and the widget binary.
 
 ### Added
 
+- She turns. A slow, small sway while idle; a glance toward a notification as it arrives, toward
+  the middle of the screen now and then, and toward the cursor when it comes to rest near her;
+  a quick turn and back in the peek and the wave; a turn on the beat when she dances. Always a
+  few degrees, always back to face you, and her eyes stay on you while she turns.
+- *Turn toward the screen* in her right-click menu (on by default): her view follows where her
+  window sits on its monitor. Near the top you see her a little from below, near the bottom a
+  little from above, and near a side edge she turns a little toward the middle. Each monitor
+  counts on its own, and it follows a drag smoothly. Her click-through area follows the turns.
+- Touch her. A quick tap (mouse or finger) is a poke; pressing and moving still drags her. Pat
+  her shell and she squints contentedly, tickle her belly and she giggles, poke an eye and she
+  flinches, poke a claw and she pinches back or waves it, hold a finger on her and she leans into
+  it. Poke her a few times in a row and she gets mildly annoyed. A poke wakes her gently. While
+  she is talking or busy with something you asked, a poke only gets a blink, and the step chip's
+  ✕ always wins. *Touch reactions* in her menu (on by default) turns it off; *Talk when poked*
+  (off by default) lets her answer a poke now and then with a short line of her own (the widget
+  sends `poked`, PROTOCOL.md §6; the lines are fixed, no model is asked).
+
 - Runs you can watch and stop. Every sentence she handles, and every notification she reacts to,
   is a run with its steps: how the gate read it, thinking, each tool call and how long it took,
   what she said, and how it ended. While a slower one is going on, a chip under her bubble says
@@ -115,6 +132,11 @@ package and the widget binary.
 
 ### Changed
 
+- Her moves are eased. The baked clips use Bézier keys, `alert_snap` snaps her claws a little past
+  the mark and settles, and the end of `notify_perk` lands softly. In the widget the wave's claw
+  overshoots the same way, dance styles ease in and out and crossfade when the music changes
+  style, and the rave lean no longer jumps on every beat. Every bone, clip and shape-key name is
+  unchanged.
 - `strawberry gate use` takes effect in a running daemon within a few seconds, without a restart,
   and `strawberry learning rollback` can undo it.
 - The Spotify adapter no longer uses the server's local favourites list (`favorite_current`,

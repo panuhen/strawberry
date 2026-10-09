@@ -23,6 +23,12 @@ model runs on your own computer through [Ollama](https://ollama.com); nothing is
   ("thinking…", "searching the web…", "Spotify: play") and its ✕ stops it. Saying "stop" or
   "never mind" does the same, and a new sentence takes over from the one she was on. Something
   already under way that changes things (a track starting) is let finish, and she says so.
+- **Touch.** Drag her to move her. A quick tap pokes her: pat her shell, tickle her belly, poke an
+  eye or a claw, or hold a finger on her, and she reacts to each; poke her a few times in a row
+  and she gets a little annoyed. It works with a mouse or a touch screen. She turns a little
+  toward the middle of the screen when she sits near an edge. *Touch reactions*, *Talk when
+  poked* (a short line now and then, off by default) and *Turn toward the screen* are in her
+  right-click menu.
 - **Tools.** You can give her MCP servers (a calendar, notes, Spotify) in the config. None is
   configured out of the box. See [ADAPTERS.md](ADAPTERS.md).
 - **Web search (optional).** With a local SearXNG and its MCP server configured, she searches

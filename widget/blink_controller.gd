@@ -8,6 +8,9 @@ var held_closed := false
 var extra_wide := 0.0
 var extra_happy := 0.0
 var extra_squint := 0.0
+# Other layers (the dance styles, touch) each hold their own [wide, happy, squint, blink] here, so
+# one layer clearing its eyes never clears another's; everything is combined with max().
+var layers := {}
 var eyes: Array[MeshInstance3D] = []
 var indices: Array[int] = []
 var wide_indices: Array[int] = []
@@ -43,6 +46,13 @@ func setup(model: Node, animation_player: AnimationPlayer = null) -> void:
 
 func _process(delta: float) -> void:
 	advance_blink(delta)
+
+## A layer's eyes; all zero removes it.
+func set_layer(layer: String, wide: float, happy: float, squint: float, closed := 0.0) -> void:
+	if wide <= 0.0 and happy <= 0.0 and squint <= 0.0 and closed <= 0.0:
+		layers.erase(layer)
+	else:
+		layers[layer] = [wide, happy, squint, closed]
 
 func advance_blink(delta: float) -> void:
 	value = 0.0
@@ -95,11 +105,22 @@ func advance_blink(delta: float) -> void:
 			else:
 				elapsed = -1.0
 				remaining = rng.randf_range(minimum_pause, maximum_pause)
+	var wide := extra_wide
+	var happy := extra_happy
+	var squint := extra_squint
+	var closed := 0.0
+	for layer: Array in layers.values():
+		wide = maxf(wide, layer[0])
+		happy = maxf(happy, layer[1])
+		squint = maxf(squint, layer[2])
+		closed = maxf(closed, layer[3])
+	if not held_closed:
+		value = maxf(value, closed)
 	for i in eyes.size():
 		eyes[i].set_blend_shape_value(indices[i], value)
 		if wide_indices[i] >= 0:
-			eyes[i].set_blend_shape_value(wide_indices[i], maxf(wide_value, extra_wide))
+			eyes[i].set_blend_shape_value(wide_indices[i], maxf(wide_value, wide))
 		if happy_indices[i] >= 0:
-			eyes[i].set_blend_shape_value(happy_indices[i], maxf(happy_values[i], extra_happy))
+			eyes[i].set_blend_shape_value(happy_indices[i], maxf(happy_values[i], happy))
 		if squint_indices[i] >= 0:
-			eyes[i].set_blend_shape_value(squint_indices[i], extra_squint)
+			eyes[i].set_blend_shape_value(squint_indices[i], squint)

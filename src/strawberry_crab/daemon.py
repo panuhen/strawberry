@@ -24,6 +24,7 @@ from .ledger import Ledger
 from .logtext import sentence
 from . import logtext, media, privacy
 from .outcomes import OutcomeLog
+from .pokes import Pokes
 from .reactions import decorate, is_burst
 from .routefeed import RouteFeed
 from . import runs
@@ -95,6 +96,7 @@ class Daemon:
         # Every input she handles is a run (runs.py, WIRING.md §18): its steps go to the bodies that
         # asked for them and to the Brain UI, and a run can be stopped. One foreground run at a time.
         self.runs = RunBook(keep=self.config.runs.keep, events=self.config.runs.events)
+        self.pokes = Pokes()          # the widget's "Talk when poked" lines (pokes.py)
         self.phases: asyncio.Queue | None = None    # the hub's feed of run events (start)
         # Its second half (§8d): labels from those outcomes, a candidate head trained on them when she
         # has been idle a while, and the gate following the heads dir's `current` without a restart.

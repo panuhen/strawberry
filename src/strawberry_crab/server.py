@@ -32,7 +32,7 @@ from typing import Any
 from aiohttp import WSMsgType, web
 from aiohttp.web_log import AccessLogger
 
-from . import __version__, brainui, firstrun, paths
+from . import __version__, brainui, firstrun, paths, pokes
 from .client import listen_for_stop_request, plain_signal_handler
 from .config import Config, ConfigError
 from .contract import ContractError, Performance, anim_for
@@ -389,8 +389,9 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
 
 
 async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str) -> None:
-    # The widget introduces itself, pings for liveness, and relays typed sentences ("heard"); a v2
-    # body may also stop the run going on ("run.cancel"). Anything else is logged, not acted on.
+    # The widget introduces itself, pings for liveness, relays typed sentences ("heard") and, with
+    # its "Talk when poked" setting on, pokes ("poked"); a v2 body may also stop the run going on
+    # ("run.cancel"). Anything else is logged, not acted on.
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -421,8 +422,27 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
             log.info("widget typed: %s", sentence(text))
             daemon.background(daemon.handle_event(Event.from_dict({"source": "voice", "title": text})),
                               f"typed {sentence(text)}")
+    elif kind == "poked":
+        _poked(daemon, data)
     else:
         log.debug("widget message: %s", data)
+
+
+def _poked(daemon: Daemon, data: dict[str, Any]) -> None:
+    """`poked {zone, level}`: the widget was poked with "Talk when poked" on. She may answer with a
+    short line of her own (pokes.py), voiced like any other, unless she is busy (a run going on, or
+    a state other than her resting one) or has said one lately. The widget did its reaction already."""
+    poke = pokes.parse(data)
+    if poke is None:
+        log.debug("poked: not a poke this daemon knows: %s", data)
+        return
+    zone, level = poke
+    busy = daemon.runs.busy() is not None or daemon.current_state() not in ("idle", "dancing")
+    if not daemon.pokes.allowed(busy):
+        log.info("poked (%s, level %d): no line (%s)", zone, level, "busy" if busy else "said one lately")
+        return
+    text, emotion = daemon.pokes.line(zone, level)
+    daemon.background(daemon.perform(Performance(state="talking", text=text, emotion=emotion)), "poked")
 
 
 def welcome(daemon: Daemon, body) -> dict[str, Any]:

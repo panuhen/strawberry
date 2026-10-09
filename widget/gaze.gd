@@ -96,7 +96,8 @@ func target_for(pixel: Vector2) -> Vector2:
 	# Pretend the cursor floats LOOK_DEPTH in front of her: near her the pupils barely move,
 	# a few hundred pixels away they are fully to the side.
 	dir.z = -LOOK_DEPTH
-	dir = dir.normalized()
+	# In her own frame: when she has turned (turn.gd), the pupils make up for it.
+	dir = (skeleton.global_transform.basis.orthonormalized().inverse() * dir).normalized()
 	# The pupil rests on -Z. Ry(a) sends -Z to (-sin a, 0, -cos a); Rx(b) sends it to (0, sin b, -cos b).
 	var yaw := -atan2(dir.x, -dir.z)
 	var pitch := atan2(dir.y, -dir.z)
