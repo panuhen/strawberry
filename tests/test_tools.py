@@ -280,7 +280,10 @@ async def test_real_stdio_server_round_trip():
                          preconnect=False, result_chars=120)
     box = Toolbox(config)
     specs = await box.tools_for("test")
-    assert {s.name for s in specs} == {"echo", "add", "long", "env", "soft_error", "hard_error"}
+    assert {s.name for s in specs} == {"echo", "add", "long", "env", "soft_error", "hard_error", "slow", "slow_change"}
+    # MCP's readOnlyHint: a cancel stops waiting for these, anything else finishes first (runs.py).
+    assert box.servers["echo"].read_only == {"slow"} and box.reads("echo", "slow") and not box.reads("echo", "slow_change")
+    assert box.label("echo", "slow_change") == "Echo: slow change"
     add = next(s for s in specs if s.name == "add")
     assert add.schema["properties"]["a"]["type"] == "integer" and add.description == "Add two integers."
     assert (await box.call("echo", "echo", {"text": "hello"})).text == "hello"

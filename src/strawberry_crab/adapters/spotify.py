@@ -561,6 +561,10 @@ class SpotifyAdapter(Adapter):
                     "set_volume", "shuffle")
     guide = GUIDE
     confirm = CONFIRM
+    title = "Spotify"
+    # Only look things up: a cancel stops waiting for these at once (runs.py); the rest finish first.
+    reads = ("search", "get_current_track", "get_playback_state", "get_queue", "get_devices", "get_playlists",
+             "get_playlist_tracks", "get_saved_tracks", "find_playlist")
 
     def guide_for(self, tools: list[str]) -> str:
         # An older server without the by-name tools gets no paragraph about them, nor about play_liked.

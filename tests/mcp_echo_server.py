@@ -1,10 +1,12 @@
 """A tiny MCP server for tests/test_tools.py: spawned over stdio like the real ones."""
 
+import asyncio
 import json
 import os
 import sys
 
 from mcp.server.mcpserver import MCPServer
+from mcp.types import ToolAnnotations
 
 server = MCPServer("echo")
 
@@ -43,6 +45,20 @@ def soft_error() -> str:
 def hard_error() -> str:
     """A failure raised properly."""
     raise ValueError("nope")
+
+
+@server.tool(annotations=ToolAnnotations(read_only_hint=True))
+async def slow(seconds: float) -> str:
+    """Wait this many seconds, then say how long it waited. Use it when asked to wait or to test something slow."""
+    await asyncio.sleep(seconds)
+    return f"waited {seconds} seconds"
+
+
+@server.tool()
+async def slow_change(seconds: float) -> str:
+    """Wait this many seconds as if changing something, then say it is done."""
+    await asyncio.sleep(seconds)
+    return "changed"
 
 
 if __name__ == "__main__":
