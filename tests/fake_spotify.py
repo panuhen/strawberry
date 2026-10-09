@@ -214,6 +214,16 @@ def serve() -> None:
         """Set the volume, 0-100."""
         return await run("set_volume", {"volume": volume})
 
+    @server.tool(annotations=reads)
+    async def find_playlist(query: str) -> str:
+        """Find the user's playlist by name; returns its name and URI."""
+        return await run("find_playlist", {"query": query})
+
+    @server.tool()
+    async def remove_from_playlist(playlist: str, track: str = "current") -> str:
+        """Remove a track (a URI, or "current" for the playing one) from the user's playlist, by name or URI."""
+        return await run("remove_from_playlist", {"playlist": playlist, "track": track})
+
     server.run("stdio")
 
 
