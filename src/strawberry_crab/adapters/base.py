@@ -146,6 +146,13 @@ class Adapter:
         """One plain line of what is going on, or "" when there is nothing to say."""
         return ""
 
+    def situation_is_foreign(self, line: str) -> bool:
+        """Does this adapter's situation line carry text others wrote (a track's name, a sender's)? Then the
+        run starts foreign (Thinker.run `foreign_context`): every call above `playback` asks. True by default:
+        when in doubt, foreign. The line goes into the prompt before any tool, so it is part of the trust
+        boundary like a result."""
+        return True
+
     async def vocabulary(self, toolbox: Toolbox, server: str) -> list[str]:
         """Names for the speech recogniser, most likely first (the list is cut to max_hotwords)."""
         return []

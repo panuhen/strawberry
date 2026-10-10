@@ -334,9 +334,26 @@ async def test_confirm_off_in_the_daemon_removes_at_once(aiohttp_client):
     spotify, qwen, daemon, sink = daemon_over([REMOVE_CALL, "[neutral] Gone from Running."], confirm=[])
     client = await aiohttp_client(create_app(daemon))
     await daemon.start()
+    real = daemon.situation_trust
+
+    async def nothing_from_others(today=""):
+        return (await real(today))[0], False     # as if the situation named nothing others wrote
+
+    daemon.situation_trust = nothing_from_others   # type: ignore[method-assign]
     reply = await say(client, REMOVE)
     assert reply["performance"]["text"] == "Gone from Running." and daemon.held is None
     assert spotify.removed == [("running", "current")]
+    await daemon.close()
+
+
+async def test_confirm_off_still_asks_while_a_track_is_playing(aiohttp_client):
+    """The playing track's name is in the situation, and it is someone else's text (WIRING §20): a removal,
+    above `playback`, asks whatever the confirm list says."""
+    spotify, qwen, daemon, sink = daemon_over([REMOVE_CALL, "[neutral] Gone from Running."], confirm=[])
+    client = await aiohttp_client(create_app(daemon))
+    await daemon.start()
+    await say(client, REMOVE)
+    assert daemon.held is not None and spotify.removed == []
     await daemon.close()
 
 

@@ -51,7 +51,7 @@ asks about nothing. A tool can be on both lists, on one, or on neither. `/health
 she is waiting for.
 
 Every tool also has an approval tier: `read`, `playback` (what plays and how, undone in a second: play,
-pause, skip, volume, the queue), `change`, `sends` (something reaches other people, or
+pause, skip, volume, the queue, a like), `change`, `sends` (something reaches other people, or
 leaves the machine for someone: a message, an email) or `destructive` (deletes, or cannot be
 undone). A `sends` or `destructive` call is always asked about, confirm list or not, and waits 30 s
 (`sends_s`, `destructive_s`); on her card its yes is a press-and-hold. The tier comes from
@@ -86,7 +86,7 @@ the adapter says holds.
 | server | flags |
 |---|---|
 | web | foreign, egress |
-| Spotify | private, egress, and every result with a name in it foreign (`view`): names are written by others, and trust is not decided by what they say. What they can steer is bounded by the tiers: its play, pause, skip, volume and queue tools are `playback` and go ahead; a like, a save or a playlist change asks |
+| Spotify | private, egress, and every result with a name in it foreign (`view`): names are written by others, and trust is not decided by what they say. What they can steer is bounded by the tiers: its play, pause, skip, volume, queue, like and save tools are `playback` and go ahead; a playlist change asks. Its situation line names the playing track, so while one plays the sentence starts foreign |
 | no adapter, no `flags` | private, foreign, egress |
 
 The flags also decide the journal: a private, foreign or unknown server's calls are logged as the
@@ -129,6 +129,7 @@ An adapter is for a server you use every day, where the generic path is not good
 | `private`, `foreign`, `egress` | the trust flags (above, WIRING §20) |
 | `view`, `reads_as_foreign` | for the brain's calls: the text it reads and whether that counts as strangers' text, decided in one pass, and the final text read once more. Decide by where text comes from, never by what it says (Spotify: every result with a name is foreign; listed fields only, quoted, cut). An exception in either counts as foreign. `view` is `shape_result` and "not foreign" by default |
 | `asks_after_foreign` | `True` when `ask` and `describe` never put an argument as it came into her question or card: they are then still used after strangers' text |
+| `situation_is_foreign` | whether its `situation` line carries text others wrote (a track's name). The situation line is part of the trust boundary: such a line starts the sentence foreign, so every call above `playback` asks. `True` by default |
 | `offer` | when the brain is offered this server's tools: `always`, `topic`, `asked` (above); the config's `offer` decides over it |
 | `reflex_tools` | which of the server's tools each reflex calls: a reflex whose tools would wait for a yes is not run and the brain asks instead |
 | `guide`, `guide_for`, `unavailable` | a paragraph for the brain's rules when its tools are offered (`guide_for`: only for a server that lists the tools it names), or when the server is down |

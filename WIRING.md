@@ -1253,24 +1253,33 @@ So no text is judged by what it says. Instead:
   description and any unlisted field never reach the model. A word that mixes Latin with Cyrillic or
   Greek letters is logged, nothing more.
 - *The `playback` tier* (`[approvals] risk`, `Adapter.risks`): a change to what plays and how, local to
-  the user's player and undone in a second. Spotify's `play`, `play_liked`, `pause`, `next`, `previous`,
-  `seek`, `set_volume`, `shuffle`, `repeat`, `add_to_queue` are `playback`. After foreign text every call
-  *above* `playback` waits for a yes (`approvals.UNDER_FOREIGN`): a like, a save, adding to or making a
-  playlist, any other server's change, every `sends` and `destructive` call. So the worst a name can
-  steer without the user is "it played or skipped a song". A `playback` call may carry the user's
+  the user's player and undone in a second or a word. Spotify's `play`, `play_liked`, `pause`, `next`,
+  `previous`, `seek`, `set_volume`, `shuffle`, `repeat`, `add_to_queue`, and liking or saving a track
+  (`like_current`, `save_tracks`) are `playback`. After foreign text every call *above* `playback` waits
+  for a yes (`approvals.UNDER_FOREIGN`): adding to or making a playlist, the removals, any other server's
+  change, every `sends` and `destructive` call. So the worst a name can steer without the user is "it
+  played, skipped or liked a song". A `playback` call may carry the user's
   library names to Spotify after foreign text (the private-phrase check is for egress that others read).
 - *The removals* ask first whatever happens (`confirm`), in Spotify's own words, which name only what
   the server returned (cut, quoted) and a playlist name only when it is a few plain words
   (`asks_after_foreign`), so "current" is still pinned to the track she named.
-- *The situation line* shows the playing track's real name, cut and quoted: it reaches the prompt before
-  any tool and does not taint it; what it could steer is bounded the same way (the library changes are
-  offered only to a sentence that asks for one, and the removals ask).
+- *The situation line is part of the trust boundary.* It reaches the prompt before any tool, so text
+  others wrote in it starts the run foreign (`Thinker.run(foreign_context=True)`): from the first round
+  every call above `playback` asks, in the core's words. The situation itself stays (it is what "this
+  song" means), and no server is refused for it. `Daemon.situation_trust` decides each part: the date is
+  not foreign; a Spotify line naming a track is (`Adapter.situation_is_foreign`: "Nothing is playing" is
+  not; an adapter that does not say is foreign, and an exception there is too); MPRIS's (or SMTC's) line is
+  always foreign (a player's title); "Names in the user's library" is foreign when any name came from a
+  server (artists, followed playlists and saved tracks are named by others; Spotify does not say which
+  playlists the user made), and not when they are only the user's own `[voice] vocabulary`. The playing
+  track's name is shown as it is, cut and quoted.
 
-What changes for the user: an ordinary search and play, a skip, the volume and the queue need no yes,
-as before; a like or a save the model makes after a Spotify search in the same sentence now asks (the
-reflexes, "I like this" among them, do not: no model reads a result there); after a Spotify result the web
-search and other private or egress servers are refused for the rest of that sentence; and her answer from
-Spotify results is kept in the ledger as the placeholder, as an answer from web results is.
+What changes for the user: a search and play, a skip, the volume, the queue and a like or a save need no
+yes, as before. While a track is playing (or the library names come from Spotify, which is nearly always),
+adding to or making a playlist and any other server's change ask first, through the thinker, even with
+`confirm = []`; the reflexes ("I like this", "skip") never ask. After a Spotify result the web search and
+other private or egress servers are refused for the rest of that sentence, and her answer from Spotify
+results is kept in the ledger as the placeholder, as an answer from web results is.
 
 A config may add flags to an adapter's (`flags = ["foreign"]` on a Spotify server whose catalogue the
 user distrusts: every result foreign), never remove one: what an adapter says of its server holds. A plain server says what
@@ -1394,6 +1403,9 @@ for Spotify's names: a hostile playlist name or description in English, in Finni
 title, that cannot make a save, an add, a like, a new playlist or a removal without a yes, and whose
 description never reaches the model; "play You Should Be Dancing", "play some jazz", a queue, the volume
 and a skip that need none; Spotify's tiers; a removal that still asks in its own pinned words; the
-situation line with the real name, cut and quoted; the shape; the web refused after a Spotify result;
+situation line with the real name, cut and quoted; the shape; the web refused after a Spotify result; the
+situation's trust (a playing track, a player's title, a server's library names; the user's own words not),
+a hostile playing track that cannot add to or make a playlist or switch a lamp on, through the thinker
+and the daemon, while a like, a skip, a play and the volume go ahead;
 and failing closed: an exception in `view` or `reads_as_foreign`, an unreadable result, an error),
 `tests/test_bussecret.py` (§2).

@@ -537,7 +537,7 @@ class Thinker:
 
     async def run(self, text: str, context: str = "", careful: bool = False, topic: str = "",
                   tools: bool = True, recent: list[str] | None = None, route: Any = None,
-                  public_context: str = "", run: Run | None = None) -> Outcome:
+                  public_context: str = "", run: Run | None = None, foreign_context: bool = False) -> Outcome:
         """One sentence, start to finish: her reply, its mood, and whatever tools it took to get
         there. Never raises: a failure is an Outcome with ok=False and something to say about it.
         `tools=False` offers none (the latency probe, which must not change anything). `recent`
@@ -545,7 +545,9 @@ class Thinker:
         `route` is the gate's reading, for the adapters that decide by it (Thinker.offer).
         `public_context` is the part of `context` with nothing private in it (the date): all of it
         that stays once a web result is in the conversation (_run). `run` is the run this sentence
-        is (runs.py): its `thinking` and tool events, and why it failed. A cancel is not caught here."""
+        is (runs.py): its `thinking` and tool events, and why it failed. `foreign_context`: the situation
+        carries text others wrote (a track's name; Daemon.situation_trust), so from the first round every call
+        above `playback` asks, in the core's words (WIRING §20). A cancel is not caught here."""
         self.calls += 1
         started = time.perf_counter()
         calls: list[ToolResult] = []
@@ -554,7 +556,8 @@ class Thinker:
         metered = metering.set(Meter(run))   # the task wait_for starts takes a copy of it
         try:
             outcome = await asyncio.wait_for(self._run(text, context, calls, careful, topic, tools, list(recent or []),
-                                                       route, public_context, run), self.config.timeout_s)
+                                                       route, public_context, run, foreign_context),
+                                             self.config.timeout_s)
         except asyncio.TimeoutError:
             error = "timeout"
             outcome = Outcome("thought about it too long", "I tried, but my thinking took too long. Sorry.", False,
@@ -629,7 +632,7 @@ class Thinker:
 
     async def _run(self, text: str, context: str, calls: list[ToolResult], careful: bool, topic: str = "",
                    use_tools: bool = True, recent: list[str] | None = None, route: Any = None,
-                   public_context: str = "", run: Run | None = None) -> Outcome:
+                   public_context: str = "", run: Run | None = None, foreign_context: bool = False) -> Outcome:
         """The tool loop. Once a result from a `foreign` server (a web search, a page; trust.py) is in the
         conversation, it is tainted and the user's private context goes out of it: the ledger, the
         situation but its public part, and the other servers' results so far. Then, whatever a result
@@ -656,6 +659,11 @@ class Thinker:
         until = self.config.max_rounds            # the last round; earlier once a foreign result is in
         tainted = False
         tainting: set[str] = set()                # the foreign servers whose results are in
+        # The situation's own text from others (a track playing): the calls above `playback` ask from the
+        # start. The situation stays (it is what "this song" means), and no server is refused for it.
+        asks = bool(foreign_context)
+        if asks:
+            log.info("thinker: the situation carries names others wrote; every call above playback asks")
         for round_no in range(self.config.max_rounds + 1):
             last_round = round_no >= until or not tools
             payload = {
@@ -739,16 +747,16 @@ class Thinker:
                     continue
                 # Once strangers' text is in the conversation every call above `playback` waits for a
                 # yes (approvals.needed `foreign`), whatever its confirm list.
-                if spec is not None and self.toolbox.needs_approval(spec.server, spec.name, foreign=tainted):
+                if spec is not None and self.toolbox.needs_approval(spec.server, spec.name, foreign=tainted or asks):
                     # A tool she asks about first (confirm.py, approvals.py): not made, and the thinking
                     # ends here with her question, written by code (after foreign text, the core's own
                     # wording, not the adapter's, which could quote an argument). The call is kept exactly
                     # as it would have been sent; only the user's yes can make it. The rest of this reply's
                     # calls are not made.
                     held = await confirm.hold(self.toolbox, adapter, spec.server, spec.name, arguments, run=run,
-                                              foreign=tainted)
+                                              foreign=tainted or asks)
                     log.info("thinker: %s (%s) held for a yes%s", held.key, held.risk,
-                             " (outside text is in the conversation)" if tainted else "")
+                             " (outside text is in the conversation)" if tainted or asks else "")
                     did = f"asked before {spec.name}" if not used else f"{_did(used)}, then asked before {spec.name}"
                     return Outcome(did, held.question, True, tuple(calls), "neutral", held=held)
                 if spec:

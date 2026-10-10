@@ -87,6 +87,7 @@ class Daemon:
         # Names for the speech recogniser: yours from the config, plus what the music server
         # knows (artists, playlists), refreshed in the background (voice.vocabulary_refresh_s).
         self.vocabulary: list[str] = list(self.config.voice.vocabulary)
+        self.vocabulary_foreign = False     # any of them from a server (refresh_vocabulary): named by others
         self.vocabulary_task: asyncio.Task | None = None
         self.vocabulary_at = 0.0
         # Her memory across turns (§8b): the last few exchanges, given to whoever answers.
@@ -367,10 +368,13 @@ class Daemon:
 
     async def refresh_vocabulary(self) -> None:
         names = list(self.config.voice.vocabulary)
+        foreign = False
         for word in await self.actor.vocabulary():
             if word not in names:
                 names.append(word)
+                foreign = True       # artists, playlists a user follows, saved tracks: named by others
         self.vocabulary = names
+        self.vocabulary_foreign = foreign
         self.vocabulary_at = time.monotonic()
         log.info("voice: %d names for the recogniser (%s…)", len(names), ", ".join(names[:5]))
 
@@ -931,9 +935,11 @@ class Daemon:
         try:
             careful = route is not None and route.library_change >= 0.5
             today = self.today()
-            return await self.thinker.run(text, await self.situation(today), careful=careful,
+            context, foreign = await self.situation_trust(today)
+            extra = {"foreign_context": True} if foreign else {}
+            return await self.thinker.run(text, context, careful=careful,
                                           topic=route.topic if route is not None else "", recent=self.ledger.lines(),
-                                          route=route, public_context=today, run=run)
+                                          route=route, public_context=today, run=run, **extra)
         finally:
             reminder.cancel()
 
@@ -944,16 +950,27 @@ class Daemon:
         return time.strftime("Today is %A %d %B %Y, %H:%M local time.")
 
     async def situation(self, today: str = "") -> str:
+        """What Qwen is told before the sentence (`situation_trust`, without the flag)."""
+        return (await self.situation_trust(today))[0]
+
+    async def situation_trust(self, today: str = "") -> tuple[str, bool]:
         """What Qwen is told before the sentence: the date, what the servers say is going on and the
-        names in the user's library (speech-to-text mishears them). The recent exchanges go to it
-        as ledger lines of their own, so the thinker can drop the oldest when the prompt is long."""
+        names in the user's library (speech-to-text mishears them); and whether any of it is text others
+        wrote, which starts the run foreign (Thinker.run `foreign_context`, WIRING §20): a track playing,
+        a player's title, names from a server's library (artists, followed playlists, saved tracks). The
+        date and the user's own `[voice] vocabulary` are not. The recent exchanges go to it as ledger lines
+        of their own, so the thinker can drop the oldest when the prompt is long."""
         parts = [today or self.today()]
-        here = await self.actor.situation()
+        situation = getattr(self.actor, "situation_trust", None)
+        here, foreign = await situation() if situation is not None else (await self.actor.situation(), True)
         if here:
             parts.append(here)
+        else:
+            foreign = False
         if self.vocabulary:
             parts.append(f"Names in the user's library: {self.hotwords()}.")
-        return " ".join(parts)
+            foreign = foreign or getattr(self, "vocabulary_foreign", True)
+        return " ".join(parts), foreign
 
     # `strawberry doctor --talk` (POST /probe): fixed sentences, so the only text this path ever
     # handles is ours, and nothing the user wrote can end up in a log line.

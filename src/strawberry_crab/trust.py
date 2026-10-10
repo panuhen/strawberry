@@ -21,6 +21,10 @@ holds. A server that is not foreign may still say one result is (`Adapter.view`,
 `ToolResult.foreign`, failing closed: an exception there makes the result foreign): that result counts
 as a foreign server's.
 
+The situation line is part of the boundary: text others wrote in it (a track playing, a player's title, a
+server's library names; Daemon.situation_trust) starts the run foreign for asking (every call above
+`playback` asks), without taking the situation out.
+
 What the thinker does with them (Thinker._run) cannot be switched off:
 
     once a foreign result is in the conversation ("tainted"):

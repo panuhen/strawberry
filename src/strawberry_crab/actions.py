@@ -303,11 +303,19 @@ class Actor:
         return outcome
 
     async def situation(self, topic: str | None = None) -> str:
-        """What the thinker should know before it starts, from the servers that can say. `topic`
-        narrows it to one topic's servers; None (the default) asks every server that has a line.
-        With nothing to say about music, MPRIS says what is playing, so "this song" still means
-        something with no server configured."""
+        """What the thinker should know before it starts (`situation_trust`, without the flag)."""
+        return (await self.situation_trust(topic))[0]
+
+    async def situation_trust(self, topic: str | None = None) -> tuple[str, bool]:
+        """What the thinker should know before it starts, from the servers that can say, and whether any of
+        it is text others wrote (a track's name: the situation line is part of the trust boundary, WIRING
+        §20). `topic` narrows it to one topic's servers; None (the default) asks every server that has a
+        line. With nothing to say about music, MPRIS says what is playing, so "this song" still means
+        something with no server configured; a player's title is always someone else's text. An adapter
+        says of its own line (`Adapter.situation_is_foreign`, foreign unless it says otherwise; an
+        exception there is foreign too)."""
         lines = []
+        foreign = False
         for name, server in self.toolbox.servers.items():
             adapter = self.adapters.get(name)
             if adapter is None or (topic is not None and server.topic != topic):
@@ -318,6 +326,10 @@ class Actor:
                 line = ""
             if line:
                 lines.append(line)
+                try:
+                    foreign = foreign or adapter.situation_is_foreign(line) is not False
+                except Exception:   # noqa: BLE001 - when in doubt, foreign
+                    foreign = True
         if not lines and self.mpris is not None and topic in (None, MPRIS_TOPIC):
             try:
                 line = await asyncio.wait_for(self.mpris.situation(), 5.0)
@@ -325,7 +337,8 @@ class Actor:
                 line = ""
             if line:
                 lines.append(line)
-        return " ".join(lines)
+                foreign = True        # the player's title, artist and album: written by others
+        return " ".join(lines), foreign
 
     async def vocabulary(self) -> list[str]:
         """Names from every server whose adapter can offer them, for the speech recogniser."""

@@ -359,13 +359,16 @@ def _volume(delta: int) -> Reflex:
     return reflex
 
 
+NOTHING_PLAYING = "Nothing is playing on Spotify right now."
+
+
 async def situation(toolbox: Toolbox, server: str) -> str:
     """One line of context for the thinker: 'this song' means whatever is playing now."""
     track, data, result = await _current(toolbox, server)
     if not result.ok:
         return ""
     if not track:
-        return "Nothing is playing on Spotify right now."
+        return NOTHING_PLAYING
     album = (data.get("track") or {}).get("album")
     state = "Now playing" if data.get("playing", True) else "Paused"
     # The names go into the thinker's prompt before any tool, as data: normalised, cut short, quoted. What
@@ -584,8 +587,10 @@ BREAKS = {"Cc", "Zl", "Zp"}            # control characters and line separators:
 HIDDEN = {"Cf", "Co", "Cs", "Cn"}      # format (zero-width, bidi), private, unassigned: nothing
 # The tier of its tools that change only what plays and how: local to the user's player, undone in a second.
 # After strangers' text these still go ahead (approvals.UNDER_FOREIGN); its library changes do not.
+# Saving or liking a track is undone in a word too: `playback`, so "like this song" while a track plays (its name
+# in the situation, strangers' text) still needs no yes. Playlist changes and the removals are above it.
 PLAYBACK = ("play", "play_liked", "pause", "next", "previous", "seek", "set_volume", "shuffle", "repeat",
-            "add_to_queue")
+            "add_to_queue", "like_current", "save_tracks")
 
 
 def _normal(value: str) -> str:
@@ -824,6 +829,10 @@ class SpotifyAdapter(Adapter):
 
     async def situation(self, toolbox: Toolbox, server: str) -> str:
         return await situation(toolbox, server)
+
+    def situation_is_foreign(self, line: str) -> bool:
+        # A playing track's name is someone else's text; "nothing is playing" is ours.
+        return line != NOTHING_PLAYING
 
     async def vocabulary(self, toolbox: Toolbox, server: str) -> list[str]:
         return await vocabulary(toolbox, server)
