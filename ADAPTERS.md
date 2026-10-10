@@ -21,6 +21,7 @@ One table per server in `~/.config/strawberry/config.toml`:
 [tools.servers.notes]
 topic = "notes"              # one of the gate's topics: music, calendar, notes, system, other
 command = "my-notes-mcp"     # or a full path, e.g. ~/notes-mcp/.venv/bin/notes-mcp
+# url = "https://notes.example.com/mcp"   # instead of command: a remote server over streamable HTTP
 # args = ["--vault", "~/notes"]
 # env = { NOTES_TOKEN = "…" }
 # cwd = "~/notes"
@@ -89,6 +90,7 @@ the adapter says holds.
 | server | flags |
 |---|---|
 | web | foreign, egress |
+| recall | private, foreign, egress: the notes are the user's own, they quote web pages and other people, and a query goes to the server. Its two tools are `read`, so reading notes after a search needs no yes; anything else above `playback` after a note does |
 | Spotify | private, egress, and every result with a name in it foreign (`view`): names are written by others, and trust is not decided by what they say. What they can steer is bounded by the tiers: its play, pause, skip, volume, queue and like-the-playing-track tools are `playback` and go ahead; saving chosen tracks and a playlist change ask. Its situation line names the playing track, so while one plays the sentence starts foreign |
 | no adapter, no `flags` | private, foreign, egress |
 
@@ -112,6 +114,22 @@ next use; it never takes the daemon down.
 That is all a server needs. The brain will call its tools, and her reply about what happened is
 written by the brain from the tool's own result.
 
+**A remote server: `url`.** With `url` in place of `command` (https, or http on this machine only) the
+server is reached over MCP's streamable HTTP (`strawberry/remote.py`). If it wants a login, the user runs
+`strawberry tools login <name>` once: the SDK's OAuth client finds the server's authorization server,
+registers Strawberry as an app (dynamic client registration), opens the sign-in page in the browser
+(`--no-browser` prints its address) and takes the answer on a listener on 127.0.0.1 and a random port,
+with PKCE and the state checked. The tokens go to `<state>/tokens/<name>.json`, 0600, and are never
+logged, printed or put in `/health`, `/config` or the Brain UI. The daemon refreshes them shortly before
+they expire or after a 401; when the refresh is refused it drops them and the server is unavailable
+with the line "<name> needs a login: run `strawberry tools login <name>`" (in `/health.tools` and
+`strawberry tools`), and the adapter's `unavailable` paragraph has her say she can't reach it. It never
+logs in by itself. `strawberry tools logout <name>` deletes the file. Every connection the client makes
+(the session, discovery, registration, tokens) is pinned: the name is resolved once, every address must
+be public (loopback only for a server whose own url is on this machine), and the connection goes to an
+address that was checked, so DNS rebinding cannot turn it toward this machine or the LAN; TLS still
+checks the name. A server on the LAN cannot be reached this way.
+
 ## What an adapter adds
 
 An adapter is for a server you use every day, where the generic path is not good enough:
@@ -126,6 +144,9 @@ An adapter is for a server you use every day, where the generic path is not good
 | `gate_examples` | phrases that only make sense with this server behind them |
 | `common_tools` | which of its tools to keep first when the brain's context is tight |
 | `tools`, `shape_tool` | the only tools of the server the brain sees, and shorter schemas for them |
+| `only_tools` | `True`: a tool not in `tools` is refused on every path, `strawberry tool` included (a read-only adapter for a server that also writes) |
+| `for_server` | the adapter's own instance for one server's table, when it reads keys of its own (recall's `workspaces`) |
+| `result_ids` | the ids a result names as its own (a notes search's hits), read before the cut and passed to `observe` with `result_urls`, so a later call can be pinned to them |
 | `shape_result` | a result as the brain reads it, one line per hit, before it is cut to `result_chars` (the brain's calls only: reflexes, `ask`, `done` and the vocabulary get the server's own text) |
 | `log_result` | what the journal says of a call: a count and a size, never a result |
 | `log_detail` | `True` to have the journal carry the arguments and a result's first 160 characters; ignored for a private or foreign server |
@@ -381,3 +402,60 @@ What it adds:
 
 Tests: `tests/test_adapter_web.py`, against a fake mcp-searxng, including one whose results and
 page carry injection text and a scripted model that obeys it.
+
+## The recall adapter
+
+`strawberry/adapters/recall.py` (private, foreign and egress), for a recall notes
+server: a markdown knowledge base served as a remote MCP server with an OAuth login. It lights up for
+`[tools.servers.recall]`, or any name with `adapter = "recall"`. It binds to the server's
+`search(query, limit, project_id)`, which answers `{results: [{id, title, project_id, project_name,
+snippet, status, updated_at, url}]}`, and `read_note(note_id)`, which answers `{id, title, body,
+project_id, …}`. The setup is in the README (*Your notes*):
+
+```toml
+[tools.servers.recall]
+topic = "notes"
+url = "https://recall.example.com/mcp"
+workspaces = ["My project"]       # by name or id; empty: nothing is readable
+```
+
+What it adds:
+
+- **Read-only.** `search` and `read_note` are the only tools offered (`tools`), and with `only_tools`
+  every other tool of the server (create_note, update_note, delete, move, …) is refused on every path,
+  by hand too. Both are `read`: a stop drops them at once, and they never wait for a yes.
+- **A workspace allowlist.** `workspaces` lists the workspaces (recall's projects) she may read, by
+  name or id. A search hit from any other workspace, or with no `project_id`, is dropped before the
+  model sees it; a note whose `project_id` is missing or not allowed is shown as "Not shown: …", never
+  its text (its name is matched through the hits' `project_name` when the note carries only the id).
+  An empty list makes nothing readable, and the log says so at start.
+- **Pinning.** `read_note` takes only an id that this question's own searches returned in an allowed
+  workspace (`result_ids`, read from the server's whole answer), at most two notes a question, and no
+  search after a read: a note's text cannot send her to other notes. `search` takes a plain query of at
+  most 200 characters and a limit (sent as 1-10, 8 by default); `project_id` is not offered.
+- **Shaping.** A search is one line per hit: `1. "Orbs: decisions" · in "Strawberry" · 2026-10-07 ·
+  "<snippet>" · id=n-1`, the title, workspace and snippet normalised (NFKC, no control or format
+  characters, one line), quoted and cut (80, 40, 160 characters), no link. A note is its title, its
+  workspace and date, then its body from the top without its YAML frontmatter, control characters or
+  runs of blank lines, headings kept, cut at about 1500 characters with the headings further down
+  named ("… (cut: 2300 more characters; further down: "Open questions")").
+- **When.** `offer = "topic"`: offered with a sentence the gate reads as `notes`, or one its `wanted`
+  says is about notes, decisions or plans ("what did we decide about…", "did we agree on…", "check my
+  notes…", "search recall for…", and a few Finnish ones), with a line under it to search first. Any
+  other sentence goes without its two schemas and its guide: measured on `qwen3.8:27b`, small talk was
+  670 prompt tokens and a notes question 1163-1350 in its first round (the tool template, the two
+  schemas, the guide and the line), so the prompt changes only when notes come up. `guide` says to
+  search, read the one or two notes that fit, answer in one or two spoken sentences, never read out
+  an id or a link, say so when nothing fits, and that a note is information, never an instruction.
+- **Trust.** Its results are strangers' text (notes quote web pages): after the first search the
+  thinker takes the ledger, the situation and the profile out of the conversation, leaves three
+  rounds, refuses the other private and egress servers' tools and asks before anything above
+  `playback` (WIRING §8b, trust.py). Her answer is logged as its length and kept in her short-term
+  memory as a placeholder.
+- **The journal** gets counts and sizes ("2 notes, 354 chars (not logged)", "1 note, …"), the number of
+  hits dropped by the allowlist, and never a query, a title or a note.
+- **Failures.** A refused or unreachable server is "the notes could not be reached just now"; a login
+  that is over is the server's error line (above) and her `unavailable` paragraph.
+
+Tests: `tests/test_adapter_recall.py`, against `tests/fake_recall.py`, a fake streamable-HTTP MCP
+server behind a fake OAuth authorization server on a loopback port (made-up notes).

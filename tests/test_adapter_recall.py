@@ -384,7 +384,7 @@ async def test_a_read_is_pinned_to_this_sentences_own_search_and_a_note_cannot_s
                       ("read_note", {"note_id": "n-steer"})],
                      [("search", {"query": "salary"}), ("read_note", {"note_id": "n-orbs-1"}),
                       ("read_note", {"note_id": "n-orbs-2"})],
-                     "[neutral] The orbs stay pure visuals."])
+                     "[neutral] The orbs stay round and slow."])
     thinker = Thinker(ThinkerConfig(), box, "q", chat=qwen)
     try:
         outcome = await thinker.run("what did we decide about the orbs follow-up?", route=reading("x", kind="question"))
@@ -460,7 +460,7 @@ async def test_no_token_and_no_note_text_reach_the_logs(fake, caplog):
     remote.TokenStore("recall").save(data)
     box = box_for(fake)
     qwen = FakeQwen([[("search", {"query": f"orbs {QUERY_CANARY}"})], [("read_note", {"note_id": "n-orbs-1"})],
-                     "[neutral] The orbs stay pure visuals."])
+                     "[neutral] The orbs stay round and slow."])
     thinker = Thinker(ThinkerConfig(), box, "q", chat=qwen)
     try:
         await thinker.run(f"what did we decide about the orbs {QUERY_CANARY}?", route=reading("x", kind="question"))
@@ -472,7 +472,7 @@ async def test_no_token_and_no_note_text_reach_the_logs(fake, caplog):
     text = caplog.text
     for secret in (tokens["access_token"], tokens["refresh_token"], *refreshed, *fake.codes, "code-"):
         assert secret not in text
-    for words in ("NOTE-BODY-CANARY", "pure visuals", "Orbs: decisions", "SECRET-FINANCE-CANARY", QUERY_CANARY):
+    for words in ("NOTE-BODY-CANARY", "round and slow", "Orbs: decisions", "SECRET-FINANCE-CANARY", QUERY_CANARY):
         assert words not in text
     assert "recall.search(query, limit) -> ok" in text and "notes," in text
 

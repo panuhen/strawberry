@@ -26,10 +26,10 @@ NOTES = [
     {"id": "n-orbs-1", "title": "Orbs: decisions", "project_id": "p-straw", "project_name": "Strawberry",
      "updated_at": "2026-10-07T18:20:00Z", "status": "current",
      "body": "---\ntype: decision\ntags: [orbs]\n---\n# Orbs: decisions\n\n## Decided\n\n"
-             "- The orbs stay pure visuals: no buttons, no menus, no approvals on them.\n"
-             "- Approvals, menus and stop live in the crab widget.\n"
-             "- The Brain UI is only for what happens under the hood.\n\n## Why\n\n"
-             "Two places for one approval confused everyone in the trial week.\n"},
+             "- The orbs stay round and slow: one pulse a second at most.\n"
+             "- They glow amber only while she thinks.\n"
+             "- Nothing on them can be clicked.\n\n## Why\n\n"
+             "Faster pulses read as alarms in the trial week.\n"},
     {"id": "n-orbs-2", "title": "Orbs: colour ideas", "project_id": "p-straw", "project_name": "Strawberry",
      "updated_at": "2026-10-02T09:00:00Z", "status": "draft",
      "body": "# Orbs: colour ideas\n\nAmber for thinking, teal for listening. Not decided yet.\n"},
