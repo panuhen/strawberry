@@ -8,7 +8,7 @@
 
 (() => {
   const CSRF = document.querySelector('meta[name="csrf"]').content;
-  const SECTIONS = ["persona", "profile", "runs", "router", "learning", "data", "settings", "system"];
+  const SECTIONS = ["persona", "profile", "runs", "router", "learning", "data", "settings", "input", "system"];
   const MAX_ROUTES = 100;
   const MAX_RUNS = 50;
   const TERMINAL = { "run.completed": "completed", "run.failed": "failed", "run.cancelled": "cancelled" };
@@ -37,6 +37,16 @@
     fresh: new Set(),
     freshRuns: new Set(),
     busy: false,
+    input: null,            // GET input: status, settings in use, the dropdowns' choices, bodies, the file, recent
+    inputForm: null,        // the tab's settings as edited (rows for the maps)
+    inputEdited: false,
+    inputCheck: null,       // the edited settings checked: problems, the diff against input.toml
+    inputStatus: null,      // the live view's latest status (once a second)
+    inputPractice: false,
+    hand: null,             // the latest hand from the live view (numbers only), null when none
+    handAt: 0,
+    gesture: null,          // the latest gesture event, with when it came
+    freshInput: new Set(),
   };
 
   // --------------------------------------------------------------------------- DOM, as text
@@ -1095,6 +1105,603 @@
     if (state.profileDraft === null) rerender("profile");
   }
 
+  // --------------------------------------------------------------------------- settings: input
+
+  // Hand gestures from the camera and touch from the bodies. The live view is drawn from the hand's few
+  // numbers the watcher posts (the wrist, the fingertips, pinch, open, engaged), never from a picture: no
+  // frame ever leaves the watcher. The settings are saved to input.toml, never config.toml.
+
+  const GESTURE_TUNING = [
+    ["hold_ms", "Hold time", "ms a shape is held to count", 100, 3000, 50],
+    ["zone", "Zone line", "a hand counts with its wrist above it (0 top, 1 bottom)", 0.1, 1, 0.01],
+    ["min_size", "Smallest hand", "of the frame: a nearer hand is bigger", 0, 0.99, 0.01],
+    ["armed_s", "Command mode lasts", "s, with arming on or watch = armed", 1, 120, 1],
+    ["idle_fps", "Frames a second, looking", "while no hand is up", 0.5, 60, 0.5],
+    ["fps", "Frames a second, hand up", "swipes need 10 or more", 1, 60, 1],
+    ["hand_hz", "Hand updates a second", "to the bodies and this view", 1, 30, 1],
+  ];
+  const TOUCH_TUNING = [
+    ["target_s", "A target holds", "s after the body last reported it", 0.5, 60, 0.5],
+    ["cooldown_s", "Between touch actions", "s at least", 0, 30, 0.1],
+  ];
+  const WHY = {
+    not_mapped: "not mapped", cooldown: "too soon after the last", not_armed: "command mode was off",
+    too_soon: "too soon after the last", not_answerable: "a thumb cannot answer this question",
+    nothing_can_do_it: "no player or music server for it", tool_failed: "the call failed", refused: "refused",
+    would_ask: "it would need a yes", not_listening: "she could not listen", error: "an error",
+    not_open: "no question open", resolved: "already answered",
+  };
+  let inputCheckTimer = null;
+  let inputLive = null;          // the live view's fetch (an AbortController) while the tab is open
+  let drawPending = false;
+
+  function inputForm(view) {
+    const s = view.settings;
+    const g = Object.assign({}, s.gestures);
+    const gmap = Object.entries(g.map || {}).map(([key, action]) => {
+      const at = key.lastIndexOf(":");
+      return { target: at >= 0 ? key.slice(0, at) : "", gesture: at >= 0 ? key.slice(at + 1) : key, action };
+    });
+    delete g.map;
+    const tmap = [];
+    for (const [entity, kinds] of Object.entries(s.touch.actions || {})) {
+      for (const [kind, action] of Object.entries(kinds)) tmap.push({ entity, kind, action });
+    }
+    return { g, t: { target_s: s.touch.target_s, cooldown_s: s.touch.cooldown_s }, gmap, tmap };
+  }
+
+  function inputSettings(form) {
+    const map = {};
+    for (const r of form.gmap) map[r.target ? `${r.target}:${r.gesture}` : r.gesture] = r.action;
+    const actions = {};
+    for (const r of form.tmap) (actions[r.entity] = actions[r.entity] || {})[r.kind] = r.action;
+    return { gestures: Object.assign({}, form.g, { map }), touch: Object.assign({}, form.t, { actions }) };
+  }
+
+  function inputDuplicates(form) {
+    const seen = new Set();
+    const twice = [];
+    for (const r of form.gmap) {
+      const key = r.target ? `${r.target}:${r.gesture}` : r.gesture;
+      if (seen.has(key)) twice.push(key); else seen.add(key);
+    }
+    for (const r of form.tmap) {
+      const key = `${r.entity}.${r.kind}`;
+      if (seen.has(key)) twice.push(key); else seen.add(key);
+    }
+    return twice;
+  }
+
+  function inputDirty() {
+    return Boolean(state.input && state.inputForm
+      && JSON.stringify(inputSettings(state.inputForm)) !== JSON.stringify(inputSettings(inputForm(state.input))));
+  }
+
+  function edited() {
+    state.inputEdited = true;
+    scheduleInputCheck();
+  }
+
+  function scheduleInputCheck(ms = 400) {
+    clearTimeout(inputCheckTimer);
+    inputCheckTimer = setTimeout(checkInput, ms);
+  }
+
+  async function checkInput() {
+    if (!state.inputForm) return;
+    try { state.inputCheck = await api("input/check", { settings: inputSettings(state.inputForm) }); }
+    catch (e) { state.inputCheck = { ok: false, problems: [e.message], diff: [] }; }
+    renderInputCheck();
+  }
+
+  function renderInput() {
+    const root = $("#input");
+    const V = state.input;
+    if (!V) {
+      root.replaceChildren(panel("Input", null, el("p", { class: "empty", text: "Loading..." })));
+      return;
+    }
+    if (!state.inputEdited || !state.inputForm) state.inputForm = inputForm(V);
+    const practice = el("input", { type: "checkbox", id: "input-practice", checked: Boolean(state.inputPractice),
+      on: { change: (ev) => setPractice(ev.target) } });
+    const canvas = el("canvas", { id: "hand-canvas", class: "hand", width: 640, height: 480,
+      "aria-label": "The hand as the watcher reports it: wrist, fingertips, the zone and the hold ring" });
+    fill(root,
+      panel("Input", "hand gestures through the camera, and touch from the bodies",
+        el("div", { id: "input-head" }),
+        el("div", { class: "actions" },
+          el("label", { class: "check", for: "input-practice" }, practice,
+            el("b", { text: "Practice mode" }),
+            el("span", { class: "dim", text: "Gestures and touches are recognised and shown here, and do nothing. Not saved; off again when she restarts." })))),
+      el("div", { class: "input-grid" },
+        panel("Live", "drawn from the hand's numbers; the camera's picture never leaves the watcher",
+          el("div", { class: "hand-wrap" }, canvas), el("div", { id: "hand-legend", class: "hand-legend" })),
+        el("div", { class: "input-side" },
+          panel("Status", null, el("div", { id: "input-status" })),
+          panel("Bodies", "what they draw, and what the user touches", el("div", { id: "input-bodies" })))),
+      panel("Mappings", "what a gesture or a touch does: only actions that need no yes (read and playback)",
+        el("div", { id: "input-maps" })),
+      panel("Tuning", "how a hand has to be held, and how the camera runs", el("div", { id: "input-tuning" })),
+      panel("input.toml", "saved here, never in config.toml; she reads it again within a second",
+        el("div", { id: "input-file" })),
+      panel("Recent", "the last gestures and touch actions, and what came of each", el("div", { id: "input-recent" })));
+    renderInputHead();
+    renderInputStatus();
+    renderInputBodies();
+    renderInputMaps();
+    renderInputTuning();
+    renderInputCheck();
+    renderInputRecent();
+    drawHand();
+    if (!state.inputCheck) scheduleInputCheck(0);
+  }
+
+  function renderInputHead() {
+    const node = document.getElementById("input-head");
+    if (!node || !state.input) return;
+    const V = state.input;
+    const S = Object.assign({}, V.status, state.inputStatus || {});
+    const f = V.file || {};
+    const notes = [];
+    if (f.error) {
+      notes.push(el("div", { class: "note berry" }, el("b", { text: "Your input.toml is not used. " }),
+        "She keeps the settings she has until it checks out:", el("ul", null, el("li", { text: f.error }))));
+    }
+    fill(node, el("div", { class: "actions" },
+      chip(`gestures ${onOff(S.enabled)}`, S.enabled ? "good" : null, "The tray's Hand gestures (camera) row, or strawberry gestures on|off"),
+      chip(f.in_use ? (f.error ? "settings: the last input.toml that checked out" : "settings from input.toml")
+        : f.exists ? "settings from config.toml" : "settings from config.toml (no input.toml yet)",
+        f.in_use && !f.error ? "good" : f.error ? "warn" : null, f.path || ""),
+      S.practice ? chip("practice mode: nothing is done", "warn") : null,
+      el("span", { class: "faint", text: S.enabled ? "The camera is the watcher's alone; turn it off in the tray." : "Turn the camera on with the tray's Hand gestures (camera) row." })),
+      notes);
+  }
+
+  function renderInputStatus() {
+    const node = document.getElementById("input-status");
+    if (!node || !state.input) return;
+    const S = Object.assign({}, state.input.status, state.inputStatus || {});
+    const w = S.watcher || {};
+    const watcher = !S.enabled ? "waits (gestures are off: it only reads the config file)"
+      : w.heard ? `running, heard ${num(w.age_s, 1)} s ago` : "not heard from (is the tray running it?)";
+    const camera = !S.enabled ? "closed" : w.heard ? (w.camera ? "open" : "closed") : "unknown";
+    const armed = S.armed_s > 0 ? `armed, ${Math.ceil(S.armed_s)} s left`
+      : S.arming || S.watch === "armed" ? "idle (not armed)" : "not needed (arming is off)";
+    const g = S.gestures || {};
+    const t = S.touch || {};
+    fill(node,
+      el("div", { class: "actions" },
+        chip(`camera ${camera}`, camera === "open" ? "berry" : null, "The camera's light is on while it is open"),
+        chip(`watch: ${S.watch}`), chip(`command mode ${armed.split(",")[0]}`, S.armed_s > 0 ? "good" : null)),
+      kv([
+        ["Watcher", watcher],
+        ["Watch mode", S.watch === "armed" ? "armed: the camera opens only when armed (strawberry gestures arm)" : "always: open while gestures are on"],
+        ["Command mode", armed],
+        ["Frames a second", w.heard ? num(w.fps, 1) : dash],
+        ["CPU (the watcher)", w.heard ? `${num(w.cpu, 1)}% of one core` : dash],
+        ["Last hand", typeof S.hand_age_s === "number" ? `${duration(S.hand_age_s)} ago` : "none since she started"],
+        ["MediaPipe", S.mediapipe ? `missing: ${S.mediapipe}` : "installed"],
+        ["Model", S.model ? "present" : "missing: strawberry gestures fetch"],
+        ["Gestures", `${g.received ?? 0} received, ${g.acted ?? 0} acted, ${g.answered ?? 0} answered, ${g.refused ?? 0} refused`],
+        ["Touch actions", `${t.acted ?? 0} done, ${t.failed ?? 0} failed, ${t.refused ?? 0} refused, ${t.cooldown ?? 0} too soon`]]));
+  }
+
+  function renderInputBodies() {
+    const node = document.getElementById("input-bodies");
+    if (!node || !state.input) return;
+    const bodies = state.input.bodies || [];
+    const targets = (state.inputStatus || state.input.status || {}).targets || {};
+    const target = targets.target;
+    fill(node,
+      target ? el("p", null, "Pointing at ", el("b", { text: target.entity }), ` (${target.via}, on ${target.body})`) : null,
+      bodies.length ? bodies.map((b) => el("div", { class: "body-card" },
+        el("div", { class: "actions" }, el("b", { class: "mono", text: b.id || "a body" }),
+          chip(`${(b.inputs || {}).touch ?? 0} touches`), chip(`${(b.inputs || {}).target ?? 0} targets`),
+          (b.inputs || {}).refused ? chip(`${b.inputs.refused} refused`, "warn") : null,
+          (b.inputs || {}).dropped ? chip(`${b.inputs.dropped} dropped`, "warn") : null),
+        el("div", { class: "entities" }, (b.entities || []).map((e) => el("span", { class: "tag", title: e.label },
+          el("span", { class: "mono", text: e.id }), e.kind !== e.id ? ` ${e.kind}` : null)))))
+        : el("p", { class: "empty", text: "No body has declared anything to touch. The orbs and the crab list their entities when they connect." }));
+  }
+
+  function entityList() {
+    const ids = new Map();
+    for (const e of (state.input && state.input.options.entities) || []) ids.set(e.id, `${e.kind} on ${e.body}`);
+    if (state.inputForm) {
+      for (const r of state.inputForm.tmap) if (r.entity && !ids.has(r.entity)) ids.set(r.entity, "not connected now");
+      for (const r of state.inputForm.gmap) if (r.target && !ids.has(r.target)) ids.set(r.target, "not connected now");
+    }
+    return el("datalist", { id: "input-entities" }, [...ids].map(([id, what]) => el("option", { value: id, label: what })));
+  }
+
+  function selectOf(values, value, labels, onPick, aria) {
+    return el("select", { "aria-label": aria, on: { change: (ev) => onPick(ev.target.value) } },
+      values.map((v) => el("option", { value: v, selected: v === value, text: labels ? labels(v) : v })));
+  }
+
+  function renderInputMaps() {
+    const node = document.getElementById("input-maps");
+    if (!node || !state.input || !state.inputForm) return;
+    const O = state.input.options;
+    const F = state.inputForm;
+    const twice = new Set(inputDuplicates(F));
+    const gActions = Object.keys(O.gesture_actions);
+    const tActions = Object.keys(O.touch_actions);
+    const tier = (map) => (a) => `${a} (${map[a]})`;
+    const gRows = F.gmap.map((r, i) => el("tr", { class: twice.has(r.target ? `${r.target}:${r.gesture}` : r.gesture) ? "dup" : null },
+      el("td", null, el("input", { type: "text", list: "input-entities", value: r.target, placeholder: "anything",
+        "aria-label": "When pointing at", class: "short",
+        on: { input: (ev) => { r.target = ev.target.value.trim(); edited(); markDuplicates(); } } })),
+      td(selectOf(O.gestures, r.gesture, (v) => v.replace(/_/g, " "), (v) => { r.gesture = v; edited(); markDuplicates(); }, "Gesture")),
+      td(selectOf(gActions, r.action, tier(O.gesture_actions), (v) => { r.action = v; edited(); }, "Action")),
+      td(removeButton(() => { F.gmap.splice(i, 1); edited(); renderInputMaps(); }))));
+    const tRows = F.tmap.map((r, i) => el("tr", { class: twice.has(`${r.entity}.${r.kind}`) ? "dup" : null },
+      el("td", null, el("input", { type: "text", list: "input-entities", value: r.entity, placeholder: "music",
+        "aria-label": "Entity", class: "short",
+        on: { input: (ev) => { r.entity = ev.target.value.trim(); edited(); markDuplicates(); } } })),
+      td(selectOf(O.touch_kinds, r.kind, null, (v) => { r.kind = v; edited(); markDuplicates(); }, "Touch")),
+      td(selectOf(tActions, r.action, tier(O.touch_actions), (v) => { r.action = v; edited(); }, "Action")),
+      td(removeButton(() => { F.tmap.splice(i, 1); edited(); renderInputMaps(); }))));
+    const firstEntity = ((O.entities || [])[0] || {}).id || "";
+    fill(node, entityList(),
+      el("div", { class: "grid" },
+        el("div", null,
+          el("h3", { text: "Gestures" }),
+          table(["When pointing at", "Gesture", "Does", ""], gRows, { empty: "No gesture does anything." }),
+          el("div", { class: "actions" },
+            actionButton("Add a gesture", () => { F.gmap.push({ target: "", gesture: O.gestures[0], action: gActions[0] }); edited(); renderInputMaps(); }, "small"),
+            el("span", { class: "faint", text: "“When pointing at” names an entity: that row wins while the user points at it." }))),
+        el("div", null,
+          el("h3", { text: "Touch" }),
+          table(["Entity", "Touch", "Does", ""], tRows, { empty: "No touch does anything: touches are only shown to the other bodies." }),
+          el("div", { class: "actions" },
+            actionButton("Add a touch", () => { F.tmap.push({ entity: firstEntity, kind: O.touch_kinds[0], action: tActions[0] }); edited(); renderInputMaps(); }, "small"),
+            el("span", { class: "faint", text: "Entities are the ids the bodies declare." })))),
+      el("p", { class: "note hidden", id: "input-dups", text: "Two rows map the same thing; only the last would count. Change or remove one." }));
+    markDuplicates();
+  }
+
+  function removeButton(action) {
+    const button = actionButton("✕", action, "small ghost");
+    button.setAttribute("aria-label", "Remove this row");
+    button.title = "Remove this row";
+    return button;
+  }
+
+  function markDuplicates() {
+    const node = document.getElementById("input-dups");
+    if (!node || !state.inputForm) return;
+    const twice = inputDuplicates(state.inputForm);
+    node.classList.toggle("hidden", !twice.length);
+    renderInputSave();
+  }
+
+  function numberField(obj, [key, label, hint, min, max, step]) {
+    const id = `tune-${key}`;
+    return el("label", { class: "field", for: id },
+      el("span", { class: "k", text: label }),
+      el("input", { type: "number", id, min, max, step, value: obj[key],
+        on: { input: (ev) => { const v = Number(ev.target.value); if (ev.target.value !== "" && Number.isFinite(v)) { obj[key] = v; edited(); } } } }),
+      el("span", { class: "s", text: hint }));
+  }
+
+  function renderInputTuning() {
+    const node = document.getElementById("input-tuning");
+    if (!node || !state.inputForm) return;
+    const G = state.inputForm.g;
+    const T = state.inputForm.t;
+    const box = (key, label, hint) => el("label", { class: "field check", for: `tune-${key}` },
+      el("input", { type: "checkbox", id: `tune-${key}`, checked: Boolean(G[key]), on: { change: (ev) => { G[key] = ev.target.checked; edited(); drawHand(); } } }),
+      el("span", null, el("b", { text: label }), el("span", { class: "s", text: ` ${hint}` })));
+    node.className = "tuning";
+    fill(node,
+      el("h3", { text: "Gestures" }),
+      el("div", { class: "fields" },
+        GESTURE_TUNING.map((f) => numberField(G, f)),
+        el("label", { class: "field", for: "tune-watch" }, el("span", { class: "k", text: "Watch" }),
+          (() => { const s = selectOf(state.input.options.watch, G.watch, null, (v) => { G.watch = v; edited(); }, "Watch"); s.id = "tune-watch"; return s; })(),
+          el("span", { class: "s", text: "always: open while on; armed: only after strawberry gestures arm" })),
+        el("label", { class: "field", for: "tune-camera" }, el("span", { class: "k", text: "Camera" }),
+          el("input", { type: "text", id: "tune-camera", value: G.camera, placeholder: "the first",
+            on: { input: (ev) => { G.camera = ev.target.value.trim(); edited(); } } }),
+          el("span", { class: "s", text: "an index (1) or a device (/dev/video2); empty: the first" }))),
+      el("div", { class: "actions" },
+        box("arming", "Arming", "a held open palm turns command mode on first"),
+        box("approvals", "A thumb answers her card", "a held thumbs up or down, for a tier her card takes with a tap")),
+      el("h3", { text: "Touch" }),
+      el("div", { class: "fields" }, TOUCH_TUNING.map((f) => numberField(T, f))));
+    for (const input of node.querySelectorAll('input[type="number"]')) input.addEventListener("input", () => drawHand());
+  }
+
+  function renderInputCheck() {
+    const node = document.getElementById("input-file");
+    if (!node || !state.input) return;
+    const C = state.inputCheck;
+    const f = state.input.file || {};
+    const dirty = inputDirty();
+    const diff = ((C && C.diff) || []).map((line) => el("span", {
+      class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : null,
+      text: `${line}\n` }));
+    const save = confirmButton("Save input.toml", "Save it? She uses it at once", (b) => saveInput(b), "primary");
+    save.id = "input-save";
+    fill(node,
+      el("div", { class: "actions" }, el("span", { class: "dim mono", text: f.path || "input.toml" }),
+        f.exists ? null : chip("not written yet")),
+      !C ? el("p", { class: "faint", text: "Checking..." })
+        : C.ok ? el("p", null, chip("checks out", "good"), dirty ? " Save it to put it in use." : f.in_use ? " Same as the file." : " Save it to keep these settings in input.toml.")
+          : el("div", { class: "note berry" }, el("b", { text: "Not saved like this:" }), el("ul", null, (C.problems || []).map((p) => el("li", { text: p })))),
+      el("h3", { text: "Changes against the file" }),
+      diff.length ? el("pre", { class: "diff" }, diff) : el("p", { class: "faint", text: "No changes." }),
+      el("div", { class: "actions" }, save,
+        actionButton("Undo my edits", () => { state.inputEdited = false; state.inputForm = null; state.inputCheck = null; renderInput(); }, "ghost")));
+    renderInputSave();
+  }
+
+  function renderInputSave() {
+    const save = document.getElementById("input-save");
+    if (!save) return;
+    const C = state.inputCheck;
+    const f = (state.input && state.input.file) || {};
+    const twice = state.inputForm ? inputDuplicates(state.inputForm) : [];
+    save.disabled = !(C && C.ok && !twice.length && (inputDirty() || !f.in_use || (C.diff || []).length));
+  }
+
+  async function saveInput(button) {
+    button.disabled = true;
+    try {
+      const r = await api("input/save", { settings: inputSettings(state.inputForm) });
+      toast(r.backup ? "Saved. The old one is kept as input.toml.bak." : "Saved. She uses it at once.");
+      state.input = r;
+      state.inputEdited = false;
+      state.inputForm = null;
+      state.inputCheck = null;
+      renderInput();
+    } catch (e) {
+      toast(e.message, true);
+      button.disabled = false;
+    }
+  }
+
+  function setPractice(box) {
+    box.disabled = true;
+    api("input/practice", { on: box.checked })
+      .then((r) => {
+        state.inputPractice = r.practice;
+        if (state.inputStatus) state.inputStatus.practice = r.practice;
+        toast(r.practice ? "Practice mode: gestures and touches are shown and do nothing." : "Practice mode off.");
+        renderInputHead();
+      })
+      .catch((e) => { box.checked = !box.checked; toast(e.message, true); })
+      .finally(() => { box.disabled = false; });
+  }
+
+  const OUTCOME_KIND = { did: "good", practice: "warn", ignored: null, failed: "berry", running: "berry" };
+
+  function renderInputRecent() {
+    const node = document.getElementById("input-recent");
+    if (!node || !state.input) return;
+    const rows = (state.input.recent || []).map((r) => el("tr", { class: state.freshInput.has(r.id) ? "fresh" : null },
+      td(clock(r.at), "nowrap"), td(r.source),
+      td([el("span", { class: "mono", text: r.name.replace(/_/g, " ") }), r.count > 1 ? el("span", { class: "sub", text: `×${r.count}` }) : null]),
+      td(chip(r.outcome === "practice" ? "practice: not done" : r.outcome, OUTCOME_KIND[r.outcome])),
+      td(r.action ? (r.outcome === "practice" ? `would: ${r.action}` : r.action) : dash),
+      td(r.why ? WHY[r.why] || r.why.replace(/_/g, " ") : dash)));
+    state.freshInput.clear();
+    fill(node, table(["When", "From", "What", "Outcome", "Action", "Why"], rows,
+      { empty: "Nothing yet since she started. Hold up a hand, or touch an orb." }));
+  }
+
+  // --- the live view
+
+  function startInputLive() {
+    if (inputLive || state.ended || document.hidden) return;
+    const controller = new AbortController();
+    inputLive = controller;
+    (async () => {
+      while (inputLive === controller && !state.ended) {
+        try {
+          const res = await fetch("/ui/api/input/live", { headers: { "X-Strawberry-CSRF": CSRF }, cache: "no-store",
+            credentials: "same-origin", signal: controller.signal });
+          if (res.status === 401) { sessionEnded(); return; }
+          if (!res.ok || !res.body) throw new Error(`live ${res.status}`);
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let at;
+            while ((at = buffer.indexOf("\n\n")) >= 0) {
+              parseWith(buffer.slice(0, at), onInputEvent);
+              buffer = buffer.slice(at + 2);
+            }
+          }
+        } catch (e) { /* aborted, or reconnect below */ }
+        if (inputLive !== controller) return;
+        await sleep(3000);
+      }
+    })();
+  }
+
+  function stopInputLive() {
+    if (!inputLive) return;
+    inputLive.abort();
+    inputLive = null;
+  }
+
+  function onInputEvent(name, data) {
+    const now = performance.now();
+    if (name === "hand") {
+      state.hand = data.present ? data : null;
+      state.handAt = now;
+      requestDraw();
+    } else if (name === "gesture") {
+      state.gesture = Object.assign({ at: now }, data);
+      requestDraw();
+    } else if (name === "status") {
+      state.inputStatus = data;
+      state.inputPractice = data.practice;
+      const box = document.getElementById("input-practice");
+      if (box && !box.disabled) box.checked = Boolean(data.practice);
+      renderInputStatus();
+      renderInputHead();
+      if (state.hand && now - state.handAt > 2000) { state.hand = null; requestDraw(); }
+    } else if (name === "recent" && state.input) {
+      const list = (state.input.recent || []).filter((r) => r.id !== data.id);
+      list.unshift(data);
+      list.sort((a, b) => b.id - a.id);
+      state.input.recent = list.slice(0, 20);
+      state.freshInput.add(data.id);
+      renderInputRecent();
+    }
+  }
+
+  function requestDraw() {
+    if (drawPending) return;
+    drawPending = true;
+    requestAnimationFrame(() => { drawPending = false; drawHand(); });
+  }
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
+  }
+
+  function drawHand() {
+    const canvas = document.getElementById("hand-canvas");
+    if (!canvas) return;
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(240, Math.round(canvas.clientWidth || 640));
+    const height = Math.round(width * 0.75);
+    if (canvas.width !== Math.round(width * ratio)) { canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const ink = cssVar("--ink");
+    const faint = cssVar("--ink-faint");
+    const berry = cssVar("--berry");
+    const good = cssVar("--good");
+    const warn = cssVar("--warn");
+    const G = (state.inputForm && state.inputForm.g) || (state.input && state.input.settings.gestures) || { zone: 0.8, min_size: 0.12 };
+    const X = (x) => x * width;
+    const Y = (y) => y * height;
+    ctx.font = "12px system-ui, sans-serif";
+    // Below the zone line a hand does not count (resting on the desk): shaded.
+    ctx.fillStyle = cssVar("--line");
+    ctx.fillRect(0, Y(G.zone), width, height - Y(G.zone));
+    ctx.strokeStyle = warn;
+    ctx.setLineDash([6, 5]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, Y(G.zone)); ctx.lineTo(width, Y(G.zone)); ctx.stroke();
+    ctx.fillStyle = warn;
+    ctx.fillText(`zone ${num(G.zone)}: a wrist below this line does not count`, 8, Math.min(Y(G.zone) + 16, height - 6));
+    // The smallest hand that counts, as a square in the corner.
+    const side = G.min_size * height;
+    ctx.strokeStyle = faint;
+    ctx.strokeRect(width - side - 10, 10, side, side);
+    ctx.setLineDash([]);
+    ctx.fillStyle = faint;
+    ctx.textAlign = "right";
+    ctx.fillText(`smallest hand ${num(G.min_size)}`, width - 10, side + 26);
+    ctx.textAlign = "start";
+    const legend = document.getElementById("hand-legend");
+    const H = state.hand;
+    const gesture = state.gesture && performance.now() - state.gesture.at < (state.gesture.phase === "done" ? 1200 : state.gesture.phase === "cancelled" ? 700 : 1500) ? state.gesture : null;
+    if (!H) {
+      ctx.fillStyle = faint;
+      ctx.font = "15px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("No hand", width / 2, height / 2);
+      ctx.textAlign = "start";
+      if (legend) fill(legend, el("span", { class: "faint", text: noHandWhy() }), gesture ? gestureChip(gesture) : null);
+      return;
+    }
+    const color = H.engaged ? berry : faint;
+    const pts = H.points || {};
+    // The hand's extent around the palm, against the smallest hand.
+    ctx.strokeStyle = H.size >= G.min_size ? good : faint;
+    ctx.setLineDash([3, 4]);
+    ctx.strokeRect(X(H.x) - (H.size * height) / 2, Y(H.y) - (H.size * height) / 2, H.size * height, H.size * height);
+    ctx.setLineDash([]);
+    // The stick hand: the wrist to each fingertip.
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    if (pts.wrist) {
+      for (const name of ["thumb", "index", "middle", "ring", "pinky"]) {
+        if (!pts[name]) continue;
+        ctx.beginPath(); ctx.moveTo(X(pts.wrist[0]), Y(pts.wrist[1])); ctx.lineTo(X(pts[name][0]), Y(pts[name][1])); ctx.stroke();
+      }
+    }
+    for (const [name, p] of Object.entries(pts)) {
+      ctx.fillStyle = name === "wrist" ? ink : color;
+      ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), name === "wrist" ? 6 : 5, 0, Math.PI * 2); ctx.fill();
+    }
+    // The pinch: the thumb's and index's tips, brighter as they close.
+    if (pts.thumb && pts.index && H.pinch > 0.05) {
+      ctx.strokeStyle = H.pinch >= 0.85 ? good : warn;
+      ctx.globalAlpha = Math.min(1, 0.3 + H.pinch);
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(X(pts.thumb[0]), Y(pts.thumb[1])); ctx.lineTo(X(pts.index[0]), Y(pts.index[1])); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // The palm, and the hold ring around it.
+    const r = Math.max(24, H.size * height * 0.62);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath(); ctx.arc(X(H.x), Y(H.y), 7, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    if (gesture) {
+      const progress = gesture.phase === "done" ? 1 : gesture.progress || 0;
+      ctx.lineWidth = 8;
+      ctx.strokeStyle = cssVar("--rim");
+      ctx.beginPath(); ctx.arc(X(H.x), Y(H.y), r, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = gesture.phase === "done" ? good : gesture.phase === "cancelled" ? faint : berry;
+      ctx.beginPath(); ctx.arc(X(H.x), Y(H.y), r, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2); ctx.stroke();
+    }
+    if (legend) {
+      fill(legend,
+        chip(H.engaged ? "engaged: it counts" : "not engaged", H.engaged ? "good" : null,
+          "Raised into the zone and near enough"),
+        chip(`seen: ${H.shape ? H.shape.replace(/_/g, " ") : "no shape"}`, H.shape ? "berry" : null),
+        chip(`pinch ${num(H.pinch)}`), chip(`open ${num(H.open)}`), chip(`size ${num(H.size)}`),
+        gesture ? gestureChip(gesture) : null);
+    }
+  }
+
+  function gestureChip(g) {
+    const name = g.name.replace(/_/g, " ");
+    if (g.phase === "done") {
+      const did = g.practice ? `practice: would ${g.practice}` : g.action ? `did ${g.action}` : "nothing done";
+      return chip(`${name}: ${did}`, g.action ? "good" : "warn");
+    }
+    if (g.phase === "cancelled") return chip(`${name}: let go at ${Math.round((g.progress || 0) * 100)}%`);
+    return chip(`${name}: holding ${Math.round((g.progress || 0) * 100)}%`, "berry");
+  }
+
+  function noHandWhy() {
+    const S = Object.assign({}, state.input ? state.input.status : {}, state.inputStatus || {});
+    if (!S.enabled) return "Gestures are off: the camera is closed. Turn them on with the tray's Hand gestures (camera) row.";
+    if (S.mediapipe) return "MediaPipe is missing, so the camera stays closed.";
+    if (S.model === false) return "The model is missing (strawberry gestures fetch), so the camera stays closed.";
+    const w = S.watcher || {};
+    if (!w.heard) return "The watcher has not been heard from.";
+    if (!w.camera) return S.watch === "armed" ? "The camera is closed until armed (strawberry gestures arm)." : "The camera is closed.";
+    return "No hand in view. Raise one toward the screen, above the zone line.";
+  }
+
+  async function refreshInput() {
+    try {
+      state.input = await api("input");
+      state.inputPractice = state.input.status.practice;
+    } catch (e) { if (!state.ended) toast(e.message, true); }
+    if (!state.inputEdited) { state.inputForm = null; state.inputCheck = null; rerender("input"); return; }
+    renderInputHead();
+    renderInputStatus();
+    renderInputBodies();
+    renderInputRecent();
+  }
+
   // --------------------------------------------------------------------------- loading
 
   async function refreshLearning() {
@@ -1146,9 +1753,10 @@
   }
 
   const RENDER = { persona: renderPersona, profile: renderProfile, learning: renderLearning, router: renderRouter,
-                   runs: renderRuns, data: renderData, settings: renderSettings, system: renderSystem };
+                   runs: renderRuns, data: renderData, settings: renderSettings, input: renderInput, system: renderSystem };
   const REFRESH = { persona: refreshPersona, profile: refreshProfile, learning: refreshLearning, router: refreshRoutes,
-                    runs: refreshRuns, data: refreshData, settings: refreshSettings, system: refreshSystem };
+                    runs: refreshRuns, data: refreshData, settings: refreshSettings, input: refreshInput,
+                    system: refreshSystem };
 
   function show(section, anchor) {
     if (!SECTIONS.includes(section)) section = "persona";
@@ -1156,6 +1764,7 @@
     for (const name of SECTIONS) $(`#${name}`).classList.toggle("hidden", name !== section);
     for (const b of document.querySelectorAll("#nav button")) b.classList.toggle("on", b.dataset.section === section);
     if (location.hash !== `#${section}`) history.replaceState(null, "", `#${section}`);
+    if (section === "input") startInputLive(); else stopInputLive();   // the live view only while the tab is open
     RENDER[section]();
     REFRESH[section]().then(() => {
       if (anchor) { const node = document.getElementById(anchor); if (node) node.scrollIntoView({ block: "start" }); }
@@ -1183,6 +1792,10 @@
   }
 
   function parse(chunk) {
+    parseWith(chunk, onEvent);
+  }
+
+  function parseWith(chunk, handler) {
     let name = "message";
     const lines = [];
     for (const line of chunk.split("\n")) {
@@ -1190,7 +1803,7 @@
       else if (line.startsWith("data:")) lines.push(line.slice(5).trimStart());
     }
     if (!lines.length) return;
-    try { onEvent(name, JSON.parse(lines.join("\n"))); } catch (e) { /* a partial or odd event */ }
+    try { handler(name, JSON.parse(lines.join("\n"))); } catch (e) { /* a partial or odd event */ }
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1252,6 +1865,11 @@
     if (state.section !== "learning") refreshLearning();
     if (state.section !== "persona") refreshPersona();     // the attention spot says when persona.md has a problem
     stream();
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopInputLive();
+      else if (state.section === "input") startInputLive();
+    });
+    window.addEventListener("resize", () => { if (state.section === "input") requestDraw(); });
     setInterval(() => {
       if (state.ended || document.hidden) return;
       if (state.section === "system") refreshSystem();

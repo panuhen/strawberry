@@ -177,7 +177,8 @@ def test_hand_messages_are_numbers_and_fixed_names_only():
     messages = [p for kind, p in Tracker().step(0.0, hand(label="Open_Palm")) if kind == "hand"]
     assert len(messages) == 1
     message = messages[0]
-    assert set(message) == {"present", "x", "y", "size", "pinch", "open", "engaged", "points"}
+    assert set(message) == {"present", "x", "y", "size", "pinch", "open", "engaged", "shape", "points"}
+    assert message["shape"] == "palm_hold"                                      # the shape seen now, by name
     assert set(message["points"]) == set(gestures.POINTS)
     assert gestures.parse_hand(message) == message                              # the brain takes it as it is
     assert_plain(message)

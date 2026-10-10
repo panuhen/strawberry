@@ -46,6 +46,7 @@ from .contract import ContractError, Performance, anim_for
 from .daemon import Daemon
 from .events import Event
 from .gestures import GestureError, parse_gesture, parse_hand
+from .inputs import WATCHER_HEADER
 from .hub import accepted_gestures
 from .logtext import sentence
 
@@ -483,6 +484,7 @@ async def gesture(request: web.Request) -> web.Response:
     [gestures] is off; 429 past the rate (30 a second, one action per half second). The reply carries the state
     the watcher steers the camera by."""
     daemon = request.app[DAEMON]
+    daemon.input.heard(request.headers.get(WATCHER_HEADER))
     try:
         message = parse_gesture(await _body(request))
     except GestureError as exc:
@@ -501,6 +503,7 @@ async def hand(request: web.Request) -> web.Response:
     """`POST /hand` from the camera doorway: where the hand is, numbers only, to the bodies that asked for `hand`.
     Past 30 a second it is dropped (`dropped: true`), not queued."""
     daemon = request.app[DAEMON]
+    daemon.input.heard(request.headers.get(WATCHER_HEADER))
     try:
         message = parse_hand(await _body(request))
     except GestureError as exc:
@@ -519,7 +522,9 @@ async def gesture_state(request: web.Request) -> web.Response:
     refusal = _secret_refusal(request)
     if refusal is not None:
         raise web.HTTPForbidden(text=json.dumps(refusal), content_type="application/json")
-    return web.json_response(request.app[DAEMON].gestures.state())
+    daemon = request.app[DAEMON]
+    daemon.input.heard(request.headers.get(WATCHER_HEADER))     # the watcher's camera, frame rate and CPU
+    return web.json_response(daemon.gestures.state())
 
 
 def gesture_command(daemon: Daemon, message: dict[str, Any]) -> web.Response:

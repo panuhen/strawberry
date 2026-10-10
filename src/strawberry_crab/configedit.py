@@ -117,7 +117,7 @@ def check_config_text(text: str) -> None:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".toml", delete=False) as handle:
         handle.write(text)
     try:
-        load(Path(handle.name), env={})
+        load(Path(handle.name), env={}, inputs=False)   # config.toml alone: input.toml is not its business
     finally:
         Path(handle.name).unlink(missing_ok=True)
 

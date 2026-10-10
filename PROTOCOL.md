@@ -47,7 +47,7 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 | `POST /probe` | none | per-slot timings | `strawberry doctor --talk`; loopback clients only (403 otherwise) | `server.py:316-327` |
 | `GET /health` | – | status object (below); without the bus secret only whether she is up | the tray (every 2 s), `strawberry doctor`, the check scripts' liveness polls | `server.py` `health` |
 | `GET /config` | – | the effective settings; 403 without the bus secret | inspection (curl) | `server.py` `config` |
-| `POST /gesture`, `POST /hand`, `GET /gesture` | a gesture's name and phase; a hand's position (Part 1d) | `{"sent": n, "state": {…}}`; 409 while `[gestures]` is off, 429 past the rate | `doorways/gesture_watch.py` | `server.py` `gesture`, `hand`, `gesture_state` |
+| `POST /gesture`, `POST /hand`, `GET /gesture` | a gesture's name and phase; a hand's position (Part 1d); the watcher's `X-Strawberry-Watcher: camera=open; fps=4.0; cpu=5.1` header on each (for the Brain UI's Input tab; optional) | `{"sent": n, "state": {…}}`; 409 while `[gestures]` is off, 429 past the rate | `doorways/gesture_watch.py` | `server.py` `gesture`, `hand`, `gesture_state` |
 | `GET /ws` | – | websocket upgrade | bodies | `server.py:350-371` |
 | `POST /ui-token`, `/ui/...` | – | the Brain UI: a one-time login token, then a page and its own API under a session (WIRING.md §17) | `strawberry ui`, the user's browser | `brainui.py` |
 
@@ -1003,7 +1003,7 @@ something else (Part 2 §14's proposal for touch-screen gestures): this one goes
 
 ```json
 {"type": "hand", "t": 17683.25, "present": true, "x": 0.506, "y": 0.483, "size": 0.25, "pinch": 0.0, "open": 1.0,
- "engaged": true, "points": {"wrist": [0.5, 0.575], "thumb": [0.405, 0.445], "index": [0.465, 0.338],
+ "engaged": true, "shape": "palm_hold", "points": {"wrist": [0.5, 0.575], "thumb": [0.405, 0.445], "index": [0.465, 0.338],
  "middle": [0.5, 0.325], "ring": [0.533, 0.343], "pinky": [0.565, 0.375]}}
 {"type": "hand", "t": 17685.5, "present": false}
 ```
@@ -1016,6 +1016,7 @@ something else (Part 2 §14's proposal for touch-screen gestures): this one goes
 | `pinch` | 0 apart … 1 the thumb's and index's tips together |
 | `open` | the share of the four fingers stretched (0, 0.25 … 1) |
 | `engaged` | raised into the zone the gestures count in (WIRING §26); a hand that is not still goes out |
+| `shape` | the shape the recogniser sees in this frame, one of the held shapes of `gesture.name` (`thumb_up` … `pinch_hold`); absent when it sees none. What the hand looks like now, not a gesture: only `gesture` says one was held (since 2026-10-10) |
 | `points` | the wrist and the five fingertips, each `[x, y]` like `x`, `y` |
 
 At most `[gestures] hand_hz` (15) a second, and only while some body wants it: the watcher sends nothing

@@ -24,6 +24,7 @@ are on; the model is `strawberry gestures fetch`'s.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import http.client
 import json
 import logging
@@ -36,6 +37,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import bussecret, gestures
+from ..inputs import WATCHER_HEADER, input_file
 from ..winproc import utf8_streams
 from .gesture_track import Hand, Settings, Tracker
 
@@ -138,10 +140,13 @@ class Poster:
         self.timeout = timeout
         self.connection: http.client.HTTPConnection | None = None
         self.failures = 0
+        self.report = ""       # the watcher about itself (Watcher.measure): the camera, frames a second, CPU %
 
     def request(self, method: str, path: str, payload: dict | None = None) -> tuple[int, dict] | None:
         body = json.dumps(payload).encode() if payload is not None else None
         headers = bussecret.headers({"Content-Type": "application/json"} if body is not None else {})
+        if self.report:
+            headers[WATCHER_HEADER] = self.report
         for attempt in (1, 2):    # a kept-alive connection the daemon closed: once more on a new one
             try:
                 if self.connection is None:
@@ -173,10 +178,23 @@ class Poster:
 
 
 def load_settings(path: Path | None) -> Any:
-    """[gestures] from the config file, validated as the daemon validates it (config.load)."""
+    """[gestures] from the config file with input.toml over it, validated as the daemon validates it
+    (config.load, inputs.overlay)."""
+    return load_config(path).gestures
+
+
+def load_config(path: Path | None) -> Any:
     from ..config import load
 
-    return load(path, env={}).gestures
+    return load(path, env={})
+
+
+def _stat(path: Path) -> tuple[int, int]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return (0, -1)
+    return stat.st_mtime_ns, stat.st_size
 
 
 class Watcher:
@@ -207,26 +225,34 @@ class Watcher:
         self.said: set[str] = set()        # one-time log lines already written
         self.frames = 0
         self.posts = 0
+        self.measured_at = -1e18           # measure(): the last look at the frame count and the CPU time
+        self.measured_frames = 0
+        self.measured_cpu = (0.0, 0.0)
+        self.report = ""
 
     # --- settings ---------------------------------------------------------------
 
     def reload(self, now: float) -> None:
-        """Read [gestures] again when the config file changed (the tray's row writes it)."""
+        """Read [gestures] again when the config file or input.toml beside it changed (the tray's row writes the
+        one, the Brain UI's Input tab the other). An input.toml that does not check out keeps the settings this
+        has and takes only `enabled` (config.toml's)."""
         if self.settings is not None and now - self.config_checked < CONFIG_EVERY_S:
             return
         self.config_checked = now
         from ..config import ConfigError, default_path
 
         path = self.config_path or default_path()
-        try:
-            stat = path.stat()
-            seen = (stat.st_mtime_ns, stat.st_size)
-        except OSError:
-            seen = (0, -1)
+        seen = _stat(path) + _stat(input_file(path))
         if seen == self.config_seen and self.settings is not None:
             return
         try:
-            fresh = load_settings(path)
+            loaded = load_config(path)
+            fresh = loaded.gestures
+            if loaded.input_error:
+                self.once(f"input:{seen}", logging.WARNING, "input.toml does not check out; keeping the settings "
+                                                            "I have (strawberry gestures status says why)")
+                if self.settings is not None:
+                    fresh = dataclasses.replace(self.settings, enabled=fresh.enabled)
         except ConfigError as exc:
             if self.settings is None:
                 from ..config import GesturesConfig
@@ -265,6 +291,7 @@ class Watcher:
         """One turn: what the camera should do now, and one frame if it is open. Returns how long to wait."""
         started = self.clock()
         self.reload(started)
+        self.measure(started)
         cfg = self.settings
         if cfg is None or not cfg.enabled:
             self.release("gestures are off")
@@ -295,6 +322,20 @@ class Watcher:
         self.frame(started)
         rate = cfg.fps if self.tracker.active(started) or self.tracker.approval is not None else cfg.idle_fps
         return max(1.0 / rate - (self.clock() - started), 0.0)
+
+    def measure(self, now: float) -> None:
+        """About once a second: the frames read a second and this process's share of one CPU core, for the
+        daemon (a header on each request; the Brain UI's Input tab shows them). Numbers only."""
+        if now - self.measured_at < 1.0:
+            return
+        cpu, wall = time.process_time(), time.monotonic()
+        if self.measured_at > -1e9 and now > self.measured_at:
+            fps = (self.frames - self.measured_frames) / (now - self.measured_at)
+            share = 100.0 * (cpu - self.measured_cpu[0]) / max(wall - self.measured_cpu[1], 1e-3)
+            report = (f"camera={'open' if self.camera is not None else 'closed'}; "
+                      f"fps={min(fps, 999.0):.1f}; cpu={min(max(share, 0.0), 9999.0):.1f}")
+            self.poster.report = self.report = report
+        self.measured_at, self.measured_frames, self.measured_cpu = now, self.frames, (cpu, wall)
 
     def ensure_camera(self, now: float) -> bool:
         if self.camera is not None:

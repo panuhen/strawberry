@@ -231,7 +231,8 @@ def parse_gesture(data: Any) -> dict[str, Any]:
 def parse_hand(data: Any) -> dict[str, Any]:
     """A POST /hand body: {"present": false}, or where the hand is (x, y: its palm, 0-1 as in a mirror, y
     down), how big (size, 0-1 of the frame), how pinched and how open (0-1), whether it is raised into the
-    zone (engaged), and the wrist and fingertips as [x, y] pairs. Numbers and fixed names only."""
+    zone (engaged), the shape the recogniser sees now (`shape`, one of SHAPES; absent for none) and the wrist and
+    fingertips as [x, y] pairs. Numbers and fixed names only."""
     if not isinstance(data, dict):
         raise GestureError("a hand must be an object")
     present = data.get("present")
@@ -241,7 +242,7 @@ def parse_hand(data: Any) -> dict[str, Any]:
         if set(data) - {"present"}:
             raise GestureError("a hand that is not present carries nothing else")
         return {"present": False}
-    unknown = set(data) - set(HAND_NUMBERS) - set(HAND_FLAGS) - {"points"}
+    unknown = set(data) - set(HAND_NUMBERS) - set(HAND_FLAGS) - {"points", "shape"}
     if unknown:
         raise GestureError(f"unknown hand fields: {sorted(unknown)}")
     out: dict[str, Any] = {"present": True}
@@ -253,6 +254,10 @@ def parse_hand(data: Any) -> dict[str, Any]:
     if not isinstance(engaged, bool):
         raise GestureError("hand.engaged must be true or false")
     out["engaged"] = engaged
+    if "shape" in data:
+        if data["shape"] not in SHAPES:
+            raise GestureError(f"hand.shape must be one of {', '.join(SHAPES)}")
+        out["shape"] = data["shape"]
     points = data.get("points", {})
     if not isinstance(points, dict) or set(points) - set(POINTS):
         raise GestureError(f"hand.points must be an object of {', '.join(POINTS)}")
@@ -326,11 +331,32 @@ class GestureDesk:
         """What the camera should do now (GET /gesture, and every reply): whether gestures are on, how long
         command mode stays armed, the approval a thumb may answer, and who wants what."""
         approval = self.answerable()
+        viewing = self.live is not None and self.live.watching      # the Brain UI's Input tab is open
         return {"enabled": self.config.enabled,
                 "armed_s": round(max(self.armed_until - time.monotonic(), 0.0), 2),
                 "approval": approval,
-                "wanted": {"gesture": self.daemon.hub.wants_gesture("gesture"),
-                           "hand": self.daemon.hub.wants_gesture("hand")}}
+                "wanted": {"gesture": viewing or self.daemon.hub.wants_gesture("gesture"),
+                           "hand": viewing or self.daemon.hub.wants_gesture("hand")}}
+
+    @property
+    def live(self) -> Any:
+        desk = getattr(self.daemon, "input", None)
+        return desk.live if desk is not None else None
+
+    @property
+    def practice(self) -> bool:
+        desk = getattr(self.daemon, "input", None)
+        return bool(desk is not None and desk.practice)
+
+    def note(self, name: str, outcome: str, action: str = "", why: str = "") -> dict[str, Any] | None:
+        """A `done` in the Input tab's recent list: its name, what it did or why not (no target, no hand)."""
+        desk = getattr(self.daemon, "input", None)
+        return desk.recent.add("gesture", name, outcome, action, why) if desk is not None else None
+
+    def _finish(self, entry: dict[str, Any] | None, outcome: str, why: str = "") -> None:
+        desk = getattr(self.daemon, "input", None)
+        if entry is not None and desk is not None and entry.get("outcome") == "running":
+            desk.recent.finish(entry, outcome, why)
 
     def answerable(self) -> dict[str, bool] | None:
         """The open approval as a thumb sees it: may a thumbs up say yes (a tier a card answers with a tap: not
@@ -377,6 +403,7 @@ class GestureDesk:
             if now - self.last_done < self.DONE_GAP_S:
                 self.refused += 1
                 out["refused"] = "too_soon"
+                self.note(name, "ignored", why="too_soon")
                 return out
             self.last_done = now
             out = await self.done(name)
@@ -387,22 +414,40 @@ class GestureDesk:
             bus["action"] = out["action"]          # what was done: absent when nothing was
         if phase == "done" and out.get("run_id"):
             bus["run_id"] = out["run_id"]
+        live = self.live
+        if live is not None:
+            shown = {k: v for k, v in bus.items() if k not in ("type", "t", "run_id")}
+            live.publish("gesture", shown | ({"practice": out["practice"]} if out.get("practice") else {}))
         out["sent"] = await self.daemon.hub.send_gesture(bus)
         return out
 
     async def done(self, name: str) -> dict[str, Any]:
+        approval = self.answerable()
+        if self.practice:
+            # Practice mode (the Brain UI's Input tab, never saved): recognised and shown, nothing done.
+            if name == "arm":
+                would = "arm"
+            elif approval is not None and name in ("thumb_up", "thumb_down"):
+                would = "yes" if name == "thumb_up" else "no"
+            else:
+                would = self.action_for(name)
+            log.info("gestures: %s in practice mode; nothing done", name)
+            self.last = {"name": name, "action": None, "ok": False}
+            self.note(name, "practice", would)
+            return {"action": "", "run_id": "", "refused": "practice", "practice": would or "nothing"}
         if name == "arm":
             self.arm()
             log.info("gestures: armed for %.0fs", self.config.armed_s)
             self.last = {"name": name, "action": "arm", "ok": True}
+            self.note(name, "did", "arm")
             return {"action": "arm", "run_id": ""}
-        approval = self.answerable()
         if approval is not None and name in ("thumb_up", "thumb_down"):
             return self.answer(name, approval)
         action = self.action_for(name)
         if not action:
             log.info("gestures: %s is not mapped; nothing done", name)
             self.last = {"name": name, "action": None, "ok": False}
+            self.note(name, "ignored", why="not_mapped")
             return {"action": "", "run_id": ""}
         if self.config.arming:
             # Command mode (the watcher keeps it too; this is the second look): off, a mapped gesture does
@@ -411,6 +456,7 @@ class GestureDesk:
                 log.info("gestures: %s while command mode is off; nothing done", name)
                 self.refused += 1
                 self.last = {"name": name, "action": None, "ok": False}
+                self.note(name, "ignored", action, "not_armed")
                 return {"action": "", "run_id": "", "refused": "not_armed"}
             self.arm()
         if action == "listen":
@@ -420,14 +466,17 @@ class GestureDesk:
                      next((k for k in ("loading", "busy", "stopped", "debounced", "error") if k in result), "no"))
             self.acted += 1
             self.last = {"name": name, "action": action, "ok": ok}
+            self.note(name, "did" if ok else "failed", action, "" if ok else "not_listening")
             return {"action": action, "run_id": "", "ok": ok}
         found = await self.daemon.actor.named(action)
         if found is None:
             log.info("gestures: %s -> %s, but nothing here can do it (no music server or player for it)", name, action)
             self.last = {"name": name, "action": action, "ok": False}
+            self.note(name, "failed", action, "nothing_can_do_it")
             return {"action": action, "run_id": "", "ok": False}
         run = self.daemon.runs.start("gesture", foreground=False)
-        self.daemon.background(self._run(run, name, action, found), f"gesture {name}")
+        entry = self.note(name, "running", action)
+        self.daemon.background(self._run(run, name, action, found, entry), f"gesture {name}")
         self.acted += 1
         return {"action": action, "run_id": run.run_id}
 
@@ -441,18 +490,22 @@ class GestureDesk:
                      "up" if said == "yes" else "down", pending.risk if pending is not None else "closed")
             self.refused += 1
             self.last = {"name": name, "action": None, "ok": False}
+            self.note(name, "ignored", said, "not_answerable")
             return {"action": "", "run_id": "", "refused": "not_answerable"}
         reason = self.daemon.approvals.answer(pending.approval_id, said, "gesture")
         if reason is not None:
             self.refused += 1
             self.last = {"name": name, "action": said, "ok": False}
+            self.note(name, "ignored", said, str(reason))
             return {"action": "", "run_id": "", "refused": reason}
         log.info("gestures: %s answered %s %s", name, pending.approval_id, said)
         self.answered += 1
         self.last = {"name": name, "action": said, "ok": True}
+        self.note(name, "did", said)
         return {"action": said, "run_id": pending.run_id}
 
-    async def _run(self, run: Any, name: str, action: str, found: tuple[str, str, Any]) -> None:
+    async def _run(self, run: Any, name: str, action: str, found: tuple[str, str, Any],
+                   entry: dict[str, Any] | None = None) -> None:
         """The reflex as a run (`source: "gesture"`, never the foreground one: a sentence does not stop it):
         its tool events, her line (the fact and a quip, as for a spoken reflex) and a timeline notice."""
         from . import runs
@@ -467,11 +520,13 @@ class GestureDesk:
             if outcome is None:
                 run.error = "tools"
                 self.last = {"name": name, "action": action, "ok": False}
+                self._finish(entry, "failed", "refused")
                 return
             daemon.quiet_media_until = time.monotonic() + daemon.QUIET_MEDIA_S
             if not outcome.ok:
                 run.error = "tools"
             self.last = {"name": name, "action": action, "ok": outcome.ok}
+            self._finish(entry, "did" if outcome.ok else "failed", "" if outcome.ok else "tool_failed")
             performance, _ = await daemon.report(outcome.event(f"a {name.replace('_', ' ')} gesture"), outcome.ok)
             # Her line is a reflex's fact (a track's name from the player or server): strangers' text.
             daemon.ledger.notice("reflex", f"a {name.replace('_', ' ')} gesture: {outcome.did}",
@@ -481,6 +536,7 @@ class GestureDesk:
             raise
         except Exception:
             run.error = run.error or "other"
+            self._finish(entry, "failed", "error")
             raise
         finally:
             runs.active.reset(token)
@@ -489,15 +545,24 @@ class GestureDesk:
     async def hand(self, message: dict[str, Any]) -> int:
         """One parsed /hand: to the bodies that asked for it, stamped with the brain's clock."""
         self.hand_at = time.monotonic()
+        live = self.live
+        if live is not None:
+            live.publish("hand", message)
         return await self.daemon.hub.send_gesture({"type": "hand", "t": round(self.hand_at, 3)} | message)
 
     def reload(self) -> bool:
-        """Read [gestures] from the config file again (the tray's Gestures row, `strawberry gestures on|off`).
-        Raises ConfigError, keeping what she has, when the file does not load. Returns whether they are on."""
+        """Read [gestures] from the config file again (the tray's Gestures row, `strawberry gestures on|off`),
+        with input.toml over it (inputs.py). Raises ConfigError, keeping what she has, when config.toml does not
+        load; an input.toml that does not check out keeps the rest she has and takes only `enabled`. Returns
+        whether they are on."""
         from .config import default_path, load
 
-        fresh = load(self.daemon.config.path or default_path()).gestures
-        self.daemon.config.gestures = fresh
+        loaded = load(self.daemon.config.path or default_path())
+        fresh = loaded.gestures
+        if loaded.input_error:
+            self.daemon.config.gestures.enabled = fresh.enabled
+        else:
+            self.daemon.config.gestures = fresh
         if not fresh.enabled:
             self.armed_until = 0.0
         return fresh.enabled

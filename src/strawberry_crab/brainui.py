@@ -6,12 +6,15 @@ nothing here decides anything.
                               (server.local_only) and answers a loopback client only
     GET  /ui/login?token=     swaps the token for a session cookie, then redirects to /ui
     GET  /ui                  the page; /ui/app.js, /ui/style.css, /ui/icon.svg beside it
-    GET  /ui/api/learning | routes | runs | data | settings | system | persona | profile
+    GET  /ui/api/learning | routes | runs | data | settings | system | persona | profile | input
     GET  /ui/api/events       server-sent events: `route` (a sentence routed), `run` (a step of a run,
                               runs.py), `learning` (a file of the loop changed), a comment line as a
                               keep-alive
+    GET  /ui/api/input/live   server-sent events while the Input tab is open: `hand`, `gesture`, `recent`,
+                              `status` (inputs.Live; a hand's few numbers, never a frame)
     POST /ui/api/accept | reject | rollback | use | review | train | forget | cancel | approval | apply
     POST /ui/api/persona/check | persona/save | persona/try | profile/save | profile/revert
+    POST /ui/api/input/check | input/save | input/practice
 
 Everything else on the port refuses a request with an Origin header, so no web page can reach
 it. The routes under /ui are the one place a browser is let in, and only this way:
@@ -52,7 +55,7 @@ from typing import Any, Awaitable, Callable
 
 from aiohttp import web
 
-from . import paths, persona, privacy, routefeed
+from . import inputs, paths, persona, privacy, routefeed
 from . import profile as profiles
 from .config import ConfigError
 from .events import Event
@@ -229,6 +232,11 @@ def setup(app: web.Application, daemon) -> BrainUI:
         web.get("/ui/api/profile", api_profile),
         web.post("/ui/api/profile/save", api_profile_save),
         web.post("/ui/api/profile/revert", api_profile_revert),
+        web.get("/ui/api/input", api_input),
+        web.get("/ui/api/input/live", api_input_live),
+        web.post("/ui/api/input/check", api_input_check),
+        web.post("/ui/api/input/save", api_input_save),
+        web.post("/ui/api/input/practice", api_input_practice),
     ])
     return ui
 
@@ -769,6 +777,7 @@ LIVE = {
     "persona.md": "read again when it changes, at her next line",
     "profile.md": "read again for every sentence",
     "[notifications]": "Apply below (or the tray's Message bodies rows)",
+    "input.toml": "read again within a second (the Input tab writes it; [gestures] and [touch] but `enabled`)",
     "everything else in config.toml": "needs a restart (strawberry restart)",
 }
 
@@ -957,3 +966,137 @@ async def api_profile_revert(request: web.Request, ui: BrainUI, session: Session
         return web.json_response({"error": str(exc)}, status=409)
     log.info("ui: profile.md reverted (+%d -%d lines)", len(change.added), len(change.removed))
     return web.json_response({"change": change.view()} | await asyncio.to_thread(profile_view, ui))
+
+
+# ----------------------------------------------------------------------------- input: gestures and touch
+
+
+def input_status(ui: BrainUI) -> dict[str, Any]:
+    """What changes from second to second: the watcher, the camera, command mode, the counts. No position."""
+    d = ui.daemon
+    g = d.config.gestures
+    stats = d.gestures.stats()
+    return {"enabled": g.enabled, "watch": g.watch, "arming": g.arming,
+            "armed_s": d.gestures.state()["armed_s"], "watcher": d.input.watcher_view(),
+            "hand_age_s": stats["hand_age_s"], "practice": d.input.practice,
+            "gestures": {k: stats[k] for k in ("received", "acted", "answered", "refused")},
+            "touch": dict(d.touch_stats), "targets": d.targets.stats()}
+
+
+def input_view(ui: BrainUI) -> dict[str, Any]:
+    """The Input tab: the status, what the camera needs, the bodies and their entities, the settings in use
+    (the file's or config.toml's), the choices the dropdowns offer, the file and the recent list."""
+    from . import bodylink, gestures
+    from .config import GESTURE_WATCH
+
+    d = ui.daemon
+    g, t = d.config.gestures, d.config.touch
+    bodies, entities = [], []
+    for row in d.hub.bodies():
+        if not row.get("entities"):
+            continue
+        bodies.append({"id": row.get("id"), "trusted": row.get("trusted"), "entities": row["entities"],
+                       "inputs": row.get("inputs") or {}, "touch": row.get("touch"), "target": row.get("target")})
+        entities += [{"id": e["id"], "kind": e["kind"], "label": e["label"], "body": row.get("id")}
+                     for e in row["entities"]]
+    store = d.input.store
+    return {"status": input_status(ui) | {"mediapipe": gestures.mediapipe_missing() or None,
+                                         "model": gestures.model_ready(), "model_path": str(gestures.model_file())},
+            "settings": {"gestures": {k: getattr(g, k) for k in inputs.GESTURE_KEYS},
+                         "touch": {"target_s": t.target_s, "cooldown_s": t.cooldown_s,
+                                   "actions": {e: dict(kinds) for e, kinds in t.actions.items()}}},
+            "options": {"gestures": list(gestures.MAPPABLE), "gesture_actions": dict(gestures.ACTIONS),
+                        "touch_kinds": list(bodylink.TOUCH_KINDS), "touch_actions": dict(bodylink.TOUCH_ACTIONS),
+                        "watch": list(GESTURE_WATCH), "entities": entities},
+            "bodies": bodies, "file": store.status() | {"text": store.text()},
+            "config_path": str(d.config.path) if d.config.path else None, "recent": d.input.recent.view()}
+
+
+@checked("get")
+async def api_input(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    return web.json_response(await asyncio.to_thread(input_view, ui))
+
+
+@checked("get")
+async def api_input_live(request: web.Request, ui: BrainUI, session: Session) -> web.StreamResponse:
+    """Server-sent events for the Input tab's live view, while it is open: `hand` (the watcher's few numbers about
+    the hand: never a frame, which never leaves the watcher), `gesture` (a name, its phase and progress, what was
+    done), `recent` (a row of the recent list) and `status` once a second. While one is open, the watcher is
+    asked for the hand (GestureDesk.state). At most inputs.Live.MAX_VIEWERS at once."""
+    live = ui.daemon.input.live
+    queue = live.subscribe()
+    if queue is None:
+        return refuse(429, "Too many live views open.", api=True)
+    response = web.StreamResponse(headers={"Content-Type": "text/event-stream", "X-Accel-Buffering": "no"})
+    secure(response, api=True)
+    try:
+        await response.prepare(request)
+        await response.write(b"retry: 3000\n\n")
+        told = -1e9
+        while not ui.closing and ui.sessions.alive(session):
+            try:
+                kind, data = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                kind, data = None, None
+            if kind is not None:
+                await response.write(_event(kind, data))
+            if time.monotonic() - told >= 1.0:
+                await response.write(_event("status", input_status(ui)))
+                told = time.monotonic()
+    except (ConnectionResetError, asyncio.CancelledError):
+        pass
+    finally:
+        live.unsubscribe(queue)
+    with contextlib.suppress(ConnectionResetError, RuntimeError):
+        await response.write_eof()
+    return response
+
+
+def _input_draft(ui: BrainUI, data: dict[str, Any]) -> dict[str, Any]:
+    """The tab's settings checked as the loader checks input.toml (inputs.from_view), as the file's text and its
+    diff against the file there now."""
+    try:
+        text, _gestures, _touch = inputs.from_view(data.get("settings"), ui.daemon.config)
+    except ConfigError as exc:
+        return {"ok": False, "problems": [str(exc)], "text": None, "diff": []}
+    store = ui.daemon.input.store
+    return {"ok": True, "problems": [], "text": text,
+            "diff": _diff(store.text(), text, "input.toml (the file)", "input.toml (draft)")}
+
+
+@checked("post")
+async def api_input_check(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    return web.json_response(_input_draft(ui, await _payload(request)))
+
+
+@checked("post")
+async def api_input_save(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """Settings that check out written as input.toml (atomic, the old file kept as input.toml.bak) and used at
+    once; never config.toml. 400 with the problems when they do not check out."""
+    draft = _input_draft(ui, await _payload(request))
+    if not draft["ok"]:
+        return web.json_response({"error": "the settings do not check out", "problems": draft["problems"]}, status=400)
+    store = ui.daemon.input.store
+    try:
+        backup = await asyncio.to_thread(inputs.save, draft["text"], store.path)
+    except OSError as exc:
+        return web.json_response({"error": f"not saved ({type(exc).__name__})"}, status=409)
+    store.check(force=True)
+    config = ui.daemon.config
+    log.info("ui: input.toml saved (%d gesture mapping(s), %d touch mapping(s))%s", len(config.gestures.map),
+             sum(len(kinds) for kinds in config.touch.actions.values()),
+             " (the old one kept as input.toml.bak)" if backup else "")
+    return web.json_response({"saved": str(store.path), "backup": str(backup) if backup else None}
+                             | await asyncio.to_thread(input_view, ui))
+
+
+@checked("post")
+async def api_input_practice(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """Practice mode on or off (runtime only, never saved): gestures and touches are recognised and shown, and
+    do nothing."""
+    on = (await _payload(request)).get("on")
+    if not isinstance(on, bool):
+        raise web.HTTPBadRequest(text='practice needs {"on": true} or {"on": false}')
+    ui.daemon.input.practice = on
+    log.info("ui: practice mode %s", "on" if on else "off")
+    return web.json_response({"practice": on})
