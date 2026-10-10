@@ -307,7 +307,8 @@ class Watcher:
             self.camera = self.open_camera(self.settings.camera, self.settings.fps)
         except Exception as exc:   # noqa: BLE001 - a busy camera or a broken model: say so, try again later
             self.camera_failed_at = now
-            log.warning("camera not opened: %s", exc)
+            self.once(f"camera:{exc}", logging.WARNING, f"camera not opened: {exc} (trying again every "
+                                                      f"{RETRY_CAMERA_S:.0f}s)")
             return False
         self.last_frame_at = now
         log.info("camera open (%s, watch %s)", self.settings.camera or "the first", self.settings.watch)
@@ -334,7 +335,14 @@ class Watcher:
             return
         self.last_frame_at = now
         self.frames += 1
-        hand = self.recognizer.recognize(rgb, now)
+        try:
+            hand = self.recognizer.recognize(rgb, now)
+        except Exception as exc:   # noqa: BLE001 - a frame the model chokes on: let the camera go, try again later
+            del rgb
+            log.warning("the recogniser failed (%s); releasing the camera for a while", type(exc).__name__)
+            self.release("the recogniser failed")
+            self.camera_failed_at = now
+            return
         del rgb                                   # the frame goes no further than this
         if hand is not None and self.settings.watch == "armed":
             self.open_until = max(self.open_until, now + self.settings.armed_s)
@@ -349,10 +357,10 @@ class Watcher:
     def send_gesture(self, payload: dict[str, Any]) -> None:
         reply = self.poster.request("POST", "/gesture", payload)
         self.posts += 1
-        if payload["phase"] in ("done", "cancelled"):
+        if payload["phase"] == "done":
             outcome = (reply[1].get("action") or reply[1].get("refused") or "nothing") if reply and reply[0] == 200 \
                 else f"refused ({reply[0]})" if reply else "no daemon"
-            log.info("gesture %s %s -> %s", payload["name"], payload["phase"], outcome)
+            log.info("gesture %s -> %s", payload["name"], outcome)      # a name and a code, nothing about the hand
         self.take_state(reply)
 
     def send_hand(self, payload: dict[str, Any], now: float | None = None) -> None:

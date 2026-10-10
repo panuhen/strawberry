@@ -21,6 +21,7 @@ the data dir, from a pinned URL, and checked against its sha256 (`fetch`).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
@@ -381,8 +382,8 @@ class GestureDesk:
         bus = {"type": "gesture", "t": round(time.monotonic(), 3), "name": name, "phase": phase}
         if "progress" in message:
             bus["progress"] = message["progress"]
-        if phase == "done" and out.get("action"):
-            bus["action"] = out["action"]
+        if phase == "done" and out.get("action") and out.get("ok", True):
+            bus["action"] = out["action"]          # what was done: absent when nothing was
         if phase == "done" and out.get("run_id"):
             bus["run_id"] = out["run_id"]
         out["sent"] = await self.daemon.hub.send_gesture(bus)
@@ -418,7 +419,7 @@ class GestureDesk:
                      next((k for k in ("loading", "busy", "stopped", "debounced", "error") if k in result), "no"))
             self.acted += 1
             self.last = {"name": name, "action": action, "ok": ok}
-            return {"action": action, "run_id": ""}
+            return {"action": action, "run_id": "", "ok": ok}
         found = await self.daemon.actor.named(action)
         if found is None:
             log.info("gestures: %s -> %s, but nothing here can do it (no music server or player for it)", name, action)
@@ -474,6 +475,9 @@ class GestureDesk:
             # Her line is a reflex's fact (a track's name from the player or server): strangers' text.
             daemon.ledger.notice("reflex", f"a {name.replace('_', ' ')} gesture: {outcome.did}",
                                  performance.text or "", foreign=True)
+        except asyncio.CancelledError:
+            run.cancel_reason = run.cancel_reason or "shutdown"
+            raise
         except Exception:
             run.error = run.error or "other"
             raise
