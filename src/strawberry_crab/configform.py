@@ -750,13 +750,18 @@ class Finding:
 
     key: str
     why: str
+    category: str = "approvals"    # runs | egress | approvals | privacy | gestures (CATEGORIES, most severe first)
+    detail: str = ""               # for her card: a server's command line or address
 
     def view(self) -> dict[str, str]:
-        return {"key": self.key, "why": self.why}
+        return {"key": self.key, "why": self.why, "category": self.category, "detail": self.detail}
 
 
 BODY_RANK = {mode: i for i, mode in enumerate(cfg.BODY_MODES)}          # off < react < glance
 OFFER_RANK = {"asked": 0, "topic": 1, "always": 2}
+WILDCARDS = ("", "0.0.0.0", "::", "*", "[::]")
+# The kinds of loosening, most severe first: her card names each kind there is (configui._card_line).
+CATEGORIES = ("runs", "egress", "approvals", "privacy", "gestures")
 
 
 def _host_of(url: str) -> str:
@@ -788,102 +793,230 @@ def _server_view(name: str, table: dict[str, Any]) -> dict[str, Any]:
             "workspaces": frozenset(table.get("workspaces") or ())}
 
 
-def _tool_tier(config: cfg.Config, key: str) -> str:
-    """The tier `[approvals] risk` key `key` ("server.tool" or "server") would have without an entry: the adapter's
-    own for a tool, else `change`."""
+def command_line(table: dict[str, Any]) -> str:
+    """A server's command and its arguments as one line (for the page and her card, scrubbed by the caller), or its
+    address."""
+    if table.get("command"):
+        args = [str(a) for a in table.get("args") or [] if isinstance(a, (str, int, float))]
+        return " ".join([str(table["command"]), *args])
+    return str(table.get("url", ""))
+
+
+def tier(config: cfg.Config, server: str, tool: str, destructive: frozenset[str] = frozenset()) -> str:
+    """The approval tier `tool` of `server` has under `config`, by Server.risk's own precedence (tools.py): an
+    `[approvals] risk` entry for the tool as written; else the adapter's tier, else `change`, never below the
+    server's destructiveHint (`destructive`) or the adapter's tier, which a whole-server entry also never goes under.
+    `tool` "" stands for an ordinary tool of the server that nothing names."""
     from .adapters import adapter_for
 
-    server, _, tool = key.partition(".")
+    risk = config.approvals.risk
+    own = risk.get(f"{server}.{tool}") if tool else None
+    if own in cfg.RISKS:
+        return own
     table = config.tools.servers.get(server)
-    adapter = adapter_for(server, table) if isinstance(table, dict) else None
+    adapter = adapter_for(server, table if isinstance(table, dict) else {})
     declared = adapter.risk(tool) if adapter is not None and tool else None
-    return declared if declared in cfg.RISKS else "change"
+    declared = declared if declared in cfg.RISKS else None
+    floor = "destructive" if tool in destructive else "read"
+    if declared is not None and cfg.RISKS.index(declared) > cfg.RISKS.index(floor):
+        floor = declared
+    whole = risk.get(server)
+    chosen = whole if whole in cfg.RISKS else (declared or "change")
+    return chosen if cfg.RISKS.index(chosen) >= cfg.RISKS.index(floor) else floor
 
 
-def lowering(old: cfg.Config, new: cfg.Config) -> list[Finding]:
+def _tools_of(old: cfg.Config, new: cfg.Config, server: str, known: dict[str, Any]) -> set[str]:
+    """The tools of `server` worth comparing: those it lists (the toolbox's, when connected), those `[approvals] risk`
+    names in either config, the adapter's own named ones, and "" for an ordinary tool nothing names."""
+    from .adapters import adapter_for
+
+    names = {""} | set((known.get(server) or {}).get("listed", ()))
+    for config in (old, new):
+        names |= {key.partition(".")[2] for key in config.approvals.risk if key.startswith(f"{server}.")}
+        table = config.tools.servers.get(server)
+        adapter = adapter_for(server, table if isinstance(table, dict) else {})
+        if adapter is not None:
+            names |= set(getattr(adapter, "risks", {}) or {}) | set(getattr(adapter, "confirm", ()) or ())
+    return names
+
+
+def lowering(old: cfg.Config, new: cfg.Config, known: dict[str, Any] | None = None) -> list[Finding]:
     """What `new` loosens against `old` (both as config.load reads them): the edits her approval card must confirm.
+    `known` is what the toolbox knows of each server now: {"listed": its tool names, "destructive": the ones it marks
+    destructiveHint}, for the tiers.
 
-    A tool server that is new, or runs another command (args, env, cwd) or connects elsewhere (url); a server's
-    adapter changed; a trust flag gone (private, foreign, egress: trust.py); a tool off its confirm or careful
-    list; tools offered more readily (asked < topic < always); recall workspaces added; tools switched on; an
-    `[approvals] risk` tier lowered, or a tier taken off `[approvals] hold`; message bodies read more (off < react <
-    glance, per app too); sentences kept in the log or the outcome file; the inbox switched on; the daemon listening
-    beyond this machine; the models' Ollama on another machine; the camera always watching instead of armed; a thumb
-    answering her card; strangers' text making changes ask for less time. Everything else is neutral or raises it."""
+    runs: a tool server that is new, or runs another command (args, env, cwd); its adapter changed.
+    egress: a server that connects elsewhere (url); the daemon listening beyond this machine or on every address;
+      the models' Ollama on another machine.
+    approvals: tools switched on; a trust flag gone (trust.py); a tool off its confirm or careful list; tools offered
+      more readily (asked < topic < always); an effective tier lowered (`tier`, with Server.risk's precedence); a
+      tier taken off `[approvals] hold`; a longer wait for a yes; strangers' text making changes ask for less time
+      (the shorter of the ledger's window and foreign_minutes) or kept out of the ledger (notices = 0); a thumb
+      answering her card.
+    privacy: message bodies read more (off < react < glance, per app too), longer, from more apps; sentences kept in
+      the log or the outcome file; DEBUG logging; the inbox switched on; recall workspaces added.
+    gestures: the camera always watching instead of armed; the face check, arming or the hold time loosened; the
+      zone or the smallest hand made easier; command mode armed for longer.
+    Everything else is neutral or raises safety."""
+    known = known or {}
     out: list[Finding] = []
 
-    def add(key: str, why: str) -> None:
-        out.append(Finding(key, why))
+    def add(category: str, key: str, why: str, detail: str = "") -> None:
+        out.append(Finding(key, why, category, detail))
 
-    if _local(old.daemon.host) and not _local(new.daemon.host):
-        add("daemon.host", f"the daemon would listen beyond this machine ({new.daemon.host})")
-    if new.daemon.log_sentences and not old.daemon.log_sentences:
-        add("daemon.log_sentences", "what you say or type would be written to the log")
-    if new.learning.log_outcomes and not old.learning.log_outcomes:
-        add("learning.log_outcomes", "the sentences you say or type would be kept in the outcome file")
-    if new.messages.enabled and not old.messages.enabled:
-        add("messages.enabled", "her inbox would keep your notifications for the big model to read")
-    for key, old_url, new_url in (("brain.ollama_url", old.brain.ollama_url, new.brain.ollama_url),):
-        if new_url != old_url and not _local(_host_of(new_url)):
-            add(key, f"the models would run on another machine ({_host_of(new_url) or new_url})")
+    # --- what runs, and what leaves the machine
+    for name in sorted(new.tools.servers):
+        table = new.tools.servers[name]
+        after = _server_view(name, table)
+        if name not in old.tools.servers:
+            if table.get("command"):
+                add("runs", f"tools.servers.{name}", f"a new tool server {name} (runs {command_line(table)})",
+                    command_line(table))
+            else:
+                add("egress", f"tools.servers.{name}", f"a new tool server {name} (connects to {table.get('url', '')})",
+                    str(table.get("url", "")))
+            continue
+        before = _server_view(name, old.tools.servers[name])
+        for part, said in (("command", "its command"), ("args", "its arguments"), ("env", "its environment"),
+                           ("cwd", "its folder")):
+            if before["runs"][part] != after["runs"][part]:
+                add("runs", f"tools.servers.{name}.{part}", f"tool server {name}: {said} changed "
+                    f"(runs {command_line(table)})", command_line(table))
+        if before["runs"]["url"] != after["runs"]["url"]:
+            add("egress", f"tools.servers.{name}.url", f"tool server {name}: its address changed ({table.get('url')})",
+                str(table.get("url", "")))
+        if before["adapter"] != after["adapter"]:
+            add("runs", f"tools.servers.{name}.adapter", f"tool server {name}: its adapter changed")
+        gone = sorted(before["flags"] - after["flags"])
+        if gone:
+            add("approvals", f"tools.servers.{name}.flags", f"tool server {name} would no longer count as "
+                f"{' or '.join(gone)}")
+        for listed, said in (("confirm", "asked about first"), ("careful", "held back as careful")):
+            dropped = sorted(before[listed] - after[listed])
+            if dropped:
+                add("approvals", f"tools.servers.{name}.{listed}", f"{name}: {', '.join(dropped)} would no longer be "
+                    f"{said}")
+        if OFFER_RANK.get(after["offer"], 2) > OFFER_RANK.get(before["offer"], 2):
+            add("approvals", f"tools.servers.{name}.offer", f"tool server {name} offered {after['offer']} instead of "
+                f"{before['offer']}")
+        wider = sorted(after["workspaces"] - before["workspaces"])
+        if wider:
+            add("privacy", f"tools.servers.{name}.workspaces", f"{name} could read the workspace(s) {', '.join(wider)}")
+    host = new.daemon.host.strip().lower()
+    if host != old.daemon.host.strip().lower() and (host in WILDCARDS or (_local(old.daemon.host) and not _local(host))):
+        add("egress", "daemon.host", f"the daemon would listen beyond this machine ({new.daemon.host or 'every address'})",
+            f"listening on {new.daemon.host or 'every address'}")
+    if new.brain.ollama_url != old.brain.ollama_url and not _local(_host_of(new.brain.ollama_url)):
+        add("egress", "brain.ollama_url", f"the models would run on another machine "
+            f"({_host_of(new.brain.ollama_url) or new.brain.ollama_url})", _host_of(new.brain.ollama_url))
+
+    # --- approvals
+    if new.tools.enabled and not old.tools.enabled:
+        add("approvals", "tools.enabled", "the tool servers would be switched on")
+    for server in sorted(set(old.tools.servers) & set(new.tools.servers)):
+        destructive = frozenset((known.get(server) or {}).get("destructive", ()))
+        for tool in sorted(_tools_of(old, new, server, known)):
+            before, after = tier(old, server, tool, destructive), tier(new, server, tool, destructive)
+            if cfg.RISKS.index(after) < cfg.RISKS.index(before):
+                key = f"{server}.{tool}" if tool else server
+                add("approvals", f"approvals.risk.{key}", f"{key if tool else f'{server} (its other tools)'}: "
+                    f"{before} -> {after} (asks less)")
+    for removed in sorted(set(old.approvals.hold) - set(new.approvals.hold)):
+        add("approvals", "approvals.hold", f"a yes to a {removed} call would no longer need a hold on her card")
+    for key in ("change_s", "sends_s", "destructive_s", "grace_s"):
+        if getattr(new.approvals, key) > getattr(old.approvals, key):
+            add("approvals", f"approvals.{key}", f"her card would wait longer for a yes ({key} "
+                f"{getattr(old.approvals, key):g} -> {getattr(new.approvals, key):g} s)")
+    was = min(old.ledger.window_minutes, old.ledger.foreign_minutes)
+    now = min(new.ledger.window_minutes, new.ledger.foreign_minutes)
+    if now < was:
+        add("approvals", "ledger.foreign_minutes", f"strangers' text would make changes ask for {now:g} min instead "
+            f"of {was:g}")
+    if old.ledger.notices > 0 and new.ledger.notices == 0:
+        add("approvals", "ledger.notices", "what she reacts to (strangers' text included) would leave her short memory, "
+            "so it would no longer make changes ask")
+    if new.gestures.approvals and not old.gestures.approvals:
+        add("approvals", "gestures.approvals", "a thumb, a nod or a shake would answer her card")
+
+    # --- privacy
     apps = set(old.notifications.body_apps) | set(new.notifications.body_apps)
     for app in sorted(apps | {""}):
         before = old.notifications.mode_for(app) if app else old.notifications.body
         after = new.notifications.mode_for(app) if app else new.notifications.body
         if BODY_RANK[after] > BODY_RANK[before]:
             key = f"notifications.body_apps.{app}" if app else "notifications.body"
-            add(key, f"message bodies{f' from {app}' if app else ''}: {before} -> {after} (she reads more of them)")
-    if new.tools.enabled and not old.tools.enabled:
-        add("tools.enabled", "the tool servers would be switched on")
-    for name in sorted(new.tools.servers):
-        table = new.tools.servers[name]
-        after = _server_view(name, table)
-        if name not in old.tools.servers:
-            what = f"runs {table.get('command')}" if table.get("command") else f"connects to {_host_of(table.get('url', ''))}"
-            add(f"tools.servers.{name}", f"a new tool server {name} ({what})")
-            continue
-        before = _server_view(name, old.tools.servers[name])
-        for part, said in (("command", "its command"), ("args", "its arguments"), ("env", "its environment"),
-                           ("cwd", "its folder"), ("url", "its address")):
-            if before["runs"][part] != after["runs"][part]:
-                add(f"tools.servers.{name}.{part}", f"tool server {name}: {said} changed")
-        if before["adapter"] != after["adapter"]:
-            add(f"tools.servers.{name}.adapter", f"tool server {name}: its adapter changed")
-        gone = sorted(before["flags"] - after["flags"])
-        if gone:
-            add(f"tools.servers.{name}.flags", f"tool server {name} would no longer count as {' or '.join(gone)}")
-        for listed, said in (("confirm", "asked about first"), ("careful", "held back as careful")):
-            dropped = sorted(before[listed] - after[listed])
-            if dropped:
-                add(f"tools.servers.{name}.{listed}", f"{name}: {', '.join(dropped)} would no longer be {said}")
-        if OFFER_RANK.get(after["offer"], 2) > OFFER_RANK.get(before["offer"], 2):
-            add(f"tools.servers.{name}.offer", f"tool server {name} offered {after['offer']} instead of {before['offer']}")
-        wider = sorted(after["workspaces"] - before["workspaces"])
-        if wider:
-            add(f"tools.servers.{name}.workspaces", f"{name} could read the workspace(s) {', '.join(wider)}")
-    for key in sorted(set(old.approvals.risk) | set(new.approvals.risk)):
-        before = old.approvals.risk.get(key) or _tool_tier(old, key)
-        after = new.approvals.risk.get(key) or _tool_tier(new, key)
-        if cfg.RISKS.index(after) < cfg.RISKS.index(before):
-            add(f"approvals.risk.{key}", f"{key}: {before} -> {after} (asks less)")
-    for tier in sorted(set(old.approvals.hold) - set(new.approvals.hold)):
-        add("approvals.hold", f"a yes to a {tier} call would no longer need a hold on her card")
-    if old.gestures.watch == "armed" and new.gestures.watch == "always":
-        add("gestures.watch", "the camera would watch all the time instead of only when armed")
-    if new.gestures.approvals and not old.gestures.approvals:
-        add("gestures.approvals", "a thumb, a nod or a shake would answer her card")
-    if new.ledger.foreign_minutes < old.ledger.foreign_minutes:
-        add("ledger.foreign_minutes", f"strangers' text would make changes ask for {new.ledger.foreign_minutes:g} "
-                                      f"min instead of {old.ledger.foreign_minutes:g}")
-    return out
+            add("privacy", key, f"message bodies{f' from {app}' if app else ''}: {before} -> {after} (she reads more of "
+                "them)")
+    if new.notifications.max_body_chars > old.notifications.max_body_chars:
+        add("privacy", "notifications.max_body_chars", f"more of each message body would be read "
+            f"({old.notifications.max_body_chars} -> {new.notifications.max_body_chars} characters)")
+    unignored = sorted(set(old.notifications.ignore_apps) - set(new.notifications.ignore_apps))
+    if unignored:
+        add("privacy", "notifications.ignore_apps", f"notifications from {', '.join(unignored)} would reach her")
+    if old.notifications.only_apps and (not new.notifications.only_apps
+                                        or set(new.notifications.only_apps) - set(old.notifications.only_apps)):
+        more = sorted(set(new.notifications.only_apps) - set(old.notifications.only_apps))
+        add("privacy", "notifications.only_apps", "notifications from " + (", ".join(more) if more else "every app")
+            + " would reach her")
+    if new.daemon.log_sentences and not old.daemon.log_sentences:
+        add("privacy", "daemon.log_sentences", "what you say or type would be written to the log")
+    if new.daemon.log_level.upper() == "DEBUG" and old.daemon.log_level.upper() != "DEBUG":
+        add("privacy", "daemon.log_level", "the log would say more (DEBUG)")
+    if new.learning.log_outcomes and not old.learning.log_outcomes:
+        add("privacy", "learning.log_outcomes", "the sentences you say or type would be kept in the outcome file")
+    if new.messages.enabled and not old.messages.enabled:
+        add("privacy", "messages.enabled", "her inbox would keep your notifications for the big model to read")
+
+    # --- gestures (the camera is the watcher's: these make a gesture easier to make by accident, or watch longer)
+    g0, g1 = old.gestures, new.gestures
+    if g0.watch == "armed" and g1.watch == "always":
+        add("gestures", "gestures.watch", "the camera would watch all the time instead of only when armed")
+    if g0.require_facing and not g1.require_facing:
+        add("gestures", "gestures.require_facing", "a gesture would count even when you do not face the screen")
+    if g0.arming and not g1.arming:
+        add("gestures", "gestures.arming", "gestures would act without the open palm arming them first")
+    if g1.hold_ms < g0.hold_ms:
+        add("gestures", "gestures.hold_ms", f"a shape would count after {g1.hold_ms:g} ms instead of {g0.hold_ms:g}")
+    if g1.zone > g0.zone:
+        add("gestures", "gestures.zone", f"a lower hand would count (zone {g0.zone:g} -> {g1.zone:g})")
+    if g1.min_size < g0.min_size:
+        add("gestures", "gestures.min_size", f"a smaller (farther) hand would count ({g0.min_size:g} -> {g1.min_size:g})")
+    if g1.armed_s > g0.armed_s:
+        add("gestures", "gestures.armed_s", f"command mode would stay armed longer ({g0.armed_s:g} -> {g1.armed_s:g} s)")
+    seen: set[tuple[str, str]] = set()
+    unique = []
+    for finding in out:
+        if (finding.key, finding.why) not in seen:
+            seen.add((finding.key, finding.why))
+            unique.append(finding)
+    return sorted(unique, key=lambda f: CATEGORIES.index(f.category))
+
+
+def merged(*lists: list[Finding]) -> list[Finding]:
+    """Findings from several readings (the file alone, and with input.toml over it), each once, most severe first."""
+    seen: dict[tuple[str, str], Finding] = {}
+    for found in lists:
+        for finding in found:
+            seen.setdefault((finding.key, finding.why), finding)
+    return sorted(seen.values(), key=lambda f: CATEGORIES.index(f.category))
 
 
 def refused(old: cfg.Config, new: cfg.Config) -> list[str]:
-    """What this editor never changes: the camera goes on and off only by its explicit switches."""
+    """What this editor never writes: a camera switched on or off (only its explicit switches do that), and an Ollama
+    address with a login part, a backslash or a space in it (remote.url_problem's reading of an address)."""
+    problems = []
     if old.gestures.enabled != new.gestures.enabled:
-        return ["[gestures] enabled is switched with the camera switch on the Input tab (or the tray's Hand gestures "
-                "row), not from here: put it back as it was"]
-    return []
+        problems.append("[gestures] enabled is switched with the camera switch on the Input tab (or the tray's Hand "
+                        "gestures row), not from here: put it back as it was")
+    url = new.brain.ollama_url
+    try:
+        parts = urlsplit(url)
+        login = parts.username is not None or parts.password is not None
+    except ValueError:
+        login = True
+    if "\\" in url or any(c.isspace() for c in url) or login:
+        problems.append("brain.ollama_url must be one plain address, without a login part")
+    return problems
 
 
 # --------------------------------------------------------------------------------------------- writing

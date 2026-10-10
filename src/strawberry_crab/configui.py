@@ -21,6 +21,7 @@ reach the page, the diff or the log: the page sees `<hidden N: kept as is>` and 
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import time
 import tomllib
@@ -30,7 +31,7 @@ from typing import Any, Callable
 
 from aiohttp import web
 
-from . import configform, runs
+from . import configform, inputs, runs
 from .approvals import Approval
 from .brainui import BrainUI, Session, _diff, _payload, checked
 from .config import OFFERS, TRUST_FLAGS, ConfigError, default_path, default_toml, load
@@ -182,13 +183,34 @@ def draft_check(ui: BrainUI, desk: ConfigDesk, session: Session, data: dict[str,
         return out
     old = _old(ui, base)
     changed = configform.changed_sections(old, new)
+    # input.toml replaces [gestures] (but `enabled`) and [touch] when it is there: what she would run with is the
+    # file with it laid over. Both readings are compared; and a change that would make input.toml stop checking out
+    # (a touch map whose server now asks first) is refused, never left to break it.
+    old_eff, new_eff = copy.deepcopy(old), copy.deepcopy(new)
+    inputs.overlay(old_eff, path)
+    inputs.overlay(new_eff, path)
+    known = known_tools(ui)
+    findings = configform.merged(configform.lowering(old, new, known), configform.lowering(old_eff, new_eff, known))
+    problems = configform.refused(old, new)
+    if new_eff.input_error and not old_eff.input_error:
+        problems.append(f"this change would make input.toml stop checking out ({new_eff.input_error}); change the "
+                        "Input tab's settings first")
     # What goes to the page and her card is scrubbed: a reason names a command, a host or an app as written.
-    lowering = [{"key": vault.scrub(f.key), "why": vault.scrub(f.why)} for f in configform.lowering(old, new)]
-    out.update(ok=True, problems=[vault.scrub(p) for p in configform.refused(old, new)], lowering=lowering,
+    lowering = [{"key": vault.scrub(f.key), "why": vault.scrub(f.why), "category": f.category,
+                 "detail": vault.scrub(f.detail)} for f in findings]
+    out.update(ok=True, problems=[vault.scrub(p) for p in problems], lowering=lowering,
                changed=changed, restart=[s for s in changed if s not in configform.LIVE_SECTIONS],
                live=[s for s in changed if s in configform.LIVE_SECTIONS], same=real == old_text)
     out["ok"] = not out["problems"]
     return out
+
+
+def known_tools(ui: BrainUI) -> dict[str, Any]:
+    """What the toolbox knows of each server now, for the tiers (configform.tier): the tools it lists and the ones it
+    marks destructiveHint (empty until it has connected)."""
+    return {name: {"listed": frozenset(server.listed) | {spec.name for spec in server.tools},
+                   "destructive": frozenset(server.destructive)}
+            for name, server in ui.daemon.toolbox.servers.items()}
 
 
 def _public(checked_: dict[str, Any]) -> dict[str, Any]:
@@ -212,9 +234,46 @@ def apply_live(ui: BrainUI, changed: list[str]) -> list[str]:
     return applied
 
 
+CARD_MAX = 160                         # what her card shows of a line (runs.MAX_PROSE)
+CATEGORY_WORDS = {"runs": "runs", "egress": "reaches", "approvals": "fewer approvals", "privacy": "less privacy",
+                  "gestures": "looser gestures"}
+
+
 def _card_line(findings: list[configform.Finding]) -> str:
-    more = f" (+{len(findings) - 1} more)" if len(findings) > 1 else ""
-    return f"Save the settings? {findings[0].why}{more}."
+    """Her card's line for a settings change: every kind of loosening there is, most severe first, and for what runs or
+    connects the command line or the address itself (scrubbed already), cut to fit. "Settings: runs notes-mcp
+    --verbose; fewer approvals; less privacy." One line, no control characters, at most CARD_MAX."""
+    from .trust import CONTROL
+
+    def plain(text: str) -> str:
+        return " ".join(CONTROL.sub(" ", text).split())
+
+    kinds = [c for c in configform.CATEGORIES if any(f.category == c for f in findings)]
+    # What runs or connects by its command line or address; the rest by the settings' names.
+    details = {c: list(dict.fromkeys(plain(f.detail) if c in ("runs", "egress") and f.detail else plain(f.key)
+                                     for f in findings if f.category == c)) for c in kinds}
+
+    full = {c: ", ".join(details[c]) for c in kinds}
+    room = {c: len(full[c]) for c in kinds}
+
+    def line() -> str:
+        parts = []
+        for c in kinds:
+            shown = full[c] if len(full[c]) <= room[c] else full[c][:max(room[c] - 1, 0)].rstrip() + "…"
+            if c in ("runs", "egress"):
+                parts.append(f"{CATEGORY_WORDS[c]} {shown}")
+            else:
+                parts.append(f"{CATEGORY_WORDS[c]} ({shown})" if room[c] >= 4 else CATEGORY_WORDS[c])
+        return "Settings: " + "; ".join(parts) + "."
+
+    # Too long: the least severe kind's names give way first, then the next; a command line keeps 24 characters.
+    text = line()
+    for c in reversed(kinds):
+        floor = 24 if c in ("runs", "egress") else 0
+        while len(text) > CARD_MAX and room[c] > floor:
+            room[c] = max(floor, room[c] - (len(text) - CARD_MAX) - 1)
+            text = line()
+    return text if len(text) <= CARD_MAX else text[:CARD_MAX - 1].rstrip() + "…"
 
 
 async def _wait(ui: BrainUI, desk: ConfigDesk, pending: Pending, run: runs.Run) -> None:
@@ -327,7 +386,7 @@ async def api_config_save(request: web.Request, ui: BrainUI, session: Session) -
     if checked_["same"]:
         return web.json_response({"saved": False, "same": True})
     real = checked_["_real"]
-    findings = [configform.Finding(f["key"], f["why"]) for f in checked_["lowering"]]
+    findings = [configform.Finding(**f) for f in checked_["lowering"]]
     if findings and desk.busy(ui) is not None:
         return web.json_response({"error": desk.busy(ui), "busy": True}, status=409)
     if findings:

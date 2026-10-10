@@ -1131,7 +1131,7 @@ def _input_asks(request: web.Request, ui: BrainUI, data: dict[str, Any], text: s
     _text, gestures_, touch = inputs.from_view(data.get("settings"), d.config)
     after = dataclasses.replace(d.config, gestures=dataclasses.replace(gestures_, enabled=d.config.gestures.enabled),
                                 touch=touch)
-    findings = configform.lowering(d.config, after)
+    findings = configform.lowering(d.config, after, configui.known_tools(ui))
     if not findings:
         return None
     desk = request.app[configui.DESK]

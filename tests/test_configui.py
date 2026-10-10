@@ -207,6 +207,30 @@ LOWERING = [
     ("", "[ledger]\nforeign_minutes = 2.0\n", ["ledger.foreign_minutes"]),
     ("", "[ledger]\nforeign_minutes = 20.0\n", []),
     ("", "[gestures]\nhands = 1\nfps = 10.0\n", []),
+    # the audit's: the ledger (F2), gestures (F6), the cheap ones (F11)
+    ("", "[ledger]\nnotices = 0\n", ["ledger.notices"]),
+    ("", "[ledger]\nnotices = 3\n", []),
+    ("", "[ledger]\nwindow_minutes = 5.0\n", ["ledger.foreign_minutes"]),
+    ("[ledger]\nforeign_minutes = 30.0\n", "[ledger]\nforeign_minutes = 30.0\nwindow_minutes = 20.0\n",
+     ["ledger.foreign_minutes"]),
+    ("", "[gestures]\nrequire_facing = false\n", ["gestures.require_facing"]),
+    ("[gestures]\narming = true\n", "", ["gestures.arming"]),
+    ("", "[gestures]\nhold_ms = 300.0\n", ["gestures.hold_ms"]),
+    ("", "[gestures]\nzone = 0.9\n", ["gestures.zone"]),
+    ("", "[gestures]\nmin_size = 0.05\n", ["gestures.min_size"]),
+    ("", "[gestures]\narmed_s = 20.0\n", ["gestures.armed_s"]),
+    ("", "[gestures]\nhold_ms = 600.0\nzone = 0.6\nmin_size = 0.2\narmed_s = 4.0\n", []),
+    ('[daemon]\nhost = "10.0.0.2"\n', '[daemon]\nhost = "0.0.0.0"\n', ["daemon.host"]),
+    ("", '[daemon]\nhost = "::"\n', ["daemon.host"]),
+    ("", '[daemon]\nlog_level = "DEBUG"\n', ["daemon.log_level"]),
+    ('[daemon]\nlog_level = "DEBUG"\n', "", []),
+    ("", "[notifications]\nignore_apps = []\n", ["notifications.ignore_apps"]),
+    ('[notifications]\nonly_apps = ["Signal"]\n', "", ["notifications.only_apps"]),
+    ('[notifications]\nonly_apps = ["Signal"]\n', '[notifications]\nonly_apps = ["Signal", "Slack"]\n',
+     ["notifications.only_apps"]),
+    ("", '[notifications]\nonly_apps = ["Signal"]\n', []),
+    ("", "[notifications]\nmax_body_chars = 2000\n", ["notifications.max_body_chars"]),
+    ("", "[approvals]\nsends_s = 60.0\n", ["approvals.sends_s"]),
 ]
 
 
@@ -340,7 +364,7 @@ async def test_a_change_that_loosens_safety_waits_for_a_yes_on_her_card_never_fr
     approval = daemon.approvals.open
     assert approval is not None and approval.approval_id == pending["approval_id"] and approval.hold is True
     assert approval.timeout_s == configui.CONFIRM_S and approval.run.source == "settings"
-    assert "Save the settings? message bodies: off -> glance" in approval.prompt
+    assert approval.prompt == "Settings: less privacy (notifications.body)."
     assert path.read_text() == FILE                                             # nothing written yet
     # The page that asked cannot say yes; a thumb cannot either; a second save waits its turn.
     refused = await signed.post("/ui/api/approval", {"approval_id": approval.approval_id, "answer": "yes"})
@@ -740,3 +764,58 @@ def test_config_toml_and_its_backups_are_the_users_alone_and_ten_are_kept(tmp_pa
     backups = sorted(tmp_path.glob("config.toml.bak-*"))
     assert len(backups) == configform.KEEP_BACKUPS and all(stat.S_IMODE(b.stat().st_mode) == 0o600 for b in backups)
     assert made[-1] in backups and not list(tmp_path.glob(".config.toml.*.tmp"))
+
+
+
+def test_tiers_follow_the_servers_own_precedence_with_its_destructive_tools():
+    """F5: a whole-server entry never takes a tool below its destructiveHint or its adapter's tier; a per-tool entry is
+    taken as written; each effective lowering is named."""
+    known = {"notes": {"listed": {"wipe", "peek"}, "destructive": {"wipe"}}}
+    whole = load_text(SERVER + '[approvals]\nrisk = { "notes" = "read" }\n')
+    found = [f.key for f in configform.lowering(load_text(SERVER), whole, known)]
+    assert found == ["approvals.risk.notes", "approvals.risk.notes.peek"]          # wipe stays destructive
+    assert configform.tier(whole, "notes", "wipe", frozenset({"wipe"})) == "destructive"
+    own = load_text(SERVER + '[approvals]\nrisk = { "notes.wipe" = "read" }\n')
+    assert [f.key for f in configform.lowering(load_text(SERVER), own, known)] == ["approvals.risk.notes.wipe"]
+    spotify = load_text(SPOTIFY + '[approvals]\nrisk = { "spotify" = "read" }\n')
+    keys = [f.key for f in configform.lowering(load_text(SPOTIFY), spotify, {})]
+    assert "approvals.risk.spotify" in keys and "approvals.risk.spotify.pause" not in keys   # its own playback stays
+
+
+async def test_input_toml_laid_over_is_read_too_and_a_change_that_would_break_it_is_refused(client):
+    """F4: what she runs with is config.toml with input.toml over [gestures] and [touch]."""
+    from strawberry_crab import inputs
+
+    path = write_config('[tools.servers.spotify]\ncommand = "x"\n')
+    inputs.input_file().write_text('[touch]\nmusic.flick = "skip"\n', encoding="utf-8")
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    breaks = view["text"] + 'confirm = ["next"]\n'
+    checked = await (await signed.post("/ui/api/config/check", {"text": breaks})).json()
+    assert not checked["ok"] and "input.toml stop checking out" in " ".join(checked["problems"])
+    assert (await signed.post("/ui/api/config/save", {"text": breaks, "base": view["base"]["tag"]})).status == 400
+    assert "confirm" not in path.read_text()
+    # A loosening in input.toml's own [gestures] is moot in config.toml, and one in config.toml that input.toml
+    # does not cover is still caught.
+    inputs.input_file().write_text("[gestures]\nrequire_facing = true\n", encoding="utf-8")
+    shadowed = await (await signed.post("/ui/api/config/check", {"text": view["text"] + "\n[gestures]\nrequire_facing = false\n"})).json()
+    assert "gestures.require_facing" in [f["key"] for f in shadowed["lowering"]]    # the file alone is read too
+
+
+def test_her_card_names_every_kind_most_severe_first_with_the_command_cut_to_fit():
+    """F3."""
+    from strawberry_crab.configui import CARD_MAX, _card_line
+
+    findings = configform.lowering(load_text(""), load_text(
+        '[daemon]\nlog_sentences = true\n[approvals]\nhold = []\n[gestures]\nzone = 0.95\n'
+        '[tools.servers.x]\ncommand = "/opt/x/bin/x-mcp"\nargs = ["--root", "/", "--yes\\u0007"]\n'
+        '[brain]\nollama_url = "https://gpu.example:11434"\n'))
+    assert [f.category for f in findings][:2] == ["runs", "egress"]
+    line = _card_line(findings)
+    assert line.startswith("Settings: runs /opt/x/bin/x-mcp --root / --yes; reaches gpu.example")
+    for words in ("fewer approvals (approvals.hold)", "less privacy (daemon.log_sentences)", "looser gestures"):
+        assert words in line, line
+    assert "\x07" not in line and len(line) <= CARD_MAX
+    many = [configform.Finding(f"tools.servers.s{i}", "x", "runs", f"/bin/server-{i} " + "--flag " * 20) for i in range(9)]
+    long = _card_line(many + [configform.Finding("daemon.log_level", "x", "privacy")])
+    assert len(long) <= CARD_MAX and long.startswith("Settings: runs /bin/server-0") and "less privacy" in long
