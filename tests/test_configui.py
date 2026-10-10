@@ -264,10 +264,10 @@ async def test_the_page_never_gets_a_secret_and_a_save_keeps_them(client, caplog
     assert SECRET not in json.dumps(view) and view["exists"] and view["error"] is None
     assert view["values"]["daemon"]["port"] == 8770 and view["text"].startswith("# the user's own comment")
     draft = view["text"].replace("port = 8770", "port = 8790")
-    checked = await (await signed.post("/ui/api/config/check", {"text": draft, "base": view["base"]["sha256"]})).json()
+    checked = await (await signed.post("/ui/api/config/check", {"text": draft, "base": view["base"]["tag"]})).json()
     assert checked["ok"] and checked["lowering"] == [] and checked["restart"] == ["daemon"]
     assert "-port = 8770   # keep this one" in checked["diff"] and SECRET not in json.dumps(checked)
-    saved = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})
+    saved = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})
     assert saved.status == 200
     body = await saved.json()
     assert body["backup"] and SECRET not in json.dumps(body) and body["restart"] == ["daemon"]
@@ -292,7 +292,7 @@ async def test_a_draft_that_would_not_load_is_refused_with_the_startup_reason(cl
                          (view["text"] + "\n[gestures]\nenabled = true\n", "camera switch")):
         checked = await (await signed.post("/ui/api/config/check", {"text": draft})).json()
         assert not checked["ok"] and words in " ".join(checked["problems"]), draft
-        reply = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})
+        reply = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})
         assert reply.status == 400
     assert path.read_text() == FILE
 
@@ -303,13 +303,13 @@ async def test_a_file_changed_under_the_page_is_never_overwritten(client):
     view = await (await signed.get("/ui/api/config")).json()
     path.write_text(FILE + "\n[speech]\nenabled = true\n", encoding="utf-8")   # the tray, an editor, the camera switch
     draft = view["text"].replace("port = 8770", "port = 8790")
-    checked = await (await signed.post("/ui/api/config/check", {"text": draft, "base": view["base"]["sha256"]})).json()
+    checked = await (await signed.post("/ui/api/config/check", {"text": draft, "base": view["base"]["tag"]})).json()
     assert checked["stale"] is True
-    reply = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})
+    reply = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})
     assert reply.status == 409 and (await reply.json())["stale"] is True
     assert "[speech]" in path.read_text() and "port = 8790" not in path.read_text()
     with pytest.raises(configform.Stale):
-        configform.write(path, FILE, configform.sha256(FILE))
+        configform.write(path, FILE, configform.tag(FILE))
 
 
 async def test_a_new_file_starts_from_the_template_and_a_safe_change_saves_at_once_and_applies(client):
@@ -319,7 +319,7 @@ async def test_a_new_file_starts_from_the_template_and_a_safe_change_saves_at_on
     checked = await (await signed.post("/ui/api/config/check", {"text": view["text"], "edits": [
         {"key": "notifications.body", "value": "off"}, {"key": "notifications.ignore_apps", "value": ["Spotify", "Steam"]}]})).json()
     assert checked["ok"] and checked["live"] == ["notifications"] and checked["lowering"] == []
-    saved = await (await signed.post("/ui/api/config/save", {"text": checked["text"], "base": view["base"]["sha256"]})).json()
+    saved = await (await signed.post("/ui/api/config/save", {"text": checked["text"], "base": view["base"]["tag"]})).json()
     assert saved["backup"] is None and saved["applied"] == ["notifications"]
     assert daemon_of(client).config.notifications.ignore_apps == ["Spotify", "Steam"]       # used at once
     assert load(paths.config_file()).notifications.ignore_apps == ["Spotify", "Steam"]
@@ -333,7 +333,7 @@ async def test_a_change_that_loosens_safety_waits_for_a_yes_on_her_card_never_fr
     daemon, desk = daemon_of(client), desk_of(client)
     view = await (await signed.get("/ui/api/config")).json()
     draft = view["text"].replace('body = "off"', 'body = "glance"')
-    reply = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})
+    reply = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})
     assert reply.status == 202
     pending = (await reply.json())["pending"]
     assert pending["state"] == "waiting" and pending["lowering"][0]["key"] == "notifications.body"
@@ -346,7 +346,7 @@ async def test_a_change_that_loosens_safety_waits_for_a_yes_on_her_card_never_fr
     refused = await signed.post("/ui/api/approval", {"approval_id": approval.approval_id, "answer": "yes"})
     assert refused.status == 409 and (await refused.json())["reason"] == "not_here"
     assert daemon.gestures.answerable() in (None, {"yes": False, "no": True})
-    again = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})
+    again = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})
     assert again.status == 409
     # A tap on her card is not a yes for a hold; a held yes is.
     assert daemon.approvals.answer(approval.approval_id, "yes", "body", hold=False) == "hold_required"
@@ -366,17 +366,17 @@ async def test_a_no_or_no_answer_or_a_file_changed_meanwhile_writes_nothing(clie
     daemon, desk = daemon_of(client), desk_of(client)
     view = await (await signed.get("/ui/api/config")).json()
     draft = view["text"].replace("[daemon]\n", "[daemon]\nlog_sentences = true\n")
-    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})).status == 202
+    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})).status == 202
     no = await signed.post("/ui/api/approval", {"approval_id": daemon.approvals.open.approval_id, "answer": "no"})
     assert no.status == 200                                                     # a no from the page is fine
     await until(lambda: desk.pending.state != "waiting")
     assert desk.pending.state == "left" and path.read_text() == FILE
-    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})).status == 202
+    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})).status == 202
     path.write_text(FILE + "\n# edited meanwhile\n", encoding="utf-8")
-    daemon.approvals.answer(daemon.approvals.open.approval_id, "yes", "voice")
+    daemon.approvals.answer(daemon.approvals.open.approval_id, "yes", "body", hold=True)
     await until(lambda: desk.pending.state != "waiting")
     assert desk.pending.state == "changed" and "log_sentences" not in path.read_text()
-    base = configform.sha256(path.read_text())
+    base = configform.tag(path.read_text())
     draft = (await (await signed.get("/ui/api/config")).json())["text"].replace("[daemon]\n", "[daemon]\nlog_sentences = true\n")
     assert (await signed.post("/ui/api/config/save", {"text": draft, "base": base})).status == 202
     daemon.approvals.config.change_s = 0.05
@@ -432,28 +432,35 @@ def test_the_page_has_config_and_tools_tabs_under_settings_and_puts_text_in_as_t
 # ----------------------------------------------------------------------------- the security review's cases
 
 
-async def test_a_hidden_value_moved_into_a_plain_key_stays_hidden_everywhere(client, caplog):
+async def test_a_hidden_value_moved_into_a_plain_key_is_refused_and_a_typed_one_stays_hidden_everywhere(client, caplog):
+    """F8: a placeholder goes back only where it was shown. A secret typed in full where nothing hides it by name (a
+    command) is still hidden in the draft, the reason, her card, the Tools view and the log."""
     caplog.set_level(logging.DEBUG)
     write_config(FILE)
     signed = await sign_in(client)
     view = await (await signed.get("/ui/api/config")).json()
     hidden = view["values"]["tools"]["servers"]["notes"]["env"]["NOTES_TOKEN"]
-    leak = view["text"] + f'\n[tools.servers.leak]\ncommand = "{hidden}"\n'
     for draft in (view["text"] + f'\n[voice]\nvocabulary = ["{hidden}"]\n',              # a plain key
-                  view["text"] + f'\n[touch]\nmusic.flick = "{hidden}"\n',               # a check that quotes the value
-                  leak,                                                                  # a reason that names it
+                  view["text"] + f'\n[touch]\nmusic.flick = "{hidden}"\n',               # a check that would quote it
+                  view["text"] + f'\n[tools.servers.leak]\ncommand = "{hidden}"\n',      # a reason that would name it
                   view["text"] + f'\n[brain]\nollama_url = "{hidden}"\n'):
         checked = await (await signed.post("/ui/api/config/check", {"text": draft})).json()
-        assert SECRET not in json.dumps(checked), draft
+        assert not checked["ok"] and "moved" in checked["problems"][0] and SECRET not in json.dumps(checked), draft
+        assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})).status == 400
+    leak = view["text"] + f'\n[tools.servers.leak]\ncommand = "{SECRET}"\n'
     checked = await (await signed.post("/ui/api/config/check", {"text": leak})).json()
+    assert SECRET not in json.dumps(checked)
     assert checked["lowering"][0]["key"] == "tools.servers.leak" and "<hidden" in checked["lowering"][0]["why"]
-    reply = await signed.post("/ui/api/config/save", {"text": leak, "base": view["base"]["sha256"]})
+    reply = await signed.post("/ui/api/config/save", {"text": leak, "base": view["base"]["tag"]})
     assert reply.status == 202 and SECRET not in await reply.text()
     approval = daemon_of(client).approvals.open
     assert SECRET not in approval.prompt and SECRET not in json.dumps(approval.view(prompt=True))
     tools = await (await signed.get("/ui/api/tools")).json()
     assert SECRET not in json.dumps(tools)
     assert SECRET not in caplog.text
+    vault = configform.Vault()
+    vault.mask('[x]\ntoken = "a\\"b\\\\c-0429"\n')
+    assert "0429" not in vault.scrub(repr('a"b\\c-0429') + json.dumps('a"b\\c-0429'))   # quoted forms too
 
 
 def test_a_secret_in_a_trailing_comment_or_a_plain_value_is_hidden_and_put_back():
@@ -586,7 +593,7 @@ def test_a_placeholder_is_never_written(tmp_path):
     path = tmp_path / "config.toml"
     for text in ('[voice]\nlanguage = "<hidden 1: kept as is>"\n', "[voice]\n# <hidden comment 2: kept as is>\n"):
         with pytest.raises(ConfigError, match="placeholder"):
-            configform.write(path, text, configform.sha256(""))
+            configform.write(path, text, configform.tag(""))
     assert not path.exists()
 
 
@@ -598,7 +605,7 @@ async def test_a_loosening_edit_bundled_with_neutral_ones_still_asks(client):
         {"key": "speech.speed", "value": 1.2}, {"key": "voice.language", "value": "en"},
         {"key": "approvals.hold", "value": ["destructive"]}]})).json()
     assert [f["key"] for f in checked["lowering"]] == ["approvals.hold"]
-    reply = await signed.post("/ui/api/config/save", {"text": checked["text"], "base": view["base"]["sha256"]})
+    reply = await signed.post("/ui/api/config/save", {"text": checked["text"], "base": view["base"]["tag"]})
     assert reply.status == 202 and path.read_text() == FILE
 
 
@@ -608,9 +615,9 @@ async def test_only_the_text_she_asked_about_is_written(client):
     daemon, desk = daemon_of(client), desk_of(client)
     view = await (await signed.get("/ui/api/config")).json()
     draft = view["text"].replace('body = "off"', 'body = "react"')
-    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})).status == 202
+    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})).status == 202
     desk.pending.text = desk.pending.text.replace("[daemon]\n", "[daemon]\nhost = \"0.0.0.0\"\n")   # swapped meanwhile
-    daemon.approvals.answer(daemon.approvals.open.approval_id, "yes", "voice")
+    daemon.approvals.answer(daemon.approvals.open.approval_id, "yes", "body", hold=True)
     await until(lambda: desk.pending.state != "waiting")
     assert desk.pending.state == "failed" and path.read_text() == FILE
 
@@ -647,3 +654,89 @@ async def test_the_input_tab_asks_on_her_card_before_a_thumb_may_answer_it(aioht
     assert desk.pending.state == "saved" and daemon.config.gestures.approvals is True
     assert "approvals = true" in inputs.input_file().read_text()
     await daemon.close()
+
+
+# ----------------------------------------------------------------------------- the audit's findings
+
+
+async def test_a_settings_change_never_asks_over_another_question_and_takes_only_a_held_yes_on_her_card(client):
+    """F1: a yes meant for another card cannot approve a settings change. While she asks anything else a loosening
+    save is refused (it would supersede that question); her own settings question takes a hold on her card only."""
+    from strawberry_crab.approvals import CARD_ONLY
+    from strawberry_crab.confirm import Held
+    from strawberry_crab.events import Event
+
+    path = write_config(FILE)
+    signed = await sign_in(client)
+    daemon, desk = daemon_of(client), desk_of(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    draft = view["text"].replace('body = "off"', 'body = "react"')
+    run = daemon.runs.start("typed")
+    other = daemon.approvals.request(run, Held("notes", "wipe", {}, question="Wipe? Say yes.", risk="destructive"))
+    busy = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})
+    assert busy.status == 409 and (await busy.json())["busy"] and daemon.approvals.open is other
+    neutral = view["text"].replace("port = 8770", "port = 8771")
+    assert (await signed.post("/ui/api/config/save", {"text": neutral, "base": view["base"]["tag"]})).status == 200
+    daemon.approvals.resolve(other, "no")
+    daemon.runs.finish(run)
+    view = await (await signed.get("/ui/api/config")).json()
+    draft = view["text"].replace('body = "off"', 'body = "react"')
+    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})).status == 202
+    approval = daemon.approvals.open
+    for by in ("voice", "typed", "ui", "gesture"):
+        assert daemon.approvals.answer(approval.approval_id, "yes", by) == "not_here"
+    performance, _sent = await daemon.handle_voice(Event(source="voice", title="yes"))
+    assert performance.text == CARD_ONLY and approval.open and 'body = "off"' in path.read_text()
+    assert daemon.approvals.answer(approval.approval_id, "yes", "body", hold=True) is None
+    await until(lambda: desk.pending.state != "waiting")
+    assert desk.pending.state == "saved" and 'body = "react"' in path.read_text()
+
+
+async def test_an_error_while_she_waits_never_leaves_the_page_saying_waiting(client, monkeypatch):
+    """F12."""
+    write_config(FILE)
+    signed = await sign_in(client)
+    daemon, desk = daemon_of(client), desk_of(client)
+
+    async def broken(*_a, **_k):
+        raise RuntimeError("the speaker fell over")
+
+    monkeypatch.setattr(daemon, "perform", broken)
+    view = await (await signed.get("/ui/api/config")).json()
+    draft = view["text"].replace('body = "off"', 'body = "react"')
+    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})).status == 202
+    await until(lambda: desk.pending.state != "waiting")
+    assert desk.pending.state == "failed" and daemon.approvals.open is None
+
+
+async def test_the_page_gets_a_keyed_tag_never_the_files_plain_hash(client):
+    """F9."""
+    write_config(FILE)
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    tools = await (await signed.get("/ui/api/tools")).json()
+    assert configform.sha256(FILE) not in json.dumps(view) + json.dumps(tools)
+    assert view["base"]["tag"] == configform.tag(FILE) == tools["base"]["tag"] and "sha256" not in view["base"]
+    with pytest.raises(configform.Stale):
+        configform.write(paths.config_file(), FILE, configform.sha256(FILE))   # the plain hash is not a tag
+
+
+@pytest.mark.linux_only
+def test_config_toml_and_its_backups_are_the_users_alone_and_ten_are_kept(tmp_path):
+    """F10: 0600 for the file and each backup from the first byte, no temporary file left, the last ten backups."""
+    import os
+    import stat
+
+    path = tmp_path / "config.toml"
+    path.write_text(FILE, encoding="utf-8")
+    os.chmod(path, 0o644)
+    text = FILE
+    made = []
+    for i in range(13):
+        new = FILE.replace("8770", str(8700 + i))
+        made.append(configform.write(path, new, configform.tag(text)))
+        text = new
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600 and path.read_text() == text
+    backups = sorted(tmp_path.glob("config.toml.bak-*"))
+    assert len(backups) == configform.KEEP_BACKUPS and all(stat.S_IMODE(b.stat().st_mode) == 0o600 for b in backups)
+    assert made[-1] in backups and not list(tmp_path.glob(".config.toml.*.tmp"))

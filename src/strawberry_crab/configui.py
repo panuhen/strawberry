@@ -41,7 +41,10 @@ log = logging.getLogger("strawberryd.ui")
 
 MAX_TEXT = 200_000
 CONFIRM_S = 60.0                       # how long her card waits for the user's yes to a settings change
-YES_BY = frozenset({"voice", "typed", "body"})
+# Her card alone, held: never this page, a thumb, or a "yes" said or typed (which may have been meant for another
+# question of hers, superseded by this one).
+YES_BY = frozenset({"body"})
+BUSY = "she is asking something else on her card; answer that first"
 ASK_LINE = "That settings change loosens my safety rules. Hold yes on my card if it was you."
 SAVED_LINE = "Okay, the settings are saved."
 LEFT_LINE = "Okay, I've left the settings as they were."
@@ -56,7 +59,7 @@ class Pending:
 
     approval: Approval
     text: str
-    base_sha: str
+    base_tag: str
     findings: list[configform.Finding]
     changed: list[str]
     state: str = "waiting"             # waiting | saved | left | changed | failed
@@ -65,7 +68,7 @@ class Pending:
     applied: list[str] = field(default_factory=list)
     at: float = field(default_factory=time.time)
     file: str = "config.toml"          # or input.toml (the Input tab's settings: brainui.api_input_save)
-    # After the yes: write(text, base_sha) -> the backup (raises configform.Stale when the file changed), then
+    # After the yes: write(text, base_tag) -> the backup (raises configform.Stale when the file changed), then
     # apply() -> the sections in use at once. None: config.toml's (configform.write, apply_live).
     write: Callable[[str, str], Path | None] | None = None
     apply: Callable[[], list[str]] | None = None
@@ -95,6 +98,15 @@ class ConfigDesk:
     def waiting(self) -> Pending | None:
         return self.pending if self.pending is not None and self.pending.state == "waiting" else None
 
+    def busy(self, ui: BrainUI) -> str | None:
+        """Why a settings change cannot ask on her card now: one of ours waits, or she is asking anything else (a
+        new question would supersede it, and an answer meant for that one could land on this). None: free."""
+        if self.waiting() is not None:
+            return "a settings change already waits for your yes on her card; answer it first"
+        if ui.daemon.approvals.open is not None:
+            return BUSY
+        return None
+
 
 DESK = web.AppKey("configdesk", ConfigDesk)
 
@@ -118,7 +130,7 @@ def config_view(ui: BrainUI, desk: ConfigDesk, session: Session) -> dict[str, An
         values = tomllib.loads(text)
     except (ConfigError, tomllib.TOMLDecodeError) as exc:
         text, values, error = None, {}, str(exc)
-    return {"path": str(path), "exists": base["exists"], "base": {"sha256": base["sha256"], "mtime_ns": base["mtime_ns"]},
+    return {"path": str(path), "exists": base["exists"], "base": {"tag": base["tag"], "mtime_ns": base["mtime_ns"]},
             "text": text, "values": values, "error": error, "schema": configform.schema(),
             "live": dict(configform.LIVE_SECTIONS),
             "pending": desk.pending.view() if desk.pending is not None else None}
@@ -147,7 +159,7 @@ def draft_check(ui: BrainUI, desk: ConfigDesk, session: Session, data: dict[str,
     old_text = base["text"]
     out: dict[str, Any] = {"ok": False, "problems": [], "text": text, "values": None, "diff": [], "lowering": [],
                            "changed": [], "restart": [], "live": [], "same": False,
-                           "stale": data.get("base") not in (None, base["sha256"]), "_real": None}
+                           "stale": data.get("base") not in (None, base["tag"]), "_real": None}
     try:
         real = vault.unmask(text.replace("\r\n", "\n"))
         if data.get("edits"):
@@ -221,7 +233,7 @@ async def _wait(ui: BrainUI, desk: ConfigDesk, pending: Pending, run: runs.Run) 
             else:
                 write = pending.write or (lambda text, base: configform.write(config_path(ui), text, base))
                 try:
-                    backup = await asyncio.to_thread(write, pending.text, pending.base_sha)
+                    backup = await asyncio.to_thread(write, pending.text, pending.base_tag)
                 except configform.Stale as exc:
                     pending.state, pending.detail, line = "changed", str(exc), LEFT_CHANGED
                 except (ConfigError, OSError) as exc:
@@ -250,11 +262,16 @@ async def _wait(ui: BrainUI, desk: ConfigDesk, pending: Pending, run: runs.Run) 
         d.approvals.resolve(approval, "cancelled")
         pending.state, pending.detail = "left", "cancelled"
         raise
+    except Exception as exc:   # noqa: BLE001 - whatever went wrong, the page must not keep showing "waiting"
+        d.approvals.resolve(approval, "cancelled")
+        if pending.state == "waiting":
+            pending.state, pending.detail = "failed", f"not saved ({type(exc).__name__})"
+        log.warning("ui: a settings change failed while it waited (%s)", type(exc).__name__)
     finally:
         d.runs.finish(run)
 
 
-def ask(ui: BrainUI, desk: ConfigDesk, real: str, base_sha: str, findings: list[configform.Finding],
+def ask(ui: BrainUI, desk: ConfigDesk, real: str, base_tag: str, findings: list[configform.Finding],
         changed: list[str], file: str = "config.toml", write: Callable[[str, str], Path | None] | None = None,
         apply: Callable[[], list[str]] | None = None) -> Pending:
     """Her card asks about the change (approvals.py, a `settings` run): a hold for a yes on the card, or the user's
@@ -262,10 +279,10 @@ def ask(ui: BrainUI, desk: ConfigDesk, real: str, base_sha: str, findings: list[
     d = ui.daemon
     run = d.runs.start("settings", foreground=False)
     prompt = _card_line(findings)
-    held = Held("strawberry", "settings", {"file": file, "sha256": configform.sha256(real), "base": base_sha},
+    held = Held("strawberry", "settings", {"file": file, "sha256": configform.sha256(real), "base": base_tag},
                 question=prompt, risk="change", prompt=prompt)
     approval = d.approvals.request(run, held, timeout_s=CONFIRM_S, hold=True, yes_by=YES_BY)
-    pending = Pending(approval, real, base_sha, findings, changed, file=file, write=write, apply=apply)
+    pending = Pending(approval, real, base_tag, findings, changed, file=file, write=write, apply=apply)
     desk.pending = pending
     task = d.background(_wait(ui, desk, pending, run), "a settings change waiting for a yes")
     run.continued, run.task = True, task
@@ -297,8 +314,8 @@ async def api_config_save(request: web.Request, ui: BrainUI, session: Session) -
     waits on her card."""
     desk = request.app[DESK]
     data = await _payload(request)
-    base_sha = data.get("base")
-    if not isinstance(base_sha, str) or len(base_sha) != 64:
+    base_tag = data.get("base")
+    if not isinstance(base_tag, str) or len(base_tag) != 64:
         raise web.HTTPBadRequest(text="base must be the file's hash as the page loaded it")
     checked_ = await asyncio.to_thread(draft_check, ui, desk, session, data)
     if checked_["stale"]:
@@ -309,17 +326,16 @@ async def api_config_save(request: web.Request, ui: BrainUI, session: Session) -
         return web.json_response({"error": "the draft does not check out", "problems": checked_["problems"]}, status=400)
     if checked_["same"]:
         return web.json_response({"saved": False, "same": True})
-    if desk.waiting() is not None:
-        return web.json_response({"error": "a settings change already waits for your yes on her card; answer it first"},
-                                 status=409)
     real = checked_["_real"]
     findings = [configform.Finding(f["key"], f["why"]) for f in checked_["lowering"]]
+    if findings and desk.busy(ui) is not None:
+        return web.json_response({"error": desk.busy(ui), "busy": True}, status=409)
     if findings:
-        pending = ask(ui, desk, real, base_sha, findings, checked_["changed"])
+        pending = ask(ui, desk, real, base_tag, findings, checked_["changed"])
         return web.json_response({"pending": pending.view()}, status=202)
     path = config_path(ui)
     try:
-        backup = await asyncio.to_thread(configform.write, path, real, base_sha)
+        backup = await asyncio.to_thread(configform.write, path, real, base_tag)
     except configform.Stale as exc:
         return web.json_response({"error": f"{exc}. Reload it, then make the change again.", "stale": True}, status=409)
     except (ConfigError, OSError) as exc:
@@ -387,7 +403,7 @@ def tools_view(ui: BrainUI, desk: ConfigDesk, session: Session) -> dict[str, Any
                      "state": "not running", "error": None, "in_file": True, "restart": True, "tools": [],
                      **({"login": _login(name)} if "url" in in_file[name] else {})})
     return {"enabled": d.config.tools.enabled, "servers": rows, "file": in_file, "path": str(config_path(ui)),
-            "base": {"sha256": base["sha256"], "mtime_ns": base["mtime_ns"]},
+            "base": {"tag": base["tag"], "mtime_ns": base["mtime_ns"]},
             "options": {"topics": [o.name for o in systemone.TOPIC.options], "adapters": [a.name for a in REGISTRY],
                         "flags": list(TRUST_FLAGS), "offers": list(OFFERS)},
             "pending": desk.pending.view() if desk.pending is not None else None}

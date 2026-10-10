@@ -23,8 +23,12 @@ import inspect
 import io
 import json
 import os
+import hmac
 import re
+import secrets
+import tempfile
 import threading
+import time
 import tokenize
 from dataclasses import dataclass
 from pathlib import Path
@@ -329,6 +333,12 @@ class Vault:
         self.numbers: dict[Any, int] = {}
         self.lines: dict[int, str] = {}
         self.line_numbers: dict[str, int] = {}
+        self.where: dict[int, set[tuple]] = {}   # where each hidden value was shown: it goes back there and only there
+
+    def _hide(self, value: Any, path: tuple) -> str:
+        n = self._number(value, self.values, self.numbers)
+        self.where.setdefault(n, set()).add(tuple(path))
+        return f"<hidden {n}: kept as is>"
 
     def _number(self, value: Any, values: dict[int, Any], numbers: dict[Any, int]) -> int:
         key = (type(value).__name__, value)
@@ -367,25 +377,25 @@ class Vault:
                 value = _unwrap(node[path[-1]])
                 if isinstance(value, str) and HIDDEN.fullmatch(value):
                     continue
-                node[path[-1]] = f"<hidden {self._number(value, self.values, self.numbers)}: kept as is>"
+                node[path[-1]] = self._hide(value, path)
         except (KeyError, IndexError, TypeError):   # the two parsers disagree on where a value is: show nothing
             raise ConfigError("config.toml cannot be shown here safely; edit it in a text editor (strawberry config)") from None
         # A secret moved somewhere its name does not say (a hidden value put in a plain key's place: the page may
         # do that, and the daemon puts the value back there) is hidden wherever it is: any string with one in it.
         known = self._known()
 
-        def by_value(node: Any) -> None:
+        def by_value(node: Any, path: tuple) -> None:
             for key in _keys(node):
                 value = node[key]
                 if isinstance(value, str):
                     plain = _plain(value)
                     if not HIDDEN.fullmatch(plain) and any(secret in plain for secret in known):
-                        node[key] = f"<hidden {self._number(plain, self.values, self.numbers)}: kept as is>"
+                        node[key] = self._hide(plain, path + (key,))
                 elif isinstance(value, (dict, list)):
-                    by_value(value)
+                    by_value(value, path + (key,))
 
         if known:
-            by_value(doc)
+            by_value(doc, ())
         out = tomlkit.dumps(doc)
         # Comments, found as the parser finds them (comment_spans): one that looks like it holds a secret (a
         # commented-out token, a trailing note with a key in it) or holds a known one is hidden whole; the line's
@@ -445,9 +455,11 @@ class Vault:
         as its placeholder. A startup check may quote a value, and a hidden value may have been moved where it does."""
         with self.lock:
             for secret in self._known():
-                if secret in text:
-                    n = next(n for n, v in self.values.items() if str(v) == secret)
-                    text = text.replace(secret, f"<hidden {n}: kept as is>")
+                n = next(n for n, v in self.values.items() if str(v) == secret)
+                # As written, and as repr() and JSON would quote it (a message may carry either).
+                for form in dict.fromkeys((secret, repr(secret)[1:-1], json.dumps(secret)[1:-1])):
+                    if form and form in text:
+                        text = text.replace(form, f"<hidden {n}: kept as is>")
             return text
 
     def _unmask(self, text: str) -> str:
@@ -478,9 +490,10 @@ class Vault:
         except tomlkit.exceptions.TOMLKitError as exc:
             raise ConfigError(f"the draft does not parse: {_first_line(exc)}") from None
 
-        def put_back(node: Any) -> None:
+        def put_back(node: Any, path: tuple) -> None:
             for key in _keys(node):
                 value = node[key]
+                here = path + (key,)
                 if isinstance(value, str):
                     plain = _plain(value)
                     match = HIDDEN.fullmatch(plain)
@@ -488,13 +501,18 @@ class Vault:
                         n = int(match.group(1))
                         if n not in self.values:
                             raise ConfigError("a hidden value is not one this page showed; type the value in full")
+                        if here not in self.where.get(n, ()):
+                            # Moved: a hidden value goes back only where it was shown, never into another key (where
+                            # it might be sent somewhere, or shown).
+                            raise ConfigError(f"a hidden value was moved to {'.'.join(map(str, here))}; type the value "
+                                              "there in full, or put the placeholder back where it was")
                         node[key] = self.values[n]
                     elif HIDDEN.search(plain):
                         raise ConfigError("a hidden value was changed by hand; type the whole new value in its place")
                 elif isinstance(value, (dict, list)):
-                    put_back(value)
+                    put_back(value, here)
 
-        put_back(doc)
+        put_back(doc, ())
         out = tomlkit.dumps(doc)
         if HIDDEN.search(out):
             raise ConfigError("a hidden value is in a place it cannot go back to (a key's name or a comment)")
@@ -694,15 +712,25 @@ def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+# The page gets a keyed hash of the file (`tag`), never its plain sha256: a plain hash of a small file with one
+# unknown token in it could be tested against guesses. The key is new at each start, so a tag is good until then.
+_PAGE_KEY = secrets.token_bytes(32)
+
+
+def tag(text: str) -> str:
+    return hmac.new(_PAGE_KEY, text.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def base_of(path: Path) -> dict[str, Any]:
-    """What the page loaded: the file's text, its hash and its mtime (none when there is no file yet)."""
+    """What the page loaded: the file's text, its hash (kept here), its tag (the page's) and its mtime (none when there
+    is no file yet)."""
     try:
         raw = path.read_bytes()
         stat = path.stat()
     except FileNotFoundError:
-        return {"exists": False, "text": "", "sha256": sha256(""), "mtime_ns": None}
+        return {"exists": False, "text": "", "sha256": sha256(""), "tag": tag(""), "mtime_ns": None}
     text = raw.decode("utf-8")
-    return {"exists": True, "text": text, "sha256": sha256(text), "mtime_ns": stat.st_mtime_ns}
+    return {"exists": True, "text": text, "sha256": sha256(text), "tag": tag(text), "mtime_ns": stat.st_mtime_ns}
 
 
 def changed_sections(old: cfg.Config, new: cfg.Config) -> list[str]:
@@ -865,22 +893,63 @@ class Stale(ConfigError):
     """The file changed after the page loaded it."""
 
 
-def write(path: Path, text: str, base_sha: str) -> Path | None:
-    """`text` as config.toml if the file is still the one the page loaded (`base_sha`): the old one backed up beside
-    it (config.toml.bak-<time>, as configedit does), then the new one written in one step, as private as the old one
-    was. Returns the backup (None for a new file). Raises Stale when the file changed, ConfigError when `text` does
-    not load."""
+KEEP_BACKUPS = 10
+
+
+def write(path: Path, text: str, base_tag: str) -> Path | None:
+    """`text` as config.toml if the file is still the one the page loaded (its `tag`): under the file's lock (as
+    configedit's writers take it) the tag is compared, the old file is copied to config.toml.bak-<time> (made 0600
+    before a byte goes in), and the new one is written to a fresh temporary file (0600, O_EXCL) and put in place in
+    one step. config.toml may hold tokens, so it is the user's alone (0600). The last KEEP_BACKUPS backups stay.
+    Returns the backup (None for a new file). Raises Stale when the file changed, ConfigError when `text` does not
+    load or still has a placeholder."""
     if HIDDEN.search(text) or HIDDEN_COMMENT.search(text):
         raise ConfigError("the text still has a hidden placeholder in it; nothing written")
     load_text(text)
-    now = base_of(path)
-    if now["sha256"] != base_sha:
-        raise Stale("config.toml changed since this page loaded it (another editor, the tray or the camera switch)")
-    backup = None
-    private = False
-    if now["exists"]:
-        private = os.name == "posix" and (path.stat().st_mode & 0o077) == 0
-        backup = configedit.backup(path)
-    paths.write_atomic(path, text, private=private)
-    os.utime(path)
+    with configedit.locked(path):
+        now = base_of(path)
+        if not hmac.compare_digest(now["tag"], base_tag):
+            raise Stale("config.toml changed since this page loaded it (another editor, the tray or the camera switch)")
+        backup = _private_backup(path, now["text"]) if now["exists"] else None
+        write_private(path, text)
+        _prune_backups(path)
     return backup
+
+
+def write_private(path: Path, text: str) -> None:
+    """`text` as the whole of `path`, 0600, in one step: a temporary file of its own beside it (mkstemp: O_EXCL, a
+    random name, 0600), flushed, then renamed over it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(name, path)
+    except BaseException:
+        Path(name).unlink(missing_ok=True)
+        raise
+    if os.name == "posix":
+        os.chmod(path, 0o600)
+
+
+def _private_backup(path: Path, text: str) -> Path:
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for n in range(1000):
+        target = path.with_name(f"{path.name}.bak-{stamp}" + (f"-{n}" if n else ""))
+        try:
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)   # 0600 from the start
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+        return target
+    raise ConfigError("no free backup name")
+
+
+def _prune_backups(path: Path) -> None:
+    pattern = re.compile(re.escape(path.name) + r"\.bak-\d{8}-\d{6}(?:-\d+)?$")
+    found = sorted((p for p in path.parent.iterdir() if pattern.match(p.name)), key=lambda p: p.stat().st_mtime_ns)
+    for old in found[:-KEEP_BACKUPS]:
+        old.unlink(missing_ok=True)

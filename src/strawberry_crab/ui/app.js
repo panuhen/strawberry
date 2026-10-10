@@ -1307,7 +1307,7 @@
     const edits = conf.edits.splice(0);
     const sent = confText();
     try {
-      const r = await api("config/check", { text: sent, edits, base: conf.view.base.sha256 });
+      const r = await api("config/check", { text: sent, edits, base: conf.view.base.tag });
       conf.check = r;
       if (r.values) conf.values = r.values;
       // The raw view keeps what the user is typing; the form takes the daemon's text back.
@@ -1358,7 +1358,7 @@
     fill(node,
       el("div", { class: "actions" }, el("span", { class: "dim mono", text: V.path }),
         V.exists ? chip("in use", "good") : chip("no file yet: the draft starts from the commented template"),
-        chip(`loaded ${clock(Date.now() / 1000)}`, null, `sha256 ${V.base.sha256.slice(0, 12)}…`),
+        chip(`loaded ${clock(Date.now() / 1000)}`, null, `as loaded: ${V.base.tag.slice(0, 12)}…`),
         actionButton("Reload from the file", () => refreshConfig(true), "ghost small")),
       V.error ? el("div", { class: "note berry" }, el("b", { text: "Not shown: " }), V.error,
         el("p", { text: "Fix it in a text editor (strawberry config). Nothing of the file is shown until it parses, so no secret in it can leak here." })) : null,
@@ -1556,7 +1556,7 @@
   async function confSave(button) {
     button.disabled = true;
     try {
-      const r = await api("config/save", { text: confText(), base: conf.view.base.sha256 });
+      const r = await api("config/save", { text: confText(), base: conf.view.base.tag });
       if (r.pending) {
         conf.view.pending = r.pending;
         toast("She asks on her card now: hold Yes there, or say yes.");

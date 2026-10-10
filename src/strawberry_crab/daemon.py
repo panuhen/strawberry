@@ -13,7 +13,7 @@ from typing import Any
 
 from .actions import NO_CATALOGUE, READ_REFLEXES, Actor, Outcome
 from .adapters import gate_examples
-from .approvals import Approval, ApprovalBook
+from .approvals import CARD_ONLY, Approval, ApprovalBook
 from . import bodylink
 from .bodylink import Pointing, Targets, Touch
 from . import bussecret, confirm
@@ -729,7 +729,13 @@ class Daemon:
         live = self.feed.start(by)
         live["run_id"] = approval.run_id
         try:
-            if self.approvals.answer(approval.approval_id, said, by, text=event.title) is not None:
+            reason = self.approvals.answer(approval.approval_id, said, by, text=event.title)
+            if reason == "not_here":
+                # A question only her card answers (a settings change, configui.py): a spoken or typed yes is not
+                # taken (it may have been meant for an earlier question), and she says where to answer.
+                performance = decorate(event, Performance(state="talking", text=CARD_ONLY, emotion="neutral"))
+                return performance, await self.perform(performance)
+            if reason is not None:
                 return None
             log.info("confirm: %s answered %s (%s)", approval.held.key, said, by)
             if approval.run is not None:

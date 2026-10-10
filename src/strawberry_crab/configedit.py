@@ -8,9 +8,12 @@ tray's "Message bodies" rows (tray.py) both write through here.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
 import shutil
+import threading
 import time
 import tomllib
 from pathlib import Path
@@ -96,6 +99,35 @@ def _split_comment(line: str) -> tuple[Any, str]:
     return None, ""
 
 
+_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def locked(path: Path):
+    """config.toml's writers, one at a time: a lock in this process, and on POSIX an flock on a file beside it, so
+    the tray (another process) and the Brain UI do not interleave a check and a write."""
+    with _LOCK:
+        if os.name != "posix":
+            yield
+            return
+        import fcntl
+
+        import hashlib
+
+        from . import paths   # local: paths is light, but configedit stays importable on its own
+
+        # In the state dir, not beside the file: the config dir holds only what the user edits.
+        locks = paths.state_dir() / "locks"
+        locks.mkdir(parents=True, exist_ok=True)
+        name = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:16]
+        fd = os.open(locks / f"config-{name}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
+
 def backup(path: Path, clock: Callable[[], float] = time.time) -> Path:
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(clock()))
     target = path.with_name(f"{path.name}.bak-{stamp}")
@@ -127,6 +159,12 @@ def check_config_text(text: str) -> Config:
 
 def write_config(path: Path, text: str, say: Callable[[str], None]) -> Path | None:
     """Back up the file if it exists, then write `text`. Returns the backup's path."""
+    check_config_text(text)   # a broken text touches nothing, not even the lock
+    with locked(path):
+        return _write_config(path, text, say)
+
+
+def _write_config(path: Path, text: str, say: Callable[[str], None]) -> Path | None:
     check_config_text(text)
     saved = None
     if path.exists():
@@ -148,15 +186,16 @@ def set_value(path: Path, dotted: str, value: Any, say: Callable[[str], None] = 
     value, or the section written as an inline table) or the result would not load."""
     from .config import ConfigError, default_toml
 
-    text = path.read_text(encoding="utf-8") if path.exists() else ""
-    if not text.strip():
-        text = default_toml()
-    text, _ = set_key(text, dotted, value, overwrite=True)
-    try:
-        data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(f"the edited config would not parse: {exc}") from exc
-    section, key = dotted.rsplit(".", 1)
-    if not isinstance(data.get(section), dict) or data[section].get(key) != value:
-        raise ConfigError(f"{dotted} is not on a line of its own in [{section}]; edit it by hand")
-    return write_config(path, text, say)
+    with locked(path):   # the read and the write together: the Brain UI's editor checks its hash under the same lock
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+        if not text.strip():
+            text = default_toml()
+        text, _ = set_key(text, dotted, value, overwrite=True)
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigError(f"the edited config would not parse: {exc}") from exc
+        section, key = dotted.rsplit(".", 1)
+        if not isinstance(data.get(section), dict) or data[section].get(key) != value:
+            raise ConfigError(f"{dotted} is not on a line of its own in [{section}]; edit it by hand")
+        return _write_config(path, text, say)

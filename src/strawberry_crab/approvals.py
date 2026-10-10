@@ -65,6 +65,8 @@ UNDER_FOREIGN = frozenset({"read", "playback"})
 OUTCOMES = ("yes", "no", "timeout", "cancelled", "superseded")
 BY = ("voice", "typed", "body", "ui", "gesture")   # gesture: a held thumb (gestures.py)
 HISTORY = 50
+# What she says to a spoken or typed yes that the open question does not take (its `yes_by` is her card alone).
+CARD_ONLY = "That one needs a hold on Yes on my card."
 TICK_S = 0.25          # how often a wait past its expiry looks again while the user is speaking
 
 

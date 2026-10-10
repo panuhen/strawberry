@@ -1135,13 +1135,12 @@ def _input_asks(request: web.Request, ui: BrainUI, data: dict[str, Any], text: s
     if not findings:
         return None
     desk = request.app[configui.DESK]
-    if desk.waiting() is not None:
-        return web.json_response({"error": "a settings change already waits for your yes on her card; answer it first"},
-                                 status=409)
+    if desk.busy(ui) is not None:
+        return web.json_response({"error": desk.busy(ui), "busy": True}, status=409)
     store = d.input.store
 
     def write(new: str, base: str) -> Path | None:
-        if configform.sha256(store.text()) != base:
+        if configform.tag(store.text()) != base:
             raise configform.Stale("input.toml changed since this page loaded it")
         return inputs.save(new, store.path)
 
@@ -1149,7 +1148,7 @@ def _input_asks(request: web.Request, ui: BrainUI, data: dict[str, Any], text: s
         store.check(force=True)
         return ["gestures", "touch"]
 
-    pending = configui.ask(ui, desk, text, configform.sha256(store.text()), findings, ["gestures"], file="input.toml",
+    pending = configui.ask(ui, desk, text, configform.tag(store.text()), findings, ["gestures"], file="input.toml",
                            write=write, apply=apply)
     return web.json_response({"pending": pending.view()}, status=202)
 
