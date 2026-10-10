@@ -1250,6 +1250,14 @@
     button.disabled = true;
     try {
       const r = await api("apps/save", { apps: appsList(apps.rows) });
+      if (r.pending) {
+        // A newly allowed app, or a close without asking: she asks on her card first (WIRING.md §28).
+        toast("That lets her do more, so she asks on her card: hold Yes there. The Config file tab shows how it went.");
+        if (conf.view) conf.view.pending = r.pending;
+        confPoll();
+        button.disabled = false;
+        return;
+      }
       toast(r.backup ? "Saved. The old one is kept as apps.toml.bak." : "Saved. She uses it at once.");
       apps.view = r;
       apps.edited = false;
@@ -1404,6 +1412,7 @@
             r.pending.state !== "saved");
           if (r.pending.state === "saved") {
             if (r.pending.file === "input.toml") { if (state.section === "input") refreshInput(); }
+            else if (r.pending.file === "apps.toml") { apps.edited = false; if (state.section === "apps") refreshApps(); }
             else { conf.view = r; confReset(); rerender("config"); if (state.section === "tools") refreshTools(); return; }
           }
         }

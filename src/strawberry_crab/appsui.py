@@ -69,6 +69,9 @@ async def api_apps_save(request: web.Request, ui: BrainUI, session: Session) -> 
     if not draft["ok"]:
         return web.json_response({"error": "the list does not check out", "problems": draft["problems"]}, status=400)
     store = ui.daemon.apps
+    asked = _apps_asks(request, ui, draft["text"])   # loosening waits for her card (WIRING §28)
+    if asked is not None:
+        return asked
     try:
         backup = await asyncio.to_thread(inputs.save, draft["text"], store.path)
     except OSError as exc:
@@ -79,6 +82,52 @@ async def api_apps_save(request: web.Request, ui: BrainUI, session: Session) -> 
              sum(a.close for a in listed), " (the old one kept as apps.toml.bak)" if backup else "")
     return web.json_response({"saved": str(store.path), "backup": str(backup) if backup else None}
                              | await asyncio.to_thread(apps_view, ui))
+
+
+def apps_lowering(old: list[applist.App], new: list[applist.App]) -> list[Any]:
+    """What a new list loosens (configform.Finding): an app she may now open (it starts a program) or close (unsaved
+    work can go), or close without asking first. Tightening and neutral edits are none."""
+    from .configform import Finding, merged
+
+    before = {app.id: app for app in old}
+    found = []
+    for app in new:
+        was = before.get(app.id)
+        if app.open and not (was is not None and was.open):
+            found.append(Finding(f"apps.{app.id}.open", f"she could open {app.name}", "runs", f"open {app.name}"))
+        if app.close and not (was is not None and was.close):
+            found.append(Finding(f"apps.{app.id}.close", f"she could close {app.name}", "approvals"))
+        if app.close and not app.close_asks and (was is None or not was.close or was.close_asks):
+            found.append(Finding(f"apps.{app.id}.close_asks", f"she would close {app.name} without asking first",
+                                 "approvals"))
+    return merged(found)
+
+
+def _apps_asks(request: web.Request, ui: BrainUI, text: str) -> web.Response | None:
+    """A list that loosens asks on her card first, as config.toml and input.toml do (configui.ask): 202. None: save
+    at once."""
+    from . import configform, configui   # local: configui builds on brainui, as this module does
+
+    store = ui.daemon.apps
+    findings = apps_lowering(store.apps(), applist.parse(text))
+    if not findings:
+        return None
+    desk = request.app[configui.DESK]
+    if desk.busy(ui) is not None:
+        return web.json_response({"error": desk.busy(ui), "busy": True}, status=409)
+
+    def write(new: str, base: str) -> Any:
+        if configform.tag(store.text()) != base:
+            raise configform.Stale("apps.toml changed since this page loaded it")
+        return inputs.save(new, store.path)
+
+    def apply() -> list[str]:
+        store.check(force=True)
+        return ["apps"]
+
+    pending = configui.ask(ui, desk, text, configform.tag(store.text()), findings, [], file="apps.toml", write=write,
+                           apply=apply)
+    return web.json_response({"pending": pending.view()}, status=202)
 
 
 def add_routes(app: web.Application) -> None:

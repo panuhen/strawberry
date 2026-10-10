@@ -9,12 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from strawberry_crab import apps, brainui, paths
+from strawberry_crab import apps, brainui, configui, paths
 from strawberry_crab.apps import App, AppStore, AppsError
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
 from strawberry_crab.server import create_app
 from tests.test_brainui import quiet_config, sign_in
+from tests.test_runs import until
 
 CANARY = "zanzibarq"     # an alias: it may be in apps.toml and the page, never in a log line
 
@@ -229,11 +230,20 @@ async def test_the_apps_tab_lists_checks_and_saves_apps_toml_never_config_toml(c
     missing = rows + [{"id": "nothere.desktop", "name": "Nothere", "open": True}]
     assert (await signed.post("/ui/api/apps/save", {"apps": missing})).status == 400
     assert not apps.apps_file().exists()
-    saved = await (await signed.post("/ui/api/apps/save", {"apps": rows})).json()
-    assert saved["backup"] is None and saved["file"]["in_use"] and saved["file"]["source"] == "apps.toml"
     daemon = daemon_of(client)
+    asked = await signed.post("/ui/api/apps/save", {"apps": rows})     # Firefox may now open and close: her card
+    assert asked.status == 202 and not apps.apps_file().exists()
+    keys = [f["key"] for f in (await asked.json())["pending"]["lowering"]]
+    assert keys == ["apps.firefox_firefox.desktop.open", "apps.spotify_spotify.desktop.close",
+                    "apps.firefox_firefox.desktop.close", "apps.firefox_firefox.desktop.close_asks"]
+    daemon.approvals.answer(daemon.approvals.open.approval_id, "yes", "body", hold=True)
+    desk = client.server.app[configui.DESK]
+    await until(lambda: desk.pending.state != "waiting")
+    assert desk.pending.state == "saved" and desk.pending.file == "apps.toml"
+    saved = await (await signed.get("/ui/api/apps")).json()
+    assert saved["file"]["in_use"] and saved["file"]["source"] == "apps.toml"
     assert daemon.apps.find(CANARY).app.close_asks is False                      # used at once
-    rows[1]["close_asks"] = True
+    rows[1]["close_asks"] = True                                                 # tighter: saved at once
     again = await (await signed.post("/ui/api/apps/save", {"apps": rows})).json()
     assert again["backup"] and "close_asks = false" in apps.apps_file().with_name("apps.toml.bak").read_text()
     assert apps.parse(apps.apps_file().read_text())[1].close_asks is True        # the reader agrees
