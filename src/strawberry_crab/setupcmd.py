@@ -357,6 +357,7 @@ class Setup:
         self.step_voice(values)
         self.step_ears(values)
         self.step_widget()
+        self.step_gestures()
         self.step_missing()
         self.step_install()
         if self.failures:
@@ -664,6 +665,35 @@ class Setup:
             else:
                 self.say(f"  ✗ widget fetch failed: {exc}")
                 self.failures.append("widget")
+
+    def step_gestures(self) -> None:
+        """Hand gestures (WIRING.md §26) are opt-in: only with `[gestures] enabled = true` in the file does setup
+        say anything here, and then it fetches the recogniser's model (~8 MB, sha256 checked) if it is missing."""
+        from . import gestures
+
+        try:
+            enabled = tomllib.loads(self.path.read_text(encoding="utf-8")).get("gestures", {}).get("enabled") is True
+        except (OSError, tomllib.TOMLDecodeError, AttributeError):
+            enabled = False
+        if not enabled:
+            return
+        self.say("\n6b. Hand gestures")
+        deps = gestures.mediapipe_missing()
+        if deps:
+            self.say(f"  ! {deps}")
+        if gestures.model_ready():
+            self.say(f"  ✓ the gesture model is at {gestures.model_file()}")
+            return
+        if not self.download:
+            self.say("  not fetched (--no-download): the gesture model; later: strawberry gestures fetch")
+            self.skipped.append("the gesture model")
+            return
+        self.say("  MediaPipe's gesture recogniser (Apache-2.0, Google)")
+        try:
+            gestures.fetch(say=lambda line: self.say("  " + line))
+        except (gestures.FetchError, OSError) as exc:
+            self.say(f"  ✗ gesture model fetch failed: {exc}")
+            self.failures.append("gesture model")
 
     # 7 ---------------------------------------------------------------------------
     def step_missing(self) -> None:

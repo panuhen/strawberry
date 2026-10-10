@@ -77,6 +77,7 @@ Long-running Python (asyncio, aiohttp). One port, default **8770**:
 - `GET /config` — the effective settings (§15). 403 without the bus secret: they name the MCP servers' commands, environment and headers, paths in the user's home and her persona.
 - `POST /probe` — `strawberry doctor --talk`: the daemon's own two scripted sentences (`Daemon.PROBE_LINES`) through the gate, the desktop voice (Gemma), the brain (Qwen, offered no tools so nothing changes), Piper and whisper (reading Piper's wav back), each timed. It takes no text, performs nothing, records nothing in the ledger, logs only the times, and answers a loopback client only.
 - `GET /ws` — the widget connects here. A v2 body (the crab, the orbs) also sends input back over it: what the user touches and points at on it (`touch`, `target`; §25, PROTOCOL Part 1c).
+- `POST /gesture`, `POST /hand`, `GET /gesture` — the camera doorway's gestures and hand, and what the camera should do (§26).
 - `POST /ui-token`, `/ui/...` — the Brain UI (§17): a one-time login token for `strawberry ui`, and the page with its own API.
 - **Core function:** `Daemon.perform(performance)` builds the blob, (Phase 4) runs TTS, and sends to Godot. Everything routes through it.
 
@@ -741,7 +742,7 @@ Three modules: `traymenu.py` is the menu as data and what its rows do (`menu_ite
 
 **The icon pixels.** `IconPixmap` is `a(iiay)`: width, height and the pixels as **ARGB32 in network byte order**, which is not what a PNG stores. `scripts/render_icons.py` renders 🍓 from Noto Color Emoji (Apache-2.0, a CBDT bitmap font: Pillow loads it only at its one 109 ppem strike) to `src/strawberry_crab/assets/icons/strawberry-{16,22,24,32,48,64}.png`, checked in and shipped in the wheel as package data (`paths.icons_dir()` finds them through `importlib.resources`); `strawberry/icons.py` reads them at runtime with `zlib` alone and reorders RGBA to ARGB, so Pillow stays a dev dependency. **`IconName` is left empty unless the icon really is in an icon theme**: GNOME's AppIndicator extension prefers the name over the pixmaps and draws a placeholder for one it cannot resolve — with `IconName = "strawberry"` the panel showed "…" where the berry should be, and with it empty the pixmaps came through (measured 2026-09-22).
 
-**The menu is her right-click menu, in the top bar** (§13): a disabled status row (`Idle` / `Listening` / `Thinking…` / `Talking` / `Dancing`, or "strawberryd is not running"), Show her / Hide her, Chat with Strawberry…, then Mute her voice, Quiet for an hour (counting down), Voice volume, Skin, Sleep after inactivity, Sleep now, Top hat, Always on top, Message bodies (below), Router: roll back to previous (only while the learning loop has a head to go back to: `/health.learning.rollback`; it runs `Learning.rollback` in the tray's own process, and the daemon follows `current` on its own, §8d), then Settings file…, Voices folder…, Reset position, Restart (which is her menu's "apply settings": the children come back with the new config) and Quit. The choices are the same lists as `widget/menu.gd` and a test compares the two files, because that is the seam that would drift.
+**The menu is her right-click menu, in the top bar** (§13): a disabled status row (`Idle` / `Listening` / `Thinking…` / `Talking` / `Dancing`, or "strawberryd is not running"), Show her / Hide her, Chat with Strawberry…, then Mute her voice, Quiet for an hour (counting down), Voice volume, Skin, Sleep after inactivity, Sleep now, Top hat, Always on top, Message bodies (below), Hand gestures (camera) (`[gestures] enabled`, written like Message bodies; the daemon is told with `reload_gestures` and the camera doorway follows the file, §26), Router: roll back to previous (only while the learning loop has a head to go back to: `/health.learning.rollback`; it runs `Learning.rollback` in the tray's own process, and the daemon follows `current` on its own, §8d), then Settings file…, Voices folder…, Reset position, Restart (which is her menu's "apply settings": the children come back with the new config) and Quit. The choices are the same lists as `widget/menu.gd` and a test compares the two files, because that is the seam that would drift.
 
 **How the tray knows anything.** `GET /health` every two seconds gives the status row (`state`: the last state performed, with the transients expiring after 6 s since the widget leaves them on its own). The check marks are read back from the widget's own settings file (`~/.config/strawberry/widget.cfg`, `paths.widget_prefs_file()`; the old `~/.local/share/godot/app_userdata/Strawberry/widget.cfg` until the widget has copied it over, §13), so the tray and her right-click menu agree whichever one you used last.
 
@@ -755,7 +756,7 @@ Three modules: `traymenu.py` is the menu as data and what its rows do (`menu_ite
 
 The daemon goes first, so turning bodies on never has the new watcher forwarding a body that the daemon would still read the old way, and turning them off drops bodies at the daemon while the old watcher finishes. `body_apps` is never touched; when it has entries, a disabled "Per-app overrides in config" row shows under the three (it and its separator are always in the layout and only hidden otherwise, so no id moves). With `--no-children` step 3 is a warning to restart the watcher by hand. The tray logs the mode name and nothing else from the file, and she says nothing about it.
 
-**The children.** `daemon` (`python -m strawberry_crab.strawberryd`), `mpris_watch`, `notify_watch`, `beat_watch` (`python -m strawberry_crab.doorways.<name>`), all on the tray's own interpreter so an installed tray never reaches into a checkout, and the widget, chosen by `widgetbin.resolve()` (§13): the installed binary itself (`strawberry-widget --display-driver x11 -- --ws=ws://127.0.0.1:<port>/ws`), or in developer mode `python -m strawberry_crab widget` (which imports the project if needed and execs Godot; `STRAWBERRY_TRAY=1` keeps it from starting a second daemon or a second set of doorways). The widget child's environment adds `STRAWBERRYD_PORT` (the tray's port) and `STRAWBERRY_CLI` (the absolute path of this `strawberry`, for her menu). With neither a binary nor a checkout the tray logs how to get one (`strawberry widget --fetch`) and runs the rest. A child that exits is restarted after a backoff that doubles from 1 s to 30 s and resets once the child has stayed up for 30 s; Quit terminates them all, killing what does not go in 5 s. Stopping the unit does the same after systemd has already sent SIGTERM to every process in its cgroup (the default `KillMode=control-group`), so each child is signalled twice; the daemon treats that as one stop (§2). The tray writes `~/.local/state/strawberry/tray.json` (its own pid, each child's pid, command line and restart count) and `strawberry status` prints it.
+**The children.** `daemon` (`python -m strawberry_crab.strawberryd`), `mpris_watch`, `notify_watch`, `beat_watch`, `gesture_watch` (`python -m strawberry_crab.doorways.<name>`; the gesture doorway sleeps until `[gestures]` is on, §26), all on the tray's own interpreter so an installed tray never reaches into a checkout, and the widget, chosen by `widgetbin.resolve()` (§13): the installed binary itself (`strawberry-widget --display-driver x11 -- --ws=ws://127.0.0.1:<port>/ws`), or in developer mode `python -m strawberry_crab widget` (which imports the project if needed and execs Godot; `STRAWBERRY_TRAY=1` keeps it from starting a second daemon or a second set of doorways). The widget child's environment adds `STRAWBERRYD_PORT` (the tray's port) and `STRAWBERRY_CLI` (the absolute path of this `strawberry`, for her menu). With neither a binary nor a checkout the tray logs how to get one (`strawberry widget --fetch`) and runs the rest. A child that exits is restarted after a backoff that doubles from 1 s to 30 s and resets once the child has stayed up for 30 s; Quit terminates them all, killing what does not go in 5 s. Stopping the unit does the same after systemd has already sent SIGTERM to every process in its cgroup (the default `KillMode=control-group`), so each child is signalled twice; the daemon treats that as one stop (§2). The tray writes `~/.local/state/strawberry/tray.json` (its own pid, each child's pid, command line and restart count) and `strawberry status` prints it.
 
 **On Windows** (`WINDOWS.md` step 4) the children are the same and are started differently: no console window (`CREATE_NO_WINDOW`), a process group of their own, output to `%LOCALAPPDATA%\strawberry\state\<name>.log` (`strawberryd.log` for the daemon; moved to `.1` past 5 MB) since there is no journal, and a kill-on-close job object, so a tray that is killed takes them with it, as the unit's cgroup does. Stopping one sets its stop event (§2), keyed `<tray pid>-<name>-<n>` and passed in `STRAWBERRY_STOP_EVENT`; the widget binary has none and gets TerminateProcess. The 5 s grace and the kill after it are the same.
 
@@ -838,6 +839,20 @@ destructive_s = 30.0             # …to one that deletes or cannot be undone
 grace_s = 10.0                   # while the user is still answering, at most this much longer
 hold = ["sends", "destructive"]  # on her card, a yes to these tiers is a press-and-hold
 # risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }   # a tool's or a server's tier
+
+[gestures]
+enabled = false                  # the webcam doorway (§26); off: the camera is never opened
+watch = "always"                 # always: open while enabled, a few looks a second until a hand is up; armed: closed until armed
+hold_ms = 400.0                  # a shape held this long counts
+arming = false                   # true: a held open palm turns commands on for armed_s first
+approvals = true                 # a held thumb answers her card (tap tiers only)
+
+[gestures.map]                   # read and playback reflexes only; anything else is refused at load
+thumb_up = "like"
+swipe_left = "previous"
+swipe_right = "skip"
+palm_hold = "pause"
+point_hold = "listen"
 ```
 
 `[thinker] tool_tokens = 4000` caps the tool schemas in the prompt beside `max_tools`, and each `[tools.servers.<name>]` may say `flags` (what the server is for the trust model) and `offer` (`always`, `topic`, `asked`): §20. A server reached over HTTP has `url` in place of `command` (and `strawberry tools login <name>`); recall's adapter reads `workspaces` (§8b, *Notes, read-only*).
@@ -865,7 +880,7 @@ pyproject.toml, uv.lock  the one Python package, `strawberry` (hatchling; `uv bu
 src/strawberry_crab/          the package: contract, events/reactor, brain, speech (Piper), voice (whisper), systemone (the gate), embedder (the gate's model in-process, ONNX; `--fetch`), gatehead (the gate's trained head, §8a), gateeval + gatecmd (`strawberry gate train|eval|use`), outcomes + labels + learnfit + learning + learncmd (the learning loop, `strawberry learning ...`, §8c, §8d), data/ (the gate's data set, held-out set and shipped head), tools (MCP client), actions (reflexes), thinker (Qwen tool loop), confirm (a spoken yes before a removal), adapters/ (what is particular to one server: spotify, web; ADAPTERS.md), ledger (short memory), outcomes (the learning loop's log, §8c), hub, server
                          + cli.py (`strawberry`), strawberryd.py (`strawberryd`), paths.py (XDG dirs, the checkout), firstrun.py (the one-time privacy note, §15), pokes.py (the lines for "Talk when poked", §13), widgetbin.py (which widget runs; `widget --fetch`), bus.py (jeepney plumbing), wake.py (logind resume -> model warm-up, §4), winwake.py (the same on Windows: the suspend and resume notification), client.py (HTTP to the daemon), icons.py (PNG -> ARGB32, BGRA, .ico), tray.py (the StatusNotifierItem, §14), bussecret.py (the bus secret, §2), traymenu.py (the tray's menu and its rows' actions), supervisor.py (the tray's children), wintray.py (the Windows notification-area icon), wasapi.py (Windows audio through ctypes: process loopback, the audio sessions), winproc.py (Windows stop and restart events, the kill-on-close job, §2), winmic.py (the Windows microphone, §7), hotkey.py (the listen hotkey's syntax and its Windows setting, §7), startup.py (the Windows Startup shortcut, §13), media.py (which media controls this system has), mpris.py, smtc.py (Windows), adapters/,
                          setupcmd.py (`strawberry setup [--no-download]`: tiers by VRAM, config merge, pulls, the gate's model, voice, widget), configedit.py (config.toml edited as text: setup and the tray's Message bodies), doctor.py (`strawberry doctor [--talk]`; on Windows its own checks: notification access, media sessions, microphone, process loopback, the Startup shortcut, the tray)
-src/strawberry_crab/doorways/ notify_watch.py, mpris_watch.py, beat_watch.py + beat_track.py (beat_structure.py: the bar and the section) with its captures beat_pipewire.py (Linux) and beat_loopback.py (Windows), smtc_watch.py and toast_watch.py (Windows), notifications.py (what both notification doorways share) (`strawberry-doorway <name>`, or python -m strawberry_crab.doorways.<name>; `for_system()` says which run where)
+src/strawberry_crab/doorways/ notify_watch.py, mpris_watch.py, beat_watch.py + beat_track.py (beat_structure.py: the bar and the section) with its captures beat_pipewire.py (Linux) and beat_loopback.py (Windows), smtc_watch.py and toast_watch.py (Windows), notifications.py (what both notification doorways share), gesture_watch.py + gesture_track.py (the camera, §26) (`strawberry-doorway <name>`, or python -m strawberry_crab.doorways.<name>; `for_system()` says which run where)
 src/strawberry_crab/assets/icons/  the tray icon PNGs (package data), rendered by scripts/render_icons.py
 src/strawberry_crab/runs.py  runs (§18): Run, RunBook, the event whitelist, `is_stop`; hub.py keeps a Body per socket (protocol v2)
 src/strawberry_crab/approvals.py  approvals (§19): ApprovalBook, the digest, `needed`; confirm.py words the question and keeps the call
@@ -875,9 +890,10 @@ src/strawberry_crab/persona.py  her persona (§21): persona.md parsed, checked a
 src/strawberry_crab/profile.py  what she knows about the user (§22): profile.md, its history, her remember/forget/undo tools
 src/strawberry_crab/ledger.py  her short memory (§23): the user's turns and System 1's notices, one timeline with trust labels
 src/strawberry_crab/inbox.py  her inbox (§24): the notifications she got, in memory only, and the read-only `messages` tools
+src/strawberry_crab/gestures.py  hand gestures (§26): the map and its tiers, /gesture and /hand, the runs; gesturecmd.py `strawberry gestures`
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
-widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, turn.gd, touch.gd, legs.gd, wander.gd, easing.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), approval_card.gd (§19), paths.gd (XDG, the CLI, the version), validate_*.gd
+widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, turn.gd, touch.gd, legs.gd, wander.gd, easing.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), approval_card.gd (§19), gesture_ring.gd (§26), paths.gd (XDG, the CLI, the version), validate_*.gd
                          + strawberry_v2.glb, the shaders/controllers, export_presets.cfg (the Linux binary)
 bin/strawberry           the checkout's shim: runs the CLI from .venv (created with `uv sync --inexact --group gpu` on first use)
 scripts/check_phase1.sh  Phase 1 acceptance: unit tests + headless widget against a real daemon (WIDGET=<binary> for the export)
@@ -1900,3 +1916,138 @@ action, the cooldown, a call that would ask, nothing to do it with), the config 
 a kind, an id, a tier raised by `[approvals] risk` or a confirm list), the broadcast to other bodies and its
 fields, nothing for an untrusted socket, a v1 body untouched, and `/health`. `widget/validate_touch.gd` checks
 the crab's `touch` per poke.
+
+---
+
+## 26. Hand gestures — `strawberry/gestures.py`, `doorways/gesture_watch.py` + `gesture_track.py`
+
+A webcam doorway: a held thumbs up likes the playing track, a swipe skips, an open palm pauses, pointing
+listens. Gestures belong to the brain and the bodies show them; Strawberry owns the camera.
+
+```
+camera ─OpenCV─▶ gesture_watch ─MediaPipe (CPU)─▶ Tracker ─POST /gesture {name, phase, progress}─▶ GestureDesk ─▶ a reflex (actions.py), as a run
+ (one process, opt-in)                                     ─POST /hand {x, y, pinch, open, …}──▶             ─▶ `gesture`, `hand` to the bodies that ask
+```
+
+**One watcher, and only names leave it.** `doorways/gesture_watch.py` is a doorway process like the others
+(`strawberry-doorway gesture_watch`; the tray starts it on Linux and Windows). It is the one place that opens
+the camera. A frame is read, handed to MediaPipe's gesture recogniser (`gesture_recognizer.task`: the hand
+detector, the 21 landmarks and a seven-category classifier in one file) on the CPU in video mode, and dropped;
+it is never written, logged or sent, and no frame or image field exists in any message (`parse_gesture` and
+`parse_hand` refuse unknown fields). What goes to the daemon is a gesture's name, its phase and progress, and
+a hand's palm position, size, pinch, openness, whether it is raised and the wrist and fingertips, as numbers in
+0..1 (x as in a mirror: the user's right is +x; y down). With `[gestures] enabled = false` (the default) the
+process imports neither OpenCV nor MediaPipe, makes no request and only reads its config file's mtime once a
+second; turned on (the tray's *Hand gestures (camera)* row or `strawberry gestures on`, both through
+`configedit` as Message bodies is, then POST /command `reload_gestures` for the daemon), it follows the file
+within a second, and turned off it releases the camera within a second or two. No restart either way.
+
+**When the camera is open** (`[gestures] watch`):
+
+| `watch` | the camera | the trade-off |
+|---|---|---|
+| `always` (default) | open the whole time gestures are on: `idle_fps` (4) frames a second until a hand is up in the zone, then `fps` (15) until two seconds after it went | nothing to press first; the camera's light is on all the while |
+| `armed` | closed until the brain says so: `strawberry gestures arm` (POST /command `arm_gestures`; bind it to a key like `strawberry listen`) or an approval she shows; then open at full rate until `armed_s` (8 s) after the last hand seen, and released | the light means she is looking; one key press before the gestures |
+
+The watcher learns what the brain wants from every reply (`state`: `armed_s` left, the approval a thumb may
+answer, whether any body wants `gesture` or `hand`) and, while it posts nothing, from `GET /gesture` once a
+second (secret-gated: it says whether a question is open). The hand goes out only while a body wants it, at
+most `hand_hz` (15) a second, and `{"present": false}` once when it goes.
+
+**The guards** (`gesture_track.Tracker`, pure code, fed synthetic hands in the tests). The webcam sees the user
+all day, so:
+
+1. *Engagement.* A hand counts only with its wrist above `zone` (0.8 of the frame from the top) and at least
+   `min_size` (0.12 of the frame) big: raised toward the screen, not resting on the desk or across the room.
+   Leaving the zone cancels a hold and forgets a swipe. Whether the user faces the screen is not checked (a face
+   model would cost as much again).
+2. *Hold to confirm.* A shape must be held still (the palm under 0.6 frames a second) for `hold_ms` (400 ms). It
+   goes out as `started`, `progress` (every frame) and `done`; the bodies fill a ring. A moved, changed or dropped
+   hand is `cancelled` with the progress it had reached. A shape the recogniser blinks away for a frame (under
+   0.12 s) is still the same hold. One look is never "still": a hand passing by starts nothing.
+3. *Once per hold.* A shape that fired is latched: it must change, or the hand go, before it can fire again, and
+   nothing fires within 0.8 s of the last.
+4. *Arming* (`arming = true`, off by default): command mode first. A held open palm goes out as `arm`, and
+   for `armed_s` the mapped gestures count; each one keeps it on. The brain checks it too (`not_armed`).
+5. *Swipes* are the palm moving at least 0.22 of the frame across within 0.5 s, at most 0.6 as much up or
+   down, by a hand that had been up and in the zone for 0.3 s before the move began: a hand that only wanders
+   through is no swipe. Only gestures the map uses (and a thumb while a question is open) show a ring at all.
+
+Shapes: `thumb_up`, `thumb_down`, `palm_hold`, `fist_hold`, `point_hold`, `victory_hold` (the recogniser's
+categories, score ≥ 0.5) and `pinch_hold` (geometry: the thumb and index tips together); motions
+`swipe_left`, `swipe_right`.
+
+**What a gesture does** (`gestures.GestureDesk`, in the daemon). Neither the gate nor a model sees it: a
+recognised gesture is already typed. `[gestures.map]` names one of the reflexes voice has, by the gate's tool
+names and the adapters' said reflexes (`gestures.ACTIONS`): `now_playing`, `pause`, `resume`, `skip`,
+`previous`, `volume_up`, `volume_down`, `like`, `play_liked`, and `listen` (the hotkey's push to talk:
+`Daemon.listen`). The shipped map: `thumb_up = "like"`, `swipe_left = "previous"`, `swipe_right = "skip"`,
+`palm_hold = "pause"`, `point_hold = "listen"`; a `[gestures.map]` table replaces it. Every action is of the
+`read` or `playback` tier (§20: what plays and how, undone in a second); anything else in the map (a tool, a
+save, a playlist, a message) is refused when the config loads, with the list (`gestures.check_map`,
+`config._validate_gestures`), so she does not start. At run time `Actor.named` finds the reflex as `act` would
+(a configured music server's adapter, else MPRIS) and `Actor.act_named` makes it the same way (shielded,
+`Guarded`), after `Actor.above` has checked each call its adapter lists (`reflex_tools`) against the tiers:
+an `[approvals] risk` that raises one above `playback`, or a confirm list naming it, and the gesture does
+nothing (a gesture never hands a sentence to the thinker; the log says why). A `done` is a run of its own,
+`source: "gesture"`, never the foreground one (a sentence does not stop it), with the reflex's tool events,
+her line (the fact and a quip, as for a spoken reflex) and one timeline notice (`reflex`, foreign: the fact
+names a track). A gesture that is not mapped, or that nothing here can do (`like` without the Spotify adapter),
+takes no action and writes no notice.
+
+**A thumb on her card** (`[gestures] approvals`, on). While an approval is open a held thumb answers it
+instead of running its mapped action: a thumbs up says yes only to a tier her card takes with a tap (not one in
+`[approvals] hold`, never `destructive`; by default `change`), a thumbs down says no to any. `by` is
+`gesture` (`approvals.BY`, PROTOCOL §13b). The watcher shows a ring only for the thumb that may answer.
+
+**Rate and schema** (`server.gesture`, `hand`). Both routes need the bus secret, `application/json`, and
+`[gestures] enabled` in the daemon (409 otherwise); /gesture takes 30 a second (429 past it) and one action
+per half second (429), /hand 30 a second (past that `dropped: true`, not queued). Both are quiet in the access
+log. `/health.gestures` has counts and the last gesture's name and action, never a position.
+
+**What the bodies get** (PROTOCOL Part 1d). `gesture` (name, phase, progress; on `done` the action and the
+run) and `hand`, each only to a trusted v2 body whose hello listed it in `capabilities.gestures`
+(`hub.gestures_from_hello`, `WidgetHub.send_gesture`); a body without the secret, a v1 body and a body that did
+not ask get nothing of either, in any shape. The crab asks for `gesture` only: a ring beside her
+(`widget/gesture_ring.gd`, under her line, left of the step chip) fills while the user holds, flashes green on
+`done` and fades on a cancel, and as a hold starts she glances toward the middle of the screen, where the user
+and the camera are. The orbs can ask for `hand` to render it.
+
+**Gesture + target (a hook).** A map key may name a target before the gesture, `"music:thumb_up" = "like"`,
+for when the user points at something; `GestureDesk.action_for` takes it over the plain entry when
+`GestureDesk.target()` returns that entity id. Until the body link's targets (`touch` / `target` from the
+bodies) are on main, `target()` returns "" and the plain entries are used.
+
+**Dependencies and the model.** MediaPipe (and the OpenCV it brings) is the optional `gestures` group and
+extra: `uv sync --inexact --group gpu --group gestures`, or `uv tool install 'strawberry-crab[gestures]'`
+(mediapipe 1.x has wheels for Python 3.12 on Linux x86_64 and aarch64, Windows and macOS arm64). Nothing in the
+core imports it (`tests/test_gestures.py` runs the server, the daemon, the doorway and the CLI with both
+missing). The model is not committed: `strawberry gestures fetch` (and `strawberry setup` when gestures are on)
+downloads it from a pinned URL (MediaPipe's `float16/1`), checks its sha256 and puts it in
+`<data>/models/gesture_recognizer.task`. `strawberry gestures status` and `strawberry doctor` say what is
+missing; the watcher says it once and keeps the camera closed.
+
+**Measured** (2026-10-10, synthetic frames, never the camera). The real watcher loop and the real recogniser,
+fed 640×480 frames made in memory: ~51 ms of CPU per second while it looks for a hand (4 frames a second) and
+~183 ms per second at the full 15 (a frame is ~10 ms of CPU; the frames' making is counted, a real camera's
+decoding is not). No VRAM. End to end on a throwaway daemon (port 8797, temp XDG dirs, the fake Spotify over
+stdio) with the real watcher and its poster, a fake camera and a scripted recogniser, and a v2 body asking for
+both: welcome accepted `gestures: ["gesture", "hand"]`; a thumbs up held 1.2 s went `started` and `done` 0.40 s
+later (`like`: the fake server over stdio has no `like_current`, so nothing ran, and the log said so); a swipe
+after the hand settled was `swipe_right` → `skip`: `spotify.next`, her line "Skipped. Now Blue Monday by New
+Order.", `run.completed` in 0.62 s; 34 `hand` messages in the ~2 s the hand was up; the daemon's log had gesture
+names and the tools' counts, no position.
+
+**Not built yet.** The face-toward-the-screen check; tuning on a real camera (the thresholds come from synthetic
+hands); the orbs rendering `hand`; trying it on Windows (OpenCV's default backend there); a target API to fill
+`target()`.
+
+Tests: `tests/test_gestures.py` (a thumbs up held 600 ms, a hold dropped early, swipes and the cooldown, a palm
+arming then pointing, a hand that wanders through low, far or passing, jitter and a blinking label, unmapped
+shapes, a pinch, thumbs for the open question; the map's tier refusal at load and target keys; the routes'
+secret, schema and rate; who gets `gesture` and `hand`; a gesture's run, line and notice; arming in the brain; a
+target's entry; a thumb on her card per tier; a raised tier stopping a reflex, with a fake and the real Spotify
+adapter; `/health`; the watcher with gestures off (no camera, no request), on (names and numbers only, never the
+frame, released when turned off), the hand only when wanted, `watch = "armed"`, MediaPipe or the model missing;
+the core without MediaPipe; the model's digest; and, given `STRAWBERRY_TEST_GESTURE_MODEL`, the real recogniser
+finding no hand in a blank frame), `tests/conftest.py` (`no_real_camera`), `widget/validate_widget.gd` §26.

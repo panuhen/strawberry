@@ -118,6 +118,8 @@ class Body:
     rates: dict[str, Rate] = field(default_factory=lambda: {"touch": Rate(bodylink.TOUCH_PER_S),
                                                             "target": Rate(bodylink.TARGET_PER_S)})
     connected: float = field(default_factory=time.monotonic)
+    gestures: frozenset[str] = frozenset()   # accepted: `gesture` and/or `hand` (gestures.py; trusted v2 only)
+    gestures_asked: bool = False             # its hello mentioned capabilities.gestures (welcome says what it got)
 
     def wants(self, kind: str) -> bool:
         if self.protocol < 2:
@@ -211,6 +213,28 @@ def body_from_hello(data: dict[str, Any], secret: str | None = None) -> Body:
     return body
 
 
+GESTURE_KINDS = ("gesture", "hand")     # PROTOCOL Part 1d
+
+
+def gestures_from_hello(body: Body, data: dict[str, Any]) -> None:
+    """`capabilities.gestures` (PROTOCOL Part 1d): the list of `gesture` and `hand` a body wants. Given only to a
+    trusted v2 body: a gesture's name and where the user's hand is are not for a socket without the bus secret."""
+    if body.protocol < 2:
+        return
+    capabilities = data.get("capabilities") if isinstance(data.get("capabilities"), dict) else {}
+    asked = capabilities.get("gestures")
+    if asked is None:
+        return
+    body.gestures_asked = True
+    wanted = asked if isinstance(asked, list) else []
+    body.gestures = frozenset(k for k in wanted if k in GESTURE_KINDS) if body.trusted else frozenset()
+
+
+def accepted_gestures(body: Body) -> dict[str, list[str]]:
+    """`gestures` for welcome's `accepted` and /health, when the hello mentioned it."""
+    return {"gestures": sorted(body.gestures)} if body.gestures_asked else {}
+
+
 class WidgetHub:
     def __init__(self) -> None:
         self._sockets: set[web.WebSocketResponse] = set()
@@ -246,6 +270,7 @@ class WidgetHub:
         """Record what the hello says about this socket; a v1 hello leaves it a v1 body. `secret`: the
         daemon's bus secret, which the hello must present for input and approvals (body_from_hello)."""
         body = body_from_hello(data, secret)
+        gestures_from_hello(body, data)
         self._bodies[ws] = body
         return body
 
@@ -262,6 +287,7 @@ class WidgetHub:
                 if body.asked_input:
                     row |= body.accepted_input() | {"entities": [e.to_dict() for e in body.entities],
                                                     "inputs": dict(body.inputs)}
+                row |= accepted_gestures(body)
             out.append(row)
         return out
 
@@ -352,3 +378,26 @@ class WidgetHub:
                 log.warning("hub: a run event was not sent (%s)", type(exc).__name__)
             finally:
                 queue.task_done()   # Daemon.perform waits for these (queue.join) before a performance
+
+    def wants_gesture(self, kind: str) -> bool:
+        """Does any open socket take `gesture` or `hand` (the watcher sends the hand only then)?"""
+        return any(kind in self.body(ws).gestures for ws in self._sockets if not ws.closed)
+
+    async def send_gesture(self, message: dict[str, Any]) -> int:
+        """A `gesture` or `hand` message (gestures.py) to every trusted v2 body that asked for its kind; no
+        other socket gets it, in any shape."""
+        kind = str(message.get("type", ""))
+        text = None
+        sent = 0
+        for ws in list(self._sockets):
+            body = self.body(ws)
+            if ws.closed or not body.trusted or kind not in body.gestures:
+                continue
+            text = text or json.dumps(message, ensure_ascii=False)
+            try:
+                await ws.send_str(text)
+                sent += 1
+            except (ConnectionResetError, RuntimeError) as exc:
+                log.warning("dropping widget socket: %s", exc)
+                self._sockets.discard(ws)
+        return sent

@@ -38,6 +38,7 @@ log = logging.getLogger("strawberryd.tray")
 
 NOTIFY_CHILD = "notify_watch"     # the doorway that reads [notifications] body at its start
 NOTIFY_CHILDREN = (NOTIFY_CHILD, "toast_watch")   # ... on Linux, and on Windows
+GESTURE_CHILD = "gesture_watch"                   # reads [gestures] from the file the tray's Gestures row writes
 LOG_ROTATE_BYTES = 5 * 1024 * 1024                # Windows: a child's log is moved to .1 past this
 
 
@@ -79,8 +80,8 @@ def child_specs(port: int, config: Path | None, widget: bool = True,
     children = [Child("daemon", daemon)]
     for module in (doorway_modules.for_system() if doorways is None else doorways):
         argv = [python, "-m", f"strawberry_crab.doorways.{module}", "--daemon", url]
-        if config and module in NOTIFY_CHILDREN:
-            argv += ["--config", str(config)]      # the file "Message bodies" writes, not the XDG one
+        if config and module in (*NOTIFY_CHILDREN, GESTURE_CHILD):
+            argv += ["--config", str(config)]      # the file "Message bodies" and "Gestures" write, not the XDG one
         children.append(Child(module, argv))
     if not widget:
         return children

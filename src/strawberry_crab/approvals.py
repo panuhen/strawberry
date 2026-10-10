@@ -63,7 +63,7 @@ ALWAYS = frozenset({"sends", "destructive"})       # these wait for a yes whatev
 # by the tier (WIRING §20).
 UNDER_FOREIGN = frozenset({"read", "playback"})
 OUTCOMES = ("yes", "no", "timeout", "cancelled", "superseded")
-BY = ("voice", "typed", "body", "ui")
+BY = ("voice", "typed", "body", "ui", "gesture")   # gesture: a held thumb (gestures.py)
 HISTORY = 50
 TICK_S = 0.25          # how often a wait past its expiry looks again while the user is speaking
 

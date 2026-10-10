@@ -21,6 +21,7 @@ from .confirm import Held
 from .config import Config
 from .contract import Performance
 from .events import CannedReactor, Event, Reactor
+from .gestures import GestureDesk
 from .hub import WidgetHub
 from .learning import IdleTrainer
 from .ledger import Ledger
@@ -161,6 +162,8 @@ class Daemon:
             self.toolbox.risks = dict(self.config.approvals.risk)
         self.dropped_at = -1e9   # when a held call was last dropped by silence or a no (confirm.LATE_S)
         self.unmade_line = ""    # "I stopped before doing it…", for the sentence that overtook a yes
+        # Hand gestures from the camera doorway (gestures.py, WIRING.md §26): straight to the reflexes, as runs.
+        self.gestures = GestureDesk(self)
         # Resume from suspend (logind on the system bus; Windows' power notification): the models
         # are loaded again before the first notification needs them (wake.py, winwake.py). No bus,
         # no registration: one log line, nothing else.
@@ -926,7 +929,8 @@ class Daemon:
         return performance, sent
 
     # What the ledger says the user said when the answer was not a sentence of theirs.
-    ANSWERED_ON = {"body": "(answered {} on her card)", "ui": "(answered {} in the Brain UI)"}
+    ANSWERED_ON = {"body": "(answered {} on her card)", "ui": "(answered {} in the Brain UI)",
+                   "gesture": "(answered {} with a thumb)"}
 
     def hold(self, held: Held, run: Run | None) -> Approval:
         """Wait for a yes to `held` (confirm.py, approvals.py): its approval opens on `run`

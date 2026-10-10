@@ -179,6 +179,7 @@ The settings you are most likely to change:
 | `[ledger]` | `turns`, `notices`, `window_minutes`, `foreign_minutes` | her short memory: your last exchanges (8) and what she reacted to on her own (8), none older than 60 minutes; for 10 minutes after a sender's or a track's name, a change asks first |
 | `[messages]` | `enabled`, `keep`, `max_age_hours` | her inbox for "any new messages?": on, at most 100 notifications, none older than 24 hours, in memory only; message text only as `[notifications] body` allows |
 | `[touch]` | `target_s`, `cooldown_s`, `<entity>.<touch>` | what you point at on a body stays meant for 8 s after the body last said so; touch actions at least 1 s apart; the action map, e.g. `music.flick = "next"` (none by default: a touch changes nothing) |
+| `[gestures]` | `enabled`, `watch`, `camera`, `arming`, `map` | hand gestures through the webcam (off); see [Hand gestures](#hand-gestures-optional) |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
 Her persona is a file of its own: copy the shipped `persona.md` (in the package's `data/` folder,
@@ -288,6 +289,10 @@ voices in the room are never kept, and no sentence goes into a log. `strawberry 
 what is there, `strawberry outcomes --clear` deletes it. What she learned from it is kept in
 `~/.local/share/strawberry/gate/learned.json`, also readable only by you;
 `strawberry learning forget` deletes it.
+
+The webcam is never opened unless you turn [hand gestures](#hand-gestures-optional) on. Then one
+watcher process reads it, frames stay in that process's memory for a single look and are never
+stored, logged or sent, and only gesture names and a few numbers about your hand leave it.
 
 ## Learning
 
@@ -460,6 +465,59 @@ strangers' text (notes quote web pages and other people): once she has read one,
 context leaves that conversation and anything that would change something waits for your yes,
 as after a web search. Your query goes to your recall server; the log says how many notes came
 back and how long it took, never the query or a note.
+
+## Hand gestures (optional)
+
+With a webcam she can take a few commands by hand: hold a thumbs up to like the playing track, swipe
+to the next or previous one, hold an open palm to pause, point to talk to her (as the hotkey does). A
+held thumbs up or down also answers the question on her card. Off by default. To try it:
+
+```bash
+uv sync --inexact --group gpu --group gestures    # in a checkout; installed: uv tool install --force 'strawberry-crab[gestures]'
+strawberry gestures fetch                         # the recogniser's model, ~8 MB, sha256 checked
+strawberry gestures on                            # or the tray's "Hand gestures (camera)" row
+strawberry gestures status                        # what is on, what is missing
+```
+
+Raise your hand toward the screen, above the bottom fifth of the camera's view, and hold the shape
+still for a moment: a ring beside her fills (0.4 s), and the gesture counts when it is full. Lower
+your hand to cancel. A shape counts once; change it or lower your hand to give it again. A swipe is
+the hand moving across a quarter of the view, after it has been up for a moment. In a mirror's
+sense: a swipe to your right is the next track.
+
+```toml
+[gestures]
+enabled = true
+camera = ""           # "" = the first camera; "1" or "/dev/video2" for another
+watch = "always"      # or "armed" (below)
+arming = false        # true: hold an open palm first to turn commands on for armed_s (8 s)
+
+[gestures.map]        # a gesture -> one of her reflexes; this table replaces the default one
+thumb_up = "like"
+swipe_left = "previous"
+swipe_right = "skip"
+palm_hold = "pause"
+point_hold = "listen"
+```
+
+The gestures are `thumb_up`, `thumb_down`, `palm_hold`, `fist_hold`, `point_hold`, `victory_hold`,
+`pinch_hold`, `swipe_left`, `swipe_right`; the actions `now_playing`, `pause`, `resume`, `skip`,
+`previous`, `volume_up`, `volume_down`, `like` (needs the Spotify add-on), `play_liked` and
+`listen`. Only these: a gesture changes what plays and how, and nothing that would ask for your yes.
+A map naming anything else (saving tracks, a playlist, a message) stops her from starting, with the
+reason. A thumbs up answers her card only for a question it may answer with a tap (not a `sends` or
+`destructive` one: those need your voice, your typing or a press-and-hold); a thumbs down may refuse
+any. `[gestures] approvals = false` turns that off.
+
+**The camera.** A separate watcher process owns it, and nothing else opens it. It runs MediaPipe
+on the CPU (about 5 % of one core while it looks for a hand, about 18 % while a hand is up), keeps
+each frame in memory only for the one look it takes, and never stores, logs or sends a frame. What
+leaves it is a gesture's name and where your hand is, as a few numbers, and that goes only to the
+daemon and to her bodies that ask for it (with the bus secret), never to a model. With `watch =
+"always"` the camera is on, and its light with it, all the while gestures are on, looking a few times
+a second for a raised hand. With `watch = "armed"` it stays off until you run `strawberry gestures
+arm` (bind it to a key, as `strawberry listen` is) or she shows a question, and goes off again a few
+seconds after your hand is gone. Turning gestures off releases the camera within a second or two.
 
 ## Developers
 

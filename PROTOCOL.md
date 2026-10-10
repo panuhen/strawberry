@@ -9,7 +9,7 @@ language, without importing any brain code.
 the code and cites it as `file:line`. Part 1b is the part of protocol v2 that is built (runs and
 their events, stopping a run, approvals and their answers, the clock in ping and pong); it cites
 functions rather than lines. Part 1c is the built input from bodies: the entities a body draws, and the
-`touch` and `target` it sends.
+`touch` and `target` it sends. Part 1d is the gesture family (`gesture` and `hand`, brain → body), as built.
 Part 2 is the rest of v2, **PROPOSED**: designs for new message families, not code. Each of its
 sections says in its heading whether it is proposed or partly built.
 
@@ -47,6 +47,7 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 | `POST /probe` | none | per-slot timings | `strawberry doctor --talk`; loopback clients only (403 otherwise) | `server.py:316-327` |
 | `GET /health` | – | status object (below); without the bus secret only whether she is up | the tray (every 2 s), `strawberry doctor`, the check scripts' liveness polls | `server.py` `health` |
 | `GET /config` | – | the effective settings; 403 without the bus secret | inspection (curl) | `server.py` `config` |
+| `POST /gesture`, `POST /hand`, `GET /gesture` | a gesture's name and phase; a hand's position (Part 1d) | `{"sent": n, "state": {…}}`; 409 while `[gestures]` is off, 429 past the rate | `doorways/gesture_watch.py` | `server.py` `gesture`, `hand`, `gesture_state` |
 | `GET /ws` | – | websocket upgrade | bodies | `server.py:350-371` |
 | `POST /ui-token`, `/ui/...` | – | the Brain UI: a one-time login token, then a page and its own API under a session (WIRING.md §17) | `strawberry ui`, the user's browser | `brainui.py` |
 
@@ -54,7 +55,8 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 `{"error": "<reason>"}` (`server.py:121-122`).
 
 **Every POST needs the bus secret** (§1.4) in the `X-Strawberry-Secret` header: `/event`, `/perform`,
-`/tempo`, `/command`, `/listen`, `/probe` and `/ui-token`, and any POST to a path that has no route.
+`/tempo`, `/command`, `/listen`, `/probe`, `/gesture`, `/hand` and `/ui-token`, and any POST to a path that
+has no route (and `GET /gesture`, which says whether a question is open).
 Without it the answer is 403 `{"error": "…", "reason": "no_secret"}`, with a wrong one `"reason":
 "bad_secret"`, and nothing happens. **The reads need it too.** `GET /config` (the server commands, their
 environment and headers, paths, her persona) is 403 the same way. `GET /health` without it answers 200
@@ -133,6 +135,7 @@ before. Field by field:
 | `token_rate` | `tokens_per_s`, `tokens` | – |
 | `approval.request`, `approval.resolved` | nothing: never sent | all |
 | `touched`, `targeted` (Part 1c) | nothing: never sent | all |
+| `gesture`, `hand` (Part 1d) | nothing: never sent | all |
 | the first-run privacy note (§2.1) | nothing: it waits for a body with the secret | all |
 
 Every run event keeps `type`, `run_id`, `seq` and `t`; a v2 body still gets only the families it asked
@@ -490,6 +493,7 @@ The v1 fields and the version check of §2.1 stay as they are. Of the v2 fields 
 | `secret` | the bus secret (§1.4). Without it `cancel`, `approvals` and `approval` are not given, whatever the hello asks, and performances and phases come as their shape (§1.4) |
 | `capabilities.entities`, `capabilities.sends.touch`, `capabilities.sends.target` | what it draws and the input it reports: Part 1c. `touch` and `target` in `capabilities.phases` ask for `touched` and `targeted` (§1c.4), for a trusted body only |
 | `capabilities.speech.bubble` | `true`: it shows a performance's `text` (her bubble). Only the one-time privacy note (§2.1) looks at it today: it goes to a body that shows text, and a v2 body without this flag (the orbs) neither gets it nor uses it up. A v1 body counts as showing text |
+| `capabilities.gestures` | a list of `gesture` and `hand`: the hand gesture messages it wants (Part 1d). Given only with the bus secret; `welcome`'s `accepted.gestures` says what it got (only when the hello mentioned it) |
 
 Every other capability of §10 is accepted and ignored for now. The brain answers a v2 hello that is
 not refused (§2.1) with `welcome` (`server.py` `welcome`), on that socket only:
@@ -513,7 +517,8 @@ open id and tier, counts per outcome; never a prompt or an argument).
 
 Every input the brain handles is a **run** (`runs.py`): a sentence the user says or types
 (`source` `voice` or `typed`; one at a time, the *foreground* run) or a notification it reacts to
-(`notification`, never foreground, never stopped). `job` is reserved. A run goes through
+(`notification`, never foreground, never stopped), or a hand gesture's reflex (`gesture`, Part 1d; never
+foreground either). `job` is reserved. A run goes through
 
 ```
 routing → thinking ⇄ tool → speaking → awaiting_approval → (tool) → speaking → completed | failed | cancelled
@@ -697,7 +702,8 @@ most if neither comes.
 | `superseded` | the user said something else, or a newer question replaced it | `run.cancelled` (`superseded`); her next line starts "I've left that, then." |
 
 `by` is there only for `yes` and `no`: `voice` (said), `typed` (the widget's box, `/event`), `body` (a
-card), `ui` (the Brain UI). Every body with `approvals` gets the outcome, the one that answered
+card), `ui` (the Brain UI), `gesture` (a held thumb, Part 1d: a yes only to a tier without `hold`, never
+`destructive`; a no to any). Every body with `approvals` gets the outcome, the one that answered
 included, and hides the card on it.
 
 ### The answer (body → brain)
@@ -952,6 +958,68 @@ top-level `input` has `targets` (the target now by body and entity id, its age, 
   `targeted`, the `touch` and `target` phase families, `input.refused` reasons `not_declared`,
   `unknown_field`, `bad_value`, `unknown_entity`, `bad_entities`. Replaces the proposed §14 `touch` and
   `point`.
+
+# Part 1d — Gestures, as built (brain → body)
+
+The brain owns the camera (WIRING §26): one watcher process reads it and posts gesture names and a few
+numbers about the hand; frames never leave that process. A recognised gesture goes straight to a reflex,
+never to a model. Bodies only show what the hand does: a ring that fills while a shape is held, a hand drawn
+where the user's is. Two message types, each to a v2 body that listed it in `capabilities.gestures` and
+whose hello presented the bus secret (§1.4); no other socket gets either, in any shape.
+
+```json
+{"type": "hello", "protocol": 2, "secret": "…", "capabilities": {"gestures": ["gesture", "hand"]}}
+{"type": "welcome", "protocol": 2, "accepted": {"phases": [], "cancel": false, "gestures": ["gesture", "hand"]}, "trusted": true}
+```
+
+`accepted.gestures` is in `welcome` (and in `/health`'s `bodies` row) only when the hello mentioned
+`capabilities.gestures`; without the secret it is `[]`. Unknown names in the list are dropped.
+
+## `gesture`
+
+```json
+{"type": "gesture", "t": 17683.316, "name": "thumb_up", "phase": "started", "progress": 0.0}
+{"type": "gesture", "t": 17683.52, "name": "thumb_up", "phase": "progress", "progress": 0.5}
+{"type": "gesture", "t": 17683.716, "name": "thumb_up", "phase": "done", "progress": 1.0, "action": "like"}
+{"type": "gesture", "t": 17686.052, "name": "swipe_right", "phase": "done", "progress": 1.0, "action": "skip", "run_id": "r-1"}
+{"type": "gesture", "t": 17690.1, "name": "palm_hold", "phase": "cancelled", "progress": 0.47}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `t` | number | brain monotonic time (§12.1) |
+| `name` | `thumb_up` `thumb_down` `palm_hold` `fist_hold` `point_hold` `victory_hold` `pinch_hold` `swipe_left` `swipe_right` `arm` | the gesture. The shapes are held; the swipes are motions (they come as `done` alone). `arm` is the raised open palm that turns command mode on (`[gestures] arming`). x is as in a mirror: `swipe_right` is a move to the user's right |
+| `phase` | `started` \| `progress` \| `done` \| `cancelled` | a shape held: `started`, then `progress` about every frame (15 a second), then `done` when it was held `[gestures] hold_ms` (400 ms), or `cancelled` when the hand moved, changed or dropped first |
+| `progress` | number 0..1 | how far the hold is: fill a ring with it. `done` is 1; `cancelled` carries where it stopped |
+| `action` | string, only on `done` | what the brain did with it: one of the reflex names (`now_playing` `pause` `resume` `skip` `previous` `volume_up` `volume_down` `like` `play_liked` `listen`), `yes` or `no` (a thumb answered the open approval, §13b, `by: "gesture"`), or `arm`. Absent: nothing was done (not mapped, not armed, a thumb that may not answer this question) |
+| `run_id` | string, only on `done` | the run the reflex is (`source: "gesture"`, §10b; for an answer, the run that asked). Its events come as for any run; its performance carries `source: "gesture"` |
+
+Only gestures the user's map uses produce a ring at all, and a thumb only while a question is open that it may
+answer. A body should show `started` and `progress` as a filling ring near the avatar, `done` briefly as a full
+one, and let `cancelled` fade; after a second with no event the hold is over. A `gesture` sent by a body is
+something else (Part 2 §14's proposal for touch-screen gestures): this one goes brain to body only.
+
+## `hand`
+
+```json
+{"type": "hand", "t": 17683.25, "present": true, "x": 0.506, "y": 0.483, "size": 0.25, "pinch": 0.0, "open": 1.0,
+ "engaged": true, "points": {"wrist": [0.5, 0.575], "thumb": [0.405, 0.445], "index": [0.465, 0.338],
+ "middle": [0.5, 0.325], "ring": [0.533, 0.343], "pinky": [0.565, 0.375]}}
+{"type": "hand", "t": 17685.5, "present": false}
+```
+
+| Field | Meaning |
+|---|---|
+| `present` | `false` once when the hand is gone (nothing else comes with it) |
+| `x`, `y` | the palm's centre, 0..1 of the camera's view, x as in a mirror (the user's right is 1), y down |
+| `size` | the hand's extent, 0..1 of the view: nearer is bigger |
+| `pinch` | 0 apart … 1 the thumb's and index's tips together |
+| `open` | the share of the four fingers stretched (0, 0.25 … 1) |
+| `engaged` | raised into the zone the gestures count in (WIRING §26); a hand that is not still goes out |
+| `points` | the wrist and the five fingertips, each `[x, y]` like `x`, `y` |
+
+At most `[gestures] hand_hz` (15) a second, and only while some body wants it: the watcher sends nothing
+for `hand` when none does. Numbers, booleans and these names only: never an image, never a frame.
 
 ---
 

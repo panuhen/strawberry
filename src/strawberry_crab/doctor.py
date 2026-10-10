@@ -391,6 +391,21 @@ def check_voice(config, probes: Probes) -> list[Check]:
                   f"strawberry voices {config.speech.voice} (or strawberry setup)")]
 
 
+def check_gestures(config) -> list[Check]:
+    """The camera doorway (WIRING.md §26): off is fine (opt-in); on, it needs MediaPipe and its model. Nothing
+    here opens the camera."""
+    from . import gestures
+
+    if not config.gestures.enabled:
+        return [Check(OK, "gestures", "off (opt-in: strawberry gestures on, or the tray's Hand gestures row)")]
+    deps = gestures.mediapipe_missing()
+    if deps:
+        return [Check(FAIL, "gestures", f"on, but {deps.split(':')[0]}", deps.split(": ", 1)[1])]
+    if not gestures.model_ready():
+        return [Check(FAIL, "gestures", f"on, but the model is not at {gestures.model_file()}", "strawberry gestures fetch")]
+    return [Check(OK, "gestures", f"on (watch {config.gestures.watch}, camera {config.gestures.camera or 'the first'})")]
+
+
 def check_widget(probes: Probes) -> list[Check]:
     from . import __version__, widgetbin
 
@@ -845,6 +860,7 @@ def run_checks(probes: Probes | None = None) -> tuple[list[Check], Any]:
     checks += check_gpu(config, probes)
     checks += check_whisper(config, probes)
     checks += check_voice(config, probes)
+    checks += check_gestures(config)
     checks += check_widget(probes)
     if probes.system == "win32":
         return _windows_checks(checks, config, probes), config

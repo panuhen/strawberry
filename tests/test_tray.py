@@ -61,7 +61,7 @@ def test_the_rows_are_the_crabs_menu_plus_show_hide_and_a_status_line():
     assert [(r.id, r.action) for r in rows] == [
         (1, "status"), (2, "hide"), (3, "chat"), (4, "separator"), (5, "mute"), (6, "quiet"),
         (7, "submenu"), (8, "submenu"), (9, "submenu"), (10, "sleep_now"), (11, "hat"), (12, "on_top"),
-        (50, "submenu"), (60, "router_rollback"), (13, "separator"), (14, "settings_file"), (15, "voices_folder"), (16, "reset_position"),
+        (50, "submenu"), (70, "gestures"), (60, "router_rollback"), (13, "separator"), (14, "settings_file"), (15, "voices_folder"), (16, "reset_position"),
         (17, "separator"), (18, "restart"), (19, "quit")]
     assert rows[0].label == "Idle" and rows[0].enabled is False
     assert rows[1].label == "Hide her"
@@ -136,7 +136,7 @@ def test_the_layout_carries_the_submenus_under_one_root():
     root_id, root_props, children = root
     assert revision == 3 and root_id == 0
     assert root_props["children-display"] == ("s", "submenu")
-    assert [child[1][0] for child in children] == list(range(1, 13)) + [50, 60] + list(range(13, 20))
+    assert [child[1][0] for child in children] == list(range(1, 13)) + [50, 70, 60] + list(range(13, 20))
     assert all(child[0] == "(ia{sv}av)" for child in children)
     volume = children[6][1]
     assert [grandchild[1][0] for grandchild in volume[2]] == [20, 21, 22, 23]
@@ -168,7 +168,7 @@ async def test_getgroupproperties_answers_only_the_ids_asked_for():
     reply = await answer(item, MENU, "GetGroupProperties", "aias", ([2, 19, 31], []))
     assert [entry[0] for entry in reply.body[0]] == [2, 31, 19]      # menu order, submenus in place
     reply = await answer(item, MENU, "GetGroupProperties", "aias", ([], []))
-    assert len(reply.body[0]) == 21 + 4 + 5 + 5 + 5      # the rows plus the four submenus
+    assert len(reply.body[0]) == 22 + 4 + 5 + 5 + 5      # the rows plus the four submenus
 
 
 async def test_abouttoshow_refreshes_the_status_row():
@@ -360,20 +360,25 @@ def test_the_children_are_the_daemon_the_doorways_and_the_widget(tmp_path):
 
     dev = lambda: widgetbin.Widget("checkout", Path("/opt/godot"), tmp_path / "widget")
     specs = tray.child_specs(8771, None, resolve_widget=dev, doorways=LINUX)
-    assert [c.name for c in specs] == ["daemon", "mpris_watch", "notify_watch", "beat_watch", "widget"]
+    assert [c.name for c in specs] == ["daemon", "mpris_watch", "notify_watch", "beat_watch", "gesture_watch", "widget"]
     python = specs[0].argv[0]
     assert all(c.argv[0] == python for c in specs)          # one interpreter, nothing from a checkout
     assert specs[0].argv[1:] == ["-m", "strawberry_crab.strawberryd", "--port", "8771"]
     assert specs[1].argv[1:] == ["-m", "strawberry_crab.doorways.mpris_watch", "--daemon", "http://127.0.0.1:8771"]
     assert specs[3].argv[1:] == ["-m", "strawberry_crab.doorways.beat_watch", "--daemon", "http://127.0.0.1:8771"]
-    assert specs[4].argv[1:] == ["-m", "strawberry_crab", "widget"]  # developer mode: the CLI imports and runs godot
-    assert specs[4].env["STRAWBERRYD_PORT"] == "8771"
+    assert specs[4].argv[1:] == ["-m", "strawberry_crab.doorways.gesture_watch", "--daemon", "http://127.0.0.1:8771"]
+    assert specs[5].argv[1:] == ["-m", "strawberry_crab", "widget"]  # developer mode: the CLI imports and runs godot
+    assert specs[5].env["STRAWBERRYD_PORT"] == "8771"
     # Windows has no system Python for the widget's idle helper: it gets this interpreter.
-    assert specs[4].env.get("STRAWBERRY_PYTHON") == widgetbin.idle_python()
+    assert specs[5].env.get("STRAWBERRY_PYTHON") == widgetbin.idle_python()
     quiet =tray.child_specs(8771, None, widget=False, resolve_widget=dev, doorways=LINUX)
-    assert [c.name for c in quiet][-1] == "beat_watch"
+    assert [c.name for c in quiet][-1] == "gesture_watch"
     config = tmp_path / "c.toml"
     assert tray.child_specs(8771, config, resolve_widget=dev)[0].argv[-2:] == ["--config", str(config)]
+    # The gesture doorway reads the file the tray's Gestures row writes (WIRING.md §26).
+    gesture = next(c for c in tray.child_specs(8771, config, widget=False, resolve_widget=dev, doorways=LINUX)
+                   if c.name == "gesture_watch")
+    assert gesture.argv[-2:] == ["--config", str(config)]
 
 
 def test_each_system_gets_its_own_doorways(tmp_path):
@@ -383,7 +388,7 @@ def test_each_system_gets_its_own_doorways(tmp_path):
     names = [c.name for c in tray.child_specs(8771, None, widget=False, resolve_widget=dev)]
     assert names == ["daemon", *doorways.for_system()]
     assert doorways.for_system("linux") == LINUX
-    assert doorways.for_system("win32") == ("smtc_watch", "toast_watch", "beat_watch")   # WINDOWS.md
+    assert doorways.for_system("win32") == ("smtc_watch", "toast_watch", "beat_watch", "gesture_watch")   # WINDOWS.md
     assert doorways.for_system("darwin") == ()
     windows = tray.child_specs(8771, None, widget=False, resolve_widget=dev, doorways=doorways.for_system("win32"))
     assert windows[1].argv[1:] == ["-m", "strawberry_crab.doorways.smtc_watch", "--daemon", "http://127.0.0.1:8771"]
@@ -408,7 +413,7 @@ def test_no_widget_to_run_leaves_the_rest(tmp_path, caplog):
     def missing():
         raise widgetbin.WidgetMissing("no widget binary at X. Get it with: strawberry widget --fetch")
 
-    assert [c.name for c in tray.child_specs(8771, None, resolve_widget=missing, doorways=LINUX)][-1] == "beat_watch"
+    assert [c.name for c in tray.child_specs(8771, None, resolve_widget=missing, doorways=LINUX)][-1] == "gesture_watch"
     assert "strawberry widget --fetch" in caplog.text
 
 

@@ -382,3 +382,105 @@ class Actor:
     def stats(self) -> dict[str, Any]:
         return {"enabled": self.config.enabled, "acted": self.acted, "failed": self.failed, "deferred": self.deferred,
                 "last": self.last}
+
+    # --- a reflex by name, with no sentence: gestures (gestures.py, WIRING.md §26) -----------------------
+
+    async def named(self, action: str) -> tuple[str, str, Reflex] | None:
+        """The reflex for an action named outright (a gesture's map entry), no gate in between: a configured
+        music server's adapter if it has one (a gate tool's reflex, or a said one whose tool the server lists),
+        else MPRIS's. (server, action, reflex), or None when nothing here does it."""
+        if not self.config.enabled:
+            return None
+        for name, server in self.toolbox.servers.items():
+            if server.topic != MPRIS_TOPIC:
+                continue
+            reflex = self.reflexes.get(name, {}).get(action)
+            if reflex is not None:
+                return name, action, reflex
+            said = (getattr(self.adapters.get(name), "said_reflexes", None) or {}).get(action)
+            if said is None:
+                continue
+            needs, reflex = said
+            try:
+                await server.ensure()
+                listed = {t.name for t in server.tools}
+            except Exception as exc:   # not answering: MPRIS may still do it, below
+                log.info("actions: %s cannot do %s (%s)", name, action, exc)
+                continue
+            if needs in listed:
+                return name, action, reflex
+        if self.mpris is not None:
+            reflex = self.mpris.reflexes().get(action)
+            if reflex is not None:
+                return "mpris", action, reflex
+        return None
+
+    def above(self, server: str, action: str, tiers: tuple[str, ...]) -> str:
+        """Why a reflex may not run for a gesture ("" when it may): one of its calls (its adapter's
+        `reflex_tools`) is of a tier outside `tiers`, or waits for a yes, or the adapter does not say which
+        calls it makes. MPRIS's reflexes only change what plays and how."""
+        if server == "mpris":
+            return ""
+        tools = (getattr(self.adapters.get(server), "reflex_tools", None) or {}).get(action)
+        if not tools:
+            return "its adapter does not list the calls it makes (reflex_tools)"
+        for tool in tools:
+            tier = self.toolbox.risk(server, tool) if hasattr(self.toolbox, "risk") else "change"
+            if tier not in tiers:
+                return f"{server}.{tool} is of the {tier} tier"
+        if self.asks_first(server, action):
+            return "one of its calls waits for a yes (a confirm list)"
+        return ""
+
+    async def act_named(self, action: str, found: tuple[str, str, Reflex], on_call: OnCall | None = None,
+                        tiers: tuple[str, ...] = ("read", "playback")) -> Outcome | None:
+        """Do `found` (from `named`) as `act` does a reflex: shielded once under way, its calls guarded, never
+        asking. None when it may not run here (`above`: a tier above `tiers`, or a call that waits for a yes)
+        or a call it made was refused: a gesture hands nothing to the thinker; it does nothing, and the log
+        says why."""
+        server, tool, reflex = found
+        why = self.above(server, action, tiers)
+        if why:
+            log.info("actions: a gesture's %s.%s is not run: %s", server, action, why)
+            return None
+        started = time.perf_counter()
+        if on_call is not None:
+            on_call("started", server, tool)
+        guarded = Guarded(self.toolbox)
+        work = asyncio.ensure_future(asyncio.wait_for(reflex(guarded, server), self.config.timeout_s))
+        timed_out = False
+        try:
+            outcome = await asyncio.shield(work)
+        except asyncio.TimeoutError:
+            timed_out = True
+            verb = tool.replace("_", " ")
+            outcome = Outcome(f"tried to {verb}", f"I tried to {verb}, but {server} did not answer in time.", False)
+        except asyncio.CancelledError:
+            ok = False
+            try:
+                ok = (await work).ok
+            except Exception:   # noqa: BLE001 - a timeout or an error: it is reported as failed
+                pass
+            if on_call is not None:
+                on_call("completed", server, tool, ok, "" if ok else "failed")
+            raise
+        if guarded.refused:
+            if on_call is not None:
+                on_call("completed", server, tool, False, "refused")
+            log.warning("actions: a gesture's %s.%s called %s, which waits for a yes; stopped there", server, tool,
+                        guarded.refused)
+            return None
+        if on_call is not None:
+            on_call("completed", server, tool, outcome.ok, "" if outcome.ok else "timeout" if timed_out else "failed")
+        ms = (time.perf_counter() - started) * 1000
+        self.acted += 1
+        if not outcome.ok:
+            self.failed += 1
+        self.last = {
+            "asked": "(a gesture)", "tool": tool, "server": server, "did": outcome.did, "fact": outcome.fact,
+            "ok": outcome.ok, "ms": round(ms, 1),
+            "calls": [self.toolbox.shown(c) if hasattr(self.toolbox, "shown") else c.to_dict() | {"text": c.text[:200]}
+                      for c in outcome.calls],
+        }
+        log.info("actions: a gesture -> %s.%s: %s -> %r (%.0f ms)", server, tool, outcome.did, line(outcome.fact), ms)
+        return outcome

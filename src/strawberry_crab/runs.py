@@ -35,7 +35,7 @@ from typing import Any
 
 log = logging.getLogger("strawberryd.runs")
 
-SOURCES = ("voice", "typed", "notification", "job")       # job: reserved for scheduled work
+SOURCES = ("voice", "typed", "notification", "gesture", "job")   # job: reserved for scheduled work
 FOREGROUND = ("voice", "typed")                          # one at a time (Daemon.handle_voice)
 TERMINAL = {"run.completed": "completed", "run.failed": "failed", "run.cancelled": "cancelled"}
 STATE_OF = {"routing": "routing", "thinking": "thinking", "tool.started": "tool", "tool.completed": "thinking",
@@ -66,7 +66,7 @@ CODES: dict[tuple[str, str], frozenset[str]] = {
     ("tool.completed", "error"): frozenset({"timeout", "refused", "failed", "unavailable"}),
     ("approval.request", "risk"): frozenset({"read", "playback", "change", "sends", "destructive"}),
     ("approval.resolved", "answer"): frozenset({"yes", "no", "timeout", "cancelled", "superseded"}),
-    ("approval.resolved", "by"): frozenset({"voice", "typed", "body", "ui"}),
+    ("approval.resolved", "by"): frozenset({"voice", "typed", "body", "ui", "gesture"}),
     ("run.completed", "outcome"): frozenset({"spoken", "silent", "nothing"}),
     ("run.failed", "error"): frozenset({"timeout", "backend", "tools", "other"}),
     ("run.cancelled", "reason"): frozenset({"superseded", "stopped", "didnt_catch", "shutdown"}),
