@@ -1,12 +1,14 @@
-# Tests and a package build on every push to main and every pull request, and the tests on
-# Windows too. No GPU wheels, no Ollama, no session bus: tests/conftest.py keeps the tests off
-# the desktop.
+# Tests and a package build on every push to main and every pull request. The Windows suite runs
+# only when started by hand (Actions > ci > Run workflow) until Windows is tested again; the
+# release workflow still runs it before a release. No GPU wheels, no Ollama, no session bus:
+# tests/conftest.py keeps the tests off the desktop.
 name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,6 +28,8 @@ jobs:
   test-windows:
     # The same suite on Windows: the winrt, sounddevice and pywin32 wheels from the lock, real
     # hidden Win32 windows, no microphone, no notification access asked for (tests/conftest.py).
+    # By hand only for now: the Linux work has run ahead of the Windows port (WINDOWS.md).
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
