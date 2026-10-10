@@ -315,7 +315,7 @@ or `{"tempo": {"silent": true}}` when nothing plays.
 | `low_ratio` | number | 0–1 | share of energy below 150 Hz |
 | `density` | number | 0–60 | onsets per second |
 | `loudness_db` | number | −120–10 | the player's stream level |
-| `steady` | boolean, optional | – | the tempo has held; missing means `true` (`server.py:208`, `dance_style.gd:92`) |
+| `steady` | boolean, optional | – | the tempo has held; missing means `true` (`server.py:208`, `dance_style.gd:133`) |
 | `silent` | `true` | – | alone: nothing plays; all other fields absent |
 
 **The bar** (optional group, `server.py` `TEMPO_BAR`; all four or none; `doorways/beat_structure.py` `Bars`):
@@ -337,13 +337,16 @@ or `{"tempo": {"silent": true}}` when nothing plays.
 | `section_since` | number | 0–1e11 | wall-clock time the section began: for a drop, the beat it landed on (to the beat grid when the tempo is sure); for a build or a break, where the rise or the dip started, give or take a beat or two. It can be in the past by more than the detection took: a drop is seen about half a second after it lands, a break after two or three seconds, a build after three or four |
 
 A watcher from before these groups sends neither; a body from before them ignores them (the widget's
-`dance_style.gd` reads only the fields above them). Unknown fields, half a group, a `beat_index` outside
+`dance_style.gd` reads the bar, to put her even beats on the downbeat, and not the section). Unknown fields, half a group, a `beat_index` outside
 the bar or a `next_downbeat` outside the bar after `next_beat` are refused at `/tempo` with 400.
 
 **Phase.** The body computes the beat phase itself every frame from its own wall clock:
-`phase = fposmod((now − next_beat) / period_s, 1)` (`dance_style.gd:111-112`), and the bar phase the
-same way from `next_downbeat` and `beats_per_bar × period_s`. It treats an estimate older than 6 s by
-its own receipt time as gone (`dance_style.gd:18`, `:60`, `:103`). All fields of the first table are
+`phase = fposmod((now − next_beat) / period_s, 1)`, and the bar phase the same way from `next_downbeat`
+and `beats_per_bar × period_s`. Successive estimates differ by the tracker's jitter (tens of ms) and name
+a different beat as `next_beat`, so a body that animates continuously keeps its own beat clock and eases
+each new grid in rather than recomputing from the latest one: the crab counts beats across estimates and
+absorbs each correction over at least 0.35 s (`dance_style.gd` `follow`, `beat_position`; WIRING §4c).
+It treats an estimate older than 6 s by its own receipt time as gone (`dance_style.gd:25`, `:52`, `:143`). All fields of the first table are
 required except `steady`.
 
 **Scheduling a pulse on the beat.** `next_beat` (and `next_downbeat`) is when the beat is in the

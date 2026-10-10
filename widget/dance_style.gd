@@ -15,8 +15,11 @@ extends Node
 ##   sway      slow, quiet, beatless, or a tempo the tracker is not steady on yet. Gentle roll,
 ##             no lock, clip slowed.
 ##
-## Everything is computed from the next beat's wall-clock time, so the moves land on the kick
-## regardless of frame rate. Without a fresh estimate (6 s) she dances the plain clip.
+## Everything is computed from her own beat clock (`beat_position`), which follows the estimates'
+## wall-clock grid, so the moves land on the kick regardless of frame rate. The clock keeps counting
+## across estimates (the beat count and its parity carry on), eases each estimate's small correction in
+## instead of jumping to it, and takes the bar's even beats when the estimate is sure of the bar.
+## Without a fresh estimate (6 s) she dances the plain clip.
 
 const LIFT_BPM := 119.0          # dance_loop: 4.033 s, 8 leg lifts -> one lift per 0.504 s
 const FRESH_S := 6.0
@@ -28,6 +31,10 @@ const MIN_SPEED := 0.65
 const MAX_SPEED := 1.6
 const FADE_S := 0.3              # the moves ease in when she starts and out when the beat goes
 const SWITCH_S := 0.5            # a new style crossfades from the one before over this long
+const EASE_MIN_S := 0.35         # a correction to the beat clock is eased in over at least this long,
+const EASE_RATE := 0.25          # and longer if needed so the clock never runs more than 25 % fast or slow
+const RELOCK_RATIO := 1.15       # a tempo this far from the clock's is a new lock: counted on from where she is
+const BAR_CONFIDENCE := 0.5      # PROTOCOL §4: below this the bar's position is a guess
 const Easing = preload("res://easing.gd")
 const Legs = preload("res://legs.gd")
 
@@ -56,6 +63,15 @@ var since_switch := SWITCH_S
 var last_moves := {}
 var yaw := 0.0                   # the styles' turn on the beat, read by turn.gd
 var legs: Node                   # legs.gd: the taps and stomps go to it as toe lifts
+# The beat clock: beat_position(t) = clock_count + (t - clock_t0) / clock_period, plus clock_offset
+# easing away to 0 from clock_from over clock_ease_s. The whole part counts beats, the rest is the phase.
+var clock_t0 := 0.0              # the latest estimate's next_beat: beat number clock_count
+var clock_period := 0.0          # 0: no clock (nothing playing, or not yet)
+var clock_count := 0
+var clock_offset := 0.0
+var clock_from := 0.0
+var clock_ease_s := EASE_MIN_S
+var clock_seen := 0.0            # when the estimate the clock follows arrived
 
 func setup(owner: Node3D, animation_player: AnimationPlayer, model: Node, blink_controller: Node) -> void:
 	process_priority = 155
@@ -79,8 +95,10 @@ func set_tempo(data: Dictionary, at: float = -1.0) -> void:
 	received_at = at if at >= 0.0 else Time.get_unix_time_from_system()
 	if data.get("silent", false):
 		tempo = {}
+		clock_period = 0.0
 		return
 	tempo = data
+	follow(data, received_at)
 	var pick := choose(data)
 	if pick == candidate:
 		candidate_votes += 1
@@ -128,17 +146,73 @@ func fresh() -> bool:
 func active() -> bool:
 	return widget.state == "dancing" and player.assigned_animation == "dance_loop" and fresh() and style != ""
 
+## Puts an estimate's grid (`next_beat`, `period_s`) on the beat clock at `at`, the time it arrived.
+## The clock stays where it is at that moment; the difference to the new grid is eased away.
+func follow(data: Dictionary, at: float) -> void:
+	var period := float(data.get("period_s", 0.5))
+	var next_beat := float(data.get("next_beat", at))
+	# Even beats from the downbeat, when the estimate is sure of the bar and the bar has an even
+	# number of beats (in three, the parity cannot follow the bar and alternate too).
+	var bar_parity := -1
+	if data.has("beats_per_bar") and float(data.get("downbeat_confidence", 0.0)) >= BAR_CONFIDENCE \
+			and int(data.beats_per_bar) % 2 == 0:
+		bar_parity = posmod(int(data.get("beat_index", 0)), 2)
+	if clock_period <= 0.0 or absf(at - clock_seen) >= FRESH_S:
+		# Nothing to carry on from: start counting at this grid.
+		clock_t0 = next_beat
+		clock_period = period
+		clock_count = maxi(bar_parity, 0)
+		clock_offset = 0.0
+		clock_seen = at
+		return
+	var here := beat_position(at)
+	var count: int
+	var ratio := period / clock_period
+	if ratio > RELOCK_RATIO or ratio < 1.0 / RELOCK_RATIO:
+		# A new tempo: the new beat nearest to where she is now keeps her count.
+		count = roundi(here - (at - next_beat) / period)
+	else:
+		# The new beat nearest to where the clock's grid expected a beat keeps that beat's number.
+		count = clock_count + roundi((next_beat - clock_t0) / ((clock_period + period) / 2.0))
+		if absf(here - (count + (at - next_beat) / period)) > 1.5:
+			count = roundi(here - (at - next_beat) / period)
+	var offset := here - (count + (at - next_beat) / period)
+	if bar_parity >= 0 and posmod(count, 2) != bar_parity:
+		# Onto the bar by one beat, whichever way is shorter: a slide over a few beats, never a jump.
+		count += 1 if offset > 0.0 else -1
+		offset = here - (count + (at - next_beat) / period)
+	clock_t0 = next_beat
+	clock_period = period
+	clock_count = count
+	clock_offset = offset if absf(offset) > 1e-6 else 0.0
+	clock_from = at
+	# smoothstep's steepest slope is 1.5 / clock_ease_s: at most EASE_RATE of the beat rate.
+	clock_ease_s = maxf(EASE_MIN_S, 1.5 * absf(offset) * period / EASE_RATE)
+	clock_seen = at
+
+## Beats since the clock started, continuous: the whole part counts beats, the rest is the phase.
+func beat_position(now: float) -> float:
+	if clock_period <= 0.0:
+		return 0.0
+	var position := float(clock_count) + (now - clock_t0) / clock_period
+	if clock_offset != 0.0:
+		var s := clampf((now - clock_from) / clock_ease_s, 0.0, 1.0)
+		position += clock_offset * (1.0 - s * s * (3.0 - 2.0 * s))
+	return position
+
 ## Beat phase in [0, 1): 0 exactly on a beat.
 func beat_phase(now: float) -> float:
-	var period := float(tempo.get("period_s", 0.5))
-	var next_beat := float(tempo.get("next_beat", now))
-	return fposmod((now - next_beat) / period, 1.0)
+	var position := beat_position(now)
+	return position - floorf(position)
 
-## Beat count parity (0/1), so moves can alternate sides.
+## The beat's number on the clock; its parity (0/1) lets moves alternate sides, even beats from the
+## downbeat when the bar is known.
 func beat_index(now: float) -> int:
-	var period := float(tempo.get("period_s", 0.5))
-	var next_beat := float(tempo.get("next_beat", now))
-	return int(floor((now - next_beat) / period))
+	return floori(beat_position(now))
+
+## The two-beat cycle in [0, 1): 0 on even beats, 0.5 on odd ones.
+func bar_phase(now: float) -> float:
+	return fposmod(beat_position(now) / 2.0, 1.0)
 
 static func pulse(phase: float, sharpness: float) -> float:
 	return exp(-phase * sharpness)
@@ -180,8 +254,9 @@ func _process(delta: float) -> void:
 
 ## One style's moves at this moment, at full strength.
 func moves(name: String, now: float) -> Dictionary:
-	var phase := beat_phase(now)
-	var parity := posmod(beat_index(now), 2)   # 0 or 1 (the index is negative before next_beat)
+	var position := beat_position(now)
+	var phase := position - floorf(position)
+	var parity := posmod(floori(position), 2)   # 0 or 1 (the count can be negative before the first beat)
 	var m := {"pitch": 0.0, "roll": 0.0, "yaw": 0.0, "lift_l": 0.0, "lift_r": 0.0, "squash": 0.0,
 		"wide": 0.0, "happy": 0.0, "squint": 0.0, "speed": clip_speed(),
 		"tap_l": 0.0, "tap_r": 0.0, "stomp_l": 0.0, "stomp_r": 0.0}
@@ -189,9 +264,11 @@ func moves(name: String, now: float) -> Dictionary:
 	match name:
 		"rave":
 			m.squash = 0.3 * pulse(phase, 7.0)
-			var swing := 0.5 - 0.5 * cos(TAU * phase)  # 0 on the beat, 1 between beats
-			m.lift_l = 1.0 * (swing if parity == 0 else 1.0 - swing) * 0.85 + 0.25
-			m.lift_r = 1.0 * (swing if parity == 1 else 1.0 - swing) * 0.85 + 0.25
+			# The arms trade places over two beats: the right one up on even beats, the left on odd
+			# ones. (A swing up and back within each beat, mirrored on odd beats, jumped on every beat.)
+			var swing := 0.5 - 0.5 * cos(PI * (float(parity) + phase))
+			m.lift_l = swing * 0.85 + 0.25
+			m.lift_r = (1.0 - swing) * 0.85 + 0.25
 			# A quick lean onto the beat's side that eases back by the next one (was a sawtooth).
 			var lean := Easing.out(phase / 0.12) * (1.0 - Easing.in_out((phase - 0.12) / 0.88))
 			m.roll = deg_to_rad(3.0) * (1.0 if parity == 0 else -1.0) * lean
@@ -209,7 +286,7 @@ func moves(name: String, now: float) -> Dictionary:
 			m.tap_l = 0.04 * down
 			m.tap_r = 0.04 * down
 		"groove":
-			var bar := fposmod((now - float(tempo.get("next_beat", now))) / (2.0 * float(tempo.get("period_s", 0.5))), 1.0)
+			var bar := fposmod(position / 2.0, 1.0)
 			m.roll = deg_to_rad(5.0) * sin(TAU * bar)
 			m.yaw = deg_to_rad(7.0) * sin(TAU * bar + PI / 2.0)   # turns at the ends of the roll
 			m.squash = 0.18 * pulse(phase, 5.0) * (1.0 if parity == 0 else 0.5)

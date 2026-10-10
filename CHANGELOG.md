@@ -392,6 +392,13 @@ package and the widget binary.
   are back: the Brain UI facelift had cut them off.
 - Dance styles: for the beat before each new tempo estimate's `next_beat` the beat's parity came
   out as −1, so the rave's arms pumped together and the groove's right claw skipped its pump.
+- Her dance no longer stutters. The beat count started again from each new tempo estimate, so
+  when two estimates were an odd number of beats apart her raised claw dropped and the other
+  jumped up, her lean and stomps swapped sides and the groove's roll jumped half a bar; each
+  estimate's jitter also snapped the moves by a few tens of ms. She now keeps her own beat clock
+  that counts on across estimates and eases each correction in over about 0.35 s, and puts her
+  even beats on the downbeat when the beat watcher is sure of the bar. The rave's arms also
+  jumped on every beat by design; they now trade places over two beats. WIRING.md §4c.
 - She can read a page from her web search again. With web-mcp the adapter took each result's
   snippet for its URL, so every page read was refused and she answered from snippets alone. The
   results' URLs are now read from the server's whole answer, before it is compacted and cut
