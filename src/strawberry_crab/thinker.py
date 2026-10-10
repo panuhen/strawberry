@@ -777,7 +777,8 @@ class Thinker:
                     continue
                 # Once strangers' text is in the conversation every call above `playback` waits for a
                 # yes (approvals.needed `foreign`), whatever its confirm list.
-                if spec is not None and self.toolbox.needs_approval(spec.server, spec.name, foreign=tainted or asks):
+                if spec is not None and self.toolbox.needs_approval(spec.server, spec.name, foreign=tainted or asks,
+                                                                 arguments=arguments):
                     # A tool she asks about first (confirm.py, approvals.py): not made, and the thinking
                     # ends here with her question, written by code (after foreign text, the core's own
                     # wording, not the adapter's, which could quote an argument). The call is kept exactly

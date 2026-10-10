@@ -40,6 +40,10 @@ earns once you use it every day:
                     on her approval card, `done` the result
     risks           each tool's approval tier (read / change / sends / destructive), where it is not
                     the default: `reads` and a look-up-only server are `read`, the rest `change`
+    confirm_call    whether one call, by its arguments, asks first (the desktop server: a close asks
+                    unless the app says otherwise); None leaves it to `confirm`
+    any_topic       its said reflexes are read whatever topic the gate gives the sentence (the desktop
+                    server's "open spotify", "lock the screen")
 
 Every one of them is optional; the base class answers "nothing to add" to all of them. An
 adapter is loaded only when a configured server matches it, by name or by an explicit
@@ -142,6 +146,14 @@ class Adapter:
     #: for a tool that sends something to someone, `destructive` for one that deletes or cannot be
     #: undone. Both always wait for a yes; `[approvals] risk` in the config decides over this
     risks: dict[str, str] = {}
+    #: True: `said_reflex` is asked for every sentence the gate does not read as `other`, whatever its topic (the
+    #: desktop server's whole sentences: the gate reads "open spotify" as music, "lock the screen" as system)
+    any_topic: bool = False
+
+    def confirm_call(self, name: str, arguments: dict[str, Any]) -> bool | None:
+        """Does this one call ask first (Toolbox.needs_confirm, with the call's arguments)? None (the default): the
+        server's `confirm` list decides. A `confirm` list in the server's config decides over this."""
+        return None
 
     def risk(self, name: str) -> str | None:
         """The tool's approval tier: `risks`, else `read` for a look-up-only server or a tool in `reads`,

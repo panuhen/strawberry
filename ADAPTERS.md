@@ -161,6 +161,8 @@ An adapter is for a server you use every day, where the generic path is not good
 | `situation_is_foreign` | whether its `situation` line carries text others wrote (a track's name). The situation line is part of the trust boundary: such a line starts the sentence foreign, so every call above `playback` asks. `True` by default |
 | `offer` | when the brain is offered this server's tools: `always`, `topic`, `asked` (above); the config's `offer` decides over it |
 | `reflex_tools` | which of the server's tools each reflex calls: a reflex whose tools would wait for a yes is not run and the brain asks instead |
+| `confirm_call` | whether one call, by its arguments, asks first (`True`/`False`), or `None` to leave it to `confirm`; a `confirm` list in the server's config decides over it. The builtin desktop server's close asks unless the app says `close_asks = false` (WIRING §27) |
+| `any_topic` | `True`: `said_reflex` is asked whatever topic the gate reads in the sentence (never for `other`); the builtin desktop server's "open spotify", "lock the screen" |
 | `volume_level`, `set_volume_level` | the volume read and set as a level 0..1 (staticmethods, both or neither), for the hand gesture slider (WIRING §26); list their tools as `reflex_tools["volume"]`. Without them the slider uses MPRIS |
 | `guide`, `guide_for`, `unavailable` | a paragraph for the brain's rules when its tools are offered (`guide_for`: only for a server that lists the tools it names), or when the server is down |
 | `wanted`, `nudge` | whether a sentence asks for this server outright, and the line added under it |

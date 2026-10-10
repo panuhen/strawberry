@@ -39,6 +39,16 @@ model runs on your own computer through [Ollama](https://ollama.com); nothing is
   `music.flick = "next"` skips the track, `music.grab = "pause"` pauses. Only music commands that never
   need your yes can be mapped (skip, previous, pause, resume, volume, what's playing); she says nothing,
   and her short memory notes what you did. Each poke on the crab counts too (`crab.poke`).
+- **Your apps, the volume, the lock (Linux).** "Open Spotify", "close Firefox": she opens and closes
+  only the apps you list in the Brain UI's **Apps** tab (Spotify may be opened out of the box), opens
+  them by their desktop entry and closes them only politely (the window's close button, or a player's
+  Quit; never by force). Closing asks on her card first unless you untick that. A play with no Spotify
+  open opens it for you ("Opening Spotify…") when Spotify is on the list. "Set the computer volume to
+  30", "system volume down" and "mute the computer" change the computer's own volume (0–100, never a
+  boost); "turn it down" while music plays is still the music's. "Lock the screen" or "lock my
+  computer" locks it at once, and so can a gesture you map to *lock* in the Input tab. Nothing else on
+  the computer: no GPU, brightness or other settings. Closing a window needs `wmctrl` (or an xdotool
+  from 2021 on); without it only a media player that can quit itself closes.
 - **Tools.** You can give her MCP servers (a calendar, notes, Spotify) in the config. None is
   configured out of the box. See [ADAPTERS.md](ADAPTERS.md).
 - **Web search (optional).** With a local SearXNG and its MCP server configured, she searches
@@ -376,6 +386,10 @@ problem, a new router head waiting).
   did nothing; and **Practice mode**, under which gestures and touches are shown and do nothing (not
   saved). **Save** writes
   `~/.config/strawberry/input.toml` (see [Hand gestures](#hand-gestures-optional)), never `config.toml`.
+- **Apps** (under Settings): which apps she may open or close. Every installed app with a search box,
+  ticks for *may open*, *may close* and *ask before closing*, and other names you may say for it.
+  **Save** writes `~/.config/strawberry/apps.toml` (the changes shown first, the old file kept as
+  `apps.toml.bak`), never `config.toml`, and she uses it at once.
 - **System**: the models, where the gate runs, the head in use.
 
 The link works once, within a minute; the page then runs on a cookie that ends after 12 hours

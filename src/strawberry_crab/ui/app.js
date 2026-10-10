@@ -8,7 +8,7 @@
 
 (() => {
   const CSRF = document.querySelector('meta[name="csrf"]').content;
-  const SECTIONS = ["persona", "profile", "runs", "router", "learning", "data", "settings", "input", "system"];
+  const SECTIONS = ["persona", "profile", "runs", "router", "learning", "data", "settings", "input", "apps", "system"];
   const MAX_ROUTES = 100;
   const MAX_RUNS = 50;
   const TERMINAL = { "run.completed": "completed", "run.failed": "failed", "run.cancelled": "cancelled" };
@@ -1106,6 +1106,165 @@
     if (state.profileDraft === null) rerender("profile");
   }
 
+  // --------------------------------------------------------------------------- settings: apps
+
+  // Which apps she may open or close (WIRING.md §27). An app is named by its desktop id (an installed .desktop
+  // file), never by a command line. The list is saved to apps.toml, never config.toml.
+
+  const apps = { view: null, rows: null, edited: false, check: null, search: "", timer: null };
+  const APPS_SHOWN = 150;      // rows drawn without a search (the listed ones always)
+
+  function appsRows(view) {
+    const rows = new Map();
+    for (const a of view.apps) {
+      rows.set(a.id, { id: a.id, name: a.name, aliases: a.aliases.join(", "), open: a.open, close: a.close,
+                       close_asks: a.close_asks, installed: a.installed, listed: true });
+    }
+    for (const e of view.installed) {
+      if (!rows.has(e.id)) rows.set(e.id, { id: e.id, name: e.name, aliases: "", open: false, close: false,
+                                            close_asks: true, installed: true, listed: false });
+    }
+    return [...rows.values()];
+  }
+
+  function appsList(rows) {
+    return rows.filter((r) => r.open || r.close).map((r) => ({
+      id: r.id, name: r.name, aliases: r.aliases.split(",").map((a) => a.trim()).filter(Boolean),
+      open: r.open, close: r.close, close_asks: r.close_asks }));
+  }
+
+  function appsDirty() {
+    return Boolean(apps.view && apps.rows
+      && JSON.stringify(appsList(apps.rows)) !== JSON.stringify(appsList(appsRows(apps.view))));
+  }
+
+  function appsEdited() {
+    apps.edited = true;
+    clearTimeout(apps.timer);
+    apps.timer = setTimeout(checkApps, 400);
+  }
+
+  async function checkApps() {
+    if (!apps.rows) return;
+    try { apps.check = await api("apps/check", { apps: appsList(apps.rows) }); }
+    catch (e) { apps.check = { ok: false, problems: [e.message], diff: [] }; }
+    renderAppsFile();
+  }
+
+  function renderApps() {
+    const root = $("#apps");
+    if (!apps.view) {
+      root.replaceChildren(panel("Apps", null, el("p", { class: "empty", text: "Loading..." })));
+      return;
+    }
+    if (!apps.edited || !apps.rows) apps.rows = appsRows(apps.view);
+    const search = el("input", { type: "search", id: "apps-search", value: apps.search, placeholder: "Search installed apps",
+      "aria-label": "Search installed apps", on: { input: (ev) => { apps.search = ev.target.value; renderAppsTable(); } } });
+    fill(root,
+      panel("Apps", "which apps she may open or close when you ask; nothing else on the computer",
+        el("div", { id: "apps-head" })),
+      panel("Installed apps", "tick what she may do; you may say the app's name or one of its aliases",
+        el("div", { class: "actions" }, search), el("div", { id: "apps-table" })),
+      panel("apps.toml", "saved here, never in config.toml; she reads it again within a second",
+        el("div", { id: "apps-file" })));
+    renderAppsHead();
+    renderAppsTable();
+    renderAppsFile();
+    if (!apps.check) { clearTimeout(apps.timer); apps.timer = setTimeout(checkApps, 0); }
+  }
+
+  function renderAppsHead() {
+    const node = document.getElementById("apps-head");
+    if (!node || !apps.view) return;
+    const f = apps.view.file || {};
+    fill(node,
+      f.error ? el("div", { class: "note berry" }, el("b", { text: "Your apps.toml is not used. " }),
+        "She keeps the list she has until it checks out:", el("ul", null, el("li", { text: f.error }))) : null,
+      el("div", { class: "actions" },
+        chip(f.in_use ? "list from apps.toml" : "the default list: Spotify may open (no apps.toml yet)", f.in_use ? "good" : null),
+        chip(`${apps.view.apps.filter((a) => a.open).length} may open`),
+        chip(`${apps.view.apps.filter((a) => a.close).length} may close`)),
+      el("p", { class: "dim", text: "Say \"open Spotify\" or \"close Firefox\". She opens an app with its desktop entry "
+        + "and closes it only politely (the window's close button, or a player's Quit), never by force. Closing "
+        + "asks on her card first unless you untick \"ask\"." }),
+      el("p", { class: "dim", text: "Always available, no list needed: the computer's volume (\"set the computer "
+        + "volume to 30\", \"mute the computer\") and locking the screen (\"lock the screen\", or a gesture you map "
+        + "to lock in the Input tab)." }));
+  }
+
+  function renderAppsTable() {
+    const node = document.getElementById("apps-table");
+    if (!node || !apps.rows) return;
+    const q = apps.search.trim().toLowerCase();
+    let rows = apps.rows.filter((r) => !q || r.name.toLowerCase().includes(q) || r.id.toLowerCase().includes(q)
+      || r.aliases.toLowerCase().includes(q));
+    const hidden = q ? 0 : Math.max(rows.filter((r) => !r.listed).length - APPS_SHOWN, 0);
+    if (hidden) rows = rows.filter((r, i) => r.listed || i < APPS_SHOWN);
+    const lines = rows.map((r) => {
+      const ask = el("input", { type: "checkbox", checked: r.close_asks, disabled: !r.close,
+        "aria-label": `Ask before closing ${r.name}`, on: { change: (ev) => { r.close_asks = ev.target.checked; appsEdited(); } } });
+      const box = (key, label, after) => el("input", { type: "checkbox", checked: r[key], "aria-label": `${label} ${r.name}`,
+        on: { change: (ev) => { r[key] = ev.target.checked; if (after) after(); appsEdited(); } } });
+      return el("tr", null,
+        el("td", null, el("b", { text: r.name }), " ", el("span", { class: "dim mono", text: r.id }),
+          r.installed ? null : [" ", chip("not installed", "berry", "No such .desktop file now; it stays on the list until you untick it")]),
+        el("td", null, box("open", "May open")),
+        el("td", null, box("close", "May close", () => { ask.disabled = !r.close; })),
+        el("td", null, ask),
+        el("td", null, el("input", { type: "text", value: r.aliases, placeholder: "other names, comma separated",
+          "aria-label": `Other names for ${r.name}`, on: { input: (ev) => { r.aliases = ev.target.value; appsEdited(); } } })));
+    });
+    fill(node,
+      table(["App", "May open", "May close", "Ask before closing", "Aliases"], lines,
+        { empty: q ? "No installed app matches." : "No installed apps found in the application folders." }),
+      hidden ? el("p", { class: "faint", text: `${hidden} more installed apps: search to find them.` }) : null);
+  }
+
+  function renderAppsFile() {
+    const node = document.getElementById("apps-file");
+    if (!node || !apps.view) return;
+    const C = apps.check;
+    const f = apps.view.file || {};
+    const dirty = appsDirty();
+    const diff = ((C && C.diff) || []).map((line) => el("span", {
+      class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : null,
+      text: `${line}\n` }));
+    const save = confirmButton("Save apps.toml", "Save it? She uses it at once", (b) => saveApps(b), "primary");
+    save.disabled = !(C && C.ok && (dirty || !f.in_use));
+    fill(node,
+      el("div", { class: "actions" }, el("span", { class: "dim mono", text: f.path || "apps.toml" }),
+        f.exists ? null : chip("not written yet")),
+      !C ? el("p", { class: "faint", text: "Checking..." })
+        : C.ok ? el("p", null, chip("checks out", "good"), dirty ? " Save it to put it in use." : f.in_use ? " Same as the file." : " Save it to keep this list in apps.toml.")
+          : el("div", { class: "note berry" }, el("b", { text: "Not saved like this:" }), el("ul", null, (C.problems || []).map((p) => el("li", { text: p })))),
+      el("h3", { text: "Changes against the file" }),
+      diff.length ? el("pre", { class: "diff" }, diff) : el("p", { class: "faint", text: "No changes." }),
+      el("div", { class: "actions" }, save,
+        actionButton("Undo my edits", () => { apps.edited = false; apps.rows = null; apps.check = null; renderApps(); }, "ghost")));
+  }
+
+  async function saveApps(button) {
+    button.disabled = true;
+    try {
+      const r = await api("apps/save", { apps: appsList(apps.rows) });
+      toast(r.backup ? "Saved. The old one is kept as apps.toml.bak." : "Saved. She uses it at once.");
+      apps.view = r;
+      apps.edited = false;
+      apps.rows = null;
+      apps.check = null;
+      renderApps();
+    } catch (e) {
+      toast(e.message, true);
+      button.disabled = false;
+    }
+  }
+
+  async function refreshApps() {
+    try { apps.view = await api("apps"); } catch (e) { if (!state.ended) toast(e.message, true); }
+    if (!apps.edited) { apps.rows = null; apps.check = null; rerender("apps"); return; }
+    renderAppsHead();
+  }
+
   // --------------------------------------------------------------------------- settings: input
 
   // Hand gestures from the camera and touch from the bodies. The live view is drawn from the hand's few
@@ -2021,9 +2180,10 @@
   }
 
   const RENDER = { persona: renderPersona, profile: renderProfile, learning: renderLearning, router: renderRouter,
-                   runs: renderRuns, data: renderData, settings: renderSettings, input: renderInput, system: renderSystem };
+                   runs: renderRuns, data: renderData, settings: renderSettings, input: renderInput, apps: renderApps,
+                   system: renderSystem };
   const REFRESH = { persona: refreshPersona, profile: refreshProfile, learning: refreshLearning, router: refreshRoutes,
-                    runs: refreshRuns, data: refreshData, settings: refreshSettings, input: refreshInput,
+                    runs: refreshRuns, data: refreshData, settings: refreshSettings, input: refreshInput, apps: refreshApps,
                     system: refreshSystem };
 
   function show(section, anchor) {

@@ -88,7 +88,7 @@ class Guarded:
     async def call(self, server: str, name: str, arguments: dict[str, Any] | None = None,
                    result_chars: int | None = None) -> ToolResult:
         needs = getattr(self._toolbox, "needs_approval", None)
-        if needs is not None and needs(server, name):
+        if needs is not None and needs(server, name, arguments=dict(arguments or {})):
             self.refused = self.refused or f"{server}.{name}"
             return ToolResult(server, name, False, f"{server}.{name} waits for the user's yes; a reflex does not make it",
                               0.0, arguments=arguments or {})
@@ -179,7 +179,10 @@ class Actor:
             return None
         for name, server in self.toolbox.servers.items():
             adapter = self.adapters.get(name)
-            if adapter is None or server.topic != route.topic or not getattr(adapter, "said_reflexes", None):
+            # An adapter of `any_topic` (the desktop's: "open spotify", "lock the screen") knows its sentences
+            # whatever topic the gate reads in them.
+            topical = server.topic == route.topic or getattr(adapter, "any_topic", False) is True
+            if adapter is None or not topical or not getattr(adapter, "said_reflexes", None):
                 continue
             try:
                 said = adapter.said_reflex(text, route)
@@ -191,7 +194,7 @@ class Actor:
                 continue
             try:
                 await server.ensure()
-                listed = {t.name for t in server.tools}
+                listed = set(getattr(server, "listed", None) or ()) | {t.name for t in server.tools}
             except Exception as exc:   # not answering: the thinker says so
                 log.info("actions: %s cannot do %s (%s); over to the thinker", name, said, exc)
                 continue
@@ -403,12 +406,23 @@ class Actor:
             needs, reflex = said
             try:
                 await server.ensure()
-                listed = {t.name for t in server.tools}
+                listed = set(getattr(server, "listed", None) or ()) | {t.name for t in server.tools}
             except Exception as exc:   # not answering: MPRIS may still do it, below
                 log.info("actions: %s cannot do %s (%s)", name, action, exc)
                 continue
             if needs in listed:
                 return name, action, reflex
+        for name, server in self.toolbox.servers.items():
+            # An `any_topic` adapter's said reflex by its name, only one it lists for gestures (`gesture_reflexes`:
+            # the desktop's "lock", gestures.EXCEPTIONS); its open, close and volume are never a gesture's.
+            adapter = self.adapters.get(name)
+            if server.topic == MPRIS_TOPIC or getattr(adapter, "any_topic", False) is not True:
+                continue
+            if action not in (getattr(adapter, "gesture_reflexes", ()) or ()):
+                continue
+            said = (getattr(adapter, "said_reflexes", None) or {}).get(action)
+            if said is not None:
+                return name, action, said[1]
         if self.mpris is not None:
             reflex = self.mpris.reflexes().get(action)
             if reflex is not None:
