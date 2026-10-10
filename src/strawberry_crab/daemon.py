@@ -42,9 +42,9 @@ from . import wake
 
 log = logging.getLogger("strawberryd")
 
-PERSISTENT_STATES = ("idle", "dancing")
+PERSISTENT_STATES = ("idle", "dancing")  # mirrors widget.gd PERSISTENT (WIRING.md §1)
 # Her answer after reading a message when it would have given the message away (Daemon.message_said).
-MESSAGE_WITHHELD = "{who} wrote in {app}. I can't repeat it word for word with your privacy setting."  # mirrors widget.gd PERSISTENT (WIRING.md §1)
+MESSAGE_WITHHELD = "{who} wrote in {app}. I can't repeat it word for word with your privacy setting."
 
 
 class Daemon:
@@ -814,7 +814,7 @@ class Daemon:
             # She says back what changed in the profile (profile.py); when her reply does not, code adds it.
             extra = profiles.Profile.readback(fact, self.profile_session.changes[changed:])
             fact = f"{fact} {extra}".strip() if extra else fact
-        if self.inbox is not None and outcome.calls:
+        if self.messages_session is not None and outcome.calls:
             fact = self.message_said(fact, outcome)
         performance = decorate(event, Performance(state="talking", text=prefaced(preface, fact),
                                                   emotion=outcome.emotion or "neutral"))

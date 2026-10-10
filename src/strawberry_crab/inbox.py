@@ -166,7 +166,7 @@ class Inbox:
         dropped = 0
         for item in self._items:
             if item.body is not None and not keeps(item.app):
-                item.body, item.why = None, OFF
+                item.body, item.gist, item.why = None, None, OFF
                 dropped += 1
         if dropped:
             log.info("inbox: %d message bodies dropped (their app's body mode is off now)", dropped)
@@ -313,7 +313,7 @@ class MessagesSession:
         mode = self.mode_for(item.app)
         if item.body is not None and mode == "off":
             # The user turned message text off since: the body goes now (Daemon.reload_notifications does the rest).
-            item.body, item.why = None, OFF
+            item.body, item.gist, item.why = None, None, OFF
         who = item.who()
         head = f"{who[:1].upper()}{who[1:]} in {quoted(item.app)}, {when}"
         if item.body is None:
@@ -325,9 +325,9 @@ class MessagesSession:
 
 
 def limit(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:   # NaN too
         return DEFAULT_LIMIT
-    return max(1, min(MAX_LIMIT, int(value)))
+    return max(1, min(MAX_LIMIT, int(value))) if abs(value) < 1e6 else MAX_LIMIT if value > 0 else 1
 
 
 # A sentence about messages or notifications: the only ones offered these tools (offer = "asked").

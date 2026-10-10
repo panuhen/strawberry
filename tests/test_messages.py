@@ -520,3 +520,10 @@ async def test_under_glance_a_read_gives_the_gist_she_said_not_the_text():
     assert CANARY not in text and '"Alex asks about lunch."' in text and text.endswith(inboxes.GIST_RULE)
     daemon.config.notifications = NotificationsConfig(body_apps={"Signal": "react"})   # react: the text, its rule
     assert CANARY in daemon.messages_session.read(item.id)
+    daemon.inbox.drop_bodies(lambda app: False)                                       # switched off: both go
+    assert item.body is None and item.gist is None
+
+
+def test_a_limit_from_the_model_is_clamped():
+    assert [inboxes.limit(v) for v in (None, "5", True, 0, 3, 3.7, 99, float("nan"), float("inf"), -float("inf"))] == \
+        [5, 5, 5, 1, 3, 3, 20, 5, 20, 1]
