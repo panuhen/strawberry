@@ -154,6 +154,7 @@ func sleep_now() -> void:
 func run() -> void:
 	widget = TestWidget.new()
 	widget.look_at = Vector2(190, 340)
+	widget.place_at = Vector2.ZERO   # the middle of the monitor, also with a display (captures)
 	root.add_child(widget)
 	await process_frame
 	skeleton = widget.model.find_children("*", "Skeleton3D", true, false)[0]
@@ -163,7 +164,7 @@ func run() -> void:
 	check(widget.player.has_animation("sleep_loop"), "Missing clip sleep_loop")
 	check(widget.player.get_animation("sleep_loop").length >= 8.0, "Sleep breathing should take eight seconds")
 	widget.set_top_hat(true)
-	await capture("sleep_awake")
+	await capture("sleep_0_awake")
 	# Both desktop inactivity and quiet widget time must reach the configured delay.
 	sleep.idle_seconds = 600.0
 	sleep.quiet_elapsed = 299.0

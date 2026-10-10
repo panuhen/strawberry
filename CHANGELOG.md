@@ -314,6 +314,13 @@ package and the widget binary.
 
 ### Changed
 
+- **She goes to sleep with a tuck and a spin.** A small crouch and a hop; in the air her legs and claws
+  fold in under the shell and her eye stalks droop over the rim; she lands with a squash and turns once
+  around while the shell wobbles like a settling coin, ending facing you. Asleep only the shell and the
+  shut, drooped eyes show. Waking is the reverse: a shiver, a hop with a small twist, everything pops back
+  out, and a bounce on landing. Input at any point blends into the wake, never a snap. With the system's
+  reduced-motion setting (where Godot reports it: Windows, macOS) she folds and settles in place instead.
+  widget/SLEEP.md; `validate_sleep.gd` now runs in `check_phase1.sh`.
 - **What the log keeps of a tool call.** For Spotify, the web, and any server you have not described,
   only the tool's name, its arguments' names, counts and sizes: never the query or what came back,
   even with `log_sentences` on. `/health`'s last thinker and reflex calls show the same. An add-on
