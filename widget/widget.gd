@@ -545,6 +545,8 @@ func on_typed(data: Dictionary) -> void:
 		step_chip.welcomed(accepted if accepted is Dictionary else {})
 		approval_card.welcomed(accepted if accepted is Dictionary else {})
 	elif kind == "input.refused":
+		if str(data.get("reason", "")) in ["no_secret", "bad_secret"] and str(data.get("ref", "")) != "hello":
+			_on_secret_refused(str(data.get("reason", "")))
 		step_chip.on_refused(data)
 		approval_card.on_refused(data)
 	elif data.has("run_id"):
@@ -818,7 +820,9 @@ func setup_ws() -> void:
 	ws.url = ws_url
 	add_child(ws)
 	ws.message_received.connect(_on_message)
-	ws.connected.connect(func(): print("strawberryd connected: ", ws_url))
+	ws.connected.connect(func():
+		told_secret = false
+		print("strawberryd connected: ", ws_url))
 	ws.disconnected.connect(func():
 		print("strawberryd disconnected; reconnecting")
 		if approval_card:
@@ -833,6 +837,17 @@ func _on_refused(reason: String) -> void:
 		return
 	told_refused = true
 	bubble.speak("My daemon and I don't match (%s). Update one of us." % reason, "alert")
+
+## Something the user typed or tapped was refused for want of the bus secret (PROTOCOL §1.4): our hello
+## had none, or not this install's. Said once per connection; the next connect reads the file again.
+var told_secret := false
+
+func _on_secret_refused(reason: String) -> void:
+	if told_secret:
+		return
+	told_secret = true
+	push_warning("strawberryd refused input: %s (file %s)" % [reason, Paths.bus_secret_file()])
+	bubble.speak("My daemon won't take that from me: I don't have its key. Restart me?", "alert")
 
 func apply_appearance() -> void:
 	# Cel shading and the ink outline are part of her look, not options.

@@ -117,6 +117,27 @@ def throwaway_xdg_dirs(monkeypatch, tmp_path_factory):
     point_dirs(monkeypatch, tmp_path_factory.mktemp("xdg"))
     paths.privacy_notice_marker().parent.mkdir(parents=True)
     paths.privacy_notice_marker().write_text("shown\n")
+    # The bus secret, where the daemon keeps it, so the test clients below can present it from the start;
+    # a known value (tests/bus.py), so a hello can carry it. tests/test_bussecret.py makes real ones.
+    from tests.bus import BUS_SECRET
+
+    with paths.open_private(paths.bus_secret_file(), "w", encoding="ascii") as file:
+        file.write(BUS_SECRET + "\n")
+
+
+@pytest.fixture
+def aiohttp_client(aiohttp_client):
+    """pytest-aiohttp's client, presenting the bus secret on every request as every first-party client
+    does (bussecret.py). A test that passes `headers=` gets exactly those: `headers={}` is a client
+    without the secret."""
+    from strawberry_crab import bussecret
+
+    async def make(app, *args, **kwargs):
+        if "headers" not in kwargs:
+            kwargs["headers"] = {bussecret.HEADER: bussecret.read()}
+        return await aiohttp_client(app, *args, **kwargs)
+
+    return make
 
 
 @pytest.fixture(autouse=True)

@@ -27,6 +27,8 @@ command = "my-notes-mcp"     # or a full path, e.g. ~/notes-mcp/.venv/bin/notes-
 # careful = ["delete_note"]  # tools with consequences: offered only when the sentence asks for one
 # confirm = ["delete_note"]  # tools she asks about out loud first and runs only after a spoken yes
 # adapter = "spotify"        # only when the server's own name does not name its adapter
+# flags = ["private"]        # what the server is (below); without an adapter and without this, all three
+# offer = "always"           # when the brain gets its tools: always, topic or asked (below)
 ```
 
 `topic` matters twice: the gate reads every spoken sentence into one topic, and that topic's servers
@@ -48,20 +50,59 @@ list (`confirm` on the adapter; the Spotify one asks about its two removals) or 
 asks about nothing. A tool can be on both lists, on one, or on neither. `/health.confirm` shows what
 she is waiting for.
 
-Every tool also has an approval tier: `read`, `change`, `sends` (something reaches other people, or
+Every tool also has an approval tier: `read`, `playback` (what plays and how, undone in a second: play,
+pause, skip, volume, the queue, a like of the playing track), `change`, `sends` (something reaches other people, or
 leaves the machine for someone: a message, an email) or `destructive` (deletes, or cannot be
 undone). A `sends` or `destructive` call is always asked about, confirm list or not, and waits 30 s
 (`sends_s`, `destructive_s`); on her card its yes is a press-and-hold. The tier comes from
-`[approvals] risk` (`"notes.send" = "sends"`, or a whole `"notes" = "read"`), taken as written; else
-from the adapter (`risks = {"send": "sends"}`; its `reads`, and every tool of a look-up-only
-server, are `read`); else it is `change`. A server that marks a tool `destructiveHint` raises it to
-`destructive`; an annotation never lowers a tier, so `readOnlyHint` does not make a tool `read`
-here. The card shows one line, the adapter's `describe` (by default her question without "Say
+`[approvals] risk` for the tool (`"notes.send" = "sends"`), taken as written; else from the adapter
+(`risks = {"send": "sends"}`; its `reads`, and every tool of a look-up-only server, are `read`); else
+it is `change`. A server that marks a tool `destructiveHint` raises it to `destructive`; an
+annotation never lowers a tier, so `readOnlyHint` does not make a tool `read` here. A whole-server
+entry (`"notes" = "read"`) then sets the server's ordinary tools, but never lowers a tool below its
+adapter's tier or its `destructiveHint`: only the tool's own entry can. Once text from strangers is in
+a conversation, every call above `playback` is asked about too (WIRING §20). Keep `playback` to calls
+whose target the model cannot choose freely: Spotify's `like_current` is `playback` (it touches only the
+track already playing, and one tap undoes it), its `save_tracks` is `change` (it saves whatever track ids
+the model picked, which a stranger's text could choose). The card shows one line, the adapter's `describe` (by default her question without "Say
 yes."), cut to 160 characters, and goes on the bus to every body that shows approvals. **Rule for
 `sends` and `destructive` tools:** neither `describe` nor the question `ask` writes may carry free
 text from the arguments: no message body, no note text, nothing being sent. Naming the target is
 fine (the song, the playlist, the recipient's display name): "Send your message to Sam?", never
 "Send 'running late, sorry' to Sam?".
+
+**What a server is: its flags.** The trust model (WIRING §20) needs to know three things of each
+server:
+
+| flag | means | what follows |
+|---|---|---|
+| `private` | its results are the user's own (their library, what they play, their messages or notes) | once text from strangers is in a conversation, its tools are refused there |
+| `foreign` | its results carry text written by others (a web page, a snippet, a message) | once one of its results is in a conversation, the user's private context leaves it, private and egress tools are refused, and every call above `playback` waits for a yes with a question the core writes |
+| `egress` | a call sends what it carries off the machine to someone else (a query, an address, a name others may see) | once text from strangers is in, a call that carries a phrase of the user's private context is refused |
+
+An adapter declares its server's flags (`private`, `foreign`, `egress` on the class). A server
+without one is all three until its table says otherwise: `flags = []` for a desk lamp that holds
+nothing of the user's and sends nothing anywhere, `flags = ["private"]` for a diary. On a server with
+an adapter `flags` can only add (`["foreign"]` on a Spotify server whose catalogue you distrust); what
+the adapter says holds.
+
+| server | flags |
+|---|---|
+| web | foreign, egress |
+| Spotify | private, egress, and every result with a name in it foreign (`view`): names are written by others, and trust is not decided by what they say. What they can steer is bounded by the tiers: its play, pause, skip, volume, queue and like-the-playing-track tools are `playback` and go ahead; saving chosen tracks and a playlist change ask. Its situation line names the playing track, so while one plays the sentence starts foreign |
+| no adapter, no `flags` | private, foreign, egress |
+
+The flags also decide the journal: a private, foreign or unknown server's calls are logged as the
+arguments' names, a count and a size, never a result or an argument, whatever `log_sentences` says.
+
+**When the brain is offered its tools: `offer`.** `always` (the default) offers them with every
+sentence, which keeps the prompt the same from sentence to sentence (Ollama's cache, below);
+`topic` only with a sentence the gate reads as the server's topic (or one its adapter's `wanted`
+says asks for it); `asked` only with a sentence that asks for it (its adapter's `wanted`, or the
+server's name or the adapter's `title` as a word: "ask my notes"). Use `topic` or `asked` for a large
+server you use now and then: the prompt then changes between sentences, which costs seconds on the
+27B model. Whatever is offered goes out in one order (topic, server, the server's own order), and
+past `[thinker] max_tools` or `tool_tokens` the least likely tools are left out and logged.
 
 Check it: `strawberry tools` lists everything she can reach, `strawberry tool notes search
 '{"q": "garden"}'` calls one by hand, and `/health.tools` shows each server's state and which
@@ -85,12 +126,19 @@ An adapter is for a server you use every day, where the generic path is not good
 | `gate_examples` | phrases that only make sense with this server behind them |
 | `common_tools` | which of its tools to keep first when the brain's context is tight |
 | `tools`, `shape_tool` | the only tools of the server the brain sees, and shorter schemas for them |
-| `shape_result` | a result made compact before it is cut to `result_chars` |
-| `log_result` | what the journal says of a call when the result must stay out of it |
+| `shape_result` | a result as the brain reads it, one line per hit, before it is cut to `result_chars` (the brain's calls only: reflexes, `ask`, `done` and the vocabulary get the server's own text) |
+| `log_result` | what the journal says of a call: a count and a size, never a result |
+| `log_detail` | `True` to have the journal carry the arguments and a result's first 160 characters; ignored for a private or foreign server |
+| `private`, `foreign`, `egress` | the trust flags (above, WIRING §20) |
+| `view`, `reads_as_foreign` | for the brain's calls: the text it reads and whether that counts as strangers' text, decided in one pass, and the final text read once more. Decide by where text comes from, never by what it says (Spotify: every result with a name is foreign; listed fields only, quoted, cut). An exception in either counts as foreign. `view` is `shape_result` and "not foreign" by default |
+| `asks_after_foreign` | `True` when `ask` and `describe` never put an argument as it came into her question or card: they are then still used after strangers' text |
+| `situation_is_foreign` | whether its `situation` line carries text others wrote (a track's name). The situation line is part of the trust boundary: such a line starts the sentence foreign, so every call above `playback` asks. `True` by default |
+| `offer` | when the brain is offered this server's tools: `always`, `topic`, `asked` (above); the config's `offer` decides over it |
+| `reflex_tools` | which of the server's tools each reflex calls: a reflex whose tools would wait for a yes is not run and the brain asks instead |
 | `guide`, `guide_for`, `unavailable` | a paragraph for the brain's rules when its tools are offered (`guide_for`: only for a server that lists the tools it names), or when the server is down |
 | `wanted`, `nudge` | whether a sentence asks for this server outright, and the line added under it |
 | `max_calls` | how many calls to its tools one sentence may make |
-| `untrusted`, `guard`, `forward`, `screen`, `observe` | its results are strangers' text: what may follow one, in what form a call is sent, and a last check that may wait on the network |
+| `guard`, `forward`, `screen`, `observe` | what may follow a result (for a `foreign` server: its results are strangers' text), in what form a call is sent, and a last check that may wait on the network |
 | `claims_tools` | tool names that give a server this adapter whatever it is called |
 | `confirm`, `ask`, `describe`, `done` | the tools asked about before they run (when the config has no `confirm`), the question with the call pinned ("current" as the playing track), the one line her approval card shows (by default the question without "Say yes."), and the sentence after the yes |
 | `risks`, `risk` | each tool's approval tier where it is not the default: `sends` or `destructive` always wait for a yes (WIRING §19); `reads` and a `looks_up_only` adapter's tools are `read`, the rest `change`. `[approvals] risk` in the config decides over it |
@@ -163,11 +211,16 @@ Rules the core relies on:
   first token that differs, and the tool schemas come right after the system prompt: a tool list
   or a `guide` that changed with the sentence re-read ~2700 tokens, 2.1-2.7 s on the 27B model.
   Say per-sentence things in a `nudge`, which goes under the sentence.
-- **An `untrusted` server's results are never trusted.** Once one is in a conversation, the
+- **A `foreign` server's results are never trusted.** Once one is in a conversation, the
   thinker takes the ledger, the situation (but the date) and the other servers' results out of
-  it, refuses every other server's tool, and leaves three rounds; the adapter's `guard` decides
-  each further call, `forward` sends it in the form that was checked, and `screen` may still refuse
-  it on a check that waits on the network (a DNS lookup).
+  it, refuses every private or egress server's tool, asks before any call above `playback` (in its
+  own words: an adapter's `ask` and `describe` are not used then, unless it sets `asks_after_foreign`), and leaves three rounds; the
+  adapter's `guard` decides each further call, `forward` sends it in the form that was checked, and
+  `screen` may still refuse it on a check that waits on the network (a DNS lookup). Say which flags
+  your server has: an adapter that sets none says its server is none of them.
+- **A reflex never asks.** List the tools each reflex calls in `reflex_tools`; when one of them would
+  wait for a yes (the user raised its tier, or put it on the confirm list) the reflex is skipped and
+  the brain asks instead. A reflex that calls a tool it did not list is refused that call.
 
 Tests: `tests/test_adapters.py` covers matching and the routing above it, and
 `tests/test_adapter_spotify.py` covers one adapter's own behaviour against a fake server. A new
@@ -175,7 +228,12 @@ adapter wants the same pair.
 
 ## The Spotify adapter
 
-The worked example, `strawberry/adapters/spotify.py`. Its server is a separate MCP wrapper around
+The worked example, `strawberry/adapters/spotify.py` (private and egress: why, in the table above).
+Its results reach the brain one line per hit, names quoted and cut to 80 characters, descriptions
+dropped (`tracks: 5`, then `1. "Blue Monday" – "New Order" ("Substance") · uri=spotify:track:…`), every
+result with a name counts as strangers' text, and its playback tools are `playback` so they still go
+ahead after one (WIRING §20), its schemas keep `device_id` only where playback starts
+(`play`, `play_liked`), and the journal gets counts ("5 tracks, 812 chars"), never a name. Its server is a separate MCP wrapper around
 the Spotify Web API, not shipped with her: you install it, register a Spotify app and authorise it
 once. The one this adapter was written against is
 [panuhen/spotify-mcp](https://github.com/panuhen/spotify-mcp) (26 tools over the Web API). The adapter binds to the tool names that wrapper exposes (`next`, `previous`,
@@ -269,7 +327,7 @@ learns "save this song", and no error is described in Spotify's words.
 
 ## The web adapter
 
-`strawberry/adapters/web.py`, for a SearXNG instance behind an MCP server: `[tools.servers.web]`,
+`strawberry/adapters/web.py` (foreign and egress), for a SearXNG instance behind an MCP server: `[tools.servers.web]`,
 or any name with `adapter = "web"`, or any server that lists one of its tools. It binds to
 [mcp-searxng](https://www.npmjs.com/package/mcp-searxng)'s `searxng_web_search` and
 `web_url_read`, and to `web_search` and `read_page` for a server exposing those instead; any other

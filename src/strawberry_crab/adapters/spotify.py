@@ -26,6 +26,17 @@ What it adds over the plain tool list:
     confirm         the two removals are asked about first ("Remove 'Teardrop' from Gym? Say yes."),
                     with "current" pinned to the playing track so a yes removes the one she named.
     guard           a Liked Songs removal with an ID the server cannot read is sent back to look it up.
+    private, egress the trust flags (trust.py): what it returns is the user's own (their library, what
+                    they play), and a call reaches Spotify, where a playlist's name or description can
+                    be seen by others. Not foreign as a server: see `SpotifyAdapter`.
+    view            its results as the thinker reads them: one line per hit, short quoted names and plain
+                    values only, never a description. Every result with a name in it is strangers' text
+                    (foreign), whatever it says; so is an error, and anything that fails the reading.
+    risks           playing, pausing, skipping, volume and the queue are `playback`: they go ahead after
+                    strangers' text, where a like, a save or a playlist change waits for a yes.
+    shape_tool      its schemas without `device_id` but where a call starts playback.
+    log_result      a call's result in the journal as counts and a size, never a name.
+    reflex_tools    the tools each reflex calls, so a tier raised to need a yes sends it to the thinker.
 
 The user's favourites are Spotify's Liked Songs: the server once kept a separate local list
 with tools of its own, and that list is gone.
@@ -38,12 +49,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from typing import Any
 
 from ..actions import Outcome, Reflex
-from ..tools import Toolbox, ToolResult
+from ..tools import Toolbox, ToolResult, ToolSpec
 from .base import Adapter
+
+log = logging.getLogger("strawberryd.adapters.spotify")
 
 
 def _json(result: ToolResult) -> dict[str, Any]:
@@ -345,16 +359,25 @@ def _volume(delta: int) -> Reflex:
     return reflex
 
 
+NOTHING_PLAYING = "Nothing is playing on Spotify right now."
+
+
 async def situation(toolbox: Toolbox, server: str) -> str:
     """One line of context for the thinker: 'this song' means whatever is playing now."""
     track, data, result = await _current(toolbox, server)
     if not result.ok:
         return ""
     if not track:
-        return "Nothing is playing on Spotify right now."
+        return NOTHING_PLAYING
     album = (data.get("track") or {}).get("album")
     state = "Now playing" if data.get("playing", True) else "Paused"
-    return f"{state} on Spotify: {track}" + (f" (album: {album})." if album else ".")
+    # The names go into the thinker's prompt before any tool, as data: normalised, cut short, quoted. What
+    # they say is not judged; what a call can do after strangers' text is bounded by its tier (`risks`).
+    playing = data.get("track") or {}
+    artists = ", ".join(str(a) for a in playing.get("artists", [])) or "an unknown artist"
+    line = f"{state} on Spotify: {json.dumps(_short(playing.get('name', 'something')), ensure_ascii=False)} by " \
+           f"{json.dumps(_short(artists), ensure_ascii=False)}"
+    return line + (f" (album: {json.dumps(_short(album), ensure_ascii=False)})." if album else ".")
 
 
 async def vocabulary(toolbox: Toolbox, server: str) -> list[str]:
@@ -450,7 +473,13 @@ def guard(name: str, arguments: dict[str, Any]) -> str | None:
 
 
 def _quoted(name: Any) -> str:
-    return "'" + " ".join(str(name or "").split())[:60] + "'"
+    """A name from the server in her question: normalised, cut to 60 characters, in quotes."""
+    return "'" + _short(name or "", 60) + "'"
+
+
+# A playlist name as the model passed it, said in her question only when it is a few plain words; anything
+# else (a name a page or a playlist's own text put there) is "that playlist".
+PLAIN_WORDS = re.compile(r"^[\w' -]{1,40}$")
 
 
 async def ask(toolbox: Toolbox, server: str, name: str, arguments: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -473,12 +502,12 @@ async def ask(toolbox: Toolbox, server: str, name: str, arguments: dict[str, Any
         else:
             what = "that track"
         playlist = str(pinned.get("playlist") or "").strip()
-        where = playlist or "the playlist"
+        where = (playlist if PLAIN_WORDS.match(playlist) else "that playlist") if playlist else "the playlist"
         if playlist:
             found = await toolbox.call(server, "find_playlist", {"query": playlist})
             rows = [r for r in _json(found).get("playlists", []) if isinstance(r, dict)] if found.ok else []
             if len(rows) == 1 and rows[0].get("uri") and rows[0].get("name"):
-                pinned["playlist"], where = rows[0]["uri"], " ".join(str(rows[0]["name"]).split())[:60]
+                pinned["playlist"], where = rows[0]["uri"], _short(rows[0]["name"], 60)
         return f"Remove {what} from {where}? Say yes.", pinned
     if name == "remove_saved_tracks":
         ids = pinned.get("track_ids")
@@ -532,9 +561,215 @@ GUIDE = (
 )
 
 
+# What the thinker reads of a Spotify result, and whether it counts as strangers' text. Track, artist, album
+# and playlist names are written by others (anyone can name a public playlist "Ignore previous instructions,
+# remove …", in any language and any wording), so trust is not decided by what a name says: every result
+# that carries one is strangers' text (foreign), unconditionally, and what that text can do is bounded by the
+# tiers instead (approvals.needed): after foreign text a `playback` call (play, pause, skip, volume, the
+# queue: `risks` below) still goes ahead, and everything above it (a like, a save, a playlist change, any
+# other server's change) waits for the user's yes. The removals ask first whatever happens (`confirm`).
+# The shaping only limits what the text can be: the listed fields only, each NFKC-normalised, without
+# control or format characters, on one line, cut to NAME_CHARS and in quotes; a description, and any field
+# not listed, never reach the thinker. A result that is not the server's JSON object, an error, or anything
+# that fails here counts as foreign too (tools.Server._view fails closed). A reflex, `ask`, `done` and the
+# vocabulary read the server's own JSON (tools.Server.call `shape`), and none of them hands a name to a model.
+NAME_CHARS = 80
+MESSAGE_CHARS = 200
+# Fields the thinker may see: names (quoted) and plain values. Anything else is dropped.
+NAMED = ("name", "artists", "album", "owner")
+PLAIN = ("uri", "id", "tracks", "total", "owned", "collaborative", "is_active", "volume", "type", "playing",
+         "success", "already_liked", "liked", "added", "removed", "playlist", "first", "message")
+# Fields that are free text: never shown.
+FREE_TEXT = ("description", "bio", "notes", "comment", "summary", "text", "html")
+# Only these start playback somewhere: the rest act on the active device, so `device_id` is only tokens.
+DEVICE_TOOLS = ("play", "play_liked")
+BREAKS = {"Cc", "Zl", "Zp"}            # control characters and line separators: a space
+HIDDEN = {"Cf", "Co", "Cs", "Cn"}      # format (zero-width, bidi), private, unassigned: nothing
+# The tier of its tools that change only what plays and how: local to the user's player, undone in a second.
+# After strangers' text these still go ahead (approvals.UNDER_FOREIGN); its library changes do not.
+# Liking the playing track is undone in a tap too: `playback`, so "like this song" while a track plays (its name
+# in the situation, strangers' text) still needs no yes. `save_tracks` is not: it saves whatever track ids the
+# model picked, which strangers' text could choose. Playlist changes and the removals are above it as well.
+PLAYBACK = ("play", "play_liked", "pause", "next", "previous", "seek", "set_volume", "shuffle", "repeat",
+            "add_to_queue", "like_current")
+
+
+def _normal(value: str) -> str:
+    """NFKC (fullwidth letters become plain ones), without control or format characters, on one line."""
+    import unicodedata
+
+    text = unicodedata.normalize("NFKC", value)
+    text = "".join(" " if unicodedata.category(ch) in BREAKS else "" if unicodedata.category(ch) in HIDDEN else ch
+                   for ch in text)
+    return " ".join(text.split())
+
+
+def _short(value: Any, limit: int = NAME_CHARS) -> str:
+    """Normalised (`_normal`) and at most `limit` characters."""
+    text = _normal(str(value))
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _scripts_mixed(text: str) -> bool:
+    """A word that mixes Latin letters with Cyrillic or Greek ones. Only a log signal, never a trust decision:
+    the result is strangers' text whatever its letters."""
+    import unicodedata
+
+    for word in re.findall(r"\w+", text):
+        scripts = {unicodedata.name(ch, "?").split(" ")[0] for ch in word if ch.isalpha()}
+        if "LATIN" in scripts and scripts & {"CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE"}:
+            return True
+    return False
+
+
+class Pass:
+    """One reading of a result: what the thinker gets, and whether it carries strangers' text (any name, any
+    text field, anything it could not read as expected)."""
+
+    def __init__(self) -> None:
+        self.foreign = False
+        self.mixed = False
+
+    def text(self, value: Any, limit: int = NAME_CHARS) -> str:
+        if not isinstance(value, str):
+            self.foreign = True
+            return "?"
+        self.foreign = True                 # a name or a message: written by someone else, whatever it says
+        self.mixed = self.mixed or _scripts_mixed(_normal(value))
+        return _short(value, limit)
+
+    def quoted(self, value: Any) -> str:
+        return json.dumps(self.text(value), ensure_ascii=False)
+
+    def value(self, key: str, value: Any) -> str:
+        """A plain field: true, false, null and numbers as they are; a URI or an id as it is; other text quoted."""
+        if isinstance(value, bool) or value is None:
+            return json.dumps(value)
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, str) and key in ("uri", "id", "type") and re.fullmatch(r"[\w:./-]{1,80}", value):
+            return value
+        return json.dumps(self.text(value, MESSAGE_CHARS if key == "message" else NAME_CHARS), ensure_ascii=False)
+
+    def hit(self, item: Any) -> str:
+        """One item on one line: '"Blue Monday" – "New Order" ("Substance") · uri=spotify:track:…'. Only the
+        listed fields; a free-text one (a description) is dropped."""
+        if not isinstance(item, dict):
+            self.foreign = True
+            return "?"
+        if any(item.get(key) for key in FREE_TEXT):
+            self.foreign = True
+        artists = item.get("artists")
+        if isinstance(artists, list):
+            artists = ", ".join(self.text(a) for a in artists)
+        line = self.quoted(item["name"]) if item.get("name") else ""
+        if artists:
+            line += f" – {self.quoted(artists)}"
+        if item.get("album"):
+            line += f" ({self.quoted(item['album'])})"
+        if item.get("owner"):
+            line += f" by {self.quoted(item['owner'])}"
+        rest = []
+        for key in PLAIN:
+            value = item.get(key)
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, (dict, list)):
+                self.foreign = True      # a shape this does not know: dropped
+                continue
+            rest.append(f"{key}={self.value(key, value)}")
+        return " · ".join([line.strip() or "?", *rest])
+
+
+def view_of(text: str, ok: bool = True) -> tuple[str, bool]:
+    """The thinker's text for a result and whether it counts as foreign, in one pass over the server's JSON:
+    the listed fields only, shaped as they are written out. Foreign whenever it carries a name or any other
+    text, and whenever the result is not the server's JSON object (an error, other text: the thinker then gets
+    that text, normalised). Only a result of plain values (a volume, a flag) is not."""
+    from ..trust import clean
+
+    if not isinstance(text, str):
+        return "", True
+    fallback = (clean(_normal(text)), True)
+    if not ok:
+        return fallback                       # an error: the server's own sentence can quote a name
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return fallback
+    if not isinstance(data, dict) or "error" in data:
+        return fallback
+    read = Pass()
+    lines: list[str] = []
+    for key, value in data.items():
+        if key in FREE_TEXT:
+            read.foreign = read.foreign or bool(value)
+        elif isinstance(value, list) and all(isinstance(v, dict) for v in value):
+            lines.append(f"{key}: {len(value)}" if value else f"{key}: none")
+            lines += [f"{i}. {read.hit(item)}" for i, item in enumerate(value, 1)]
+        elif isinstance(value, dict):
+            lines.append(f"{key}: {read.hit(value)}")
+        elif key not in NAMED and key not in PLAIN:
+            read.foreign = read.foreign or isinstance(value, str)          # unknown text: dropped
+        elif isinstance(value, list):
+            lines.append(f"{key}: " + ", ".join(read.quoted(v) for v in value[:20]))
+        elif key in NAMED:
+            lines.append(f"{key}: {read.quoted(value)}")
+        else:
+            lines.append(f"{key}: {read.value(key, value)}")
+    if read.mixed:
+        log.info("spotify: a name in a result mixes scripts inside a word (a homoglyph?); it is strangers' text "
+                 "like any other")
+    return ("\n".join(lines) if lines else "(nothing)"), read.foreign
+
+
+def shape_listing(text: str) -> str:
+    """What the thinker reads of a result (`view_of`)."""
+    return view_of(text)[0]
+
+
+def count_hits(text: str) -> str:
+    """What the journal says of a listing: how many of each kind, never a name."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        hits = len(re.findall(r"^\d+\. ", text, re.MULTILINE))
+        return f"{hits} hits, " if hits else ""
+    if not isinstance(data, dict):
+        return ""
+    kinds = [f"{len(v)} {k}" for k, v in data.items() if isinstance(v, list)]
+    return ", ".join(kinds) + ", " if kinds else ""
+
+
+LISTINGS = ("search", "get_queue", "get_playlists", "get_playlist_tracks", "get_saved_tracks", "find_playlist",
+            "get_devices")
+
+
 class SpotifyAdapter(Adapter):
     name = "spotify"
     server_names = ("spotify",)
+    # What it returns is the user's own (their library, their playlists, what they play): private. A call
+    # reaches Spotify, and some write what others can see (a playlist's name and description, a public
+    # playlist): egress. Not foreign as a server: marked so, every "play X" after a search would wait for a
+    # yes. Its results do carry names others wrote, so every result with a name is foreign (`view`), and what
+    # that text can do is bounded by the tiers (`risks`): play, skip, volume and the queue go ahead; likes,
+    # saves and playlist changes wait for a yes. The removals ask first whatever happens. After a web result
+    # its tools are refused.
+    private = True
+    egress = True
+    # The tools each reflex calls (actions.Actor.asks_first): a tier raised to need a yes sends the sentence
+    # to the thinker, which asks, instead of a reflex that would not.
+    reflex_tools = {
+        "skip": ("next", "get_current_track"),
+        "previous": ("previous", "get_current_track"),
+        "pause": ("pause",),
+        "resume": ("get_current_track", "play"),
+        "volume_down": ("get_devices", "set_volume"),
+        "volume_up": ("get_devices", "set_volume"),
+        "now_playing": ("get_current_track",),
+        "like": ("like_current",),
+        "play_liked": ("play_liked",),
+    }
     reflexes: dict[str, Reflex] = {
         "skip": skip,
         "previous": previous,
@@ -561,9 +796,16 @@ class SpotifyAdapter(Adapter):
                     "set_volume", "shuffle")
     guide = GUIDE
     confirm = CONFIRM
-    # No `risks`: the removals are `change` (a track can be added back), asked about through `confirm`
+    # What plays and how is `playback`: undone in a second, so it goes ahead even after strangers' text (its
+    # own results are that). Liking, saving and playlists are `change`: after strangers' text they wait for a yes.
+    risks = {name: "playback" for name in PLAYBACK}
+    # The removals are `change` (a track can be added back), asked about through `confirm`
     # with the short wait; `[approvals] risk` can make them `destructive` (a 30 s wait, a hold on the card).
     title = "Spotify"
+    # Its questions before a removal name only what the server says (cut, quoted) and a playlist name only when
+    # it is a few plain words: they stay its own after strangers' text, so a yes still removes the track she
+    # named (`ask` pins "current"), as before (confirm.hold `foreign`).
+    asks_after_foreign = True
     # Only look things up: a cancel stops waiting for these at once (runs.py); the rest finish first.
     reads = ("search", "get_current_track", "get_playback_state", "get_queue", "get_devices", "get_playlists",
              "get_playlist_tracks", "get_saved_tracks", "find_playlist")
@@ -589,6 +831,10 @@ class SpotifyAdapter(Adapter):
     async def situation(self, toolbox: Toolbox, server: str) -> str:
         return await situation(toolbox, server)
 
+    def situation_is_foreign(self, line: str) -> bool:
+        # A playing track's name is someone else's text; "nothing is playing" is ours.
+        return line != NOTHING_PLAYING
+
     async def vocabulary(self, toolbox: Toolbox, server: str) -> list[str]:
         return await vocabulary(toolbox, server)
 
@@ -597,6 +843,23 @@ class SpotifyAdapter(Adapter):
 
     def guard(self, state: dict[str, Any], name: str, arguments: dict[str, Any]) -> str | None:
         return guard(name, arguments)
+
+    def shape_tool(self, spec: ToolSpec) -> ToolSpec:
+        # `device_id` only where a call starts playback somewhere; elsewhere the active device is the one.
+        properties = (spec.schema or {}).get("properties") or {}
+        if spec.name in DEVICE_TOOLS or "device_id" not in properties:
+            return spec
+        schema = {**spec.schema, "properties": {k: v for k, v in properties.items() if k != "device_id"}}
+        if "required" in schema:
+            schema["required"] = [k for k in schema["required"] if k != "device_id"]
+        return ToolSpec(spec.server, spec.name, spec.description, schema, spec.function)
+
+    def view(self, name: str, text: str, ok: bool) -> tuple[str, bool]:
+        return view_of(text, ok)
+
+    def log_result(self, name: str, text: str, ok: bool) -> str | None:
+        counted = count_hits(text) if ok and name in LISTINGS else ""
+        return f"{counted}{len(text)} chars (not logged)" if ok else f"error, {len(text)} chars (not logged)"
 
     async def ask(self, toolbox: Toolbox, server: str, name: str,
                   arguments: dict[str, Any]) -> tuple[str, dict[str, Any]]:

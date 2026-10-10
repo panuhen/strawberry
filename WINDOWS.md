@@ -32,6 +32,7 @@ Most of the system has nothing Linux-specific in it and is shared as it is:
 | Stopping a process | SIGTERM | A named stop event per process (`winproc.py`), then TerminateProcess after a timeout. |
 | Wake from sleep | logind `PrepareForSleep` (`wake.py`) | `PowerRegisterSuspendResumeNotification`, `PBT_APMRESUMEAUTOMATIC` (`winwake.py`). |
 | Paths | XDG dirs (`paths.py`, `widget/paths.gd`) | `%APPDATA%\strawberry` (config), `%LOCALAPPDATA%\strawberry` (data, cache; state in `state\`). |
+| Bus secret | `$XDG_STATE_HOME/strawberry/bus-secret`, mode 0600 (`bussecret.py`) | `%LOCALAPPDATA%\strawberry\state\bus-secret`. No mode bits: the file relies on the profile folder's ACL (the user, SYSTEM, the administrators), as the rest of the state does; no ACL of its own is written. The git hook's child Python is given the file's path, never the secret. |
 | Hotkey | a GNOME custom shortcut via `gsettings` | `RegisterHotKey` in the tray (`wintray.py`), `[voice] hotkey` (`hotkey.py`), Ctrl+Alt+Space. |
 | App switcher entry | `strawberry.desktop` and a hicolor icon | Not needed: the window's own icon and title. |
 | Widget window | `--display-driver x11`; click-through by an input shape | Godot's Windows driver; `mouse_passthrough_polygon` is the window's region, which clips drawing too, so it follows her pose. |
@@ -345,3 +346,8 @@ music server, as documented in `gate_phrases.json`), `scripts/sensitive_check.py
   400 (a model runner that had gone). The gate's start now tries once more; a later call that
   meets it reads as chat or, for a body, fails closed, as any gate error does.
 - `scripts/check_tray.sh` and `scripts/check_reconnect.sh` are Linux-only as written.
+- The bus secret (PROTOCOL §1.4) is untried on Windows: that `%LOCALAPPDATA%`'s ACL keeps other
+  standard users out of the file was not checked, `os.link` (the race-free first write) was not run
+  on NTFS, and the widget reading it there and the hook's child presenting it were not watched.
+  Setting an ACL of the file's own (`icacls /inheritance:r`) was left out: a wrong one would lock the
+  daemon out of its own secret, and there was no Windows machine here to check it on.

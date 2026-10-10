@@ -25,9 +25,11 @@ What it adds over the plain tool list:
     guard           default deny: only the search and the reader, with their own arguments; a
                     query of one plain line; a page read only by a public http(s) URL from this
                     question's search results, one page a question, and no search after it: a page cannot send her to an address of its
-                    choosing with something of the user's in it (with Thinker._run's half,
-                    which takes the private context out once a result is in, and refuses the
-                    other servers' tools).
+                    choosing with something of the user's in it (with Thinker._run's half for
+                    every foreign server, trust.py, which takes the private context out once a
+                    result is in, and refuses the private and egress servers' tools).
+    private, foreign, egress
+                    foreign and egress: strangers' text in, the user's words out; nothing private.
     screen          just before a page is read, its host is looked up and every address it
                     resolves to must be public: a public-looking name can point at 127.0.0.1.
     guide           when to search and how to say what was found (no URLs read aloud).
@@ -460,11 +462,13 @@ class WebAdapter(Adapter):
     # Weather and sports listings sent Qwen into five or six searches and page reads, 17-45 s; with
     # three the answer comes from what it has.
     max_calls = 3
-    # Pages and snippets are written by strangers, and a search query or a page address goes out
-    # to the internet: what a result says must never reach the user's private context or their
-    # other tools. The thinker does its half for every `untrusted` server (Thinker._run); `guard`
-    # pins a page read to this question's search results, and after that one page nothing more.
-    untrusted = True
+    # Pages and snippets are written by strangers (foreign), and a search query or a page address goes
+    # out to the internet (egress): what a result says must never reach the user's private context or
+    # their other tools. The thinker does its half for every foreign server (Thinker._run, trust.py);
+    # `guard` pins a page read to this question's search results, and after that one page nothing more.
+    # Nothing it returns is the user's own, so it is not private.
+    foreign = True
+    egress = True
     title = "Web"
     labels = {**{name: "searching the web…" for name in SEARCH_TOOLS}, **{name: "reading a page…" for name in READ_TOOLS}}
 

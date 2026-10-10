@@ -14,13 +14,14 @@ import aiohttp
 import pytest
 from aiohttp import web
 
-from strawberry_crab import brainui, cli, paths
+from strawberry_crab import brainui, bussecret, cli, paths
 from strawberry_crab.config import Config, LearningConfig
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
 from strawberry_crab.learning import Learning, LearningError
 from strawberry_crab.routefeed import RouteFeed
 from strawberry_crab.server import QuietAccessLogger, create_app
+from tests.bus import BUS_SECRET
 from tests.test_learning import CANARY, teach, world, write_outcomes  # noqa: F401 (world: a fixture)
 from tests.test_outcomes import route
 from tests.test_thinker import ScriptedGate, bare, plain_config, voice_daemon
@@ -338,7 +339,8 @@ async def test_no_sentence_or_token_reaches_a_log_line(caplog):
     base = f"http://127.0.0.1:{port}"
     caplog.set_level(logging.DEBUG)
     try:
-        async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)) as session:
+        async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True),
+                                         headers={bussecret.HEADER: BUS_SECRET}) as session:
             await session.post(base + "/event", json={"source": "voice", "title": text})
             token = (await (await session.post(base + "/ui-token", json={})).json())["token"]
             login = await session.get(f"{base}/ui/login?token={token}", allow_redirects=False)

@@ -239,9 +239,10 @@ async def test_over_max_tools_the_topic_and_the_common_tools_survive(caplog):
     toolbox, thinker = two_servers(max_tools=6)
     with caplog.at_level("INFO", logger="strawberryd.thinker"):
         specs = await thinker.tools(topic="music")
-    # The music server's own common tools, in the adapter's order; the notes server is out.
-    assert [s.name for s in specs] == ["play", "pause", "next", "previous", "get_current_track", "get_playlists"]
-    assert "17 tools is more than max_tools=6" in caplog.text
+    # The music server's own common tools, kept by the adapter's order and offered in the one order every
+    # sentence gets (the prompt cache); the notes server is out.
+    assert [s.name for s in specs] == ["next", "previous", "pause", "play", "get_current_track", "get_playlists"]
+    assert "17 tool schemas" in caplog.text and "over max_tools=6" in caplog.text
     assert "spotify.get_devices" in caplog.text and "notes.note_0" in caplog.text
     # A sentence the gate read as notes keeps the notes tools instead.
     assert [s.name for s in await thinker.tools(topic="notes")] == [f"note_{i}" for i in range(6)]
@@ -337,7 +338,7 @@ async def test_an_argument_request_goes_to_qwen_with_cover(aiohttp_client):
     # The situation she was given: the date, the player, then the sentence.
     first_user = thinker.chat.payloads[0]["messages"][1]["content"]
     assert first_user.startswith("Situation: Today is ")
-    assert "Now playing on Spotify: Feeling Good by Nina Simone (album: I Put a Spell on You)." in first_user
+    assert 'Now playing on Spotify: "Feeling Good" by "Nina Simone" (album: "I Put a Spell on You").' in first_user
     assert first_user.endswith("The user says: put on some jazz")
     daemon.vocabulary = ["Daft Punk", "New Order"]
     await client.post("/event", json={"source": "voice", "title": "put on some jazz"})
@@ -474,6 +475,9 @@ async def test_tool_results_are_shortened_after_the_ledger_keeping_their_head(ca
     script = [[("search", {"query": "jazz"})], "[happy] Jazz it is."]
     recent = ledger_lines(2, width=40)
     spotify, toolbox, roomy, thinker = make(list(script), tools=[FakeTool("search")], handler=handler)
+    # About the trimming alone: without the Spotify adapter, whose per-result check would read this long free
+    # text as strangers' (adapters/spotify.py `free_text`) and take the ledger out on that ground instead.
+    toolbox.servers["spotify"].adapter = None
     thinker.chat = roomy = Snapshots(list(script))
     await thinker.run("play some jazz", recent=recent)
     first, second = (prompt_tokens(p["messages"], p.get("tools") or []) for p in roomy.payloads)

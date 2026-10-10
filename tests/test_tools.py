@@ -264,7 +264,8 @@ async def test_daemon_exposes_tools_in_health(aiohttp_client):
     await daemon.start()
     health = await (await client.get("/health")).json()
     assert health["tools"]["music"] == {"topic": "music", "state": "idle", "tools": 0, "calls": 0, "failures": 0,
-                                        "last_ms": None, "error": None, "adapter": None, "confirm": []}
+                                        "last_ms": None, "error": None, "adapter": None, "confirm": [],
+                                        "flags": ["egress", "foreign", "private"], "offer": "always"}
     await daemon.toolbox.tools_for("music")
     health = await (await client.get("/health")).json()
     assert health["tools"]["music"]["state"] == "ready" and health["tools"]["music"]["tools"] == 6

@@ -8,10 +8,12 @@ import logging
 import aiohttp
 from aiohttp import web
 
+from strawberry_crab import bussecret
 from strawberry_crab.config import Config
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
 from strawberry_crab.server import QuietAccessLogger, create_app
+from tests.bus import BUS_SECRET
 
 
 def quiet_daemon() -> Daemon:
@@ -34,7 +36,7 @@ async def test_polling_is_not_logged_and_the_rest_is_without_bodies(caplog):
              "low_ratio": 0.5, "density": 4.0, "loudness_db": -20.0}
     caplog.set_level(logging.INFO, logger="aiohttp.access")
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers={bussecret.HEADER: BUS_SECRET}) as session:
             for _ in range(3):
                 assert (await session.get(base + "/health")).status == 200
             assert (await session.post(base + "/tempo", json=tempo)).status == 200

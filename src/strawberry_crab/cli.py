@@ -130,8 +130,12 @@ def http(here: Here, method: str, path: str, body: dict | None = None, timeout: 
     import urllib.error      # here, not at the top: `strawberry listen` skips it (listen_fast)
     import urllib.request
 
+    from . import bussecret
+
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"} if body is not None else {}
+    if method != "GET":
+        headers = bussecret.headers(headers)    # every POST needs the bus secret
     request = urllib.request.Request(here.base + path, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -770,9 +774,13 @@ def listen_fast(port: int) -> int:
     request, and the hotkey's delay shows in her reaction (the bash launcher used awk + curl)."""
     import socket
 
+    from .bussecret import HEADER, read
+
+    secret = read()
+    line = f"{HEADER}: {secret}\r\n".encode("ascii") if secret else b""
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=5) as conn:
-            conn.sendall(b"POST /listen HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n"
+            conn.sendall(b"POST /listen HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n" + line +
                          b"Connection: close\r\n\r\n")
             status = conn.recv(64).split(b" ", 2)
     except OSError:
@@ -993,20 +1001,33 @@ def post_detached(url: str, payload: dict) -> None:
         devnull = os.open(os.devnull, os.O_RDWR)
         for fd in (0, 1, 2):
             os.dup2(devnull, fd)
-        import urllib.request
-
-        request = urllib.request.Request(url + "/event", data=json.dumps(payload).encode(),
-                                         headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(request, timeout=1).close()
+        post_event(url, payload)
     except BaseException:
         pass
     finally:
         os._exit(0)
 
 
+def post_event(url: str, payload: dict) -> None:
+    """The hook's one POST /event, with the bus secret; gives up after a second. Raises on any failure."""
+    import urllib.request
+
+    from . import bussecret
+
+    request = urllib.request.Request(url + "/event", data=json.dumps(payload).encode(),
+                                     headers=bussecret.headers({"Content-Type": "application/json"}))
+    urllib.request.urlopen(request, timeout=1).close()
+
+
+# The child reads the bus secret from its file itself: on its command line it would be in the process list.
 POST_CHILD = """import sys, urllib.request
-request = urllib.request.Request(sys.argv[1] + "/event", data=sys.argv[2].encode(),
-                                 headers={"Content-Type": "application/json"})
+headers = {"Content-Type": "application/json"}
+try:
+    with open(sys.argv[3], encoding="ascii") as file:
+        headers["X-Strawberry-Secret"] = file.read().strip()
+except OSError:
+    pass
+request = urllib.request.Request(sys.argv[1] + "/event", data=sys.argv[2].encode(), headers=headers)
 urllib.request.urlopen(request, timeout=1).close()
 """
 
@@ -1016,7 +1037,9 @@ def post_in_child(url: str, payload: dict) -> None:
     no console window and no handle of ours, so git does not wait for it either."""
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     try:
-        subprocess.Popen([sys.executable, "-c", POST_CHILD, url, json.dumps(payload)],
+        from .bussecret import path as secret_path
+
+        subprocess.Popen([sys.executable, "-c", POST_CHILD, url, json.dumps(payload), str(secret_path())],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=flags, close_fds=True)
     except OSError:

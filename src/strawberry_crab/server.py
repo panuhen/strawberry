@@ -14,7 +14,9 @@
   /ui, /ui/...   the Brain UI (brainui.py)
 
 Every route refuses a request with a browser's Origin header (local_only), except the Brain UI's
-under /ui, which make their own, stricter checks (brainui.checked).
+under /ui, which make their own, stricter checks (brainui.checked). Every POST but the Brain UI's
+API needs the bus secret in the X-Strawberry-Secret header, and a body's hello must present it for
+input and approvals (bussecret.py); without it a body still gets performances and plain run phases.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from typing import Any
 from aiohttp import WSMsgType, web
 from aiohttp.web_log import AccessLogger
 
-from . import __version__, brainui, firstrun, paths, pokes
+from . import __version__, brainui, bussecret, firstrun, paths, pokes
 from .client import listen_for_stop_request, plain_signal_handler
 from .config import Config, ConfigError
 from .contract import ContractError, Performance, anim_for
@@ -43,6 +45,7 @@ from .logtext import sentence
 log = logging.getLogger("strawberryd.http")
 
 DAEMON = web.AppKey("daemon", Daemon)
+REFUSALS = web.AppKey("secret_refusals", dict)   # (path, reason) -> how many, for the journal (_secret_refusal)
 
 # The widget says its version in the hello (WIRING.md §1). A source run says "dev" and is always
 # welcome; a released binary on another minor or patch is logged and served; another major is
@@ -89,6 +92,7 @@ class QuietAccessLogger(AccessLogger):
 def create_app(daemon: Daemon) -> web.Application:
     app = web.Application(middlewares=[local_only])
     app[DAEMON] = daemon
+    app[REFUSALS] = {}
     brainui.setup(app, daemon)
     app.on_startup.append(_start_daemon)
     app.on_shutdown.append(_close_widgets)
@@ -142,11 +146,41 @@ async def local_only(request: web.Request, handler) -> web.StreamResponse:
     to say, which will include notification text, or read /health, which holds the ledger: the
     user's recent sentences and her replies (WIRING.md §2).
     """
-    if "Origin" in request.headers and not getattr(request.match_info.handler, "browser_ok", False):
+    browser_ok = getattr(request.match_info.handler, "browser_ok", False)
+    if "Origin" in request.headers and not browser_ok:
         # The Brain UI's routes (brainui.checked) let a browser in on their own terms: this host,
         # this origin, a session and its CSRF header. Nothing else does.
         raise web.HTTPForbidden(text=json.dumps({"error": "browser origins are not accepted"}), content_type="application/json")
+    if request.method not in READ_METHODS and not browser_ok:
+        # Everything that is not a read changes what she does or says: it needs the bus secret
+        # (bussecret.py), which only a process that can read the user's own files has.
+        refusal = _secret_refusal(request)
+        if refusal is not None:
+            raise web.HTTPForbidden(text=json.dumps(refusal), content_type="application/json")
     return await handler(request)
+
+
+READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+SECRET_ERRORS = {
+    "no_secret": f"this needs the bus secret (the {bussecret.HEADER} header, from the file the daemon made)",
+    "bad_secret": "the bus secret is wrong (the daemon made a new one? read the file again)",
+}
+
+
+def _secret_refusal(request: web.Request) -> dict[str, str] | None:
+    """None when the request carries the bus secret; else the 403's body. Logged once per route and reason
+    and then every hundredth time (an old doorway posts every two seconds), never with the value."""
+    given = request.headers.get(bussecret.HEADER, "")
+    if bussecret.matches(request.app[DAEMON].bus_secret(), given):
+        return None
+    reason = "bad_secret" if given else "no_secret"
+    counts = request.app[REFUSALS]
+    seen = counts.get((request.path, reason), 0)
+    counts[(request.path, reason)] = seen + 1
+    if seen % 100 == 0:
+        log.warning("%s %s refused: %s (%d so far)", request.method, request.path,
+                    "a wrong bus secret" if given else "no bus secret", seen + 1)
+    return {"error": SECRET_ERRORS[reason], "reason": reason}
 
 
 async def _body(request: web.Request) -> Any:
@@ -396,15 +430,22 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        log.debug("widget sent non-JSON: %r", raw[:200])
+        log.debug("widget sent non-JSON (%d chars)", len(raw))   # not the text: it may be a hello, secret and all
         return
     kind = data.get("type") if isinstance(data, dict) else None
     if kind == "hello":
-        log.info("widget hello: %s", {k: v for k, v in data.items() if k not in ("type", "capabilities")})
-        body = daemon.hub.hello(ws, data)
+        log.info("widget hello: %s", {k: v for k, v in data.items() if k not in ("type", "capabilities", bussecret.FIELD)})
+        body = daemon.hub.hello(ws, data, daemon.bus_secret())
+        if not body.trusted:
+            log.info("widget hello without %s bus secret: phases and performances only, no input or approvals",
+                     "the right" if body.secret == "wrong" else "the")
         if await _check_version(daemon, ws, data.get("version")) != "major":
             if body.protocol >= 2:
                 await ws.send_str(json.dumps(welcome(daemon, body), ensure_ascii=False))
+                if not body.trusted and (body.declared or body.secret == "wrong"):
+                    # It asked for input or approvals, or sent a secret that is not this install's: say why
+                    # it got none (welcome's `accepted` says what it got).
+                    await _refuse(ws, "hello", _secret_reason(body))
                 # A body that (re)connects while she waits for a yes gets the open approval now, so its
                 # card shows (PROTOCOL §13b): the request as it went out, with the time left.
                 pending = daemon.approvals.open
@@ -426,14 +467,38 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
         # Typed into the widget's box: the same funnel as a spoken sentence (§8b). In the background,
         # so the socket keeps answering pings while Qwen thinks (the widget drops a silent socket).
         text = str(data.get("text", "")).strip()
+        if text and await _untrusted_input(daemon, ws, kind):
+            return
         if text:
             log.info("widget typed: %s", sentence(text))
             daemon.background(daemon.handle_event(Event.from_dict({"source": "voice", "title": text})),
                               f"typed {sentence(text)}")
     elif kind == "poked":
-        _poked(daemon, data)
+        if not await _untrusted_input(daemon, ws, kind):
+            _poked(daemon, data)
     else:
-        log.debug("widget message: %s", data)
+        log.debug("widget message of type %r", str(kind)[:32])
+
+
+def _secret_reason(body) -> str:
+    return "bad_secret" if body.secret == "wrong" else "no_secret"
+
+
+async def _refuse(ws: web.WebSocketResponse, ref: str, reason: str) -> None:
+    await ws.send_str(json.dumps({"type": "input.refused", "ref": ref[:32], "reason": reason}))
+
+
+async def _untrusted_input(daemon: Daemon, ws: web.WebSocketResponse, kind: str) -> bool:
+    """True (and the input is dropped) when this socket's hello did not present the bus secret. A v2 body is
+    told (`input.refused`, `no_secret` or `bad_secret`); a v1 body only gets the v1 traffic, so it is not,
+    and the journal says it instead. Never the text that came with it."""
+    body = daemon.hub.body(ws)
+    if body.trusted:
+        return False
+    log.info("%s from a body without the bus secret; refused", kind)
+    if body.protocol >= 2:
+        await _refuse(ws, kind, _secret_reason(body))
+    return True
 
 
 def _poked(daemon: Daemon, data: dict[str, Any]) -> None:
@@ -458,7 +523,7 @@ def welcome(daemon: Daemon, body) -> dict[str, Any]:
     message: dict[str, Any] = {"type": "welcome", "protocol": body.protocol, "brain": __version__,
                                "t": round(time.monotonic(), 6), "rest_state": daemon.rest_state,
                                "accepted": {"phases": sorted(body.phases), "cancel": body.cancel}
-                               | body.accepted_approvals()}
+                               | body.accepted_approvals(), "trusted": body.trusted}
     if body.id:
         message["body_id"] = body.id
     return message
@@ -469,6 +534,9 @@ async def _cancel_from_body(daemon: Daemon, ws: web.WebSocketResponse, data: dic
     the run going on now. It stops that run and nothing else: no line, no new run."""
     body = daemon.hub.body(ws)
     run_id = data.get("run_id")
+    if body.protocol >= 2 and not body.trusted:
+        await _untrusted_input(daemon, ws, "run.cancel")
+        return
     if body.protocol < 2 or not body.cancel:
         log.info("run.cancel from a body that did not declare it; ignored")
         return
@@ -491,6 +559,10 @@ async def _answer_from_body(daemon: Daemon, ws: web.WebSocketResponse, data: dic
     ref = approval_id[:32] if isinstance(approval_id, str) else ""
     if body.protocol < 2:
         log.info("approval.answer from a v1 body; ignored")
+        return
+    if not body.trusted:
+        log.info("approval.answer from a body without the bus secret; refused")
+        await _refuse(ws, ref, _secret_reason(body))
         return
     reason = "not_declared" if not body.answers else daemon.approvals.answer(
         approval_id, data.get("answer"), "body", hold=data.get("hold") is True)

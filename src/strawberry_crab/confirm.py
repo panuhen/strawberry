@@ -136,16 +136,23 @@ def card_line(question: str) -> str:
 
 
 async def hold(toolbox: Toolbox, adapter: Any, server: str, name: str, arguments: dict[str, Any],
-               run: Any = None) -> Held:
+               run: Any = None, foreign: bool = False) -> Held:
     """The call as it will be made after a yes, the line that asks about it, its approval tier and
     the line her card shows. The server's adapter writes the line and may pin what would change by
     then ("current" becomes the playing track's URI, so a yes after the song has changed removes the
     one she named); without one, or if it fails, the call is kept as it came and the line names the
     tool.
 
+    `foreign`: strangers' text is in the conversation (trust.py), so the arguments may be theirs. The
+    line is then the core's own, naming the tool and nothing from the arguments, and the adapter is not
+    asked: its wording could carry an argument onto her card, the bus and into her spoken question; unless
+    the adapter says its wording never does (`asks_after_foreign`: Spotify's removals).
+
     `run` is the run that asks (runs.py). The daemon opens the approval for it once she has said the
     question (`Daemon.hold`: `approval.request`, and the run waits in `awaiting_approval`)."""
     question, kept = generic_question(name), dict(arguments)
+    if foreign and not getattr(adapter, "asks_after_foreign", False):
+        adapter = None
     ask = getattr(adapter, "ask", None) if adapter is not None else None
     if ask is not None:
         try:

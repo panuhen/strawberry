@@ -17,6 +17,7 @@ from strawberry_crab.events import CannedReactor, Event
 from strawberry_crab.server import create_app
 from strawberry_crab.systemone import Gate
 from strawberry_crab.voice import Listener
+from tests.bus import connect
 from tests.test_outcomes import FakeMpris
 from tests.test_systemone import FakeEmbedder
 from tests.test_thinker import make, plain_config, reading
@@ -124,7 +125,7 @@ async def test_no_sentence_in_any_log_record(aiohttp_client, caplog, log_sentenc
     client = await aiohttp_client(create_app(daemon))
     with caplog.at_level(logging.DEBUG):
         await daemon.listener.loaded()
-        ws = await client.ws_connect("/ws")
+        ws = await connect(client)
         await ws.send_str(json.dumps({"type": "heard", "text": f"hello there {CANARY}"}))      # typed
         await turns(daemon, 1)
         await client.post("/event", json={"source": "voice", "title": f"find me {CANARY} songs"})  # a tool call
@@ -145,7 +146,7 @@ async def test_no_sentence_in_any_log_record(aiohttp_client, caplog, log_sentenc
     else:
         assert leaked == [], leaked
         for where in ("widget typed: <sentence, 30 chars>", "voice: heard <sentence, 26 chars>", "gate: <sentence,",
-                      "actions: <sentence,", "thinker: <sentence,", '"query": "<24 chars>"'):
+                      "actions: <sentence,", "thinker: <sentence,", "spotify.search(query)"):
             assert any(where in m for m in messages), where
 
 

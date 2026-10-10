@@ -184,7 +184,10 @@ class ToolsConfig:
     # calendar, notes, system); careful lists tools with consequences, offered to the thinker only when you ask
     # for such a change; confirm lists tools she asks about out loud first and runs only after a spoken yes
     # (missing: the adapter's own list, Spotify's two removals; [] asks about none, confirm.py); adapter names
-    # one of strawberry/adapters/ when the server's own name does not (ADAPTERS.md).
+    # one of strawberry/adapters/ when the server's own name does not (ADAPTERS.md); flags says what the
+    # server is for the trust model (private, foreign, egress; trust.py): a server with no adapter and no
+    # flags is all three, and flags only add to an adapter's; offer is when the thinker gets its tools:
+    # always (the default), topic (a sentence of its topic) or asked (a sentence that asks for it).
     # Empty by default: no server ships configured, and music control works over MPRIS without one.
     servers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -220,6 +223,8 @@ class ThinkerConfig:
     num_predict: int = 300
     max_tools: int = 30            # more schemas than this and the list is cut: the gate's topic first,
                                    # then each adapter's common tools (25 Spotify tools are ~2400 tokens)
+    tool_tokens: int = 4000        # …and at most this many prompt tokens of them, by the thinker's own
+                                   # estimate (3 characters a token; Thinker.fit); 0: no budget
     max_rounds: int = 6            # tool rounds before she has to answer honestly with what she has
     timeout_s: float = 45.0        # the whole request, cold load included
     ack_after_s: float = 2.5       # silent thinking pose first; a spoken ack only if the reply takes longer
@@ -260,7 +265,12 @@ class RunsConfig:
     keep: int = 50                 # finished runs kept in memory for the Brain UI
 
 
-RISKS = ("read", "change", "sends", "destructive")
+# The approval tiers, lowest first (approvals.py, WIRING §19, §20). `playback` is a change to what plays and
+# how, local to the user's player and undone in a second (play, pause, skip, volume, the queue): unlike
+# `change`, it does not wait for a yes once strangers' text is in the conversation.
+RISKS = ("read", "playback", "change", "sends", "destructive")
+TRUST_FLAGS = ("private", "foreign", "egress")     # = trust.FLAGS
+OFFERS = ("always", "topic", "asked")
 
 
 @dataclass
@@ -276,7 +286,7 @@ class ApprovalsConfig:
     grace_s: float = 10.0          # …for at most this much longer past the wait (a stuck mic cannot hold it open)
     hold: list[str] = field(default_factory=lambda: ["sends", "destructive"])
                                    # tiers whose yes on a body's card must be a press-and-hold
-    # A tool's tier, by "server.tool" or a whole "server": read | change | sends | destructive, taken as
+    # A tool's tier, by "server.tool" or a whole "server": read | playback | change | sends | destructive, taken as
     # written. Without one: the adapter's own tier, else `change`, raised to `destructive` when the server
     # marks the tool destructiveHint (an annotation only ever raises a tier).
     risk: dict[str, str] = field(default_factory=dict)
@@ -441,7 +451,13 @@ def _validate(config: Config) -> None:
                 raise ConfigError(f"tools.servers.{name}.{key} must be a list of tool names")
         if "adapter" in server and not (isinstance(server["adapter"], str) and server["adapter"].strip()):
             raise ConfigError(f"tools.servers.{name}.adapter must be an adapter name, e.g. \"spotify\" (ADAPTERS.md)")
-        unknown = set(server) - {"topic", "command", "args", "env", "cwd", "careful", "confirm", "adapter"}
+        flags = server.get("flags", [])
+        if not isinstance(flags, list) or not all(f in TRUST_FLAGS for f in flags):
+            raise ConfigError(f"tools.servers.{name}.flags must list some of {', '.join(TRUST_FLAGS)} (trust.py)")
+        if server.get("offer", "always") not in OFFERS:
+            raise ConfigError(f"tools.servers.{name}.offer must be one of {', '.join(OFFERS)}")
+        unknown = set(server) - {"topic", "command", "args", "env", "cwd", "careful", "confirm", "adapter", "flags",
+                                 "offer"}
         if unknown:
             raise ConfigError(f"tools.servers.{name}: unknown keys {sorted(unknown)}")
     if config.tools.result_chars < 100:
@@ -475,6 +491,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("thinker.num_predict must be between 1 and half of num_ctx (the prompt needs the rest)")
     if config.thinker.max_tools < 1:
         raise ConfigError("thinker.max_tools must be >= 1 (it caps the tool schemas in the prompt)")
+    if not 0 <= config.thinker.tool_tokens < config.thinker.num_ctx:
+        raise ConfigError("thinker.tool_tokens must be between 0 (no budget) and num_ctx")
     if not config.thinker.acks or not all(isinstance(a, str) and a for a in config.thinker.acks):
         raise ConfigError("thinker.acks must be a non-empty list of strings")
     learning = config.learning
@@ -572,6 +590,7 @@ def default_toml() -> str:
     lr = LearningConfig()
     ru = RunsConfig()
     ap = ApprovalsConfig()
+    th = ThinkerConfig()
     lines = [
         "# Strawberry settings. Every key is optional; these are the defaults.",
         "# Restart the daemon after editing: bin/strawberry stop && bin/strawberry daemon",
@@ -683,6 +702,11 @@ def default_toml() -> str:
         "# confirm = [\"remove_from_playlist\", \"remove_saved_tracks\"]",
         "#                                        # she asks first (\"Remove 'Teardrop' from Gym? Say yes.\") and runs",
         "#                                        # it only after a spoken yes; this is the default, [] asks about none",
+        "# offer = \"always\"                     # always | topic (sentences of its topic) | asked (when asked for)",
+        "#",
+        "# A server with no adapter is treated as private, foreign and egress until you say otherwise:",
+        "# flags = [\"private\"]                  # its results are yours; foreign: they carry others' text;",
+        "#                                        # egress: a call sends something off this machine (ADAPTERS.md)",
         "#",
         "# [tools.servers.web]                    # web search through your own SearXNG (README: Web search);",
         "# topic = \"other\"                        # your search queries go to the engines SearXNG asks",
@@ -703,6 +727,7 @@ def default_toml() -> str:
         'keep_alive = "30m"             # a cold load is 7-17 s; she says an acknowledgement while it happens',
         "stream = true                  # read the reply as it is written (tokens per second for the widget)",
         "max_tools = 30                 # more tool schemas than this and the least likely are cut (§8b)",
+        f"tool_tokens = {th.tool_tokens}             # …and at most this many prompt tokens of them; 0 = no budget",
         "",
         "[learning]",
         "# The router's learning loop, data only for now: each sentence you say or type, how the gate read",
@@ -743,7 +768,8 @@ def default_toml() -> str:
         f"grace_s = {ap.grace_s}                # while you are still answering, at most this much longer",
         f"hold = {json.dumps(ap.hold)}   # on her card, a yes to these tiers is a press-and-hold",
         '# risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }',
-        "#                              # a tool's (or a whole server's) tier: read | change | sends | destructive",
+        "#                              # a tool's (or a whole server's) tier: read | playback | change | sends | destructive;",
+        "#                              # a whole server's never lowers a tool its adapter or server marks higher",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]

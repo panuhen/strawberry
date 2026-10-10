@@ -14,7 +14,7 @@ from typing import Any
 from .actions import NO_CATALOGUE, READ_REFLEXES, Actor, Outcome
 from .adapters import gate_examples
 from .approvals import Approval, ApprovalBook
-from . import confirm
+from . import bussecret, confirm
 from .confirm import Held
 from .config import Config
 from .contract import Performance
@@ -87,6 +87,7 @@ class Daemon:
         # Names for the speech recogniser: yours from the config, plus what the music server
         # knows (artists, playlists), refreshed in the background (voice.vocabulary_refresh_s).
         self.vocabulary: list[str] = list(self.config.voice.vocabulary)
+        self.vocabulary_foreign = False     # any of them from a server (refresh_vocabulary): named by others
         self.vocabulary_task: asyncio.Task | None = None
         self.vocabulary_at = 0.0
         # Her memory across turns (§8b): the last few exchanges, given to whoever answers.
@@ -120,6 +121,20 @@ class Daemon:
         # no registration: one log line, nothing else.
         self.wake = wake.watcher(self.on_wake) if self.config.daemon.warm_on_wake else None
         self.wake_task: asyncio.Task | None = None
+        # The per-install bus secret (bussecret.py): made on the first start, read from the file after
+        # that. Every POST and every body's input must present it (server.py).
+        self._secret: str | None = None
+
+    def bus_secret(self) -> str | None:
+        """The bus secret, made if this install has none yet; None (and a log line) when the state dir
+        cannot be written, in which case nothing can post to the daemon or answer her."""
+        if self._secret is None:
+            try:
+                self._secret = bussecret.ensure()
+            except OSError as exc:
+                log.error("secret: %s could not be made (%s); nothing can post to the daemon or send her input "
+                          "until it can", bussecret.path(), exc)
+        return self._secret
 
     def _default_reactor(self) -> Reactor:
         canned = CannedReactor()
@@ -141,6 +156,7 @@ class Daemon:
         canned line, a line waits for Piper (a second), /listen says she is getting her ears on,
         a sentence waits up to 2 s for the gate and is then chat, a notification body waits for it
         as for a reload. A part without begin() (a stand-in in the tests) is started in full."""
+        self.bus_secret()    # first, so the widget and the doorways find the file once the port opens
         for part in (self.reactor, self.speaker, self.listener, self.gate):
             begin = getattr(part, "begin", None)
             if begin is not None:
@@ -352,10 +368,13 @@ class Daemon:
 
     async def refresh_vocabulary(self) -> None:
         names = list(self.config.voice.vocabulary)
+        foreign = False
         for word in await self.actor.vocabulary():
             if word not in names:
                 names.append(word)
+                foreign = True       # artists, playlists a user follows, saved tracks: named by others
         self.vocabulary = names
+        self.vocabulary_foreign = foreign
         self.vocabulary_at = time.monotonic()
         log.info("voice: %d names for the recogniser (%s…)", len(names), ", ".join(names[:5]))
 
@@ -689,9 +708,10 @@ class Daemon:
         sent = await self.perform(performance)
         if outcome.held is not None:
             self.hold(outcome.held, run)   # the clock starts once she has asked
-        # An answer from web results is not kept in her words: the ledger goes into the next
-        # sentence's prompt before anything marks it as strangers' text (Thinker._run).
-        web = self.thinker.used_untrusted(outcome) if hasattr(self.thinker, "used_untrusted") else False
+        # An answer from a foreign server's results (web results, a page; trust.py) is not kept in her
+        # words: the ledger goes into the next sentence's prompt before anything marks it as strangers'
+        # text (Thinker._run). Nor will memory keep it (brain step 6, stage 5: the same test).
+        web = self.thinker.used_foreign(outcome) if hasattr(self.thinker, "used_foreign") else False
         # Her question before a held call is not kept in her words either: with it in the ledger, Qwen
         # asked "Remove Blue Monday from your Liked Songs? Say yes." itself, with no call held (confirm.py).
         said = WEB_REPLY if web else confirm.LEDGER_HELD if outcome.held is not None else performance.text or ""
@@ -915,9 +935,11 @@ class Daemon:
         try:
             careful = route is not None and route.library_change >= 0.5
             today = self.today()
-            return await self.thinker.run(text, await self.situation(today), careful=careful,
+            context, foreign = await self.situation_trust(today)
+            extra = {"foreign_context": True} if foreign else {}
+            return await self.thinker.run(text, context, careful=careful,
                                           topic=route.topic if route is not None else "", recent=self.ledger.lines(),
-                                          route=route, public_context=today, run=run)
+                                          route=route, public_context=today, run=run, **extra)
         finally:
             reminder.cancel()
 
@@ -928,16 +950,27 @@ class Daemon:
         return time.strftime("Today is %A %d %B %Y, %H:%M local time.")
 
     async def situation(self, today: str = "") -> str:
+        """What Qwen is told before the sentence (`situation_trust`, without the flag)."""
+        return (await self.situation_trust(today))[0]
+
+    async def situation_trust(self, today: str = "") -> tuple[str, bool]:
         """What Qwen is told before the sentence: the date, what the servers say is going on and the
-        names in the user's library (speech-to-text mishears them). The recent exchanges go to it
-        as ledger lines of their own, so the thinker can drop the oldest when the prompt is long."""
+        names in the user's library (speech-to-text mishears them); and whether any of it is text others
+        wrote, which starts the run foreign (Thinker.run `foreign_context`, WIRING §20): a track playing,
+        a player's title, names from a server's library (artists, followed playlists, saved tracks). The
+        date and the user's own `[voice] vocabulary` are not. The recent exchanges go to it as ledger lines
+        of their own, so the thinker can drop the oldest when the prompt is long."""
         parts = [today or self.today()]
-        here = await self.actor.situation()
+        situation = getattr(self.actor, "situation_trust", None)
+        here, foreign = await situation() if situation is not None else (await self.actor.situation(), True)
         if here:
             parts.append(here)
+        else:
+            foreign = False
         if self.vocabulary:
             parts.append(f"Names in the user's library: {self.hotwords()}.")
-        return " ".join(parts)
+            foreign = foreign or getattr(self, "vocabulary_foreign", True)
+        return " ".join(parts), foreign
 
     # `strawberry doctor --talk` (POST /probe): fixed sentences, so the only text this path ever
     # handles is ours, and nothing the user wrote can end up in a log line.

@@ -7,6 +7,10 @@ Each socket is a `Body`: protocol 1 until its hello says 2 (PROTOCOL §10). A v1
 the v1 traffic, byte for byte; a v2 body also gets the run events it accepted in `welcome`
 (`send_phase`: the phase families, and the approval events when it said `approvals`), and the
 performance that answers a run carries that run's id.
+
+What a body may do rests on the bus secret (bussecret.py, PROTOCOL §1.4): a hello that presents it is
+`trusted` and gets what it declared; one without it (or with a wrong one) gets the performances and the
+plain run phases it asked for, never the approvals, and may send nothing but pings.
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aiohttp import WSCloseCode, web
+
+from . import bussecret
 
 log = logging.getLogger("strawberryd.hub")
 
@@ -45,6 +51,11 @@ class Body:
     asked: frozenset[str] = frozenset()      # which of approvals / answers its hello mentioned (welcome)
     shows_text: bool = True                  # it shows a performance's `text`: every v1 body; a v2 body
                                              # whose hello says `speech.bubble` (the orbs show none)
+    trusted: bool = False                    # its hello presented the bus secret: it may send input
+                                             # (heard, poked, run.cancel, approval.answer) and see approvals
+    secret: str = "none"                     # what its hello presented: "none", "wrong" or "ok" (never the value)
+    declared: frozenset[str] = frozenset()   # the gated capabilities its hello asked for (cancel, approvals,
+                                             # approval), whether or not it was given them
     connected: float = field(default_factory=time.monotonic)
 
     def wants(self, kind: str) -> bool:
@@ -72,14 +83,20 @@ def _text(value: Any, limit: int = MAX_ID) -> str:
     return "".join(ch for ch in str(value) if ch.isprintable())[:limit] if isinstance(value, str) else ""
 
 
-def body_from_hello(data: dict[str, Any]) -> Body:
-    """A Body from a hello; a hello without `protocol` (or below 2) is v1, whatever else it says."""
+def body_from_hello(data: dict[str, Any], secret: str | None = None) -> Body:
+    """A Body from a hello; a hello without `protocol` (or below 2) is v1, whatever else it says. `secret` is
+    the daemon's bus secret: a hello whose `secret` field matches it (bussecret.matches, constant time) is
+    trusted, and only a trusted body is given `cancel`, `approvals` and `approval`. Any protocol may present it:
+    a v1 body with it may type (`heard`) and poke, as v1 bodies always could."""
     try:
         protocol = int(data.get("protocol", 1))
     except (TypeError, ValueError):
         protocol = 1
     body = Body(protocol=min(max(protocol, 1), PROTOCOL), client=_text(data.get("client")),
                 version=_text(data.get("version")))
+    given = data.get(bussecret.FIELD)
+    body.trusted = bussecret.matches(secret, given)
+    body.secret = "ok" if body.trusted else "wrong" if isinstance(given, str) and given else "none"
     if body.protocol < 2:
         return body
     about = data.get("body") if isinstance(data.get("body"), dict) else {}
@@ -98,6 +115,11 @@ def body_from_hello(data: dict[str, Any]) -> Body:
     body.answers = body.approvals and (answer is True or (isinstance(answer, list) and bool(answer)))
     body.asked = frozenset(k for k, v in (("approvals", capabilities.get("approvals")), ("approval", answer))
                            if v is not None)
+    body.declared = frozenset(name for name, wanted in (("cancel", body.cancel), ("approvals", body.approvals),
+                                                         ("approval", body.answers)) if wanted)
+    if not body.trusted:
+        # No secret, no input and no approvals: a visual body (the orbs without the file) keeps its phases.
+        body.cancel = body.approvals = body.answers = False
     return body
 
 
@@ -132,9 +154,10 @@ class WidgetHub:
     def body(self, ws: web.WebSocketResponse) -> Body:
         return self._bodies.get(ws) or Body()
 
-    def hello(self, ws: web.WebSocketResponse, data: dict[str, Any]) -> Body:
-        """Record what the hello says about this socket; a v1 hello leaves it a v1 body."""
-        body = body_from_hello(data)
+    def hello(self, ws: web.WebSocketResponse, data: dict[str, Any], secret: str | None = None) -> Body:
+        """Record what the hello says about this socket; a v1 hello leaves it a v1 body. `secret`: the
+        daemon's bus secret, which the hello must present for input and approvals (body_from_hello)."""
+        body = body_from_hello(data, secret)
         self._bodies[ws] = body
         return body
 
@@ -145,7 +168,7 @@ class WidgetHub:
             if ws.closed:
                 continue
             body = self.body(ws)
-            row: dict[str, Any] = {"protocol": body.protocol}
+            row: dict[str, Any] = {"protocol": body.protocol, "trusted": body.trusted}
             if body.protocol >= 2:
                 row |= {"id": body.id, "phases": sorted(body.phases), "cancel": body.cancel} | body.accepted_approvals()
             out.append(row)

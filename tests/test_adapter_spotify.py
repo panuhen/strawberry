@@ -111,7 +111,8 @@ async def test_vocabulary_comes_from_the_library_in_order_of_likelihood():
     names = await actor.vocabulary()
     # now playing, playlists (no emoji), saved (a listing far longer than tools.result_chars)
     assert names == ["Nina Simone", "Acid Techno", "New Order", "Erik Satie"]
-    assert await actor.situation("music") == "Now playing on Spotify: Feeling Good by Nina Simone (album: I Put a Spell on You)."
+    # The names as data: cut, quoted (adapters/spotify.py `situation`).
+    assert await actor.situation("music") == 'Now playing on Spotify: "Feeling Good" by "Nina Simone" (album: "I Put a Spell on You").'
     await toolbox.close()
 
 

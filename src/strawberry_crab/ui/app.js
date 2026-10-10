@@ -524,7 +524,7 @@
     const left = typeof a.expires_in === "number" ? `${Math.ceil(a.expires_in)} s left when loaded` : null;
     return el("div", { class: "approval" },
       el("p", { class: "prompt", text: a.prompt || a.tool }),
-      el("p", { class: "dim" }, chip(a.risk, a.risk === "change" || a.risk === "read" ? null : "warn"), ` ${a.tool} · ${a.approval_id} for ${a.run_id}`,
+      el("p", { class: "dim" }, chip(a.risk, ["read", "playback", "change"].includes(a.risk) ? null : "warn"), ` ${a.tool} · ${a.approval_id} for ${a.run_id}`,
         left ? ` · ${left}` : null, a.hold ? " · a hold on her card" : null),
       el("div", { class: "actions" },
         actionButton("Yes", (b) => answerApproval(b, a.approval_id, "yes"), "primary"),
@@ -552,7 +552,7 @@
       td([clock(a.at), el("span", { class: "sub", text: a.approval_id })]),
       td(a.run_id || dash),
       td(a.tool),
-      td(chip(a.risk, a.risk === "change" || a.risk === "read" ? null : "warn")),
+      td(chip(a.risk, ["read", "playback", "change"].includes(a.risk) ? null : "warn")),
       td(chip(a.outcome || "open", a.outcome === "yes" ? "good" : a.outcome ? "warn" : "berry")),
       td(a.by || dash),
       td(`${num(a.waited, 1)} s`, "num")));

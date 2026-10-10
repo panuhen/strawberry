@@ -52,6 +52,13 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 `sent` is the number of open body sockets the message went to (`hub.py:57-71`). A 400 answer is
 `{"error": "<reason>"}` (`server.py:121-122`).
 
+**Every POST needs the bus secret** (§1.4) in the `X-Strawberry-Secret` header: `/event`, `/perform`,
+`/tempo`, `/command`, `/listen`, `/probe` and `/ui-token`, and any POST to a path that has no route.
+Without it the answer is 403 `{"error": "…", "reason": "no_secret"}`, with a wrong one `"reason":
+"bad_secret"`, and nothing happens. The reads (`GET /health`, `GET /config`, the `/ws` upgrade) need
+none. The Brain UI's own API under `/ui/api/` runs on its session and CSRF header instead (WIRING §17);
+its login token comes from `POST /ui-token`, which needs the secret.
+
 `/health` fields: `ok`, `widgets` (open sockets), `widget_versions` (one per socket that said
 hello), `version` (the brain's), `performed`, `uptime_s`, `brain`, `speech`, `voice`, `gate`,
 `wake`, `tools`, `actions`, `thinker`, `ledger`, `state` (now; a transient older than 6 s reads as
@@ -86,6 +93,38 @@ the resting state, `daemon.py:245-255`), `rest_state`, `tempo` (the fresh estima
 
 The widget swallows `pong` before handing messages on (`ws_client.gd:85-86`).
 
+### 1.4 The bus secret
+
+Loopback is open to every process on the machine, other users' included. So each install has one
+secret, and what can change what she does or says needs it (`bussecret.py`):
+
+| | |
+|---|---|
+| The file | Linux: `$XDG_STATE_HOME/strawberry/bus-secret` (`~/.local/state/strawberry/bus-secret` when the variable is unset, empty or relative). Windows: `%LOCALAPPDATA%\strawberry\state\bus-secret`. One line: 43 characters of url-safe base64 (32 random bytes) and a line end. A client strips the white space around it |
+| Who makes it | the daemon, on its first start, before its port opens; it keeps it from then on (a broken file is replaced). Clients only read it, and read it again on each connect or request: a client that started before the daemon finds it the next time |
+| Permissions | Linux: 0600, the user alone; the daemon makes a looser file 0600 again at start. Windows: the per-user `%LOCALAPPDATA%`, whose ACL lets in the user, SYSTEM and the administrators; no ACL of its own is set |
+| HTTP | the `X-Strawberry-Secret` header on every POST (§1.1) |
+| Websocket | the hello's `secret` field (§2.1), on any protocol |
+| Compared | in constant time (`hmac.compare_digest`); never logged, never echoed, never on the bus |
+
+**A body without it** (no hello, a hello without `secret`, or a wrong one) still gets everything a
+visual body needs: the v1 catch-up, every performance and command (byte for byte as before, §2), and,
+for a v2 body, `welcome` and the run phases it asked for (`listening`, `routing`, `thinking`, `tool`,
+`token_rate`, `speaking`, `run`). It gets no approvals (no `approval.request` or `approval.resolved`,
+so no card line), and it may send nothing but `ping` and `hello`: `heard`, `poked`, `run.cancel` and
+`approval.answer` are refused. A v2 body is told, with `{"type": "input.refused", "ref": "<the message
+type, or the approval id>", "reason": "no_secret" | "bad_secret"}`; after `welcome` it is also told
+once, with `"ref": "hello"`, when its hello asked for `cancel`, `approvals` or `sends.approval` (or
+carried a wrong secret). `welcome` then has `"trusted": false`, and its `accepted` says `false` for each
+of those. A v1 body is told nothing (a v1 body never receives a typed message, §7): its input is
+dropped and the journal says so.
+
+**What it protects against:** processes that cannot read the user's own files: other users on the
+machine, a sandboxed or containerised app without the user's home, a service account. **What not:** a
+process running as the user, which can read the file as the widget does. The crab widget is a v2 body
+and presents the secret (`ws_client.gd` `hello`, `paths.gd` `bus_secret`). A body from another repo (the
+orbs) reads the same file and puts it in its hello as `secret`; without it, it keeps its phases.
+
 ## 2. The session
 
 In order, on one socket:
@@ -98,8 +137,8 @@ In order, on one socket:
 4. From then on the brain broadcasts performances, tempo and commands to every open socket, and
    the body may send `ping`, `heard` and `poked` (§6).
 
-A socket that never says hello is still served: it gets every broadcast and may send `heard` and `poked`
-(`server.py:374-398`, `hub.py:57-71`).
+A socket that never says hello is still served: it gets every broadcast. It may send `heard` and `poked`
+only after a hello that presented the bus secret (§1.4); until then they are dropped.
 
 ### 2.1 `hello` (body → brain)
 
@@ -113,6 +152,7 @@ A socket that never says hello is still served: it gets every broadcast and may 
 | `client` | string | the body's name. Logged only (`server.py:384`) |
 | `version` | string | the body's release version, `MAJOR.MINOR[.PATCH]` with an optional `v`, or `"dev"` for a source run (`paths.gd:140-142`) |
 | `godot` | string | engine version. Logged only |
+| `secret` | string | the bus secret (§1.4). Needed for any input and for approvals; never logged |
 
 Sent by `ws_client.gd:75-76` on every open. The brain compares `version` with its own package
 version (`server.py:52-62`, `:416-430`):
@@ -283,9 +323,9 @@ first (`widget.gd:650-652`).
 |---|---|---|---|
 | `{"type":"hello",…}` | §2.1 | version check, privacy note (to a body that shows text) | `server.py` `_on_widget_message` |
 | `{"type":"ping"}` | – | answers `{"type":"pong"}` | `server.py:387-388` |
-| `{"type":"heard","text":"…"}` | `text`: string, the sentence the user typed | trimmed; empty ignored; becomes `Event(source="voice", title=text)` and runs the same funnel as a spoken sentence, in the background. It is a foreground run (Part 1b): one at a time, and it stops the one before it unless it answers her question | `server.py:390-397`, sent by `widget.gd:411-417` |
+| `{"type":"heard","text":"…"}` | `text`: string, the sentence the user typed | only from a socket whose hello presented the bus secret (§1.4); trimmed; empty ignored; becomes `Event(source="voice", title=text)` and runs the same funnel as a spoken sentence, in the background. It is a foreground run (Part 1b): one at a time, and it stops the one before it unless it answers her question | `server.py:390-397`, sent by `widget.gd:411-417` |
 | `{"type":"run.cancel","run_id":"…"}` | v2 only | §11c; from a v1 body it is ignored | `server.py` `_cancel_from_body` |
-| `{"type":"poked","zone":"…","level":1}` | `zone`: `shell` `belly` `eye` `claw` `near`; `level`: 1 (curious) or 2 (annoyed) | from any body. The widget sends it now and then only with its *Talk when poked* setting on (off by default; WIRING.md §13, Touch); it has already reacted itself. The brain may answer with one short line written in `pokes.py` (no model, nothing in the ledger) as an ordinary `talking` performance without `anim` or `reaction`, unless a run is going on, its state is not `idle` or `dancing`, or it said one in the last 20 s. Anything else in the fields: logged at DEBUG, ignored. Not the proposed v2 `touch` (§14), which maps to bindings and never speaks | `server.py` `_poked`, sent by `touch.gd` `maybe_talk` |
+| `{"type":"poked","zone":"…","level":1}` | `zone`: `shell` `belly` `eye` `claw` `near`; `level`: 1 (curious) or 2 (annoyed) | from any body whose hello presented the bus secret (§1.4). The widget sends it now and then only with its *Talk when poked* setting on (off by default; WIRING.md §13, Touch); it has already reacted itself. The brain may answer with one short line written in `pokes.py` (no model, nothing in the ledger) as an ordinary `talking` performance without `anim` or `reaction`, unless a run is going on, its state is not `idle` or `dancing`, or it said one in the last 20 s. Anything else in the fields: logged at DEBUG, ignored. Not the proposed v2 `touch` (§14), which maps to bindings and never speaks | `server.py` `_poked`, sent by `touch.gd` `maybe_talk` |
 | `{"type":"approval.answer",…}` | v2 only | §13b; from a v1 body it is ignored | `server.py` `_answer_from_body` |
 | anything else | – | logged at DEBUG, ignored | `server.py:398-399` |
 | not JSON | – | logged at DEBUG, ignored | `server.py:379-381` |
@@ -354,7 +394,7 @@ What stays proposed is in Part 2.
 
 ```json
 {"type": "hello", "client": "strawberry-widget", "version": "0.2.0", "godot": "4.7.2-stable (official)",
- "protocol": 2, "body": {"id": "crab", "name": "Strawberry"},
+ "protocol": 2, "body": {"id": "crab", "name": "Strawberry"}, "secret": "<the bus secret, §1.4>",
  "capabilities": {"phases": ["routing", "thinking", "tool", "speaking", "run"],
                   "approvals": true, "speech": {"bubble": true},
                   "sends": {"heard": true, "cancel": true, "approval": true}}}
@@ -371,6 +411,7 @@ The v1 fields and the version check of §2.1 stay as they are. Of the v2 fields 
 | `capabilities.sends.cancel` | `true`: it may send `run.cancel` (§11c) |
 | `capabilities.approvals` | `true`: it shows approvals, and gets `approval.request` and `approval.resolved` (§13b) |
 | `capabilities.sends.approval` | `true` (or Part 2's non-empty list of ways, e.g. `["click"]`): it may send `approval.answer` (§13b). Taken only together with `approvals: true`: the id to answer comes in a request |
+| `secret` | the bus secret (§1.4). Without it `cancel`, `approvals` and `approval` are not given, whatever the hello asks |
 | `capabilities.speech.bubble` | `true`: it shows a performance's `text` (her bubble). Only the one-time privacy note (§2.1) looks at it today: it goes to a body that shows text, and a v2 body without this flag (the orbs) neither gets it nor uses it up. A v1 body counts as showing text |
 
 Every other capability of §10 is accepted and ignored for now. The brain answers a v2 hello that is
@@ -379,14 +420,15 @@ not refused (§2.1) with `welcome` (`server.py` `welcome`), on that socket only:
 ```json
 {"type": "welcome", "protocol": 2, "brain": "0.2.0", "t": 81234.512, "rest_state": "idle",
  "accepted": {"phases": ["routing", "run", "speaking", "thinking", "tool"], "cancel": true,
-              "approvals": true, "approval": true}, "body_id": "crab"}
+              "approvals": true, "approval": true}, "trusted": true, "body_id": "crab"}
 ```
 
-`t` is brain monotonic time; `accepted` is what this body will get and may send. `approvals` and
+`t` is brain monotonic time; `accepted` is what this body will get and may send; `trusted` is whether
+its hello presented the bus secret (§1.4), without which `cancel`, `approvals` and `approval` are `false`. `approvals` and
 `approval` are in `accepted` only when the hello mentioned them (a stage 1 hello gets the stage 1
 shape). Right after `welcome`, a body with `approvals` gets the approval that is open now, if one is
 (§13b). The v1 catch-up (§2 step 2) still goes out at connect, before the hello. `/health` lists
-each open socket under `bodies` (`protocol`, and for v2 `id`, `phases`, `cancel`, and `approvals` /
+each open socket under `bodies` (`protocol`, `trusted`, and for v2 `id`, `phases`, `cancel`, and `approvals` /
 `approval` as in `accepted`), the run book under `runs` and the approvals under `approvals` (the
 open id and tier, counts per outcome; never a prompt or an argument).
 
@@ -470,7 +512,8 @@ A notification is `speaking → run.completed`. An empty voice capture is `speak
 {"type": "run.cancel", "run_id": "r-2"}
 ```
 
-Taken only from a v2 body whose welcome said `cancel: true`, and only for the foreground run going
+Taken only from a v2 body whose welcome said `cancel: true` (which needs the bus secret, §1.4; a body
+without it gets `input.refused` with `no_secret` or `bad_secret`), and only for the foreground run going
 on now (`server.py` `_cancel_from_body`). Anything else is ignored and logged; a v2 body that may
 cancel but named another run gets
 
@@ -526,8 +569,10 @@ once at connect and then every 5 s, and keeps the offset of the quickest of its 
 ## 13b. Approvals (brain ⇄ body)
 
 Some calls wait for the user's yes before they are made (`approvals.py`, WIRING §19): the tools on
-a server's `confirm` list (Spotify's two removals), and every call of the `sends` or `destructive`
-tier. The run that reached the call says her question as a performance, as in v1 ("Remove
+a server's `confirm` list (Spotify's two removals), every call of the `sends` or `destructive`
+tier, and, once text from strangers is in the conversation (a web result, a Spotify name; WIRING §20),
+every call above `playback`. The prompt of such a request is the brain's own wording, naming the tool and
+nothing from the call's arguments ("Shall I go ahead with lamp on?"). The run that reached the call says her question as a performance, as in v1 ("Remove
 'Teardrop' from Gym? Say yes."), then opens an approval and waits. A body that declared
 `capabilities.approvals` (§9b) gets the request and can show it as a card; one that also declared
 `sends.approval` may answer it. The user can answer by voice or by typing as well, or in the Brain
@@ -544,7 +589,7 @@ UI; whichever answer comes first decides.
 |---|---|---|
 | `approval_id` | string, `a-<boot>-<n>` | what an answer names: `<boot>` is 6 hex digits drawn at each daemon start, `<n>` counts from 1, so a card left over from before a restart never matches a new question |
 | `run_id`, `seq`, `t` | | as for every run event (§11b); the request is a step of the run |
-| `risk` | `read` \| `change` \| `sends` \| `destructive` | the call's tier. `change`: it changes something that can be put back (a track off a playlist). `sends`: something reaches other people or leaves for someone (a message, an email). `destructive`: it deletes, or cannot be undone. `read` is possible for a tool on a `confirm` list |
+| `risk` | `read` \| `playback` \| `change` \| `sends` \| `destructive` | the call's tier. `playback`: what plays and how (possible only for a tool on a `confirm` list). `change`: it changes something that can be put back (a track off a playlist). `sends`: something reaches other people or leaves for someone (a message, an email). `destructive`: it deletes, or cannot be undone. `read` is possible for a tool on a `confirm` list |
 | `prompt` | string, one line, at most 160 characters | what the card shows: the adapter's `describe` line, by default her question without "Say yes.". Written by code for display; it says nothing her spoken question does not already say, and never carries the call's arguments as they came |
 | `timeout_s` | number | how long she waits: 10 s for `change` (and `read`), 30 s for `sends` and `destructive` (`[approvals] change_s`, `sends_s`, `destructive_s`) |
 | `expires_t` | number | brain monotonic time when it runs out (`t` + `timeout_s`); map it to the body's clock with §12.1 for a countdown |
@@ -595,6 +640,7 @@ and one of these reasons, and nothing else happens (a v1 body's is ignored, with
 
 | `reason` | When | The request |
 |---|---|---|
+| `no_secret`, `bad_secret` | the body's hello did not present the bus secret, or presented a wrong one (§1.4) | unchanged |
 | `not_declared` | the body did not declare `approvals` and `sends.approval` | unchanged |
 | `not_open` | no such id, or not the open one | unchanged |
 | `resolved` | that id was answered already: the first answer won | already ended |
@@ -1009,7 +1055,8 @@ input from a body above 20 messages per second, and any `entity` the body did no
 ## 14.1 PROPOSED (v2): privacy rules of the bus
 
 The bus is localhost only, and any local process that does not send `Origin` can open `/ws` and
-read everything on it. So the rule is: **only what a body needs to perform goes on the bus.**
+read everything on it, with or without the bus secret (§1.4: the secret gates input and approvals,
+not what a body is shown). So the rule is: **only what a body needs to perform goes on the bus.**
 
 Never on the bus, in any message, v1 or v2:
 

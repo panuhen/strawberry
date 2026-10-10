@@ -18,6 +18,13 @@ Either way the outcome is one plain sentence of fact written by code ("Skipped. 
 Monday by New Order.") and the reaction path adds a short quip in her voice after it (the
 `action` event). A 1B model will not reliably carry a track name or a number from a structured
 result into a sentence, so the fact never depends on it, and a failure says it failed.
+
+A reflex never asks for a yes. So one whose tools include a call that waits for one (its tier raised
+by `[approvals] risk`, or the tool on its server's confirm list; the adapter's `reflex_tools` says
+which tools each reflex calls) is not run: the sentence goes to the thinker, which asks (approvals.py).
+A reflex that calls such a tool all the same, one its adapter did not list, gets a refusal instead of
+the call (`Guarded`) and the sentence goes to the thinker too. MPRIS's reflexes are not a configured
+server's and have no tier.
 """
 
 from __future__ import annotations
@@ -65,6 +72,27 @@ Reflex = Callable[[Toolbox, str], Awaitable[Outcome]]
 OnCall = Callable[..., None]
 # Reflexes that only read; any other one changes the player.
 READ_REFLEXES = frozenset({"now_playing"})
+
+
+class Guarded:
+    """The toolbox as a reflex sees it: a call that would wait for a yes (Toolbox.needs_approval) is not made,
+    and `refused` names it. Everything else is the toolbox's own."""
+
+    def __init__(self, toolbox: Toolbox) -> None:
+        self._toolbox = toolbox
+        self.refused = ""
+
+    async def call(self, server: str, name: str, arguments: dict[str, Any] | None = None,
+                   result_chars: int | None = None) -> ToolResult:
+        needs = getattr(self._toolbox, "needs_approval", None)
+        if needs is not None and needs(server, name):
+            self.refused = self.refused or f"{server}.{name}"
+            return ToolResult(server, name, False, f"{server}.{name} waits for the user's yes; a reflex does not make it",
+                              0.0, arguments=arguments or {})
+        return await self._toolbox.call(server, name, arguments, result_chars)
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._toolbox, attr)
 
 
 # Words a bare "start the music again" sentence is made of. Anything else in a `resume` sentence
@@ -184,6 +212,15 @@ class Actor:
             return False
         return not self.has_catalogue()
 
+    def asks_first(self, server: str, reflex: str) -> bool:
+        """Would this reflex make a call that waits for a yes (its adapter's `reflex_tools`)? Then the thinker
+        does the sentence instead, and asks. MPRIS has no tiers."""
+        if server == "mpris":
+            return False
+        tools = (getattr(self.adapters.get(server), "reflex_tools", None) or {}).get(reflex, ())
+        needs = getattr(self.toolbox, "needs_approval", None)
+        return needs is not None and any(needs(server, tool) for tool in tools)
+
     def label(self, server: str, tool: str) -> str:
         """The reflex as the widget's step chip names it: "Spotify: skip", "Player: pause"."""
         if server == "mpris":
@@ -213,10 +250,16 @@ class Actor:
                          route.has_argument)
                 return None
             (server, reflex), tool = found, route.tool
+        if self.asks_first(server, tool):
+            self.deferred += 1
+            log.info("actions: %s.%s would wait for a yes ([approvals] risk, or a confirm list); over to the thinker, "
+                     "which asks", server, tool)
+            return None
         started = time.perf_counter()
         if on_call is not None:
             on_call("started", server, tool)
-        work = asyncio.ensure_future(asyncio.wait_for(reflex(self.toolbox, server), self.config.timeout_s))
+        guarded = Guarded(self.toolbox)
+        work = asyncio.ensure_future(asyncio.wait_for(reflex(guarded, server), self.config.timeout_s))
         timed_out = False
         try:
             outcome = await asyncio.shield(work)
@@ -234,6 +277,15 @@ class Actor:
             if on_call is not None:
                 on_call("completed", server, tool, ok, "" if ok else "failed")
             raise
+        if guarded.refused:
+            # A tool its adapter did not list for this reflex waits for a yes: nothing more is made here, and
+            # the thinker takes the sentence (and asks). Whatever the reflex did before is in its calls.
+            if on_call is not None:
+                on_call("completed", server, tool, False, "refused")
+            self.deferred += 1
+            log.warning("actions: %s.%s called %s, which waits for a yes; over to the thinker (list it in the "
+                        "adapter's reflex_tools)", server, tool, guarded.refused)
+            return None
         if on_call is not None:
             on_call("completed", server, tool, outcome.ok, "" if outcome.ok else "timeout" if timed_out else "failed")
         ms = (time.perf_counter() - started) * 1000
@@ -242,18 +294,28 @@ class Actor:
             self.failed += 1
         self.last = {
             "asked": text, "tool": tool, "server": server, "did": outcome.did, "fact": outcome.fact,
-            "ok": outcome.ok, "ms": round(ms, 1), "calls": [c.to_dict() | {"text": c.text[:200]} for c in outcome.calls],
+            "ok": outcome.ok, "ms": round(ms, 1),
+            "calls": [self.toolbox.shown(c) if hasattr(self.toolbox, "shown") else c.to_dict() | {"text": c.text[:200]}
+                      for c in outcome.calls],
         }
         log.info("actions: %s -> %s.%s: %s -> %r (%.0f ms)", sentence(text), server, tool, outcome.did,
                  line(outcome.fact), ms)
         return outcome
 
     async def situation(self, topic: str | None = None) -> str:
-        """What the thinker should know before it starts, from the servers that can say. `topic`
-        narrows it to one topic's servers; None (the default) asks every server that has a line.
-        With nothing to say about music, MPRIS says what is playing, so "this song" still means
-        something with no server configured."""
+        """What the thinker should know before it starts (`situation_trust`, without the flag)."""
+        return (await self.situation_trust(topic))[0]
+
+    async def situation_trust(self, topic: str | None = None) -> tuple[str, bool]:
+        """What the thinker should know before it starts, from the servers that can say, and whether any of
+        it is text others wrote (a track's name: the situation line is part of the trust boundary, WIRING
+        §20). `topic` narrows it to one topic's servers; None (the default) asks every server that has a
+        line. With nothing to say about music, MPRIS says what is playing, so "this song" still means
+        something with no server configured; a player's title is always someone else's text. An adapter
+        says of its own line (`Adapter.situation_is_foreign`, foreign unless it says otherwise; an
+        exception there is foreign too)."""
         lines = []
+        foreign = False
         for name, server in self.toolbox.servers.items():
             adapter = self.adapters.get(name)
             if adapter is None or (topic is not None and server.topic != topic):
@@ -264,6 +326,10 @@ class Actor:
                 line = ""
             if line:
                 lines.append(line)
+                try:
+                    foreign = foreign or adapter.situation_is_foreign(line) is not False
+                except Exception:   # noqa: BLE001 - when in doubt, foreign
+                    foreign = True
         if not lines and self.mpris is not None and topic in (None, MPRIS_TOPIC):
             try:
                 line = await asyncio.wait_for(self.mpris.situation(), 5.0)
@@ -271,7 +337,8 @@ class Actor:
                 line = ""
             if line:
                 lines.append(line)
-        return " ".join(lines)
+                foreign = True        # the player's title, artist and album: written by others
+        return " ".join(lines), foreign
 
     async def vocabulary(self) -> list[str]:
         """Names from every server whose adapter can offer them, for the speech recogniser."""

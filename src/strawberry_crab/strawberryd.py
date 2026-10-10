@@ -197,7 +197,10 @@ def talk(config) -> int:
             return json.loads(response.read())
 
     def post(path: str, body: dict):
-        request = urllib.request.Request(base + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+        from . import bussecret
+
+        request = urllib.request.Request(base + path, data=json.dumps(body).encode(),
+                                         headers=bussecret.headers({"Content-Type": "application/json"}))
         with urllib.request.urlopen(request, timeout=120) as response:
             return json.loads(response.read())
 
