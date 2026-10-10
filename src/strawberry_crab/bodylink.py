@@ -16,9 +16,12 @@ last `target`, and what the user is holding (a grab or a drag until its release)
 thinker's line about it ("The user is pointing at the music orb."), so "this" means something. Other parts
 of the brain (the gesture watcher) read it through `current()` and `holding()`.
 
-A label is text the body wrote. Only a trusted body's are kept, and each is cut to letters, digits, spaces,
-hyphens and apostrophes, at most 40 characters (`clean_label`): enough for "the music orb", too little to
-carry instructions into the situation line. Ids and kinds are a short lowercase token (`ID`).
+**What reaches a model.** A trusted body holds the bus secret; that does not make every string it sends the
+user's words. A body could name an entity after a track or a notification. So nothing a model reads (the
+situation line, her timeline) carries a body's free text: an entity is named there by code from its id and
+its kind alone (`Entity.name`: id "music" and kind "orb" are "the music orb"), and both are checked at hello:
+the id a short lowercase token (`ID`), the kind one of `ENTITY_KINDS`. The `label` is for display only (bodies,
+`/health`), cleaned and cut to 40 characters (`clean_label`), and never goes into a prompt.
 """
 
 from __future__ import annotations
@@ -33,9 +36,11 @@ from typing import Any
 
 TOUCH_KINDS = ("poke", "flick", "grab", "drag", "release", "fuse")
 VIAS = ("pointer", "touch", "gesture")
-# An entity's id and kind: a lowercase token. Short, so it can sit in a config key ([touch] music.flick) and in
-# her timeline without being anyone's sentence.
-ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
+# An entity's id: a lowercase token, starting with a letter. Short, so it can sit in a config key ([touch]
+# music.flick) and be how code names it to a model ("the music orb") without being anyone's sentence.
+ID = re.compile(r"[a-z][a-z0-9_-]{0,23}")
+# An entity's kind: one of these (a body with something else says the nearest, or `thing`).
+ENTITY_KINDS = ("orb", "crab", "panel", "button", "card", "light", "thing")
 MAX_ENTITIES = 16
 MAX_LABEL = 40
 TOUCH_PER_S = 20          # per body; more in one second are dropped and counted
@@ -76,7 +81,8 @@ class Entity:
     label: str
 
     def name(self) -> str:
-        """Code's own name for it, from the id and the kind alone (no label): "the music orb", "the crab"."""
+        """Code's own name for it, from the id and the kind alone, never the label: "the music orb", "the crab".
+        The only name for it that may reach a model (the situation line, her timeline)."""
         return entity_name(self.id, self.kind)
 
     def to_dict(self) -> dict[str, str]:
@@ -84,14 +90,14 @@ class Entity:
 
 
 def entity_name(entity_id: str, kind: str) -> str:
-    words = entity_id.replace("_", " ").replace("-", " ")
-    return f"the {kind}" if entity_id == kind else f"the {words} {kind.replace('_', ' ').replace('-', ' ')}"
+    words = " ".join(entity_id.replace("_", " ").replace("-", " ").split())
+    return f"the {kind}" if words == kind else f"the {words} {kind}"
 
 
 def clean_label(value: Any) -> str:
-    """A body's label as the brain keeps it: NFKC, letters, digits, spaces, hyphens and apostrophes only (the
-    rest becomes a space), white space collapsed, at most MAX_LABEL characters, cut at a word. "" when nothing
-    is left (the caller then uses `Entity.name`)."""
+    """A body's label as the brain keeps it, for display only: NFKC, letters, digits, spaces, hyphens and
+    apostrophes (the rest becomes a space), white space collapsed, at most MAX_LABEL characters, cut at a word.
+    "" when nothing is left (the caller then uses `Entity.name`)."""
     if not isinstance(value, str):
         return ""
     text = unicodedata.normalize("NFKC", value[: MAX_LABEL * 4])
@@ -106,24 +112,25 @@ def clean_label(value: Any) -> str:
     return out if out else (words[0][:MAX_LABEL] if words else "")
 
 
-def parse_entities(value: Any) -> tuple[Entity, ...]:
-    """`capabilities.entities` from a hello: each `{id, kind, label}` with a valid id and kind, the first of
-    each id, at most MAX_ENTITIES. A bad entry is left out (welcome's `accepted.entities` lists the ids taken);
-    an entry's other fields are ignored."""
+def parse_entities(value: Any) -> tuple[tuple[Entity, ...], int]:
+    """`capabilities.entities` from a hello: each `{id, kind, label}` with a valid id (`ID`) and kind
+    (`ENTITY_KINDS`), the first of each id, at most MAX_ENTITIES; and how many entries were refused (a bad id
+    or kind, a repeated id, past the cap: the server tells the body, and welcome's `accepted.entities` lists
+    the ids taken). An entry's other fields are ignored."""
+    if value is None:
+        return (), 0
     if not isinstance(value, list):
-        return ()
+        return (), 1
     out: dict[str, Entity] = {}
-    for item in value[: MAX_ENTITIES * 4]:
-        if len(out) >= MAX_ENTITIES:
-            break
-        if not isinstance(item, dict):
-            continue
-        entity_id, kind = item.get("id"), item.get("kind")
-        if not _token(entity_id) or not _token(kind) or entity_id in out:
+    refused = max(len(value) - 256, 0)
+    for item in value[:256]:
+        entity_id, kind = (item.get("id"), item.get("kind")) if isinstance(item, dict) else (None, None)
+        if len(out) >= MAX_ENTITIES or not _token(entity_id) or kind not in ENTITY_KINDS or entity_id in out:
+            refused += 1
             continue
         label = clean_label(item.get("label")) or entity_name(entity_id, kind)
         out[entity_id] = Entity(entity_id, kind, label)
-    return tuple(out.values())
+    return tuple(out.values()), refused
 
 
 def parse_kinds(value: Any) -> frozenset[str]:
@@ -232,8 +239,8 @@ class Targets:
         targets.holding()   -> list[Target]      grabbed or dragged and not let go (for at most `hold_s`)
         targets.situation() -> str               the thinker's line about both ("" when there is none)
 
-    A target is the user's own act reported by a trusted body; the situation line names it by the body's
-    cleaned label, and is not strangers' text."""
+    A target is the user's own act reported by a trusted body, and the situation line names it by code from
+    the entity's id and kind (`Entity.name`), never its label: so the line is not strangers' text."""
 
     def __init__(self, ttl_s: float = 8.0, hold_s: float = 30.0, clock=time.monotonic) -> None:
         self.ttl_s = ttl_s
@@ -310,10 +317,10 @@ class Targets:
         target = self.current()
         if target is not None:
             verb = "touching" if target.via == "touch" else "pointing at"
-            parts.append(f"The user is {verb} {target.entity.label} on the screen.")
+            parts.append(f"The user is {verb} {target.entity.name()} on the screen.")
         held = [h for h in self.holding() if target is None or (h.owner, h.entity.id) != (target.owner, target.entity.id)]
         if held:
-            parts.append(f"The user is holding {' and '.join(h.entity.label for h in held[:3])}.")
+            parts.append(f"The user is holding {' and '.join(h.entity.name() for h in held[:3])}.")
         return " ".join(parts)
 
     def stats(self) -> dict[str, Any]:

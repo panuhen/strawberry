@@ -110,6 +110,7 @@ class Body:
                                              # approval, touch, target), whether or not it was given them
     # Input (bodylink.py, PROTOCOL Part 1c), given only to a trusted body: what it draws, and what it may send.
     entities: tuple[Entity, ...] = ()
+    entities_refused: int = 0                   # entries of its hello's entities that were not taken (bad id or kind)
     touch_kinds: frozenset[str] = frozenset()   # accepted: the touch kinds it may send (none: no `touch`)
     target: bool = False                        # accepted: it may send `target`
     asked_input: frozenset[str] = frozenset()   # which of entities / touch / target its hello mentioned
@@ -191,7 +192,7 @@ def body_from_hello(data: dict[str, Any], secret: str | None = None) -> Body:
     body.asked = frozenset(k for k, v in (("approvals", capabilities.get("approvals")), ("approval", answer))
                            if v is not None)
     # Input (PROTOCOL Part 1c): what it draws, and whether it reports touches and targets.
-    body.entities = bodylink.parse_entities(capabilities.get("entities"))
+    body.entities, body.entities_refused = bodylink.parse_entities(capabilities.get("entities"))
     body.touch_kinds = bodylink.parse_kinds(sends.get("touch"))
     body.target = sends.get("target") is True
     body.asked_input = frozenset(k for k, v in (("entities", capabilities.get("entities")),
@@ -199,7 +200,8 @@ def body_from_hello(data: dict[str, Any], secret: str | None = None) -> Body:
                                  if v is not None)
     body.declared = frozenset(name for name, wanted in (("cancel", body.cancel), ("approvals", body.approvals),
                                                          ("approval", body.answers), ("touch", bool(body.touch_kinds)),
-                                                         ("target", body.target)) if wanted)
+                                                         ("target", body.target),
+                                                         ("entities", bool(body.entities))) if wanted)
     if not body.trusted:
         # No secret, no input and no approvals: a visual body (the orbs without the file) keeps its phases. Its
         # entities are not kept either: their labels are text the brain takes only from a trusted body.

@@ -618,7 +618,7 @@ def _validate_touch(config: Config) -> None:
     mapped: dict[str, dict[str, str]] = {}
     for entity, kinds in touch.actions.items():
         if not isinstance(entity, str) or ID.fullmatch(entity) is None or not isinstance(kinds, dict):
-            raise ConfigError(f"touch.{entity}: an entity id is a short lowercase word (a-z, 0-9, _ and -), and "
+            raise ConfigError(f"touch.{entity}: an entity id is a lowercase word of at most 24 (a letter, then a-z, 0-9, _ and -), and "
                               f"its touches are written {entity}.flick = \"next\"")
         for kind, value in kinds.items():
             key = f"touch.{entity}.{kind}"

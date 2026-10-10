@@ -513,6 +513,11 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
                     # It asked for input or approvals, or sent a secret that is not this install's: say why
                     # it got none (welcome's `accepted` says what it got).
                     await _refuse(ws, "hello", _secret_reason(body))
+                elif body.trusted and body.entities_refused:
+                    # Entities with an id or kind the brain does not take (bodylink.ID, ENTITY_KINDS): left out.
+                    log.info("body %s: %d of its entities refused (bad id or kind)", body.id or "?",
+                             body.entities_refused)
+                    await _refuse(ws, "hello", "bad_entities")
                 # A body that (re)connects while she waits for a yes gets the open approval now, so its
                 # card shows (PROTOCOL §13b): the request as it went out, with the time left.
                 pending = daemon.approvals.open
