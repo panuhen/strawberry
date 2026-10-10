@@ -17,6 +17,12 @@ package and the widget binary.
   privacy and approval wording stay in code. Both models now read the same description of her voice;
   the small model's prompt and examples are exactly as before. `[brain] persona`, `[brain] examples`
   and `[thinker] acks` still work and are deprecated. WIRING.md §21.
+- **profile.md: what she knows about you.** Your name and how to address you, and standing
+  preferences, in `~/.config/strawberry/profile.md`; the big model reads it, the small one a short
+  summary. Say "remember I prefer 24-hour time" or "call me Sam" and she writes it there and says
+  it back; "forget that" undoes it. Only from your own sentence, never while a notification, a song
+  or a web page is in what she is answering; every change keeps the earlier file, so the Brain UI
+  can show the history and revert. The log keeps counts only. WIRING.md §22.
 
 - She turns. A slow, small sway while idle; a glance toward a notification as it arrives, toward
   the middle of the screen now and then, and toward the cursor when it comes to rest near her;

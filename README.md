@@ -242,7 +242,12 @@ says only how long a sentence was (`<sentence, 23 chars>`). `[daemon] log_senten
 your sentences into the log as they are, which helps when tuning how she routes them. The first time she starts she says in her bubble that
 notification bodies are off and where to change it, and logs the same note.
 
-She remembers the last few exchanges of conversation in memory, for context, and nothing more,
+She remembers the last few exchanges of conversation in memory, for context, and what you ask her
+to remember about you ("remember I prefer 24-hour time", "call me Sam") in `profile.md` beside
+your settings: readable only by you, edited by hand or in the Brain UI, with every earlier version
+kept in the state folder so a change can be undone ("forget that") or reverted. She writes to it
+only from your own sentence, never while a notification, a song or a web page is part of what
+she is answering, and says back what she saved. Nothing else is kept,
 unless you turn on the learning log (`[learning] log_outcomes = true`, off by default). Then each
 sentence you say or type is kept in `outcomes.jsonl` in the state directory, with how she routed
 it and what came of it (an undo, a correction, a rephrase, or silence), so she can learn from

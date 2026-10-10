@@ -25,6 +25,7 @@ from .ledger import Ledger
 from .logtext import sentence
 from . import logtext, media, privacy
 from . import persona as personas
+from . import profile as profiles
 from .outcomes import OutcomeLog
 from .pokes import Pokes
 from .reactions import decorate, is_burst
@@ -49,6 +50,9 @@ class Daemon:
                  actor: Actor | None = None, thinker: Thinker | None = None) -> None:
         self.config = config or Config()
         logtext.configure(self.config.daemon.log_sentences)
+        # What she knows about the user (profile.md, profile.py): in the thinker's prompt, a short summary in the
+        # reaction model's, and hers to change from the user's own sentence through a builtin server (below).
+        self.profile = profiles.store()
         self.hub = WidgetHub()
         self.reactor: Reactor = reactor or self._default_reactor()
         self.speaker = speaker or Speaker(self.config.speech)
@@ -63,7 +67,22 @@ class Daemon:
         self.mpris = media.controls() if actor is None and self.config.actions.mpris else None
         self.actor = actor or Actor(self.config.actions, self.toolbox, mpris=self.mpris)
         self.thinker = thinker or Thinker(self.config.thinker, self.toolbox, self.config.brain.action_model,
-                                          self.config.brain.ollama_url)
+                                          self.config.brain.ollama_url, profile=self.profile)
+        if getattr(self.thinker, "profile", False) is None:
+            self.thinker.profile = self.profile
+        self.profile_session: profiles.ProfileSession | None = None
+        self.profile_adapter: profiles.ProfileAdapter | None = None
+        if self.config.thinker.enabled and "profile" not in self.toolbox.servers:
+            self.profile_session = profiles.ProfileSession(self.profile)
+            self.profile_adapter = profiles.ProfileAdapter(self.profile)
+            session = self.profile_session
+
+            async def open_profile() -> profiles.ProfileSession:
+                return session
+
+            self.toolbox.add_builtin("profile", "other", open_profile, adapter=self.profile_adapter)
+        elif self.config.thinker.enabled:
+            log.warning("tools: a configured server is called profile; her own profile tools are not added")
         self.rng = random.Random()
         # Her persona (persona.md, read again when it changes, else the shipped one): her fixed lines here.
         self.persona = personas.store()
@@ -146,7 +165,7 @@ class Daemon:
             return canned
         from .brain import OllamaReactor  # local import keeps tests of the plumbing model-free
 
-        return OllamaReactor(self.config.brain, fallback=canned)
+        return OllamaReactor(self.config.brain, fallback=canned, profile=self.profile)
 
     @property
     def uptime(self) -> float:
@@ -701,6 +720,7 @@ class Daemon:
             self.acted(record, live, "chat", True)
             return await self.chat(event, preface)
         routing("escalate")
+        changed = len(self.profile_session.changes) if self.profile_session is not None else 0
         outcome = await self.think(text, route, run)
         self.acted(record, live, "thinker", outcome.ok, calls=outcome.calls)
         if music and not outcome.calls:
@@ -708,7 +728,12 @@ class Daemon:
         elif outcome.calls:
             # Again after the tools: the thinker can take longer than the window.
             self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
-        performance = decorate(event, Performance(state="talking", text=prefaced(preface, outcome.fact),
+        fact = outcome.fact
+        if self.profile_session is not None and len(self.profile_session.changes) > changed:
+            # She says back what changed in the profile (profile.py); when her reply does not, code adds it.
+            extra = profiles.Profile.readback(fact, self.profile_session.changes[changed:])
+            fact = f"{fact} {extra}".strip() if extra else fact
+        performance = decorate(event, Performance(state="talking", text=prefaced(preface, fact),
                                                   emotion=outcome.emotion or "neutral"))
         sent = await self.perform(performance)
         if outcome.held is not None:
@@ -943,6 +968,11 @@ class Daemon:
             careful = route is not None and route.library_change >= 0.5
             today = self.today()
             context, foreign = await self.situation_trust(today)
+            if self.profile_adapter is not None and self.profile_adapter.wanted(text, route):
+                # A sentence about the profile gets only the trusted part of the situation (the date): her
+                # profile tools refuse in a run with strangers' text in it (a track's name), and "this song"
+                # is not hers to write into the user's profile.
+                context, foreign = today, False
             extra = {"foreign_context": True} if foreign else {}
             return await self.thinker.run(text, context, careful=careful,
                                           topic=route.topic if route is not None else "", recent=self.ledger.lines(),

@@ -132,14 +132,15 @@ LINK = re.compile(r"\b(?:https?://|www\.)[^\s<>\"')\]]+", re.IGNORECASE)
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
 
 
-def private_phrases(context: str, public_context: str, recent: list[str], text: str) -> list[str]:
+def private_phrases(context: str, public_context: str, recent: list[str], text: str,
+                    extra: list[str] | tuple[str, ...] = ()) -> list[str]:
     """The private context as phrases to keep out of a web call once a result is in: the ledger's
     quoted sentences and replies, and the situation's parts but the public one, each 5 characters
     or more and not in what the user just said. A second layer only: rewording slips past it; the
     first is that this context is out of the prompt by then (_run)."""
     said = _plain(text)
     private = context.replace(public_context, " ") if public_context else context
-    pieces = re.split(r"[.;:()\n\[\]]|, ", private)
+    pieces = re.split(r"[.;:()\n\[\]]|, ", private) + list(extra)
     for line in recent:
         pieces += re.findall(r'"([^"]+)"', line)
     out = []
@@ -437,7 +438,7 @@ class Thinker:
         return out
 
     async def offer(self, text: str, careful: bool = False, topic: str = "",
-                    route: Any = None) -> tuple[list[ToolSpec], str, str]:
+                    route: Any = None, speaker: dict[str, str] | None = None) -> tuple[list[ToolSpec], str, str]:
         """This sentence's tools, its system prompt and the note under it. Each server's adapter
         may say the sentence does not want its tools (a web search for small talk) or asks for them
         outright ("look it up"), and brings its paragraph for the rules: how to use its tools when
@@ -485,7 +486,7 @@ class Thinker:
             if text_for and text_for not in guides:
                 guides.append(text_for)
         acting = any(not getattr(self.toolbox.adapters.get(s.server), "looks_up_only", False) for s in specs)
-        prompt = system_prompt(bool(specs), guides, acting=acting, lookup=lookup, **self.speaker())
+        prompt = system_prompt(bool(specs), guides, acting=acting, lookup=lookup, **(speaker or self.speaker()))
         if first:
             log.info("thinker: the sentence wants %s; %s", ", ".join(sorted(first)),
                      "offered first" if first & offered else "not answering")
@@ -589,6 +590,9 @@ class Thinker:
             self.failures += 1
         if self.used_foreign(outcome):
             logtext.from_foreign()   # her line carries text from outside: the journal gets its length only
+        if any(c.ok and getattr(self.toolbox.adapters.get(c.server), "own_words_only", False) is True
+               for c in outcome.calls):
+            logtext.about_profile()  # she says back what she saved of the user's words: its length only
         self.last = {
             "asked": text, "did": outcome.did, "said": outcome.fact, "emotion": outcome.emotion, "ok": outcome.ok,
             "s": round(self.last_s, 2), "held": outcome.held.key if outcome.held is not None else None,
@@ -650,10 +654,13 @@ class Thinker:
         and that server's adapter guards each further call (a page read only from the search's own
         results). Text from a stranger never shares a prompt with the user's private things, and never
         steers a change without the user's yes."""
+        # Her voice and the user's profile under it (persona.md, profile.md): the profile is private context,
+        # out of the prompt once strangers' text is in (below), as the ledger and the situation are.
+        speaker = self.speaker()
         if use_tools:
-            specs, prompt, note = await self.offer(text, careful, topic, route)
+            specs, prompt, note = await self.offer(text, careful, topic, route, speaker)
         else:
-            specs, prompt, note = [], system_prompt(False, **self.speaker()), ""
+            specs, prompt, note = [], system_prompt(False, **speaker), ""
         tools = [s.for_ollama() for s in specs]
         offered = {s.function or s.name for s in specs}
         recent = recent if recent is not None else []
@@ -735,6 +742,12 @@ class Thinker:
                     log.info("thinker: %s.%s not called: it carried a part of the private context", spec.server,
                              spec.name)
                     refusal = PRIVATE_IN_CALL
+                elif getattr(adapter, "own_words_only", False) is True and (tainted or asks):
+                    # Only from the user's own words (the profile): with strangers' text in the conversation,
+                    # a foreign result or a foreign situation line, refused rather than asked about.
+                    log.info("thinker: %s.%s not called: it changes only from the user's own words, and outside "
+                             "text is in this conversation", spec.server, spec.name)
+                    refusal = getattr(adapter, "refusal_foreign", "") or AFTER_FOREIGN
                 else:
                     refusal = self._refusal(spec, adapter, foreign, tainted, tainting, per_server, states, arguments)
                 if refusal is None and adapter is not None:
@@ -791,7 +804,13 @@ class Thinker:
                     if not tainted:
                         tainted = True
                         until = min(until, round_no + FOREIGN_ROUNDS)
-                        phrases = private_phrases(context, public_context, recent, text)
+                        about = speaker.get("about", "")
+                        phrases = private_phrases(context, public_context, recent, text,
+                                                  [line for line in about.split("\n")[1:] if line.strip()])
+                        if about:
+                            plain = self.speaker(private=False)
+                            messages[0]["content"] = messages[0]["content"].replace(
+                                speaker["voice"], plain["voice"], 1).replace("\n\n" + about, "", 1)
                         context, recent[:] = public_context, []
                         messages[1]["content"] = user_message(text, context, recent, note)
                         for earlier in private_results:

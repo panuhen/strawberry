@@ -132,6 +132,7 @@ An adapter is for a server you use every day, where the generic path is not good
 | `private`, `foreign`, `egress` | the trust flags (above, WIRING §20) |
 | `view`, `reads_as_foreign` | for the brain's calls: the text it reads and whether that counts as strangers' text, decided in one pass, and the final text read once more. Decide by where text comes from, never by what it says (Spotify: every result with a name is foreign; listed fields only, quoted, cut). An exception in either counts as foreign. `view` is `shape_result` and "not foreign" by default |
 | `asks_after_foreign` | `True` when `ask` and `describe` never put an argument as it came into her question or card: they are then still used after strangers' text |
+| `own_words_only`, `refusal_foreign` | `True`: the tools act on the user's own words only (her profile tools, WIRING.md §22); with strangers' text in the conversation, or in the situation line, a call is refused, not asked about, and the model is told `refusal_foreign` |
 | `situation_is_foreign` | whether its `situation` line carries text others wrote (a track's name). The situation line is part of the trust boundary: such a line starts the sentence foreign, so every call above `playback` asks. `True` by default |
 | `offer` | when the brain is offered this server's tools: `always`, `topic`, `asked` (above); the config's `offer` decides over it |
 | `reflex_tools` | which of the server's tools each reflex calls: a reflex whose tools would wait for a yes is not run and the brain asks instead |

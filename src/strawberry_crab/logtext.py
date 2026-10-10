@@ -26,6 +26,9 @@ _hearing: ContextVar[str] = ContextVar("hearing", default="")
 # Set once her answer to that sentence carries text from web results (Thinker.run): her line is
 # then logged as its length only, as the results are (adapters/web.py).
 _from_web: ContextVar[bool] = ContextVar("from_web", default=False)
+# Set once her answer says back a change to the user's profile (Thinker.run, profile.py): her line is then
+# logged as its length only, as the user's sentence is.
+_about_profile: ContextVar[bool] = ContextVar("about_profile", default=False)
 
 
 def configure(log_sentences: bool) -> None:
@@ -64,11 +67,19 @@ def hearing(text: str) -> Iterator[None]:
     """Mark `text` as the sentence being answered while the block runs."""
     token = _hearing.set(text)
     web = _from_web.set(False)
+    about = _about_profile.set(False)
     try:
         yield
     finally:
+        _about_profile.reset(about)
         _from_web.reset(web)
         _hearing.reset(token)
+
+
+def heard() -> str:
+    """The sentence being answered in this context ("" outside one): the profile's own-words check
+    (profile.ProfileAdapter.guard). Never for a log line."""
+    return _hearing.get()
 
 
 def from_web() -> None:
@@ -80,12 +91,20 @@ def from_web() -> None:
 from_foreign = from_web
 
 
+def about_profile() -> None:
+    """Her line for the sentence being answered says back a change to the user's profile (profile.py): see
+    line()."""
+    _about_profile.set(True)
+
+
 def line(text: str) -> str:
     """Her line for a log line: as it is, with the sentence she is answering replaced by its
     placeholder when log_sentences is off."""
     heard = _hearing.get()
     if not LOG_SENTENCES and text and _from_web.get():
         return f"<her line from web results, {len(text)} chars>"
+    if not LOG_SENTENCES and text and _about_profile.get():
+        return f"<her line about the profile, {len(text)} chars>"
     if LOG_SENTENCES or not heard or not text:
         return text
     return re.sub(re.escape(heard), lambda _: sentence(heard), text, flags=re.IGNORECASE)

@@ -853,6 +853,7 @@ src/strawberry_crab/runs.py  runs (§18): Run, RunBook, the event whitelist, `is
 src/strawberry_crab/approvals.py  approvals (§19): ApprovalBook, the digest, `needed`; confirm.py words the question and keeps the call
 src/strawberry_crab/trust.py  the trust model (§20): the private / foreign / egress flags, `clean`; bussecret.py the bus secret (§2)
 src/strawberry_crab/persona.py  her persona (§21): persona.md parsed, checked and read live; data/persona.md the shipped one
+src/strawberry_crab/profile.py  what she knows about the user (§22): profile.md, its history, her remember/forget/undo tools
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, turn.gd, touch.gd, legs.gd, wander.gd, easing.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), approval_card.gd (§19), paths.gd (XDG, the CLI, the version), validate_*.gd
@@ -1349,8 +1350,8 @@ thinker too. MPRIS's reflexes have no tier.
   result a hit.
 - *Servers inside the daemon.* `Toolbox.add_builtin(name, topic, open_session, adapter)` adds one: the
   same `Server`, offered, guarded and logged like any other, with a session object in place of a
-  process. Nothing uses it yet; memory (stage 5) and messages (stage 6) will, with adapters that say
-  `private` (and `foreign`, for messages). No builtin server was needed for this stage's rules.
+  process. The profile's tools use it (§22); memory (stage 5) and messages (stage 6) will, with adapters
+  that say `private` (and `foreign`, for messages).
 
 **`num_ctx` stays 8192** (measured 2026-10-10, `qwen3.8:27b` on the shared Ollama, `prompt_eval_count`
 with one token asked for and a nonce at the head of the system prompt so the cache hid nothing; the real
@@ -1467,3 +1468,68 @@ first paragraph and compares the rest).
 Tests: `tests/test_persona.py` (the golden prompts and lines, comments, the checks and their messages,
 the caps, warnings for keys, live reload and the fallback, `save` with its backup, the daemon's and the
 pokes' lines from the file, the deprecated keys, an edited description reaching both models).
+
+---
+
+## 22. What she knows about the user — `strawberry/profile.py`, `profile.md`
+
+`persona.md` is about her; `~/.config/strawberry/profile.md` (on Windows `%APPDATA%\strawberry\profile.md`)
+is about the user: their name and how to address them, standing preferences (24-hour time, which monitor
+is which, music taste, "don't talk in meetings"). Plain markdown, empty until written, at most 400 tokens
+(the thinker's estimate). For now it stands in for "remember X".
+
+**Who reads it.** The thinker gets it in its system prompt under her voice ("About the user, from their
+profile (their own words; what they say now wins over it):" and the file without its comments), and her
+voice then says to call the user what the profile says, else "you" (`persona.THINK_FORM_PROFILE`); with no
+profile the prompt is byte for byte as before. The system prompt changes only when the file does, so
+Ollama's prompt cache holds. A file edited past the cap is cut at a line and logged once. The reaction
+model gets the content lines on one line ("About the user (background only; mention it only when it
+fits): …") only while that is at most 60 tokens (`Profile.summary`), else nothing. The profile is private
+context: once strangers' text is in the thinker's conversation it leaves the system prompt with the ledger
+and the situation (her voice goes back to "say 'you'"), and its lines join the phrases an egress call may
+not carry (§20).
+
+**Her edits.** A builtin server (`Toolbox.add_builtin`, §20), `profile`, with three tools: `remember` (a
+line, optionally `replaces` an existing one), `forget` (one line), `undo` (the last change not yet undone;
+"forget that"). Its adapter (`ProfileAdapter`) says it is `private`, offered only when `asked`: `wanted` is
+true for a sentence that asks ("remember", "don't forget", "note that", "from now on", "call me", "my name is",
+"I prefer", "forget that", "undo that", "my profile", …), so an ordinary sentence's prompt and tools are
+unchanged. The rules, in code:
+
+- *Only from the user's own sentence.* The thinker runs only for the user's sentences (said or typed). The
+  adapter's `guard` refuses a `remember` whose line is not made of that sentence's words: at least half of
+  its content words (four-letter stems, stopwords out) and at least one must be the sentence's (`logtext.heard()`,
+  the sentence being answered). "Prefers 24-hour time" from "remember I like 24-hour time" passes; a line
+  from a notification, a song or the ledger does not (`NOT_THEIRS`).
+- *Never with strangers' text in the run.* `own_words_only`: after a foreign result, and from the start when
+  the situation line is foreign (`foreign_context`), a call to it is refused, not asked about, with a plain
+  line for her to say (`OWN_WORDS`). Since the situation line is foreign whenever a track plays, a sentence
+  the profile adapter says asks for it gets only the date as its situation (`Daemon.think`): "this song" is
+  not hers to write into the profile.
+- *The read-back is the confirmation.* The tool's result asks her to say back exactly what changed; when
+  her reply does not carry most of the line's words, code adds `Noted: "…".` (or `Removed: "…".`) to it
+  (`Profile.readback`).
+- *Approval tier: `change`*, the adapter's default. It needs no yes: no strangers' text can be in the run
+  (above), the line is the user's own words and the read-back says it. Asking "Shall I go ahead with
+  remember?" after the user said "remember …" would be a question about their own sentence.
+- *History.* Every change keeps the file as it was before it, timestamped, in `<state>/profile-history/`
+  (0700; the files 0600), with an `index.json` of the changes (op, by her or the page, the lines added and
+  removed), the last 50. `undo`, `revert(change_id)` (the page) and a whole-file `write` (the page) are
+  changes too, so each can be undone.
+- *Writes* are atomic (`paths.write_atomic`: a temporary file beside it, fsync, rename) and 0600. A line from
+  her is one plain line: control and format characters out, no comment markers, no heading, list marker or
+  number at its start, at most 200 characters; a duplicate is refused. The file stays under its cap.
+- *The journal* gets counts only (`profile: remember by her (+1 -0 lines; now 3 lines, ~45 tokens)`); the
+  tool call is logged by argument names, as for any private server (§20), and her line that says the change
+  back is logged as its length (`<her line about the profile, 42 chars>`, `logtext.about_profile`). The
+  ledger keeps her reply: it is the user's own words, and leaves the prompt with the rest of the private
+  context after foreign text.
+
+A configured server named `profile` keeps the name; her tools are then not added (a warning says so). With
+`[thinker] enabled = false` they are not added either.
+
+Tests: `tests/test_profile.py` (plain one-line facts, 0600 and the history, undo twice, replace, forget,
+revert, the cap for her, for the page and for a long hand edit, the prompts and their order, a line saved
+from the user's sentence and refused when not in their words, not offered to an ordinary sentence, refused
+with a foreign situation and after a foreign result with the profile out of the prompt, the daemon's
+read-back and undo with no line in the journal, a profile sentence without the foreign situation).
