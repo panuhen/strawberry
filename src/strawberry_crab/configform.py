@@ -165,7 +165,7 @@ SECRET_NAME = re.compile(r"token|secret|passw|api[_-]?key|auth|credential|bearer
 SECRET_FLAG = re.compile(r"^-{1,2}[\w.-]*(?:token|secret|passw|api[_-]?key|auth|credential|bearer|cookie)[\w.-]*$",
                          re.IGNORECASE)
 HIDDEN = re.compile(r"<hidden (\d{1,6}): kept as is>")
-HIDDEN_LINE = re.compile(r"^(\s*)# <hidden comment (\d{1,6}): kept as is>\s*$")
+HIDDEN_LINE = re.compile(r"^(\s*)# <hidden comment (\d{1,6}): kept as is>\s*$", re.MULTILINE)
 
 
 def _server_key(path: tuple) -> str | None:
@@ -277,12 +277,46 @@ class Vault:
             if HIDDEN.fullmatch(value):
                 continue
             node[path[-1]] = f"<hidden {self._number(value, self.values, self.numbers)}: kept as is>"
+        # A secret moved somewhere its name does not say (a hidden value put in a plain key's place: the page may
+        # do that, and the daemon puts the value back there) is hidden wherever it is: any string with one in it.
+        known = self._known()
+
+        def by_value(node: Any) -> None:
+            for key in _keys(node):
+                value = node[key]
+                if isinstance(value, str):
+                    plain = _plain(value)
+                    if not HIDDEN.fullmatch(plain) and any(secret in plain for secret in known):
+                        node[key] = f"<hidden {self._number(plain, self.values, self.numbers)}: kept as is>"
+                elif isinstance(value, (dict, list)):
+                    by_value(value)
+
+        if known:
+            by_value(doc)
+        known = self._known()
         lines = tomlkit.dumps(doc).split("\n")
         for i, line in enumerate(lines):
-            if _secret_comment(line) and not HIDDEN_LINE.match(line):
+            if HIDDEN_LINE.match(line):
+                continue
+            # A comment that names a secret, and any line a known secret is still in (a trailing comment, a key's
+            # name): hidden whole, and put back as it was.
+            if _secret_comment(line) or any(secret in line for secret in known):
                 indent = line[: len(line) - len(line.lstrip())]
                 lines[i] = f"{indent}# <hidden comment {self._number(line, self.lines, self.line_numbers)}: kept as is>"
         return "\n".join(lines)
+
+    def _known(self) -> list[str]:
+        """The secrets this page has hidden that are long enough to look for inside other text."""
+        return sorted((v for v in self.values.values() if len(v) >= MIN_SECRET), key=len, reverse=True)
+
+    def scrub(self, text: str) -> str:
+        """`text` (a message for the page or her card: a problem, a reason) with every secret this page has hidden
+        as its placeholder. A startup check may quote a value, and a hidden value may have been moved where it does."""
+        with self.lock:
+            for secret in self._known():
+                if secret in text:
+                    text = text.replace(secret, f"<hidden {self.numbers[secret]}: kept as is>")
+            return text
 
     def _unmask(self, text: str) -> str:
         lines = text.split("\n")
@@ -302,9 +336,7 @@ class Vault:
             raise ConfigError(f"the draft does not parse: {_first_line(exc)}") from None
 
         def put_back(node: Any) -> None:
-            keys = list(node.keys()) if isinstance(node, (dict, Container, Table, OutOfOrderTableProxy)) else \
-                range(len(node)) if isinstance(node, list) else ()
-            for key in keys:
+            for key in _keys(node):
                 value = node[key]
                 if isinstance(value, str):
                     plain = _plain(value)
@@ -324,6 +356,15 @@ class Vault:
         if HIDDEN.search(out):
             raise ConfigError("a hidden value is in a place it cannot go back to (a key's name or a comment)")
         return out
+
+
+MIN_SECRET = 4      # shorter hidden values are not looked for inside other text (too many false matches)
+
+
+def _keys(node: Any) -> Any:
+    if isinstance(node, (dict, Container, Table, OutOfOrderTableProxy)):
+        return list(node.keys())
+    return range(len(node)) if isinstance(node, list) else ()
 
 
 def _plain(value: Any) -> str:
@@ -685,6 +726,8 @@ def write(path: Path, text: str, base_sha: str) -> Path | None:
     it (config.toml.bak-<time>, as configedit does), then the new one written in one step, as private as the old one
     was. Returns the backup (None for a new file). Raises Stale when the file changed, ConfigError when `text` does
     not load."""
+    if HIDDEN.search(text) or HIDDEN_LINE.search(text.replace("\r\n", "\n")):
+        raise ConfigError("the text still has a hidden placeholder in it; nothing written")
     load_text(text)
     now = base_of(path)
     if now["sha256"] != base_sha:

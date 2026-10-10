@@ -189,6 +189,7 @@ LOWERING = [
     (SERVER, SERVER + 'offer = "asked"\n', []),
     (RECALL, RECALL.replace('["Garden"]', '["Garden", "Work"]'), ["tools.servers.recall.workspaces"]),
     (RECALL, RECALL.replace('["Garden"]', "[]"), []),
+    (RECALL, RECALL.replace('workspaces = ["Garden"]\n', ""), []),             # none listed: none readable
     (RECALL, RECALL.replace("recall.example", "elsewhere.example"), ["tools.servers.recall.url"]),
     (SERVER, SERVER + '[approvals]\nrisk = { "notes.wipe" = "read" }\n', ["approvals.risk.notes.wipe"]),
     (SERVER, SERVER + '[approvals]\nrisk = { "notes" = "playback" }\n', ["approvals.risk.notes"]),
@@ -413,4 +414,106 @@ async def test_the_tools_page_lists_each_server_its_tools_tiers_flags_and_logins
     assert any(row["builtin"] for row in view["servers"])                      # her own (the desktop, messages)
     assert view["file"]["notes"]["env"]["NOTES_TOKEN"].startswith("<hidden ")
     assert "notes" in view["options"]["topics"] and "recall" in view["options"]["adapters"]
+    await daemon.close()
+
+
+# ----------------------------------------------------------------------------- the security review's cases
+
+
+async def test_a_hidden_value_moved_into_a_plain_key_stays_hidden_everywhere(client, caplog):
+    caplog.set_level(logging.DEBUG)
+    write_config(FILE)
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    hidden = view["values"]["tools"]["servers"]["notes"]["env"]["NOTES_TOKEN"]
+    leak = view["text"] + f'\n[tools.servers.leak]\ncommand = "{hidden}"\n'
+    for draft in (view["text"] + f'\n[voice]\nvocabulary = ["{hidden}"]\n',              # a plain key
+                  view["text"] + f'\n[touch]\nmusic.flick = "{hidden}"\n',               # a check that quotes the value
+                  leak,                                                                  # a reason that names it
+                  view["text"] + f'\n[brain]\nollama_url = "{hidden}"\n'):
+        checked = await (await signed.post("/ui/api/config/check", {"text": draft})).json()
+        assert SECRET not in json.dumps(checked), draft
+    checked = await (await signed.post("/ui/api/config/check", {"text": leak})).json()
+    assert checked["lowering"][0]["key"] == "tools.servers.leak" and "<hidden" in checked["lowering"][0]["why"]
+    reply = await signed.post("/ui/api/config/save", {"text": leak, "base": view["base"]["sha256"]})
+    assert reply.status == 202 and SECRET not in await reply.text()
+    approval = daemon_of(client).approvals.open
+    assert SECRET not in approval.prompt and SECRET not in json.dumps(approval.view(prompt=True))
+    tools = await (await signed.get("/ui/api/tools")).json()
+    assert SECRET not in json.dumps(tools)
+    assert SECRET not in caplog.text
+
+
+def test_a_secret_in_a_trailing_comment_or_a_plain_value_is_hidden_and_put_back():
+    text = FILE + f'\n[voice]\nlanguage = "en"   # was {SECRET}\nvocabulary = ["{SECRET}"]\n'
+    vault = configform.Vault()
+    masked = vault.mask(text)
+    assert SECRET not in masked and vault.unmask(masked) == text
+    assert vault.scrub(f"voice.x = {SECRET!r} is wrong") == "voice.x = '<hidden 1: kept as is>' is wrong"
+
+
+def test_a_placeholder_is_never_written(tmp_path):
+    path = tmp_path / "config.toml"
+    for text in ('[voice]\nlanguage = "<hidden 1: kept as is>"\n', "[voice]\n# <hidden comment 2: kept as is>\n"):
+        with pytest.raises(ConfigError, match="placeholder"):
+            configform.write(path, text, configform.sha256(""))
+    assert not path.exists()
+
+
+async def test_a_loosening_edit_bundled_with_neutral_ones_still_asks(client):
+    path = write_config(FILE)
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    checked = await (await signed.post("/ui/api/config/check", {"text": view["text"], "edits": [
+        {"key": "speech.speed", "value": 1.2}, {"key": "voice.language", "value": "en"},
+        {"key": "approvals.hold", "value": ["destructive"]}]})).json()
+    assert [f["key"] for f in checked["lowering"]] == ["approvals.hold"]
+    reply = await signed.post("/ui/api/config/save", {"text": checked["text"], "base": view["base"]["sha256"]})
+    assert reply.status == 202 and path.read_text() == FILE
+
+
+async def test_only_the_text_she_asked_about_is_written(client):
+    path = write_config(FILE)
+    signed = await sign_in(client)
+    daemon, desk = daemon_of(client), desk_of(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    draft = view["text"].replace('body = "off"', 'body = "react"')
+    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})).status == 202
+    desk.pending.text = desk.pending.text.replace("[daemon]\n", "[daemon]\nhost = \"0.0.0.0\"\n")   # swapped meanwhile
+    daemon.approvals.answer(daemon.approvals.open.approval_id, "yes", "voice")
+    await until(lambda: desk.pending.state != "waiting")
+    assert desk.pending.state == "failed" and path.read_text() == FILE
+
+
+async def test_a_broken_file_is_compared_with_what_she_runs_not_with_the_defaults(aiohttp_client):
+    config = quiet_config()
+    config.messages.enabled = False
+    client = await aiohttp_client(create_app(Daemon(reactor=CannedReactor(), config=config)))
+    write_config("[messages]\nenabled = false\n[daemon\n")                        # broken under her
+    signed = await sign_in(client)
+    checked = await (await signed.post("/ui/api/config/check", {"text": "[speech]\nspeed = 1.2\n"})).json()
+    assert "messages.enabled" in [f["key"] for f in checked["lowering"]]
+
+
+async def test_the_input_tab_asks_on_her_card_before_a_thumb_may_answer_it(aiohttp_client):
+    from strawberry_crab import inputs
+    from tests.test_gestures import gesture_daemon
+
+    daemon, _ = gesture_daemon(approvals=False)
+    client = await aiohttp_client(create_app(daemon))
+    signed = await sign_in(client)
+    settings = (await (await signed.get("/ui/api/input")).json())["settings"]
+    calm = {**settings, "gestures": {**settings["gestures"], "hold_ms": 500}}
+    assert (await signed.post("/ui/api/input/save", {"settings": calm})).status == 200          # neutral: at once
+    loose = {**calm, "gestures": {**calm["gestures"], "approvals": True}}
+    reply = await signed.post("/ui/api/input/save", {"settings": loose})
+    assert reply.status == 202 and (await reply.json())["pending"]["file"] == "input.toml"
+    assert "approvals = false" in inputs.input_file().read_text() and daemon.config.gestures.approvals is False
+    refused = await signed.post("/ui/api/approval", {"approval_id": daemon.approvals.open.approval_id, "answer": "yes"})
+    assert refused.status == 409
+    daemon.approvals.answer(daemon.approvals.open.approval_id, "yes", "body", hold=True)
+    desk = client.server.app[configui.DESK]
+    await until(lambda: desk.pending.state != "waiting")
+    assert desk.pending.state == "saved" and daemon.config.gestures.approvals is True
+    assert "approvals = true" in inputs.input_file().read_text()
     await daemon.close()

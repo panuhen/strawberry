@@ -26,7 +26,7 @@ import time
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from aiohttp import web
 
@@ -64,10 +64,15 @@ class Pending:
     backup: str | None = None
     applied: list[str] = field(default_factory=list)
     at: float = field(default_factory=time.time)
+    file: str = "config.toml"          # or input.toml (the Input tab's settings: brainui.api_input_save)
+    # After the yes: write(text, base_sha) -> the backup (raises configform.Stale when the file changed), then
+    # apply() -> the sections in use at once. None: config.toml's (configform.write, apply_live).
+    write: Callable[[str, str], Path | None] | None = None
+    apply: Callable[[], list[str]] | None = None
 
     def view(self) -> dict[str, Any]:
         a = self.approval
-        return {"approval_id": a.approval_id, "state": self.state, "detail": self.detail or None,
+        return {"approval_id": a.approval_id, "file": self.file, "state": self.state, "detail": self.detail or None,
                 "lowering": [f.view() for f in self.findings], "at": round(self.at, 3), "backup": self.backup,
                 "restart": [s for s in self.changed if s not in configform.LIVE_SECTIONS], "applied": self.applied,
                 "expires_in": round(max(a.expires - time.monotonic(), 0.0), 1) if a.open else None,
@@ -119,15 +124,13 @@ def config_view(ui: BrainUI, desk: ConfigDesk, session: Session) -> dict[str, An
             "pending": desk.pending.view() if desk.pending is not None else None}
 
 
-def _old(base: dict[str, Any]) -> Any:
-    """The file as the daemon would read it now; the defaults when it does not load (then nothing is compared
-    against a file that is broken)."""
+def _old(ui: BrainUI, base: dict[str, Any]) -> Any:
+    """The file as the daemon would read it now; when it does not load (broken under her), the settings she runs
+    with, so a draft is never compared against something looser than what is in use."""
     try:
         return configform.load_text(base["text"])
     except ConfigError:
-        from .config import Config
-
-        return Config()
+        return ui.daemon.config
 
 
 def draft_check(ui: BrainUI, desk: ConfigDesk, session: Session, data: dict[str, Any]) -> dict[str, Any]:
@@ -152,19 +155,24 @@ def draft_check(ui: BrainUI, desk: ConfigDesk, session: Session, data: dict[str,
             real = vault.unmask(configform.apply_edits(real, data["edits"]))
         masked = vault.mask(real)
     except ConfigError as exc:
-        out["problems"] = [str(exc)]
+        out["problems"] = [vault.scrub(str(exc))]
         return out
+    try:
+        old_masked = vault.mask(old_text) if old_text.strip() else ""
+    except ConfigError:
+        old_masked = "# (the file does not parse, so nothing of it is shown)\n"
     out.update(text=masked, values=tomllib.loads(masked), _real=real,
-               diff=_diff(vault.mask(old_text) if old_text.strip() else "", masked, "config.toml (the file)",
-                          "config.toml (draft)"))
+               diff=_diff(old_masked, masked, "config.toml (the file)", "config.toml (draft)"))
     try:
         new = configform.load_text(real)
     except ConfigError as exc:
-        out["problems"] = [str(exc)]
+        out["problems"] = [vault.scrub(str(exc))]      # a startup check may quote the value it refuses
         return out
-    old = _old(base)
+    old = _old(ui, base)
     changed = configform.changed_sections(old, new)
-    out.update(ok=True, problems=configform.refused(old, new), lowering=[f.view() for f in configform.lowering(old, new)],
+    # What goes to the page and her card is scrubbed: a reason names a command, a host or an app as written.
+    lowering = [{"key": vault.scrub(f.key), "why": vault.scrub(f.why)} for f in configform.lowering(old, new)]
+    out.update(ok=True, problems=[vault.scrub(p) for p in configform.refused(old, new)], lowering=lowering,
                changed=changed, restart=[s for s in changed if s not in configform.LIVE_SECTIONS],
                live=[s for s in changed if s in configform.LIVE_SECTIONS], same=real == old_text)
     out["ok"] = not out["problems"]
@@ -211,8 +219,9 @@ async def _wait(ui: BrainUI, desk: ConfigDesk, pending: Pending, run: runs.Run) 
             if not d.approvals.verify(approval) or approval.held.arguments.get("sha256") != configform.sha256(pending.text):
                 pending.state, pending.detail, line = "failed", "the change is not the one asked about", FAILED_LINE
             else:
+                write = pending.write or (lambda text, base: configform.write(config_path(ui), text, base))
                 try:
-                    backup = await asyncio.to_thread(configform.write, config_path(ui), pending.text, pending.base_sha)
+                    backup = await asyncio.to_thread(write, pending.text, pending.base_sha)
                 except configform.Stale as exc:
                     pending.state, pending.detail, line = "changed", str(exc), LEFT_CHANGED
                 except (ConfigError, OSError) as exc:
@@ -221,12 +230,12 @@ async def _wait(ui: BrainUI, desk: ConfigDesk, pending: Pending, run: runs.Run) 
                     approval.made = True
                     pending.state, pending.backup = "saved", str(backup) if backup else None
                     try:
-                        pending.applied = apply_live(ui, pending.changed)
+                        pending.applied = pending.apply() if pending.apply else apply_live(ui, pending.changed)
                     except ConfigError:
                         pending.detail = "saved; it is read at the next start"
                     line = SAVED_LINE
-                    log.info("ui: config.toml saved after a yes on %s (%d loosening change(s))%s", approval.approval_id,
-                             len(pending.findings), " (the old one backed up)" if backup else "")
+                    log.info("ui: %s saved after a yes on %s (%d loosening change(s))%s", pending.file,
+                             approval.approval_id, len(pending.findings), " (the old one backed up)" if backup else "")
         elif outcome in ("no", "timeout"):
             pending.state, pending.detail = "left", "no" if outcome == "no" else "no answer in time"
             line = LEFT_LINE if outcome == "no" else SILENT_LINE
@@ -236,7 +245,7 @@ async def _wait(ui: BrainUI, desk: ConfigDesk, pending: Pending, run: runs.Run) 
             performance = Performance(state="talking", text=line, emotion="neutral")
             approval.reply = performance, await d.perform(performance)
         if pending.state != "saved":
-            log.info("ui: config.toml not saved: %s (%s)", pending.state, pending.detail or outcome)
+            log.info("ui: %s not saved: %s (%s)", pending.file, pending.state, pending.detail or outcome)
     except asyncio.CancelledError:
         d.approvals.resolve(approval, "cancelled")
         pending.state, pending.detail = "left", "cancelled"
@@ -246,20 +255,21 @@ async def _wait(ui: BrainUI, desk: ConfigDesk, pending: Pending, run: runs.Run) 
 
 
 def ask(ui: BrainUI, desk: ConfigDesk, real: str, base_sha: str, findings: list[configform.Finding],
-        changed: list[str]) -> Pending:
+        changed: list[str], file: str = "config.toml", write: Callable[[str, str], Path | None] | None = None,
+        apply: Callable[[], list[str]] | None = None) -> Pending:
     """Her card asks about the change (approvals.py, a `settings` run): a hold for a yes on the card, or the user's
-    own yes; this page cannot say yes to it."""
+    own yes; this page cannot say yes to it. Only `real`, the text checked here, is ever written after the yes."""
     d = ui.daemon
     run = d.runs.start("settings", foreground=False)
     prompt = _card_line(findings)
-    held = Held("strawberry", "settings", {"sha256": configform.sha256(real), "base": base_sha}, question=prompt,
-                risk="change", prompt=prompt)
+    held = Held("strawberry", "settings", {"file": file, "sha256": configform.sha256(real), "base": base_sha},
+                question=prompt, risk="change", prompt=prompt)
     approval = d.approvals.request(run, held, timeout_s=CONFIRM_S, hold=True, yes_by=YES_BY)
-    pending = Pending(approval, real, base_sha, findings, changed)
+    pending = Pending(approval, real, base_sha, findings, changed, file=file, write=write, apply=apply)
     desk.pending = pending
     task = d.background(_wait(ui, desk, pending, run), "a settings change waiting for a yes")
     run.continued, run.task = True, task
-    log.info("ui: a config.toml change that loosens safety (%s) waits for a yes on her card (%s)",
+    log.info("ui: a %s change that loosens safety (%s) waits for a yes on her card (%s)", file,
              ", ".join(sorted({f.key for f in findings})), approval.approval_id)
     return pending
 
@@ -383,10 +393,27 @@ def tools_view(ui: BrainUI, desk: ConfigDesk, session: Session) -> dict[str, Any
             "pending": desk.pending.view() if desk.pending is not None else None}
 
 
+def tools_page(ui: BrainUI, desk: ConfigDesk, session: Session) -> dict[str, Any]:
+    """tools_view with every secret the page's vault knows scrubbed out (a server's state or error, as it runs, may
+    carry what its table says)."""
+    vault = desk.vault(ui, session)
+
+    def scrub(value: Any) -> Any:
+        if isinstance(value, str):
+            return vault.scrub(value)
+        if isinstance(value, dict):
+            return {scrub(k): scrub(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [scrub(v) for v in value]
+        return value
+
+    return scrub(tools_view(ui, desk, session))
+
+
 @checked("get")
 async def api_tools(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
     desk = request.app[DESK]
-    return web.json_response(await asyncio.to_thread(tools_view, ui, desk, session))
+    return web.json_response(await asyncio.to_thread(tools_page, ui, desk, session))
 
 
 def add_routes(app: web.Application) -> None:
