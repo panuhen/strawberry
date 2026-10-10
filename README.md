@@ -179,7 +179,7 @@ The settings you are most likely to change:
 | `[ledger]` | `turns`, `notices`, `window_minutes`, `foreign_minutes` | her short memory: your last exchanges (8) and what she reacted to on her own (8), none older than 60 minutes; for 10 minutes after a sender's or a track's name, a change asks first |
 | `[messages]` | `enabled`, `keep`, `max_age_hours` | her inbox for "any new messages?": on, at most 100 notifications, none older than 24 hours, in memory only; message text only as `[notifications] body` allows |
 | `[touch]` | `target_s`, `cooldown_s`, `<entity>.<touch>` | what you point at on a body stays meant for 8 s after the body last said so; touch actions at least 1 s apart; the action map, e.g. `music.flick = "next"` (none by default: a touch changes nothing) |
-| `[gestures]` | `enabled`, `watch`, `camera`, `arming`, `map` | hand gestures through the webcam (off); see [Hand gestures](#hand-gestures-optional). The Brain UI's Input tab keeps this section and `[touch]` in `input.toml`, all but `enabled` |
+| `[gestures]` | `enabled`, `watch`, `camera`, `arming`, `require_facing`, `shh_minutes`, `map`, `calibration` | hand gestures through the webcam (off); see [Hand gestures](#hand-gestures-optional). The Brain UI's Input tab keeps this section and `[touch]` in `input.toml`, all but `enabled` |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
 Her persona is a file of its own: copy the shipped `persona.md` (in the package's `data/` folder,
@@ -292,7 +292,9 @@ what is there, `strawberry outcomes --clear` deletes it. What she learned from i
 
 The webcam is never opened unless you turn [hand gestures](#hand-gestures-optional) on. Then one
 watcher process reads it, frames stay in that process's memory for a single look and are never
-stored, logged or sent, and only gesture names and a few numbers about your hand leave it.
+stored, logged or sent, and only gesture names and a few numbers about your hand leave it. Its face
+model only tells whether you face the screen; it is not face recognition, and nothing of your face but
+that yes or no leaves the watcher.
 
 ## Learning
 
@@ -364,10 +366,13 @@ problem, a new router head waiting).
 - **Input** (under Settings): hand gestures and touch. Whether the camera is open, the watcher's frame
   rate and CPU, what is missing; the bodies and what they let you touch; your hand drawn live as a stick
   figure from the few numbers the watcher sends (never a picture: frames never leave the watcher), with
-  the zone line, what it recognises now and the hold ring filling; the gesture and touch mappings (only
-  actions that need no yes are offered); the tuning (hold time, zone, smallest hand, frame rates, the
-  camera); the last twenty gestures and touches with what each did or why it did nothing; and **Practice
-  mode**, under which gestures and touches are shown and do nothing (not saved). **Save** writes
+  the zone line, what it recognises now, whether you face the screen, and the hold ring filling (or the
+  pinch slider's level); the gesture and touch mappings (only actions that need no yes are offered); the
+  tuning (hold time, zone, smallest hand, frame rates, the camera, facing, shh's minutes); **Calibrate**,
+  which records your own hand (each finger's curl and the thumb-index gap, as numbers) and sets where a
+  finger counts as straight or curled; the last twenty gestures and touches with what each did or why it
+  did nothing; and **Practice mode**, under which gestures and touches are shown and do nothing (not
+  saved). **Save** writes
   `~/.config/strawberry/input.toml` (see [Hand gestures](#hand-gestures-optional)), never `config.toml`.
 - **System**: the models, where the gate runs, the head in use.
 
@@ -477,21 +482,45 @@ back and how long it took, never the query or a note.
 ## Hand gestures (optional)
 
 With a webcam she can take a few commands by hand: hold a thumbs up to like the playing track, swipe
-to the next or previous one, hold an open palm to pause, point to talk to her (as the hotkey does). A
-held thumbs up or down also answers the question on her card. Off by default. To try it:
+or point to either side for the next or previous one, hold an open palm to pause, point up to talk to her
+(as the hotkey does), pinch and slide your hand up or down to set the volume, wave to have her wave
+back, and put a finger to your lips to keep her quiet for a while. A held thumbs up or down, or a nod or
+a shake of your head, answers the question on her card. Off by default. To try it:
 
 ```bash
 uv sync --inexact --group gpu --group gestures    # in a checkout; installed: uv tool install --force 'strawberry-crab[gestures]'
-strawberry gestures fetch                         # the recogniser's model, ~8 MB, sha256 checked
+strawberry gestures fetch                         # the hand model (~8 MB) and the face model (~4 MB), sha256 checked
 strawberry gestures on                            # or the tray's "Hand gestures (camera)" row
 strawberry gestures status                        # what is on, what is missing
 ```
 
-Raise your hand toward the screen, above the bottom fifth of the camera's view, and hold the shape
-still for a moment: a ring beside her fills (0.4 s), and the gesture counts when it is full. Lower
-your hand to cancel. A shape counts once; change it or lower your hand to give it again. A swipe is
-the hand moving across a quarter of the view, after it has been up for a moment. In a mirror's
-sense: a swipe to your right is the next track.
+`strawberry gestures fetch` leaves a model that is already there and gets only what is missing.
+
+Face the screen, raise your hand toward it, above the bottom fifth of the camera's view, and hold the
+shape still for a moment: a ring beside her fills (0.4 s), and the gesture counts when it is full.
+Lower your hand or look away to cancel. A shape counts once; leave it for a moment, or lower your hand,
+to give it again. A swipe is the hand moving across a quarter of the view, after it has been up for a
+moment. In a mirror's sense: a swipe or a finger to your right is the next track.
+
+| Gesture | How | Does (default) |
+|---|---|---|
+| `thumb_up` | thumb up, held | like the track (needs the Spotify add-on); yes on her card |
+| `thumb_down` | thumb down, held | no on her card |
+| `palm_hold` | open hand, held | pause |
+| `point_hold` | index finger up, held | listen (push to talk) |
+| `point_left`, `point_right` | index finger to your left or right, held | previous, skip |
+| `swipe_left`, `swipe_right` | the hand moved across | previous, skip |
+| `pinch_slide` | thumb and index tips together, held a moment, then the hand up or down; open to let go | the volume (the slider shows the level) |
+| `wave` | an open hand side to side, two or three times | she waves back |
+| `shh` | index finger upright across your lips (needs the face model) | quiet: her voice off for `shh_minutes` (30), the bubble stays |
+| `count_1` … `count_5` | that many fingers up, held (the thumb counts) | nothing until you map them |
+| `fist_hold`, `victory_hold`, `pinch_hold` | held | nothing until you map them |
+| nod, shake | your head, while her card is open (needs the face model) | yes, no |
+
+A diagonal finger is neither up nor sideways, and a hand that is half open is no shape: both do nothing.
+Some names are the same hand, so a map uses one of each pair: `count_1` and `point_hold` (index up),
+`count_2` and `victory_hold`, `count_5` and `palm_hold`, `pinch_slide` and `pinch_hold`. Index and thumb
+up together is pointing, not two.
 
 ```toml
 [gestures]
@@ -499,6 +528,8 @@ enabled = true
 camera = ""           # "" = the first camera; "1" or "/dev/video2" for another
 watch = "always"      # or "armed" (below)
 arming = false        # true: hold an open palm first to turn commands on for armed_s (8 s)
+require_facing = true # with the face model: gestures count only while you face the screen
+shh_minutes = 30.0    # a finger to your lips: her voice off this long
 
 [gestures.map]        # a gesture -> one of her reflexes; this table replaces the default one
 thumb_up = "like"
@@ -506,16 +537,35 @@ swipe_left = "previous"
 swipe_right = "skip"
 palm_hold = "pause"
 point_hold = "listen"
+point_left = "previous"
+point_right = "skip"
+pinch_slide = "volume"
+wave = "wave_back"
+shh = "quiet"
 ```
 
-The gestures are `thumb_up`, `thumb_down`, `palm_hold`, `fist_hold`, `point_hold`, `victory_hold`,
-`pinch_hold`, `swipe_left`, `swipe_right`; the actions `now_playing`, `pause`, `resume`, `skip`,
-`previous`, `volume_up`, `volume_down`, `like` (needs the Spotify add-on), `play_liked` and
-`listen`. Only these: a gesture changes what plays and how, and nothing that would ask for your yes.
-A map naming anything else (saving tracks, a playlist, a message) stops her from starting, with the
-reason. A thumbs up answers her card only for a question it may answer with a tap (not a `sends` or
-`destructive` one: those need your voice, your typing or a press-and-hold); a thumbs down may refuse
-any. `[gestures] approvals = false` turns that off.
+The actions are `now_playing`, `pause`, `resume`, `skip`, `previous`, `volume_up`, `volume_down`,
+`like` (needs the Spotify add-on), `play_liked`, `listen`, `wave_back`, `quiet` and `volume` (for
+`pinch_slide`, and only it). Only these: a gesture changes what plays and how, and nothing that would ask
+for your yes. A map naming anything else (saving tracks, a playlist, a message) stops her from starting,
+with the reason. A thumbs up or a nod answers her card only for a question it may answer with a tap (not
+a `sends` or `destructive` one: those need your voice, your typing or a press-and-hold); a thumbs down or
+a shake may refuse any. `[gestures] approvals = false` turns that off.
+
+**Facing the screen.** With the face model fetched, a gesture counts only while you face the screen
+(`require_facing = true`, the default), so hands that talk along while you look at someone else do
+nothing. The face model runs only while a hand is up or her card is open, a few times a second on a
+small copy of the frame. It is **not face recognition**: it makes no identity and no faceprint, and
+what leaves the watcher is a yes or no for "facing" and for "a face is there", nothing else. Without the
+face model gestures work as before (the status says so), and shh, nod and shake are off.
+
+**shh** turns her voice off the way the crab's *Quiet* menu row does (the bubble stays), for
+`shh_minutes`; that row, or the tray's *Quiet*, turns it back on. The timeline notes that you shushed her.
+
+**Calibration.** Hands differ. The *Input* tab's **Calibrate** asks for a relaxed hand, an open hand, a
+fist, pointing up and a pinch, about three seconds each, and keeps the averages of each finger's curl
+and the gap between thumb and index (numbers only) as `[gestures.calibration]` in input.toml; the
+thresholds sit between your open hand and your fist. **Reset to defaults** empties it.
 
 **input.toml.** The Brain UI's *Input* tab saves the gesture and touch settings to
 `~/.config/strawberry/input.toml`, beside `config.toml`, and she reads it again within a second. It
@@ -527,7 +577,8 @@ out is not used: she keeps the settings she had, and the *Input* tab and `strawb
 say why. Delete it to go back to `config.toml`'s sections.
 
 **The camera.** A separate watcher process owns it, and nothing else opens it. It runs MediaPipe
-on the CPU (about 5 % of one core while it looks for a hand, about 18 % while a hand is up), keeps
+on the CPU (about 5 % of one core while it looks for a hand, about 18 % while a hand is up, the face
+model included), keeps
 each frame in memory only for the one look it takes, and never stores, logs or sends a frame. What
 leaves it is a gesture's name and where your hand is, as a few numbers, and that goes only to the
 daemon and to her bodies that ask for it (with the bus secret), never to a model. With `watch =

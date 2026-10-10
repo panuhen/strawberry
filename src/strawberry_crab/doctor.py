@@ -403,7 +403,11 @@ def check_gestures(config) -> list[Check]:
         return [Check(FAIL, "gestures", f"on, but {deps.split(':')[0]}", deps.split(": ", 1)[1])]
     if not gestures.model_ready():
         return [Check(FAIL, "gestures", f"on, but the model is not at {gestures.model_file()}", "strawberry gestures fetch")]
-    return [Check(OK, "gestures", f"on (watch {config.gestures.watch}, camera {config.gestures.camera or 'the first'})")]
+    checks = [Check(OK, "gestures", f"on (watch {config.gestures.watch}, camera {config.gestures.camera or 'the first'})")]
+    if not gestures.face_model_ready():
+        checks.append(Check(WARN, "gestures face", f"the face model is not at {gestures.face_model_file()}: facing the "
+                            "screen is not checked, and shh, nod and shake are off", "strawberry gestures fetch"))
+    return checks
 
 
 def check_widget(probes: Probes) -> list[Check]:

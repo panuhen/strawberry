@@ -121,10 +121,10 @@ def test_a_section_over_its_cap_is_refused():
 
 def test_unknown_and_missing_line_keys_are_warnings_and_keep_the_shipped_lines():
     text = edited("### stopped\n\"Stop\" or \"never mind\" while she was doing something.\n- Okay, stopped.\n",
-                  "### wave\n- Hello!\n")
+                  "### jig\n- Hello!\n")
     p, problems = persona.check(text)
     assert problems == [] and p is not None
-    assert any("wave is not used" in w for w in p.warnings) and any("stopped not in the file" in w for w in p.warnings)
+    assert any("jig is not used" in w for w in p.warnings) and any("stopped not in the file" in w for w in p.warnings)
     assert p.variants("stopped") == ("Okay, stopped.",)
 
 

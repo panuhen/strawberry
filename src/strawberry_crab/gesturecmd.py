@@ -5,7 +5,8 @@
              the camera doorway follows the file by itself
     arm      command mode on for `[gestures] armed_s` (with `watch = "armed"`, the camera opens for it);
              bind it to a key as you would `strawberry listen`
-    fetch    the recogniser's model into the data dir, its sha256 checked
+    fetch    the hand model and the face model into the data dir, each sha256 checked; one already there
+             with the right digest is left alone
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ def run(action: str, port: int, config_path: Path | None = None, say: Callable[[
     daemon = DaemonClient(f"http://127.0.0.1:{port}")
     if action == "fetch":
         try:
-            gestures.fetch(say=say)
+            gestures.fetch_all(say=say)
         except (gestures.FetchError, OSError) as exc:
             say(f"not fetched: {exc}")
             return 1
@@ -47,7 +48,7 @@ def run(action: str, port: int, config_path: Path | None = None, say: Callable[[
         if not daemon.post_sync("/command", {"command": "reload_gestures"}):
             say("strawberryd is not running; it reads the setting when it starts")
         if action == "on":
-            for line in missing():
+            for line in missing() + optional():
                 say(line)
         return 0
     try:
@@ -65,7 +66,7 @@ def run(action: str, port: int, config_path: Path | None = None, say: Callable[[
     say(f"gestures: {'on' if cfg.enabled else 'off'} (watch {cfg.watch}, camera {cfg.camera or 'the first'})")
     say("map: " + ", ".join(f"{k} -> {v}" for k, v in cfg.map.items()))
     problems = missing()
-    for line in problems:
+    for line in problems + optional():
         say(line)
     state = daemon.get_sync("/gesture")
     if state is None:
@@ -85,4 +86,13 @@ def missing() -> list[str]:
         lines.append(f"missing: {deps}")
     if not gestures.model_ready():
         lines.append(f"missing: the model ({gestures.model_file()}): strawberry gestures fetch")
+    return lines
+
+
+def optional() -> list[str]:
+    """What gestures work without but do better with: the face model."""
+    lines = []
+    if not gestures.face_model_ready():
+        lines.append(f"missing: the face model ({gestures.face_model_file()}): facing the screen is not checked, and "
+                     "shh, nod and shake are off; strawberry gestures fetch")
     return lines

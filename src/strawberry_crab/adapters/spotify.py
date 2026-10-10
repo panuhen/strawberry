@@ -359,6 +359,25 @@ def _volume(delta: int) -> Reflex:
     return reflex
 
 
+async def _volume_level(toolbox: Toolbox, server: str) -> float | None:
+    """The active device's volume (0-1), for the gesture slider; None when Spotify does not say."""
+    state = await toolbox.call(server, "get_devices")
+    if not state.ok:
+        return None
+    active = [d for d in _json(state).get("devices", []) if isinstance(d, dict) and d.get("is_active")]
+    current = active[0].get("volume") if active else None
+    return current / 100.0 if isinstance(current, int) and not isinstance(current, bool) else None
+
+
+async def _set_volume_level(toolbox: Toolbox, server: str, level: float) -> Outcome:
+    """The active device's volume set to `level` (0-1): the gesture slider, a few times a second."""
+    target = round(max(0.0, min(1.0, level)) * 100)
+    result = await toolbox.call(server, "set_volume", {"volume": target})
+    if not result.ok:
+        return _failed("set the volume", result)
+    return Outcome("set the volume", f"Volume {target}.", True, (result,))
+
+
 NOTHING_PLAYING = "Nothing is playing on Spotify right now."
 
 
@@ -769,7 +788,11 @@ class SpotifyAdapter(Adapter):
         "now_playing": ("get_current_track",),
         "like": ("like_current",),
         "play_liked": ("play_liked",),
+        "volume": ("get_devices", "set_volume"),
     }
+    # The gesture slider's volume (gestures.py): read from the active device, set as a level.
+    volume_level = staticmethod(_volume_level)
+    set_volume_level = staticmethod(_set_volume_level)
     reflexes: dict[str, Reflex] = {
         "skip": skip,
         "previous": previous,

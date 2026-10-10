@@ -239,3 +239,14 @@ Several pokes in a row, wherever they land.
 - Alright, alright!
 - I'm working here, you know.
 - Okay, that's enough poking.
+
+### wave
+The user waved at her through the camera (hand gestures); she waves back.
+- Hi!
+- Hello there.
+- Oh, hi!
+
+### shushed
+The user put a finger to their lips (hand gestures): her voice goes off for a while, the bubble stays.
+- Okay, bubbles only.
+- Shh. I'll keep it down.

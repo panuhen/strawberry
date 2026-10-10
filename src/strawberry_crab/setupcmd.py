@@ -668,7 +668,8 @@ class Setup:
 
     def step_gestures(self) -> None:
         """Hand gestures (WIRING.md §26) are opt-in: only with `[gestures] enabled = true` in the file does setup
-        say anything here, and then it fetches the recogniser's model (~8 MB, sha256 checked) if it is missing."""
+        say anything here, and then it fetches the hand model (~8 MB) and the face model (~4 MB), each sha256
+        checked, if they are missing."""
         from . import gestures
 
         try:
@@ -681,16 +682,16 @@ class Setup:
         deps = gestures.mediapipe_missing()
         if deps:
             self.say(f"  ! {deps}")
-        if gestures.model_ready():
-            self.say(f"  ✓ the gesture model is at {gestures.model_file()}")
+        if gestures.model_ready() and gestures.face_model_ready():
+            self.say(f"  ✓ the gesture models are in {gestures.model_file().parent}")
             return
         if not self.download:
-            self.say("  not fetched (--no-download): the gesture model; later: strawberry gestures fetch")
-            self.skipped.append("the gesture model")
+            self.say("  not fetched (--no-download): the gesture models; later: strawberry gestures fetch")
+            self.skipped.append("the gesture models")
             return
-        self.say("  MediaPipe's gesture recogniser (Apache-2.0, Google)")
+        self.say("  MediaPipe's gesture recogniser and face landmarker (Apache-2.0, Google)")
         try:
-            gestures.fetch(say=lambda line: self.say("  " + line))
+            gestures.fetch_all(say=lambda line: self.say("  " + line))
         except (gestures.FetchError, OSError) as exc:
             self.say(f"  ✗ gesture model fetch failed: {exc}")
             self.failures.append("gesture model")

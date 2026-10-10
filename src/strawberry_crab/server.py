@@ -430,6 +430,8 @@ async def command(request: web.Request) -> web.Response:
             return _error(f"config not reloaded: {exc}", 409)
         log.info("command: [notifications] reloaded, bodies %s", body)
         return web.json_response({"sent": 0, "command": message, "body": body})
+    if message["command"] == "quiet":
+        daemon.gestures.quiet_set(message["value"])     # the tray's Quiet row: shh's minutes end here too
     sent = await daemon.hub.send(message)
     log.info("command -> %d widget(s): %s", sent, message)
     return web.json_response({"sent": sent, "command": message})

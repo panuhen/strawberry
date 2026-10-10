@@ -9,6 +9,18 @@ package and the widget binary.
 
 ### Added
 
+- **Hand gestures, version 2.** New gestures: point to your left or right (previous, skip), pinch and
+  slide your hand up or down to set the volume (a slider the bodies draw; at most four volume calls a
+  second, the last level when you let go), wave to have her wave back, a finger to your lips to keep her
+  quiet for `shh_minutes` (30; the bubble stays, the crab's or the tray's *Quiet* row turns it off), finger
+  counts `count_1`..`count_5` (unmapped by default), and a nod or a shake for yes or no on her card (with
+  the thumb's tier rules). Gestures count only while you face the screen: MediaPipe's face landmarker runs
+  in the watcher only while a hand is up or her card is open, and only `facing` and `face` booleans leave
+  it. It is not face recognition. Shapes are now read from the hand's geometry, with smoothing,
+  hysteresis, a re-arm rule and per-gesture cooldowns, and the Brain UI's *Input* tab can **calibrate**
+  them to your hand (`[gestures.calibration]` in input.toml). `strawberry gestures fetch` gets the face
+  model too and leaves a model that is already there. CPU, both models, measured on synthetic frames: ~5 %
+  of a core looking for a hand, ~18 % with a hand up. README *Hand gestures*, WIRING §26, PROTOCOL Part 1d.
 - **Bodies can say what you touch and point at.** A body (the orbs on a touch screen, the crab) names
   the things it draws in its hello and sends `touch` (poke, flick, grab, drag, release, fuse) and
   `target` (what you point at). While you point at the music orb, "what's this?" means it: the thinker

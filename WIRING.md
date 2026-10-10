@@ -960,14 +960,15 @@ many more there are; a click goes to its section. The new parts:
 - *Input* (since the input stage; `inputs.py`, §25, §26): hand gestures and touch from bodies.
   - *Status*: `[gestures] enabled` (the tray's switch), the watcher (heard from in the last 5 s or not), the
     camera open or closed, `watch`, command mode armed (seconds left) or idle, the watcher's frames a second
-    and its share of one CPU core, the last hand's age, MediaPipe and the model (`gestures.mediapipe_missing`,
-    `model_ready`), the gesture and touch counts; the bodies that declared entities, with their ids, kinds,
+    and its share of one CPU core, the last hand's age, MediaPipe and the models (`gestures.mediapipe_missing`,
+    `model_ready`, `face_model_ready`, and the watcher's `face=on|missing|failed`), shh's quiet minutes left, the
+    gesture and touch counts; the bodies that declared entities, with their ids, kinds,
     labels and touch counts, and the target now. The watcher reports its camera, frame rate and CPU in an
     `X-Strawberry-Watcher` header on each of its requests (`inputs.parse_watcher`, strict; numbers only).
   - *Live*: a stick hand on a canvas, drawn from the `hand` numbers (the palm, the wrist and fingertips, pinch,
-    open, engaged, and `shape`, what the recogniser sees now), the zone line and the shaded part below it, the
-    `min_size` square, the hand's extent, and the hold ring filling from `gesture` progress (green on `done`,
-    fading on a cancel). Never a frame: none leaves the watcher. It comes over its own stream,
+    open, engaged, and `shape`, what the recogniser sees now; `facing` as a chip), the zone line and the shaded
+    part below it, the `min_size` square, the hand's extent, and the hold ring filling from `gesture` progress
+    (green on `done`, fading on a cancel), or for `pinch_slide` a bar beside the palm filled to the level. Never a frame: none leaves the watcher. It comes over its own stream,
     `GET /ui/api/input/live` (the same checks as the API; at most 4), opened when the tab is shown and closed
     when it is left or the page is hidden: `hand`, `gesture`, `recent` rows and a `status` once a second
     (`inputs.Live`). While one is open, `GestureDesk.state()` says `wanted.hand` (and `gesture`), so the
@@ -976,8 +977,13 @@ many more there are; a click goes to its section. The new parts:
     table (entity, touch kind, action). The dropdowns offer only `gestures.ACTIONS` and
     `bodylink.TOUCH_ACTIONS` (each with its tier: read or playback); the entity fields suggest the ids the
     bodies declared, and the ones already mapped. Two rows for the same key are marked and block Save.
-  - *Tuning*: `hold_ms`, `zone`, `min_size`, `arming`, `armed_s`, `approvals`, `camera`, `watch`, `idle_fps`,
-    `fps`, `hand_hz`; `[touch] target_s`, `cooldown_s`. The zone and the smallest hand redraw as they change.
+  - *Tuning*: `hold_ms`, `zone`, `min_size`, `arming`, `armed_s`, `approvals`, `require_facing`, `camera`,
+    `watch`, `idle_fps`, `fps`, `hand_hz`, `face_fps`, `shh_minutes`; `[touch] target_s`, `cooldown_s`. The zone
+    and the smallest hand redraw as they change.
+  - *Calibrate* (§26): five steps of three seconds (a relaxed hand, an open hand, a fist, pointing up, a pinch)
+    recorded from the `hand` messages' `curl` and `gap` in practice mode, live bars with the thresholds marked,
+    the result against what is in use, **Use these** (into the form's `calibration`, saved with input.toml) and
+    **Reset to defaults** (an empty table).
   - *input.toml*: the draft checked on the server (`POST /ui/api/input/check`, 0.4 s after an edit:
     `inputs.from_view` renders it as the file's text and parses that with the loader's own functions,
     `config._apply`, `_validate_touch`, `_validate_gestures`) with the problems and the diff against the file;
@@ -1979,12 +1985,16 @@ the crab's `touch` per poke.
 
 ## 26. Hand gestures — `strawberry/gestures.py`, `doorways/gesture_watch.py` + `gesture_track.py`
 
-A webcam doorway: a held thumbs up likes the playing track, a swipe skips, an open palm pauses, pointing
-listens. Gestures belong to the brain and the bodies show them; Strawberry owns the camera.
+A webcam doorway: a held thumbs up likes the playing track, a swipe or a finger to the side skips, an open
+palm pauses, pointing up listens, a pinch slides the volume, a wave gets a wave back, a finger to the lips
+keeps her quiet, and a nod or a shake answers her card. Gestures belong to the brain and the bodies show
+them; Strawberry owns the camera.
 
 ```
-camera ─OpenCV─▶ gesture_watch ─MediaPipe (CPU)─▶ Tracker ─POST /gesture {name, phase, progress}─▶ GestureDesk ─▶ a reflex (actions.py), as a run
- (one process, opt-in)                                     ─POST /hand {x, y, pinch, open, …}──▶             ─▶ `gesture`, `hand` to the bodies that ask
+camera ─OpenCV─▶ gesture_watch ─MediaPipe hands (CPU)─▶ Tracker ─POST /gesture {name, phase, progress}──────▶ GestureDesk ─▶ a reflex (actions.py), as a run
+ (one process, opt-in)          ─MediaPipe face (CPU,──▶ (facing, shh,                                                     ─▶ wave back, quiet, the slider's volume
+                                  only while a hand is     nod, shake)  ─POST /hand {x, y, pinch, open, curl, facing…}─▶  ─▶ `gesture`, `hand` to the bodies that ask
+                                  up or her card is open)
 ```
 
 **One watcher, and only names leave it.** `doorways/gesture_watch.py` is a doorway process like the others
@@ -1994,7 +2004,8 @@ detector, the 21 landmarks and a seven-category classifier in one file) on the C
 it is never written, logged or sent, and no frame or image field exists in any message (`parse_gesture` and
 `parse_hand` refuse unknown fields). What goes to the daemon is a gesture's name, its phase and progress, and
 a hand's palm position, size, pinch, openness, whether it is raised and the wrist and fingertips, as numbers in
-0..1 (x as in a mirror: the user's right is +x; y down). With `[gestures] enabled = false` (the default) the
+0..1 (x as in a mirror: the user's right is +x; y down), each digit's curl and the thumb-index gap, and, while the
+face model runs, two booleans: `facing` and `face`. With `[gestures] enabled = false` (the default) the
 process imports neither OpenCV nor MediaPipe, makes no request and only reads its config file's mtime once a
 second; turned on (the tray's *Hand gestures (camera)* row or `strawberry gestures on`, both through
 `configedit` as Message bodies is, then POST /command `reload_gestures` for the daemon), it follows the file
@@ -2017,30 +2028,70 @@ all day, so:
 
 1. *Engagement.* A hand counts only with its wrist above `zone` (0.8 of the frame from the top) and at least
    `min_size` (0.12 of the frame) big: raised toward the screen, not resting on the desk or across the room.
-   Leaving the zone cancels a hold and forgets a swipe. Whether the user faces the screen is not checked (a face
-   model would cost as much again).
-2. *Hold to confirm.* A shape must be held still (the palm under 0.6 frames a second) for `hold_ms` (400 ms). It
-   goes out as `started`, `progress` (every frame) and `done`; the bodies fill a ring. A moved, changed or dropped
-   hand is `cancelled` with the progress it had reached. A shape the recogniser blinks away for a frame (under
-   0.12 s) is still the same hold. One look is never "still": a hand passing by starts nothing.
-3. *Once per hold.* A shape that fired is latched: it must change, or the hand go, before it can fire again, and
-   nothing fires within 0.8 s of the last.
-4. *Arming* (`arming = true`, off by default): command mode first. A held open palm goes out as `arm`, and
+   Leaving the zone cancels a hold and forgets a swipe.
+2. *Facing the screen* (the face model, below). With `require_facing` (on), a gesture counts only while the user
+   faces the screen: the head's yaw within 20° and pitch within 25° to come in, 30° and 35° to go out
+   (hysteresis), and a face seen in the last second. Hands that talk along while the user looks at someone
+   else do nothing, and turning away cancels a hold. Without the face model this check is skipped (as before
+   v2), and shh, nod and shake cannot be read.
+3. *Hold to confirm.* A shape must be held still (the palm under 0.6 frames a second, and within 0.04 of the
+   frame of where the hold began) for `hold_ms` (400 ms). It goes out as `started`, `progress` (every frame) and
+   `done`; the bodies fill a ring. A moved, changed or dropped hand is `cancelled` with the progress it had
+   reached. A shape the recogniser blinks away for a frame (under 0.12 s) is still the same hold. One look is
+   never "still": a hand passing by starts nothing.
+4. *Re-arm and cooldowns.* A shape that fired is latched: it must be left for 0.3 s (or the hand go) before it
+   can fire again; nothing fires within 0.8 s of the last, and some gestures wait longer after themselves (a
+   wave 3 s, shh 5 s, a nod or a shake 1.5 s).
+5. *Arming* (`arming = true`, off by default): command mode first. A held open palm goes out as `arm`, and
    for `armed_s` the mapped gestures count; each one keeps it on. The brain checks it too (`not_armed`).
-5. *Swipes* are the palm moving at least 0.22 of the frame across within 0.5 s, at most 0.6 as much up or
+6. *Swipes* are the palm moving at least 0.22 of the frame across within 0.5 s, at most 0.6 as much up or
    down, by a hand that had been up and in the zone for 0.3 s before the move began: a hand that only wanders
    through is no swipe. Only gestures the map uses (and a thumb while a question is open) show a ring at all.
 
-Shapes: `thumb_up`, `thumb_down`, `palm_hold`, `fist_hold`, `point_hold`, `victory_hold` (the recogniser's
-categories, score ≥ 0.5) and `pinch_hold` (geometry: the thumb and index tips together); motions
-`swipe_left`, `swipe_right`.
+**Shapes from geometry** (`gesture_track.Shaper`). Each digit's curl is the sum of its three joints' bends over
+240° (0 straight, 1 a fist), from MediaPipe's world landmarks (metres, so a hand turned toward the camera reads
+the same); the thumb's from how far its tip reaches from the little finger's knuckle. A digit is *extended*
+below one threshold and *curled* above another, with an exit threshold past each (hysteresis), and in between
+it is neither: a half-curled hand is no shape at all. The landmarks are smoothed first (a One Euro filter: a
+still hand stops trembling, a fast one does not lag); motions (swipes, waves, stillness, the slider) are read
+from the raw palm so smoothing does not slow them. The recogniser's label decides the thumbs and helps where the
+geometry is unsure.
+
+| name | the hand | notes |
+|---|---|---|
+| `thumb_up`, `thumb_down` | the recogniser's (score ≥ 0.5) | |
+| `palm_hold` | four fingers extended, thumb not curled | |
+| `fist_hold` | four fingers curled, thumb not extended | |
+| `point_hold` | index extended, middle, ring and little finger curled, pointing up (≥ 60° above level, kept to 50°) | |
+| `point_left`, `point_right` | the same pointing within 25° of level (kept to 35°), to the user's own left or right (mirrored) | 25°–60° is a dead zone: a diagonal finger is nothing |
+| `victory_hold` | index and middle extended, ring and little curled, thumb in | |
+| `pinch_hold` | the thumb's and index's tips together (the gap under 30 % of the way from closed to apart, kept to 50 %), the index not curled | in a fist the thumb lies on the index too |
+| `count_1` … `count_5` | the hand upright (≥ 60°), every digit clearly extended or curled, that many extended; the thumb counts | index and thumb up is pointing, not two |
+| `shh` | pointing up, the finger's last two bones within 0.25 face widths of the mouth's centre (the face model) | a fist, a hand beside the mouth or a finger across the lips is not |
+
+Some are the same hand: `count_1` and `point_hold`, `count_2` and `victory_hold`, `count_5` and `palm_hold`, and
+`pinch_slide` and `pinch_hold`. A map may use only one of each pair (`gestures.check_map`), and the hand goes out
+by the name it uses (`Tracker.named`), so a map can count fingers or name shapes without the two fighting.
+
+Motions: `swipe_left`, `swipe_right`; `wave` (an open palm turning back at least twice by 0.05 of the frame
+within 1.6 s, mostly sideways: a trembling hand or a hand moving one way is none); and the slider,
+`pinch_slide`: a pinch held still for 0.3 s goes out as `started` (0.5), then the palm's height moves it (0.3 of
+the frame's height is the whole range; up is more) as `progress`, and opening the pinch (or lowering or losing
+the hand) ends it with `done` at its last position. A pinch that drifts while it engages does not engage.
+
+**The head** (`Tracker.look`). The face model's yaw and pitch keep `facing`; while a question is open that it
+may answer, two turns of the pitch by 8° within 1.6 s (the yaw quieter) is a `nod`, two of the yaw by 10° a
+`shake`, both `done` alone. Talking, a single look down, or looking around (both axes) is neither.
 
 **What a gesture does** (`gestures.GestureDesk`, in the daemon). Neither the gate nor a model sees it: a
 recognised gesture is already typed. `[gestures.map]` names one of the reflexes voice has, by the gate's tool
 names and the adapters' said reflexes (`gestures.ACTIONS`): `now_playing`, `pause`, `resume`, `skip`,
-`previous`, `volume_up`, `volume_down`, `like`, `play_liked`, and `listen` (the hotkey's push to talk:
-`Daemon.listen`). The shipped map: `thumb_up = "like"`, `swipe_left = "previous"`, `swipe_right = "skip"`,
-`palm_hold = "pause"`, `point_hold = "listen"`; a `[gestures.map]` table replaces it. Every action is of the
+`previous`, `volume_up`, `volume_down`, `like`, `play_liked`, `listen` (the hotkey's push to talk:
+`Daemon.listen`), `wave_back`, `quiet` and `volume` (the slider's, `pinch_slide` only, and it only that). The
+shipped map: `thumb_up = "like"`, `swipe_left = "previous"`, `swipe_right = "skip"`, `point_left = "previous"`,
+`point_right = "skip"`, `palm_hold = "pause"`, `point_hold = "listen"`, `pinch_slide = "volume"`, `wave =
+"wave_back"`, `shh = "quiet"`; a `[gestures.map]` table replaces it. Counts map to nothing until the user maps
+them. Every action is of the
 `read` or `playback` tier (§20: what plays and how, undone in a second); anything else in the map (a tool, a
 save, a playlist, a message) is refused when the config loads, with the list (`gestures.check_map`,
 `config._validate_gestures`), so she does not start. At run time `Actor.named` finds the reflex as `act` would
@@ -2053,10 +2104,46 @@ her line (the fact and a quip, as for a spoken reflex) and one timeline notice (
 names a track). A gesture that is not mapped, or that nothing here can do (`like` without the Spotify adapter),
 takes no action and writes no notice.
 
-**A thumb on her card** (`[gestures] approvals`, on). While an approval is open a held thumb answers it
-instead of running its mapped action: a thumbs up says yes only to a tier her card takes with a tap (not one in
-`[approvals] hold`, never `destructive`; by default `change`), a thumbs down says no to any. `by` is
-`gesture` (`approvals.BY`, PROTOCOL §13b). The watcher shows a ring only for the thumb that may answer.
+**A thumb or the head on her card** (`[gestures] approvals`, on). While an approval is open a held thumb
+answers it instead of running its mapped action, and so does a nod or a shake: a thumbs up or a nod says yes
+only to a tier her card takes with a tap (not one in `[approvals] hold`, never `destructive`; by default
+`change`), a thumbs down or a shake says no to any. `by` is `gesture` (`approvals.BY`, PROTOCOL §13b). The
+watcher shows a ring only for the thumb that may answer and reads a nod only when a yes is allowed; the brain
+checks again (`not_answerable`), and a nod or shake with no question open does nothing (`no_question`). While
+a card is open the face model reads up to 10 times a second (a nod needs it), else `face_fps` (5).
+
+**Wave back, shh and the slider** (`GestureDesk`). `wave_back` is a performance: her `wave` reaction and, at
+most every 20 s, a line from persona.md's `wave` (no model, nothing changed, no notice); not while she is busy.
+`quiet` (shh) sends the widget's own `quiet` command for `shh_minutes` (30), the one the crab's *Quiet* row and
+the tray's send, so her voice stops and the bubble stays, the menus show the minutes left and either turns it
+off again (a `quiet 0` through /command clears the brain's count too); she says a line of persona.md's
+`shushed` in the bubble and the timeline gets a trusted notice ("the user shushed you…"). The slider reads the
+volume when it starts (`Actor.volume_control`: a music server's adapter with `volume_level` and
+`set_volume_level`, Spotify's through `get_devices` and `set_volume`, else MPRIS's `Volume`), then sets it as
+the hand moves, one call at a time and at most four a second, and the last level when it ends; it is a run
+(`source: "gesture"`) with one tool event pair, says nothing (the bodies draw the level) and leaves a trusted
+notice. Its tier is checked as a reflex's (`Actor.above(server, "volume")`). The bus's `progress` for
+`pinch_slide` is the level, not the watcher's position.
+
+**The face model** (`gesture_watch.FaceReader`). MediaPipe's face landmarker (`face_landmarker.task`, float16
+version 1, ~4 MB), on the CPU in video mode, on a copy of the frame 320 wide. It runs only while a hand is up
+(or a slide goes on, or for half a second after) or her card is open, at `face_fps` (5) a second, up to 10 with
+a card open. The head's yaw and pitch come from its facial transformation matrix (`head_angles`; from the mesh
+when there is none), the mouth's centre from the inner lips, the face's width from the cheeks. They go to the
+tracker and nowhere else: **it is not face recognition** (no identity, no embedding, nothing stored), and of the
+face only `facing` and `face` leave the watcher, in `hand`. A missing model is said once in the journal, in
+`strawberry gestures status`, the doctor (a warning) and the Input tab (`face=missing` in the watcher's
+header); the gestures then work as before.
+
+**Calibration** (`[gestures.calibration]`, `Thresholds.from_calibration`). The Input tab's *Calibrate* asks for
+a relaxed hand, an open hand, a fist, pointing up and a pinch, three seconds each (the first second not kept),
+in practice mode, and keeps the means of the `curl` and `gap` numbers from the `hand` messages: `<digit>_open`,
+`<digit>_curled`, `gap_apart` (the relaxed hand), `gap_closed` (the pinch); pointing refines `index_open` and
+the other fingers' `_curled`. The thresholds sit at 30 % (extended, in) and 42 % (out), 65 % (curled, in) and
+53 % (out) of the way from open to curled, and the pinch at 30 % (in) and 50 % (out) from closed to apart.
+`gestures.check_calibration` refuses an unknown key, a number outside 0..1, a digit whose curled value is not
+0.15 above its open one, a gap apart not 0.1 above closed. *Reset to defaults* saves an empty table. The page
+draws each digit's curl and the gap as bars with the thresholds marked while the hand is up.
 
 **Rate and schema** (`server.gesture`, `hand`). Both routes need the bus secret, `application/json`, and
 `[gestures] enabled` in the daemon (409 otherwise); /gesture takes 30 a second (429 past it) and one action
@@ -2080,7 +2167,7 @@ target with no entry of its own, the plain entry is used.
 `~/.config/strawberry/input.toml` (beside the config file; on Windows `%APPDATA%\strawberry\input.toml`), as
 persona.md and profile.md are saved: atomic, with a backup, after a diff. Its format is config.toml's own
 `[gestures]`, `[gestures.map]` and `[touch]` (`music.flick = "skip"`), so a section can be moved between the
-files. The rule:
+files (and `[gestures.calibration]` after the map). The rule:
 
 - A section in input.toml replaces the same section of config.toml **whole**: a key it leaves out takes its
   default, not config.toml's (so an empty `[gestures.map]` maps nothing, and a `[touch]` without entity keys
@@ -2119,7 +2206,9 @@ core imports it (`tests/test_gestures.py` runs the server, the daemon, the doorw
 missing). The model is not committed: `strawberry gestures fetch` (and `strawberry setup` when gestures are on)
 downloads it from a pinned URL (MediaPipe's `float16/1`), checks its sha256 and puts it in
 `<data>/models/gesture_recognizer.task`. `strawberry gestures status` and `strawberry doctor` say what is
-missing; the watcher says it once and keeps the camera closed.
+missing; the watcher says it once and keeps the camera closed. The face model is fetched with it
+(`gestures.fetch_all`: `MODELS`, each pinned by URL, size and sha256); a model already there with the right
+digest is left alone and said so, so running `strawberry gestures fetch` again gets only what is missing.
 
 **Measured** (2026-10-10, synthetic frames, never the camera). The real watcher loop and the real recogniser,
 fed 640×480 frames made in memory: ~51 ms of CPU per second while it looks for a hand (4 frames a second) and
@@ -2132,11 +2221,30 @@ after the hand settled was `swipe_right` → `skip`: `spotify.next`, her line "S
 Order.", `run.completed` in 0.62 s; 34 `hand` messages in the ~2 s the hand was up; the daemon's log had gesture
 names and the tools' counts, no position.
 
-**Not built yet.** The face-toward-the-screen check; tuning on a real camera (the thresholds come from synthetic
-hands); the orbs rendering `hand`; trying it on Windows (OpenCV's default backend there); a target API to fill
-`target()`.
+**Measured, v2** (2026-10-10, the same way: synthetic 640×480 frames made in memory, the real watcher loop, both
+real models, never the camera; `face=on`). Looking for a hand (4 frames a second, no face model): ~47 ms of CPU
+per second. A hand up (15 frames a second, the face model 5 a second): ~179 ms per second. Her card open (15
+frames, the face model ~7.5 a second): ~185 ms per second. One hand read is ~9 ms of CPU, one face read ~1.7 ms
+on a frame with no face in it (the detector stops there; with a face the mesh adds a few ms, not measured: no
+real face is used in tests). No VRAM.
 
-Tests: `tests/test_gestures.py` (a thumbs up held 600 ms, a hold dropped early, swipes and the cooldown, a palm
+**Not built yet.** Tuning on a real camera (the thresholds and the nod and wave swings come from synthetic hands
+and heads; Calibrate is the user's way to fit them); the orbs rendering `hand` and a slider; trying it on Windows
+(OpenCV's default backend there); a target API to fill `target()`.
+
+Tests: `tests/test_gestures_v2.py` (pointing left, right and up with the mirror, a diagonal in the dead zone and
+the angle's hysteresis; counts and the pairs; a half-curled hand; the slider engaged, moved and let go, a pinch
+that drifts, a lowered hand; a wave, a wave too small, a hand moving one way, a fist shaken; shh across the lips
+and the near misses (beside the mouth, a fist, a finger across, no face model); hands talking along while the
+user looks away, facing's hysteresis, turning away mid-hold; nod and shake per tier, none without a card, small
+moves and looking around; re-arm; the One Euro filter; `head_angles`; calibration in config.toml, input.toml and
+the page, and the thresholds it moves; the routes' new names, `check_map`'s pairs and the slider's action; nod,
+shake, wave back, shh and its notice and expiry, the slider's rate (at most 4 a second, the last level on
+release), practice mode for each, Spotify's volume level; the watcher with a fake face reader: it runs only
+while a hand is up or a card is open, nothing of the face in any post or log line, turned away no gesture,
+without the face model as before, a nod from the watcher; fetch leaving a model that is there; and, given
+`STRAWBERRY_TEST_FACE_MODEL`, the real face model finding no face in a blank frame) and `tests/test_gestures.py`
+(a thumbs up held 600 ms, a hold dropped early, swipes and the cooldown, a palm
 arming then pointing, a hand that wanders through low, far or passing, jitter and a blinking label, unmapped
 shapes, a pinch, thumbs for the open question; the map's tier refusal at load and target keys; the routes'
 secret, schema and rate; who gets `gesture` and `hand`; a gesture's run, line and notice; arming in the brain; a

@@ -47,6 +47,7 @@
     handAt: 0,
     gesture: null,          // the latest gesture event, with when it came
     freshInput: new Set(),
+    calib: null,            // a calibration under way or done: its step, the samples (curl numbers), the result
   };
 
   // --------------------------------------------------------------------------- DOM, as text
@@ -1119,6 +1120,8 @@
     ["idle_fps", "Frames a second, looking", "while no hand is up", 0.5, 60, 0.5],
     ["fps", "Frames a second, hand up", "swipes need 10 or more", 1, 60, 1],
     ["hand_hz", "Hand updates a second", "to the bodies and this view", 1, 30, 1],
+    ["face_fps", "Face reads a second", "only while a hand is up or her card is open", 1, 15, 1],
+    ["shh_minutes", "Quiet after shh", "minutes her voice is off (the bubble stays)", 1, 720, 1],
   ];
   const TOUCH_TUNING = [
     ["target_s", "A target holds", "s after the body last reported it", 0.5, 60, 0.5],
@@ -1129,7 +1132,8 @@
     too_soon: "too soon after the last", not_answerable: "a thumb cannot answer this question",
     nothing_can_do_it: "no player or music server for it", tool_failed: "the call failed", refused: "refused",
     would_ask: "it would need a yes", not_listening: "she could not listen", error: "an error",
-    not_open: "no question open", resolved: "already answered",
+    not_open: "no question open", resolved: "already answered", no_question: "no question open",
+    busy: "she was busy", no_body: "no body connected", no_volume: "the player does not say its volume",
   };
   let inputCheckTimer = null;
   let inputLive = null;          // the live view's fetch (an AbortController) while the tab is open
@@ -1222,6 +1226,8 @@
       panel("Mappings", "what a gesture or a touch does: only actions that need no yes (read and playback)",
         el("div", { id: "input-maps" })),
       panel("Tuning", "how a hand has to be held, and how the camera runs", el("div", { id: "input-tuning" })),
+      panel("Calibrate", "your hand's own numbers: each finger's curl and the thumb-index gap, never a picture",
+        el("div", { id: "input-calib" })),
       panel("input.toml", "saved here, never in config.toml; she reads it again within a second",
         el("div", { id: "input-file" })),
       panel("Recent", "the last gestures and touch actions, and what came of each", el("div", { id: "input-recent" })));
@@ -1230,6 +1236,7 @@
     renderInputBodies();
     renderInputMaps();
     renderInputTuning();
+    renderCalibration();
     renderInputCheck();
     renderInputRecent();
     drawHand();
@@ -1282,6 +1289,9 @@
         ["Last hand", typeof S.hand_age_s === "number" ? `${duration(S.hand_age_s)} ago` : "none since she started"],
         ["MediaPipe", S.mediapipe ? `missing: ${S.mediapipe}` : "installed"],
         ["Model", S.model ? "present" : "missing: strawberry gestures fetch"],
+        ["Face model", !S.face_model ? "missing: strawberry gestures fetch (until then facing is not checked, and shh, nod and shake are off)"
+          : w.face === "failed" ? "did not load: facing is not checked" : w.face === "on" ? "on: gestures count while you face the screen" : "present"],
+        ["Quiet (shh)", S.quiet_s > 0 ? `her voice is off, ${Math.ceil(S.quiet_s / 60)} min left` : "off"],
         ["Gestures", `${g.received ?? 0} received, ${g.acted ?? 0} acted, ${g.answered ?? 0} answered, ${g.refused ?? 0} refused`],
         ["Touch actions", `${t.acted ?? 0} done, ${t.failed ?? 0} failed, ${t.refused ?? 0} refused, ${t.cooldown ?? 0} too soon`]]));
   }
@@ -1407,10 +1417,196 @@
           el("span", { class: "s", text: "an index (1) or a device (/dev/video2); empty: the first" }))),
       el("div", { class: "actions" },
         box("arming", "Arming", "a held open palm turns command mode on first"),
-        box("approvals", "A thumb answers her card", "a held thumbs up or down, for a tier her card takes with a tap")),
+        box("approvals", "A thumb or the head answers her card", "a held thumbs up or down, a nod or a shake, for a tier her card takes with a tap"),
+        box("require_facing", "Only while I face the screen", "needs the face model; without it gestures count as before")),
       el("h3", { text: "Touch" }),
       el("div", { class: "fields" }, TOUCH_TUNING.map((f) => numberField(T, f))));
     for (const input of node.querySelectorAll('input[type="number"]')) input.addEventListener("input", () => drawHand());
+  }
+
+  // --- calibration: the user holds a relaxed hand, then each shape, for a few seconds; the page keeps the mean
+  // of each finger's curl and the thumb-index gap from the hand messages (numbers only) and turns them into
+  // [gestures.calibration], saved with the rest of input.toml. Practice mode is on while it records.
+
+  const CALIB_STEPS = [
+    ["neutral", "A relaxed hand", "raised toward the screen, fingers loose, not pinching"],
+    ["open", "An open hand", "fingers straight and spread, palm to the screen"],
+    ["fist", "A fist", "fingers curled in, the thumb over them"],
+    ["point", "Pointing up", "the index finger straight up, the others curled"],
+    ["pinch", "A pinch", "the thumb's and index finger's tips together"],
+  ];
+  const CALIB_SECONDS = 3;
+  const CALIB_SETTLE = 1;        // the first second of each step is not kept: the hand is still moving into it
+
+  function calibDigits() { return (state.input && state.input.options.digits) || ["thumb", "index", "middle", "ring", "pinky"]; }
+
+  function mean(values) { return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null; }
+
+  function calibResult(samples) {
+    // Each step's samples are {curl: {digit: n}, gap: n}: the means, put together as the tracker wants them.
+    const avg = (step, pick) => mean((samples[step] || []).map(pick).filter((v) => typeof v === "number"));
+    const out = {};
+    for (const d of calibDigits()) {
+      out[`${d}_open`] = avg("open", (s) => s.curl[d]);
+      out[`${d}_curled`] = avg("fist", (s) => s.curl[d]);
+    }
+    const pointIndex = avg("point", (s) => s.curl.index);
+    if (pointIndex !== null && out.index_open !== null) out.index_open = (out.index_open + pointIndex) / 2;
+    for (const d of ["middle", "ring", "pinky"]) {
+      const v = avg("point", (s) => s.curl[d]);
+      if (v !== null && out[`${d}_curled`] !== null) out[`${d}_curled`] = (out[`${d}_curled`] + v) / 2;
+    }
+    out.gap_apart = avg("neutral", (s) => s.gap);
+    out.gap_closed = avg("pinch", (s) => s.gap);
+    const problems = [];
+    for (const [k, v] of Object.entries(out)) if (v === null) problems.push(`${k}: no hand seen in that step`);
+    for (const d of calibDigits()) {
+      if (out[`${d}_open`] !== null && out[`${d}_curled`] !== null && out[`${d}_curled`] - out[`${d}_open`] < 0.15) {
+        problems.push(`the ${d} hardly changed between the open hand and the fist`);
+      }
+    }
+    if (out.gap_apart !== null && out.gap_closed !== null && out.gap_apart - out.gap_closed < 0.1) {
+      problems.push("the pinch and the relaxed hand looked alike");
+    }
+    for (const k of Object.keys(out)) if (out[k] !== null) out[k] = Math.round(Math.min(1, Math.max(0, out[k])) * 1000) / 1000;
+    return { values: out, problems };
+  }
+
+  async function startCalibration() {
+    if (state.calib && state.calib.running) return;
+    const wasPractice = Boolean(state.inputPractice);
+    state.calib = { running: true, step: 0, startedAt: performance.now(), samples: {}, result: null, wasPractice };
+    try { await api("input/practice", { on: true }); state.inputPractice = true; } catch (e) { /* recording still works */ }
+    renderCalibration();
+    const tick = () => {
+      const C = state.calib;
+      if (!C || !C.running) return;
+      const elapsed = (performance.now() - C.startedAt) / 1000;
+      if (elapsed >= CALIB_SECONDS) {
+        C.step += 1;
+        C.startedAt = performance.now();
+        if (C.step >= CALIB_STEPS.length) { finishCalibration(); return; }
+      }
+      renderCalibration();
+      setTimeout(tick, 250);
+    };
+    setTimeout(tick, 250);
+  }
+
+  async function finishCalibration(cancelled) {
+    const C = state.calib;
+    if (!C) return;
+    C.running = false;
+    if (!cancelled) C.result = calibResult(C.samples);
+    if (!C.wasPractice) {
+      try { await api("input/practice", { on: false }); state.inputPractice = false; } catch (e) { /* the status says */ }
+    }
+    if (cancelled) state.calib = null;
+    renderCalibration();
+  }
+
+  function calibSample(hand) {
+    // A hand message during a step: kept once the step has settled, and only a raised hand with its numbers.
+    const C = state.calib;
+    if (!C || !C.running || !hand || !hand.present || !hand.curl || typeof hand.gap !== "number") return;
+    if ((performance.now() - C.startedAt) / 1000 < CALIB_SETTLE) return;
+    const step = CALIB_STEPS[C.step][0];
+    (C.samples[step] = C.samples[step] || []).push({ curl: Object.assign({}, hand.curl), gap: hand.gap });
+  }
+
+  function renderCalibration() {
+    const node = document.getElementById("input-calib");
+    if (!node || !state.input || !state.inputForm) return;
+    const C = state.calib;
+    const saved = state.inputForm.g.calibration || {};
+    const using = Object.keys(saved).length ? "your calibration" : "the defaults";
+    const canvas = el("canvas", { id: "calib-canvas", class: "calib", width: 480, height: 150,
+      "aria-label": "Each finger's curl and the thumb-index gap now, with where they count as extended, curled or pinched" });
+    let head;
+    if (C && C.running) {
+      const [, title, how] = CALIB_STEPS[C.step];
+      const left = Math.max(0, CALIB_SECONDS - (performance.now() - C.startedAt) / 1000);
+      const seen = (C.samples[CALIB_STEPS[C.step][0]] || []).length;
+      head = el("div", { class: "note" },
+        el("b", { text: `Step ${C.step + 1} of ${CALIB_STEPS.length}: ${title}. ` }), `${how}. `,
+        el("span", { class: "mono", text: `${left.toFixed(1)} s` }), seen ? ` (${seen} looks)` : "",
+        el("div", { class: "actions" }, actionButton("Stop", () => finishCalibration(true), "small ghost")));
+    } else if (C && C.result) {
+      const R = C.result;
+      head = el("div", null,
+        R.problems.length
+          ? el("div", { class: "note berry" }, el("b", { text: "Not usable as it is:" }), el("ul", null, R.problems.map((p) => el("li", { text: p }))))
+          : el("p", null, chip("recorded", "good"), " Use it, then save input.toml."),
+        table(["Key", "Recorded", "Now"], Object.entries(R.values).map(([k, v]) => el("tr", null,
+          td(k, "mono"), td(num(v, 3)), td(num(saved[k] ?? state.input.options.calibration[k], 3))))),
+        el("div", { class: "actions" },
+          actionButton("Use these", () => {
+            state.inputForm.g.calibration = Object.fromEntries(Object.entries(R.values).filter(([, v]) => v !== null));
+            state.calib = null; edited(); renderCalibration();
+          }, R.problems.length ? "small" : "small primary"),
+          actionButton("Again", () => startCalibration(), "small ghost"),
+          actionButton("Discard", () => { state.calib = null; renderCalibration(); }, "small ghost")));
+    } else {
+      head = el("div", null,
+        el("p", null, `In use: ${using}. Hold a relaxed hand, then an open hand, a fist, pointing up and a pinch, about ${CALIB_SECONDS} s each, raised toward the camera. Practice mode is on while it records, so nothing is done.`),
+        el("div", { class: "actions" },
+          actionButton("Calibrate", () => startCalibration(), "small primary"),
+          Object.keys(saved).length ? actionButton("Reset to defaults", () => { state.inputForm.g.calibration = {}; edited(); renderCalibration(); }, "small ghost") : null,
+          el("span", { class: "faint", text: "Saved with input.toml as [gestures.calibration]." })));
+    }
+    fill(node, head, el("div", { class: "hand-wrap" }, canvas));
+    drawCalibration();
+  }
+
+  function thresholds() {
+    // The tracker's thresholds (gesture_track.Thresholds) from the calibration in the form, for the bars' marks.
+    const cal = Object.assign({}, state.input.options.calibration, state.inputForm.g.calibration || {});
+    const out = {};
+    for (const d of calibDigits()) {
+      const low = cal[`${d}_open`];
+      const span = Math.max(cal[`${d}_curled`] - low, 0.15);
+      out[d] = { ext: low + 0.30 * span, curl: low + 0.65 * span };
+    }
+    const span = Math.max(cal.gap_apart - cal.gap_closed, 0.1);
+    out.gap = { pinch: cal.gap_closed + 0.30 * span };
+    return out;
+  }
+
+  function drawCalibration() {
+    const canvas = document.getElementById("calib-canvas");
+    if (!canvas || !state.input || !state.inputForm) return;
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(240, Math.round(canvas.clientWidth || 480));
+    const height = 150;
+    if (canvas.width !== Math.round(width * ratio)) { canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.font = "12px system-ui, sans-serif";
+    const H = state.hand;
+    const T = thresholds();
+    const rows = [...calibDigits().map((d) => [d, H && H.curl ? H.curl[d] : null, T[d]]), ["gap", H ? H.gap : null, T.gap]];
+    const left = 64;
+    const barW = width - left - 12;
+    rows.forEach(([name, value, mark], i) => {
+      const y = 10 + i * 22;
+      ctx.fillStyle = cssVar("--ink-dim");
+      ctx.fillText(name === "gap" ? "gap" : name, 6, y + 11);
+      ctx.fillStyle = cssVar("--line");
+      ctx.fillRect(left, y, barW, 14);
+      if (typeof value === "number") {
+        ctx.fillStyle = name === "gap" ? (value <= mark.pinch ? cssVar("--good") : cssVar("--berry"))
+          : value <= mark.ext ? cssVar("--good") : value >= mark.curl ? cssVar("--berry") : cssVar("--warn");
+        ctx.fillRect(left, y, barW * Math.min(1, Math.max(0, value)), 14);
+      }
+      ctx.strokeStyle = cssVar("--ink");
+      ctx.lineWidth = 1.5;
+      for (const at of name === "gap" ? [mark.pinch] : [mark.ext, mark.curl]) {
+        ctx.beginPath(); ctx.moveTo(left + barW * at, y - 2); ctx.lineTo(left + barW * at, y + 16); ctx.stroke();
+      }
+    });
+    ctx.fillStyle = cssVar("--ink-faint");
+    ctx.fillText(H ? "curl: green extended, berry curled, amber neither; gap: green pinched" : "No hand: raise one toward the camera", left, height - 6);
   }
 
   function renderInputCheck() {
@@ -1535,6 +1731,7 @@
     if (name === "hand") {
       state.hand = data.present ? data : null;
       state.handAt = now;
+      calibSample(state.hand);
       requestDraw();
     } else if (name === "gesture") {
       state.gesture = Object.assign({ at: now }, data);
@@ -1560,7 +1757,7 @@
   function requestDraw() {
     if (drawPending) return;
     drawPending = true;
-    requestAnimationFrame(() => { drawPending = false; drawHand(); });
+    requestAnimationFrame(() => { drawPending = false; drawHand(); drawCalibration(); });
   }
 
   function cssVar(name) {
@@ -1651,7 +1848,16 @@
     ctx.globalAlpha = 0.35;
     ctx.beginPath(); ctx.arc(X(H.x), Y(H.y), 7, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
-    if (gesture) {
+    if (gesture && gesture.name === "pinch_slide") {
+      // The slider: a bar beside the palm, filled to the level (its progress is the volume, not a hold).
+      const top = Y(H.y) - r;
+      const barH = 2 * r;
+      ctx.fillStyle = cssVar("--line");
+      ctx.fillRect(X(H.x) + r + 10, top, 10, barH);
+      ctx.fillStyle = gesture.phase === "done" ? good : berry;
+      const level = Math.min(1, Math.max(0, gesture.progress || 0));
+      ctx.fillRect(X(H.x) + r + 10, top + barH * (1 - level), 10, barH * level);
+    } else if (gesture) {
       const progress = gesture.phase === "done" ? 1 : gesture.progress || 0;
       ctx.lineWidth = 8;
       ctx.strokeStyle = cssVar("--rim");
@@ -1664,6 +1870,8 @@
         chip(H.engaged ? "engaged: it counts" : "not engaged", H.engaged ? "good" : null,
           "Raised into the zone and near enough"),
         chip(`seen: ${H.shape ? H.shape.replace(/_/g, " ") : "no shape"}`, H.shape ? "berry" : null),
+        typeof H.facing === "boolean" ? chip(H.facing ? "facing the screen" : H.face ? "not facing: gestures wait" : "no face seen",
+          H.facing ? "good" : "warn", "The face model's yes or no; nothing else of the face leaves the watcher") : null,
         chip(`pinch ${num(H.pinch)}`), chip(`open ${num(H.open)}`), chip(`size ${num(H.size)}`),
         gesture ? gestureChip(gesture) : null);
     }
@@ -1671,6 +1879,12 @@
 
   function gestureChip(g) {
     const name = g.name.replace(/_/g, " ");
+    if (g.name === "pinch_slide") {
+      const level = `${Math.round((g.progress || 0) * 100)}%`;
+      if (g.phase === "done") return chip(`slider: ${g.practice ? `practice, would set ${level}` : g.action ? `volume ${level}` : "nothing done"}`, g.action ? "good" : "warn");
+      if (g.phase === "cancelled") return chip("slider: no volume to start from", "warn");
+      return chip(`slider: volume ${level}`, "berry");
+    }
     if (g.phase === "done") {
       const did = g.practice ? `practice: would ${g.practice}` : g.action ? `did ${g.action}` : "nothing done";
       return chip(`${name}: ${did}`, g.action ? "good" : "warn");

@@ -1,11 +1,15 @@
 """Doorway: hand gestures through the webcam (WIRING.md §26). Opt-in: `[gestures] enabled = true`.
 
     camera (OpenCV)  ->  MediaPipe's gesture recogniser (CPU)  ->  gesture_track.Tracker  ->  POST /gesture, /hand
+                     ->  MediaPipe's face landmarker (CPU, a smaller copy, only while a hand is up or her card is open)
+                         ->  yaw, pitch, the mouth  ->  the Tracker (facing the screen; shh; nod and shake)
 
 Strawberry owns the camera, and this process is the one place that opens it. A frame lives in memory for the
 one recognition it is read for and is never written, logged or sent; what leaves the process is a gesture's
-name, its phase and progress, and a hand's position as a few numbers (gesture_track.hand_message). The brain
-decides what a gesture does (gestures.py); this only says what the hand did.
+name, its phase and progress, and a hand's position as a few numbers (gesture_track.hand_message). The face
+model is not face recognition: it makes no identity and no embedding, and of the face only two booleans leave
+(`facing`, `face` in the hand message); its yaw, pitch and landmarks stay in the tracker. The brain decides what
+a gesture does (gestures.py); this only says what the hand and the head did.
 
 When the camera is open:
 
@@ -28,6 +32,7 @@ import dataclasses
 import http.client
 import json
 import logging
+import math
 import signal
 import sys
 import threading
@@ -39,11 +44,13 @@ from typing import Any, Callable
 from .. import bussecret, gestures
 from ..inputs import WATCHER_HEADER, input_file
 from ..winproc import utf8_streams
-from .gesture_track import Hand, Settings, Tracker
+from .gesture_track import Face, Hand, Settings, Tracker, head_angles
 
 log = logging.getLogger("gesture_watch")
 
 WIDTH, HEIGHT = 640, 480     # asked of the camera; MediaPipe's models work on far less
+FACE_WIDTH = 320             # the face model reads a copy this wide
+HEAD_FPS = 10.0              # the face model's rate while her card is open (a nod or a shake needs it)
 STATE_EVERY_S = 1.0          # GET /gesture this often while no post brings the state back
 CONFIG_EVERY_S = 1.0         # look at the config file's mtime this often
 NO_FRAMES_S = 3.0            # a camera that gives nothing this long is released and opened again
@@ -117,14 +124,76 @@ class Recognizer:
         if not result.hand_landmarks:
             return None
         points = tuple((1.0 - p.x, p.y) for p in result.hand_landmarks[0])
+        world = None
+        if getattr(result, "hand_world_landmarks", None):
+            world = tuple((-p.x, p.y, p.z) for p in result.hand_world_landmarks[0])   # mirrored as the points
         label, score = "", 0.0
         if result.gestures and result.gestures[0]:
             top = result.gestures[0][0]
             label, score = str(top.category_name or ""), float(top.score or 0.0)
-        return Hand(points, label, score)
+        height, width = rgb.shape[:2]
+        return Hand(points, label, score, world, width / max(height, 1))
 
     def close(self) -> None:
         self.recognizer.close()
+
+
+class FaceReader:
+    """MediaPipe's face landmarker on the CPU, in video mode, on a smaller copy of the frame (FACE_WIDTH wide): the
+    head's yaw and pitch (from the facial transformation matrix) and where the mouth is. Not face recognition: no
+    identity and no embedding are made, and nothing of the face leaves this process (gesture_track.Face stays in
+    the tracker; the hand message says only `facing` and `face`)."""
+
+    def __init__(self, model: Path) -> None:
+        from mediapipe.tasks.python import vision
+        from mediapipe.tasks.python.core.base_options import BaseOptions
+
+        options = vision.FaceLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=str(model), delegate=BaseOptions.Delegate.CPU),
+            running_mode=vision.RunningMode.VIDEO, num_faces=1, output_face_blendshapes=False,
+            output_facial_transformation_matrixes=True)
+        self.landmarker = vision.FaceLandmarker.create_from_options(options)
+        self.last_ms = -1
+
+    def read(self, rgb: Any, t: float) -> Face | None:
+        import cv2
+        import mediapipe as mp
+
+        height, width = rgb.shape[:2]
+        if width > FACE_WIDTH:
+            rgb = cv2.resize(rgb, (FACE_WIDTH, max(1, round(height * FACE_WIDTH / width))), interpolation=cv2.INTER_AREA)
+        ms = max(int(t * 1000), self.last_ms + 1)
+        self.last_ms = ms
+        result = self.landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ms)
+        if not result.face_landmarks:
+            return None
+        marks = result.face_landmarks[0]
+        if getattr(result, "facial_transformation_matrixes", None):
+            yaw, pitch = head_angles(result.facial_transformation_matrixes[0])
+        else:
+            yaw, pitch = landmark_angles(marks)
+        mouth = (1.0 - (marks[UPPER_LIP].x + marks[LOWER_LIP].x) / 2, (marks[UPPER_LIP].y + marks[LOWER_LIP].y) / 2)
+        size = abs(marks[LEFT_CHEEK].x - marks[RIGHT_CHEEK].x)
+        return Face(yaw, pitch, mouth, size)
+
+    def close(self) -> None:
+        self.landmarker.close()
+
+
+# The face mesh's points read here: the inner lips (the mouth's centre), the cheeks' edges (the face's width), the
+# nose tip (a rough yaw and pitch when the model gives no matrix).
+UPPER_LIP, LOWER_LIP, LEFT_CHEEK, RIGHT_CHEEK, NOSE_TIP, FOREHEAD, CHIN = 13, 14, 234, 454, 1, 10, 152
+
+
+def landmark_angles(marks: Any) -> tuple[float, float]:
+    """A rough yaw and pitch from the face mesh alone: the nose tip's place between the cheeks and between the
+    forehead and the chin."""
+    width = max(abs(marks[RIGHT_CHEEK].x - marks[LEFT_CHEEK].x), 1e-6)
+    height = max(abs(marks[CHIN].y - marks[FOREHEAD].y), 1e-6)
+    across = (marks[NOSE_TIP].x - (marks[LEFT_CHEEK].x + marks[RIGHT_CHEEK].x) / 2) / (width / 2)
+    down = (marks[NOSE_TIP].y - (marks[FOREHEAD].y + marks[CHIN].y) / 2) / (height / 2)
+    return (math.degrees(math.asin(max(-1.0, min(1.0, across)))),
+            math.degrees(math.asin(max(-1.0, min(1.0, down)))))
 
 
 # --- talking to the brain ---------------------------------------------------------------
@@ -201,10 +270,15 @@ class Watcher:
     def __init__(self, daemon: str, config_path: Path | None = None,
                  camera_opener: Callable[[str, float], Any] | None = None,
                  recognizer_factory: Callable[[Path], Any] | None = None, poster: Any = None,
-                 clock: Callable[[], float] = time.monotonic, settings: Any = None) -> None:
+                 clock: Callable[[], float] = time.monotonic, settings: Any = None,
+                 face_factory: Callable[[Path], Any] | None = None) -> None:
         self.config_path = config_path
         self.open_camera = camera_opener or (lambda spec, fps: open_camera(spec, fps))
         self.make_recognizer = recognizer_factory or Recognizer
+        self.make_face = face_factory or FaceReader
+        self.face: Any = None              # the face model (FaceReader), or None: missing, or it did not load
+        self.face_state = ""               # on | missing | failed; "" until the camera first opened
+        self.face_at = -1e9                # the face model's last read
         self.poster = poster or Poster(daemon)
         self.clock = clock
         self.stopping = threading.Event()
@@ -263,7 +337,7 @@ class Watcher:
             return
         was = self.settings
         self.settings, self.config_seen = fresh, seen
-        self.tracker.settings = Settings.from_config(fresh)
+        self.tracker.retune(Settings.from_config(fresh, face=self.face is not None))
         if was is None or was.enabled != fresh.enabled:
             log.info("gestures %s (watch %s, camera %s)", "on" if fresh.enabled else "off", fresh.watch,
                      fresh.camera or "the first")
@@ -333,7 +407,8 @@ class Watcher:
             fps = (self.frames - self.measured_frames) / (now - self.measured_at)
             share = 100.0 * (cpu - self.measured_cpu[0]) / max(wall - self.measured_cpu[1], 1e-3)
             report = (f"camera={'open' if self.camera is not None else 'closed'}; "
-                      f"fps={min(fps, 999.0):.1f}; cpu={min(max(share, 0.0), 9999.0):.1f}")
+                      f"fps={min(fps, 999.0):.1f}; cpu={min(max(share, 0.0), 9999.0):.1f}"
+                      + (f"; face={self.face_state}" if self.face_state else ""))
             self.poster.report = self.report = report
         self.measured_at, self.measured_frames, self.measured_cpu = now, self.frames, (cpu, wall)
 
@@ -345,6 +420,7 @@ class Watcher:
         try:
             if self.recognizer is None:
                 self.recognizer = self.make_recognizer(gestures.model_file())
+            self.load_face()
             self.camera = self.open_camera(self.settings.camera, self.settings.fps)
         except Exception as exc:   # noqa: BLE001 - a busy camera or a broken model: say so, try again later
             self.camera_failed_at = now
@@ -354,6 +430,28 @@ class Watcher:
         self.last_frame_at = now
         log.info("camera open (%s, watch %s)", self.settings.camera or "the first", self.settings.watch)
         return True
+
+    def load_face(self) -> None:
+        """The face model, once, when the camera first opens (and again while it is missing). Without it the
+        gestures work as before: facing is not checked, and shh, nod and shake cannot be read."""
+        if self.face is not None or self.face_state == "failed":
+            return
+        if not gestures.face_model_ready():
+            self.face_state = "missing"
+            self.once("face-model", logging.WARNING, f"the face model is missing ({gestures.face_model_file()}): "
+                      "facing the screen is not checked, and shh, nod and shake are off (strawberry gestures fetch)")
+            return
+        try:
+            self.face = self.make_face(gestures.face_model_file())
+        except Exception as exc:   # noqa: BLE001 - a broken model file: the hand gestures go on without it
+            self.face_state = "failed"
+            self.once("face-failed", logging.WARNING, f"the face model did not load ({type(exc).__name__}); "
+                      "facing the screen is not checked, and shh, nod and shake are off")
+            return
+        self.face_state = "on"
+        self.tracker.settings.face = True
+        log.info("face model on: gestures count while you face the screen (require_facing %s)",
+                 "on" if self.settings is None or self.settings.require_facing else "off")
 
     def release(self, why: str) -> None:
         if self.camera is None:
@@ -384,10 +482,23 @@ class Watcher:
             self.release("the recogniser failed")
             self.camera_failed_at = now
             return
+        events: list[tuple[str, dict[str, Any]]] = []
+        if self.face is not None and self.tracker.wants_face(now, hand):
+            rate = max(self.settings.face_fps, HEAD_FPS) if self.tracker.approval is not None else self.settings.face_fps
+            if now - self.face_at >= 1.0 / rate - 0.01:
+                self.face_at = now
+                try:
+                    face = self.face.read(rgb, now)
+                except Exception as exc:   # noqa: BLE001 - the face model choking: the hands go on without it
+                    log.warning("the face model failed (%s); going on without it", type(exc).__name__)
+                    self.face, self.face_state = None, "failed"
+                    self.tracker.settings.face = False
+                    face = None
+                events += self.tracker.look(now, face)    # yaw, pitch and the mouth stay in the tracker
         del rgb                                   # the frame goes no further than this
         if hand is not None and self.settings.watch == "armed":
             self.open_until = max(self.open_until, now + self.settings.armed_s)
-        for kind, payload in self.tracker.step(now, hand):
+        for kind, payload in events + self.tracker.step(now, hand):
             if kind == "gesture":
                 self.send_gesture(payload)
             elif self.state.get("wanted", {}).get("hand") or not payload.get("present", True):

@@ -47,7 +47,7 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 | `POST /probe` | none | per-slot timings | `strawberry doctor --talk`; loopback clients only (403 otherwise) | `server.py:316-327` |
 | `GET /health` | – | status object (below); without the bus secret only whether she is up | the tray (every 2 s), `strawberry doctor`, the check scripts' liveness polls | `server.py` `health` |
 | `GET /config` | – | the effective settings; 403 without the bus secret | inspection (curl) | `server.py` `config` |
-| `POST /gesture`, `POST /hand`, `GET /gesture` | a gesture's name and phase; a hand's position (Part 1d); the watcher's `X-Strawberry-Watcher: camera=open; fps=4.0; cpu=5.1` header on each (for the Brain UI's Input tab; optional) | `{"sent": n, "state": {…}}`; 409 while `[gestures]` is off, 429 past the rate | `doorways/gesture_watch.py` | `server.py` `gesture`, `hand`, `gesture_state` |
+| `POST /gesture`, `POST /hand`, `GET /gesture` | a gesture's name and phase; a hand's position (Part 1d); the watcher's `X-Strawberry-Watcher: camera=open; fps=4.0; cpu=5.1; face=on` header on each (for the Brain UI's Input tab; optional; `face` is the face model: on, missing or failed) | `{"sent": n, "state": {…}}`; 409 while `[gestures]` is off, 429 past the rate | `doorways/gesture_watch.py` | `server.py` `gesture`, `hand`, `gesture_state` |
 | `GET /ws` | – | websocket upgrade | bodies | `server.py:350-371` |
 | `POST /ui-token`, `/ui/...` | – | the Brain UI: a one-time login token, then a page and its own API under a session (WIRING.md §17) | `strawberry ui`, the user's browser | `brainui.py` |
 
@@ -705,7 +705,7 @@ most if neither comes.
 | `superseded` | the user said something else, or a newer question replaced it | `run.cancelled` (`superseded`); her next line starts "I've left that, then." |
 
 `by` is there only for `yes` and `no`: `voice` (said), `typed` (the widget's box, `/event`), `body` (a
-card), `ui` (the Brain UI), `gesture` (a held thumb, Part 1d: a yes only to a tier without `hold`, never
+card), `ui` (the Brain UI), `gesture` (a held thumb, a nod or a shake, Part 1d: a yes only to a tier without `hold`, never
 `destructive`; a no to any). Every body with `approvals` gets the outcome, the one that answered
 included, and hides the card on it.
 
@@ -986,15 +986,19 @@ whose hello presented the bus secret (§1.4); no other socket gets either, in an
 {"type": "gesture", "t": 17683.716, "name": "thumb_up", "phase": "done", "progress": 1.0, "action": "like"}
 {"type": "gesture", "t": 17686.052, "name": "swipe_right", "phase": "done", "progress": 1.0, "action": "skip", "run_id": "r-1"}
 {"type": "gesture", "t": 17690.1, "name": "palm_hold", "phase": "cancelled", "progress": 0.47}
+{"type": "gesture", "t": 17701.2, "name": "pinch_slide", "phase": "started", "progress": 0.4}
+{"type": "gesture", "t": 17701.4, "name": "pinch_slide", "phase": "progress", "progress": 0.46}
+{"type": "gesture", "t": 17702.9, "name": "pinch_slide", "phase": "done", "progress": 0.8, "action": "volume", "run_id": "r-2"}
+{"type": "gesture", "t": 17710.0, "name": "nod", "phase": "done", "progress": 1.0, "action": "yes", "run_id": "r-1"}
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
 | `t` | number | brain monotonic time (§12.1) |
-| `name` | `thumb_up` `thumb_down` `palm_hold` `fist_hold` `point_hold` `victory_hold` `pinch_hold` `swipe_left` `swipe_right` `arm` | the gesture. The shapes are held; the swipes are motions (they come as `done` alone). `arm` is the raised open palm that turns command mode on (`[gestures] arming`). x is as in a mirror: `swipe_right` is a move to the user's right |
+| `name` | `thumb_up` `thumb_down` `palm_hold` `fist_hold` `point_hold` `victory_hold` `pinch_hold` `point_left` `point_right` `count_1` … `count_5` `shh` `swipe_left` `swipe_right` `wave` `pinch_slide` `nod` `shake` `arm` | the gesture. The shapes (`thumb_up` … `shh`) are held; the swipes and `wave` are motions, and so are `nod` and `shake` (the head, only while her card is open): they come as `done` alone. `pinch_slide` is the slider (below). `arm` is the raised open palm that turns command mode on (`[gestures] arming`). x is as in a mirror: `swipe_right` is a move to the user's right, `point_right` a finger toward it. The names from `point_left` on (but `arm`) are new since 2026-10-10, and more may come: a body shows a name it does not know as any other gesture, or not at all |
 | `phase` | `started` \| `progress` \| `done` \| `cancelled` | a shape held: `started`, then `progress` about every frame (15 a second), then `done` when it was held `[gestures] hold_ms` (400 ms), or `cancelled` when the hand moved, changed or dropped first |
-| `progress` | number 0..1 | how far the hold is: fill a ring with it. `done` is 1; `cancelled` carries where it stopped |
-| `action` | string, only on `done` | what the brain did with it: one of the reflex names (`now_playing` `pause` `resume` `skip` `previous` `volume_up` `volume_down` `like` `play_liked` `listen`), `yes` or `no` (a thumb answered the open approval, §13b, `by: "gesture"`), or `arm`. Absent: nothing was done (not mapped, not armed, a thumb that may not answer this question) |
+| `progress` | number 0..1 | how far the hold is: fill a ring with it. `done` is 1; `cancelled` carries where it stopped. For `pinch_slide` it is the level instead (the volume, 0..1): `started` with the level it began at, `progress` as the hand moves it, `done` with the level set; draw a slider. A `pinch_slide` `cancelled` means there was no volume to start from |
+| `action` | string, only on `done` | what the brain did with it: one of the reflex names (`now_playing` `pause` `resume` `skip` `previous` `volume_up` `volume_down` `like` `play_liked` `listen` `wave_back` `quiet` `volume`), `yes` or `no` (a thumb, a nod or a shake answered the open approval, §13b, `by: "gesture"`), or `arm`. Absent: nothing was done (not mapped, not armed, a thumb or nod that may not answer this question, practice mode) |
 | `run_id` | string, only on `done` | the run the reflex is (`source: "gesture"`, §10b; for an answer, the run that asked). Its events come as for any run; its performance carries `source: "gesture"` |
 
 Only gestures the user's map uses produce a ring at all, and a thumb only while a question is open that it may
@@ -1007,7 +1011,8 @@ something else (Part 2 §14's proposal for touch-screen gestures): this one goes
 ```json
 {"type": "hand", "t": 17683.25, "present": true, "x": 0.506, "y": 0.483, "size": 0.25, "pinch": 0.0, "open": 1.0,
  "engaged": true, "shape": "palm_hold", "points": {"wrist": [0.5, 0.575], "thumb": [0.405, 0.445], "index": [0.465, 0.338],
- "middle": [0.5, 0.325], "ring": [0.533, 0.343], "pinky": [0.565, 0.375]}}
+ "middle": [0.5, 0.325], "ring": [0.533, 0.343], "pinky": [0.565, 0.375]},
+ "curl": {"thumb": 0.0, "index": 0.03, "middle": 0.0, "ring": 0.04, "pinky": 0.05}, "gap": 0.95, "facing": true, "face": true}
 {"type": "hand", "t": 17685.5, "present": false}
 ```
 
@@ -1019,11 +1024,15 @@ something else (Part 2 §14's proposal for touch-screen gestures): this one goes
 | `pinch` | 0 apart … 1 the thumb's and index's tips together |
 | `open` | the share of the four fingers stretched (0, 0.25 … 1) |
 | `engaged` | raised into the zone the gestures count in (WIRING §26); a hand that is not still goes out |
-| `shape` | the shape the recogniser sees in this frame, one of the held shapes of `gesture.name` (`thumb_up` … `pinch_hold`); absent when it sees none. What the hand looks like now, not a gesture: only `gesture` says one was held (since 2026-10-10) |
+| `shape` | the shape seen in this frame, one of the held shapes of `gesture.name` (`thumb_up` … `shh`); absent when it sees none. What the hand looks like now, not a gesture: only `gesture` says one was held (since 2026-10-10) |
 | `points` | the wrist and the five fingertips, each `[x, y]` like `x`, `y` |
+| `curl` | each digit's curl, `thumb` `index` `middle` `ring` `pinky`, 0 straight … 1 curled: what the shapes are read from, and what the Brain UI's calibration records (since 2026-10-10) |
+| `gap` | the thumb's and index's tips apart, over the palm's length, at most 1 (since 2026-10-10) |
+| `facing`, `face` | only while the watcher's face model runs: whether the user faces the screen (gestures count only then, with `[gestures] require_facing`) and whether a face was seen in the last second. Two booleans: nothing else of the face (no angle, no landmark, no picture) leaves the watcher (since 2026-10-10) |
 
 At most `[gestures] hand_hz` (15) a second, and only while some body wants it: the watcher sends nothing
-for `hand` when none does. Numbers, booleans and these names only: never an image, never a frame.
+for `hand` when none does. Numbers, booleans and these names only: never an image, never a frame, never
+anything of the face but `facing` and `face`. A body must ignore fields it does not know.
 
 ---
 

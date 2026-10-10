@@ -151,6 +151,15 @@
    "Alright, alright!",
    "I'm working here, you know.",
    "Okay, that's enough poking."
+  ],
+  "wave": [
+   "Hi!",
+   "Hello there.",
+   "Oh, hi!"
+  ],
+  "shushed": [
+   "Okay, bubbles only.",
+   "Shh. I'll keep it down."
   ]
  }
 }

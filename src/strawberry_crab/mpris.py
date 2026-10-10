@@ -397,6 +397,28 @@ class Mpris:
             return await self._refused(verb, player, exc)
         return Outcome(f"turned the volume {word}", f"Volume {word} to {round(target * 100)}.", True)
 
+    async def volume_level(self) -> float | None:
+        """The active player's volume (0-1), or None when there is no player or it does not say (the gesture
+        slider starts from it)."""
+        try:
+            player = await self.active()
+        except MprisError:
+            return None
+        return player.volume if player is not None else None
+
+    async def set_volume_level(self, level: float) -> Outcome:
+        """The active player's volume set to `level` (0-1): the gesture slider, a few times a second."""
+        verb = "set the volume"
+        player = await self._player(verb)
+        if isinstance(player, Outcome):
+            return player
+        target = max(0.0, min(1.0, level))
+        try:
+            await self._set_volume(player, target)
+        except MprisError as exc:
+            return await self._refused(verb, player, exc)
+        return Outcome("set the volume", f"Volume {round(target * 100)}.", True)
+
     async def now_playing(self) -> Outcome:
         player = await self._player("look at the player")
         if isinstance(player, Outcome):
