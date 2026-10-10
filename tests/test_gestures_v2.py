@@ -34,6 +34,8 @@ from strawberry_crab.events import CannedReactor
 from strawberry_crab.server import create_app
 from strawberry_crab.tools import Toolbox
 from tests.bus import add_trusted
+from tests.test_brainui import sign_in
+from tests.test_input import client, daemon_of  # noqa: F401  (client is a fixture)
 from tests.test_gestures import (DT, FPS, HELLO_V2, FakeMpris, assert_plain, body, done, gesture_daemon, gone, hand,
                                  held, run, typed, watcher_for, spin, write)
 from tests.test_voice import Sink
@@ -851,4 +853,41 @@ async def test_untrusted_sockets_get_none_of_the_new_gestures():
     for sink in (untrusted, v1):
         assert not [m for m in sink.got if m.get("type") in ("gesture", "hand")]
     await daemon.close()
+
+
+# --- the Input tab ------------------------------------------------------------------------------------------------
+
+
+async def test_the_input_tab_saves_a_calibration_and_the_new_settings(client):  # noqa: F811
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/input")).json()
+    options = view["options"]
+    assert {"point_left", "count_3", "shh", "wave", "pinch_slide"} <= set(options["gestures"])
+    assert "nod" not in options["gestures"] and options["partners"]["palm_hold"] == "count_5"
+    assert options["calibration"] == gestures.CALIBRATION_DEFAULTS and "face_model" in view["status"]
+    settings = view["settings"]
+    assert settings["gestures"]["calibration"] == {} and settings["gestures"]["require_facing"] is True
+    settings["gestures"]["calibration"] = {"index_open": 0.1, "index_curled": 0.9, "gap_closed": 0.08}
+    settings["gestures"]["shh_minutes"] = 15
+    saved = await (await signed.post("/ui/api/input/save", {"settings": settings})).json()
+    assert saved["settings"]["gestures"]["calibration"]["index_curled"] == 0.9
+    daemon = daemon_of(client)
+    assert daemon.config.gestures.calibration == {"index_open": 0.1, "index_curled": 0.9, "gap_closed": 0.08}
+    assert daemon.config.gestures.shh_minutes == 15.0
+    assert "[gestures.calibration]" in inputs.input_file().read_text()
+    # Reset to defaults: an empty calibration, and the table is gone from the file.
+    settings["gestures"]["calibration"] = {}
+    await signed.post("/ui/api/input/save", {"settings": settings})
+    assert daemon.config.gestures.calibration == {} and "calibration]" not in inputs.input_file().read_text()
+    bad = {**settings, "gestures": {**settings["gestures"], "calibration": {"index_open": 0.9, "index_curled": 0.92}}}
+    checked = await (await signed.post("/ui/api/input/check", {"settings": bad})).json()
+    assert not checked["ok"] and "at least 0.15 above" in checked["problems"][0]
+
+
+def test_the_page_records_numbers_only_for_calibration():
+    from strawberry_crab import brainui
+
+    script = (brainui.UI_DIR / "app.js").read_text(encoding="utf-8")
+    assert "startCalibration" in script and "calibSample" in script and "getImageData" not in script
+    assert "Reset to defaults" in script and "input/practice" in script
 
