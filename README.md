@@ -162,7 +162,14 @@ The settings you are most likely to change:
 | `[runs]` | `events`, `supersede`, `keep` | the chip under her bubble and the Brain UI's Runs (`events`); whether a new sentence stops the one she is on (`supersede`, on) or waits; how many finished runs the Brain UI keeps |
 | `[approvals]` | `change_s`, `sends_s`, `destructive_s`, `grace_s`, `hold`, `risk` | the calls that wait for your yes: how long she waits per tier (10, 30, 30 s) and at most how much longer while you are still answering (10 s), which tiers need a press-and-hold on her card, and a tool's (or a server's) tier: `read`, `playback`, `change`, `sends`, `destructive` |
 | `[thinker]` | `stream` | read the big model's reply as it is written, for the tokens-per-second gauge (on) |
+| `[ledger]` | `turns`, `notices`, `window_minutes`, `foreign_minutes` | her short memory: your last exchanges (8) and what she reacted to on her own (8), none older than 60 minutes; for 10 minutes after a sender's or a track's name, a change asks first |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
+
+Her persona is a file of its own: copy the shipped `persona.md` (in the package's `data/` folder,
+or the Brain UI's *Her* tab) to `~/.config/strawberry/persona.md` and edit who she is, how she
+talks, the example reactions she copies and her fixed lines. No restart: she reads it again when
+it changes, and keeps the shipped persona while yours has a problem (the log and the Brain UI say
+which).
 
 Files she keeps: settings in `~/.config/strawberry/`, the widget binary and voices in
 `~/.local/share/strawberry/`, logs and state in `~/.local/state/strawberry/`. The XDG variables
@@ -239,7 +246,13 @@ says only how long a sentence was (`<sentence, 23 chars>`). `[daemon] log_senten
 your sentences into the log as they are, which helps when tuning how she routes them. The first time she starts she says in her bubble that
 notification bodies are off and where to change it, and logs the same note.
 
-She remembers the last few exchanges of conversation in memory, for context, and nothing more,
+She remembers the last few exchanges of conversation in memory, for context, with what she reacted
+to on her own (a notification's app and sender, a commit, a track; never a message's text), and what you ask her
+to remember about you ("remember I prefer 24-hour time", "call me Sam") in `profile.md` beside
+your settings: readable only by you, edited by hand or in the Brain UI, with every earlier version
+kept in the state folder so a change can be undone ("forget that") or reverted. She writes to it
+only from your own sentence, never while a notification, a song or a web page is part of what
+she is answering, and says back what she saved. Nothing else is kept,
 unless you turn on the learning log (`[learning] log_outcomes = true`, off by default). Then each
 sentence you say or type is kept in `outcomes.jsonl` in the state directory, with how she routed
 it and what came of it (an undo, a correction, a rephrase, or silence), so she can learn from
@@ -294,17 +307,29 @@ strawberry ui
 opens a page in your browser, served by her own daemon, that shows what she does with what you
 say and what she has learned from it:
 
+The page has five groups: **Her**, **Activity**, **Learning**, **Settings** and **System**, and a
+spot in the header for whatever needs you now (her question waiting for a yes, a persona.md with a
+problem, a new router head waiting).
+
+- **Persona**: her persona.md in an editor, checked as you type (each section's size against its
+  limit, what is wrong, the changes against the file), **Save** (the old file kept as
+  `persona.md.bak`) and **Try it**, which shows what the small model says with your draft on a few
+  made-up events before you save.
+- **Profile**: what she knows about you, with every change she or you made and a way back to any of
+  them.
 - **Learning**: the head in use and the one waiting, side by side on the test set (fields right,
   wrong reflexes, each question), with Accept, Reject, Train now and Roll back; the sentences she
   learned from, each with Approve and Reject; the learning log; every head, with Use; the week.
 - **Router live**: each sentence as she routes it: what she read it as, how sure she was, what
   handled it and how long it took.
-- **Runs**: each thing she did, step by step (how she read it, thinking, each tool and how long it
+- **Runs**: the timeline (what the big model is told happened lately, and which of it was written
+  by others), and each thing she did, step by step (how she read it, thinking, each tool and how long it
   took, what she said, how it ended), with Cancel on the one going on. Tool names and timings
   only: never what you said, what a tool was given or what it found.
 - **Data and scores**: what a head is trained and tested on, and each head's test score over time.
 - **Settings and privacy**: what is kept and logged, and the line in `config.toml` that changes
-  it (the page does not change settings), and Forget.
+  it, what applies at once and what needs a restart, **Apply** for the notification settings, the
+  whole effective `config.toml` (read-only: the page does not edit it), and Forget.
 - **System**: the models, where the gate runs, the head in use.
 
 The link works once, within a minute; the page then runs on a cookie that ends after 12 hours

@@ -19,6 +19,33 @@ package and the widget binary.
   ignores them for now. PROTOCOL.md §4 says what each field means and how a body schedules a
   pulse: the beat time less its own output latency, which each body measures. The tracker's
   test harness scores the downbeat too (`scripts/beat_eval.py`).
+- **persona.md: who she is and how she talks, in one file.** Her persona, the example exchanges
+  the small model copies and her fixed lines ("On it.", "Okay, stopped.", the poke lines, …) are
+  one markdown file with four sections. Copy it to `~/.config/strawberry/persona.md` to make her
+  your own; she picks up an edit at her next line, and a file that does not check out is not used
+  (she keeps the shipped persona and the log says why). Rules for tools, the output formats and the
+  privacy and approval wording stay in code. Both models now read the same description of her voice;
+  the small model's prompt and examples are exactly as before. `[brain] persona`, `[brain] examples`
+  and `[thinker] acks` still work and are deprecated. WIRING.md §21.
+- **profile.md: what she knows about you.** Your name and how to address you, and standing
+  preferences, in `~/.config/strawberry/profile.md`; the big model reads it, the small one a short
+  summary. Say "remember I prefer 24-hour time" or "call me Sam" and she writes it there and says
+  it back; "forget that" undoes it. Only from your own sentence, never while a notification, a song
+  or a web page is in what she is answering; every change keeps the earlier file, so the Brain UI
+  can show the history and revert. The log keeps counts only. WIRING.md §22.
+- **She remembers what she reacted to.** A commit she announced, a notification's app and sender, a
+  track: the big model now sees them beside your last exchanges, each with its age, so "what was that
+  commit about?" has an answer. Never a message's text. Names others wrote count as strangers' text:
+  for ten minutes after one, a change above play, pause, skip and volume asks first. New
+  `[ledger] turns` (8), `notices` (8), `window_minutes` (60), `foreign_minutes` (10);
+  `[actions] ledger_turns` and `ledger_age_s` still work and are deprecated. WIRING.md §23.
+- **The Brain UI, regrouped.** Her (Persona, Profile), Activity (Runs, Router live), Learning (Learning,
+  Data and scores), Settings, System; one spot in the header for what needs you now. Persona: an
+  editor checked as you type, with each section's size, the changes and **Try it** on the small model
+  before you save. Profile: the editor, her changes and yours, and revert. Runs shows the timeline.
+  Settings shows what applies when, **Apply** for the notification settings and the effective
+  `config.toml` read-only. WIRING.md §17.
+
 - She turns. A slow, small sway while idle; a glance toward a notification as it arrives, toward
   the middle of the screen now and then, and toward the cursor when it comes to rest near her;
   a quick turn and back in the peek and the wave; a turn on the beat when she dances. Always a

@@ -75,7 +75,7 @@ async def test_prompt_carries_persona_examples_schema_and_no_thinking(aiohttp_se
     assert body["format"]["properties"]["emotion"]["enum"] == ["neutral", "happy", "alert", "angry"]
     messages = body["messages"]
     assert messages[0]["role"] == "system" and "Strawberry" in messages[0]["content"]
-    assert len(messages) == 1 + 2 * len(reactor.brain.examples) + 1
+    assert len(messages) == 1 + 2 * len(reactor.examples()) + 1 == 1 + 2 * len(EXAMPLES) + 1
     assert messages[-1] == {"role": "user", "content": describe(GIT)}
     await reactor.close()
 

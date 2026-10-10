@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from . import paths, persona
+from . import paths
 
 log = logging.getLogger("strawberryd.config")
 
@@ -50,8 +50,10 @@ class BrainConfig:
     temperature: float = 0.8
     max_words: int = 15
     keep_alive: int | str = -1                # seconds; -1 pins the model in VRAM, "10m" lets it unload
-    persona: str = persona.PERSONA
-    examples: list[dict[str, str]] = field(default_factory=lambda: [dict(e) for e in persona.EXAMPLES])
+    # Deprecated: her persona and examples are persona.md now (persona.py). Set here, they still replace the
+    # reaction model's whole system prompt and its examples, with a warning at start.
+    persona: str = ""
+    examples: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -205,8 +207,7 @@ class ActionsConfig:
     timeout_s: float = 25.0        # the whole action, tools included; then she says it failed
                                    # (how long she waits for a yes is [approvals] change_s now; an old
                                    # `confirm_s` here is read as it, _migrate_actions)
-    ledger_turns: int = 6          # her memory: this many recent exchanges…
-    ledger_age_s: float = 600.0    # …no older than this, given to both models
+    # (ledger_turns and ledger_age_s are [ledger] turns and window_minutes now; read as them, _migrate_ledger)
 
 
 @dataclass
@@ -229,7 +230,20 @@ class ThinkerConfig:
     timeout_s: float = 45.0        # the whole request, cold load included
     ack_after_s: float = 2.5       # silent thinking pose first; a spoken ack only if the reply takes longer
     still_on_it_s: float = 8.0     # she says so once if it takes longer than this
-    acks: list[str] = field(default_factory=lambda: ["On it.", "Let me see.", "One moment.", "Right, hang on."])
+    # Deprecated: the cover lines are persona.md's `cover.ack` now. Set here, they still replace them.
+    acks: list[str] = field(default_factory=list)
+
+
+@dataclass
+class LedgerConfig:
+    """Her short memory (ledger.py, WIRING.md §23): one timeline of the user's turns and what she reacted to
+    on her own (a commit, a notification, a track), given to the thinker with each entry's age."""
+
+    turns: int = 8                 # the user's last this many exchanges…
+    notices: int = 8               # …and this many of the things she reacted to on her own (0: none)…
+    window_minutes: float = 60.0   # …none older than this
+    foreign_minutes: float = 10.0  # a notice with strangers' text (a sender, a track) makes a run ask before
+                                   # changes for this long, and is then left out of the thinker's lines
 
 
 @dataclass
@@ -305,6 +319,7 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     actions: ActionsConfig = field(default_factory=ActionsConfig)
     thinker: ThinkerConfig = field(default_factory=ThinkerConfig)
+    ledger: LedgerConfig = field(default_factory=LedgerConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
     runs: RunsConfig = field(default_factory=RunsConfig)
     approvals: ApprovalsConfig = field(default_factory=ApprovalsConfig)
@@ -323,6 +338,7 @@ class Config:
             "tools": asdict(self.tools),
             "actions": asdict(self.actions),
             "thinker": asdict(self.thinker),
+            "ledger": asdict(self.ledger),
             "learning": asdict(self.learning),
             "runs": asdict(self.runs),
             "approvals": asdict(self.approvals),
@@ -343,6 +359,7 @@ _SECTIONS = {
     "tools": ToolsConfig,
     "actions": ActionsConfig,
     "thinker": ThinkerConfig,
+    "ledger": LedgerConfig,
     "learning": LearningConfig,
     "runs": RunsConfig,
     "approvals": ApprovalsConfig,
@@ -464,8 +481,10 @@ def _validate(config: Config) -> None:
         raise ConfigError("tools.result_chars must be >= 100")
     if not (0.0 <= config.actions.reflex <= 1.0 and 0.0 <= config.actions.argument <= 1.0):
         raise ConfigError("actions.reflex and actions.argument must be between 0 and 1")
-    if config.actions.ledger_turns < 1 or config.actions.ledger_age_s <= 0:
-        raise ConfigError("actions.ledger_turns >= 1 and actions.ledger_age_s > 0 are required")
+    ledger = config.ledger
+    if ledger.turns < 1 or ledger.notices < 0 or ledger.window_minutes <= 0 or ledger.foreign_minutes < 0:
+        raise ConfigError("ledger.turns >= 1, ledger.notices >= 0, ledger.window_minutes > 0 and "
+                          "ledger.foreign_minutes >= 0 are required")
     approvals = config.approvals
     if min(approvals.change_s, approvals.sends_s, approvals.destructive_s) <= 0:
         raise ConfigError("approvals.change_s, sends_s and destructive_s must be positive (how long she waits for a yes)")
@@ -493,8 +512,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("thinker.max_tools must be >= 1 (it caps the tool schemas in the prompt)")
     if not 0 <= config.thinker.tool_tokens < config.thinker.num_ctx:
         raise ConfigError("thinker.tool_tokens must be between 0 (no budget) and num_ctx")
-    if not config.thinker.acks or not all(isinstance(a, str) and a for a in config.thinker.acks):
-        raise ConfigError("thinker.acks must be a non-empty list of strings")
+    if not all(isinstance(a, str) and a for a in config.thinker.acks):
+        raise ConfigError("thinker.acks must be a list of strings (and is deprecated: persona.md's cover.ack)")
     learning = config.learning
     if learning.max_days < 1 or learning.max_records < 1:
         raise ConfigError("learning.max_days and learning.max_records must be >= 1")
@@ -551,6 +570,40 @@ def _migrate_actions(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _deprecated_persona(config: Config) -> None:
+    """`[brain] persona`, `[brain] examples` and `[thinker] acks` (until the persona stage) still replace what
+    persona.md says, with a warning: her persona, her examples and her cover lines live there now."""
+    for key, value in (("brain.persona", config.brain.persona), ("brain.examples", config.brain.examples),
+                       ("thinker.acks", config.thinker.acks)):
+        if value:
+            log.warning("config: %s is deprecated and still used, over persona.md; move it to %s (persona.md, "
+                        "WIRING.md §21) and delete it here", key, paths.persona_file())
+
+
+def _migrate_ledger(data: dict[str, Any]) -> dict[str, Any]:
+    """`[actions] ledger_turns` and `ledger_age_s` (until the persona stage) read as `[ledger] turns` and
+    `window_minutes`, with a warning; a value [ledger] sets itself wins."""
+    actions = data.get("actions")
+    if not isinstance(actions, dict) or not ({"ledger_turns", "ledger_age_s"} & set(actions)):
+        return data
+    data, actions = dict(data), dict(actions)
+    ledger = dict(data["ledger"]) if isinstance(data.get("ledger"), dict) else {}
+    for old, new, convert in (("ledger_turns", "turns", lambda v: v),
+                              ("ledger_age_s", "window_minutes", lambda v: v / 60.0 if isinstance(v, (int, float))
+                               and not isinstance(v, bool) else v)):
+        if old not in actions:
+            continue
+        value = actions.pop(old)
+        if new in ledger:
+            log.warning("config: actions.%s is deprecated and ignored; ledger.%s = %r is set", old, new, ledger[new])
+        else:
+            ledger[new] = convert(value)
+            log.warning("config: actions.%s is deprecated; read as ledger.%s = %r (WIRING.md §23)", old, new,
+                        ledger[new])
+    data["actions"], data["ledger"] = actions, ledger
+    return data
+
+
 def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     path = path or default_path()
@@ -561,6 +614,7 @@ def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
         except tomllib.TOMLDecodeError as exc:
             raise ConfigError(f"{path}: {exc}") from exc
         data = _migrate_actions(data)
+        data = _migrate_ledger(data)
         for section_name, values in data.items():
             if section_name not in _SECTIONS:
                 log.warning("config: unknown section [%s] ignored", section_name)
@@ -570,6 +624,7 @@ def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
             if section_name == "notifications":
                 values = _migrate_notifications(values)
             _apply(section_name, getattr(config, section_name), values)
+    _deprecated_persona(config)
     if "STRAWBERRYD_HOST" in env:
         config.daemon.host = env["STRAWBERRYD_HOST"]
     if "STRAWBERRYD_PORT" in env:
@@ -613,8 +668,8 @@ def default_toml() -> str:
         f"max_words = {b.max_words}",
         f'keep_alive = {b.keep_alive}               # seconds; -1 keeps the model in VRAM, "10m" lets it unload',
         "",
-        "# Her voice. The examples matter more than the description for a small model.",
-        "# persona = \"\"\"...\"\"\"",
+        "# Her persona, her example exchanges and her fixed lines are in persona.md beside this file",
+        "# (the Brain UI's Persona tab edits it; without one she uses the shipped persona).",
         "",
         "[media]",
         "only = []      # e.g. [\"spotify\"] to follow one player; empty = every player (MPRIS; SMTC on Windows)",
@@ -718,7 +773,6 @@ def default_toml() -> str:
         "enabled = true                 # the reflexes: skip, pause, what's playing… (needs [gate])",
         "mpris = true                   # do the bare music commands over MPRIS (SMTC on Windows) when no server covers them",
         "reflex = 0.6                   # how sure the gate must be to fire a plain command straight away",
-        "ledger_turns = 6               # her memory: this many recent exchanges, given to whoever answers",
         "",
         "[thinker]",
         "enabled = true                 # the big model with the tools; she answers you herself through it",
@@ -728,6 +782,14 @@ def default_toml() -> str:
         "stream = true                  # read the reply as it is written (tokens per second for the widget)",
         "max_tools = 30                 # more tool schemas than this and the least likely are cut (§8b)",
         f"tool_tokens = {th.tool_tokens}             # …and at most this many prompt tokens of them; 0 = no budget",
+        "",
+        "[ledger]",
+        "# Her short memory, in memory only: your last exchanges and what she reacted to on her own (a commit,",
+        "# a notification's app and sender, a track; never a message's text), given to the big model with ages.",
+        f"turns = {LedgerConfig().turns}                      # your last this many exchanges",
+        f"notices = {LedgerConfig().notices}                    # and this many things she reacted to (0: none)",
+        f"window_minutes = {LedgerConfig().window_minutes}         # none older than this",
+        f"foreign_minutes = {LedgerConfig().foreign_minutes}        # a sender's or a track's name makes changes ask first for this long",
         "",
         "[learning]",
         "# The router's learning loop, data only for now: each sentence you say or type, how the gate read",
@@ -770,15 +832,5 @@ def default_toml() -> str:
         '# risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }',
         "#                              # a tool's (or a whole server's) tier: read | playback | change | sends | destructive;",
         "#                              # a whole server's never lowers a tool its adapter or server marks higher",
-        "",
-        "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]
-    for example in b.examples:
-        event = example["event"].replace("\n", "\\n")
-        lines += [
-            "# [[brain.examples]]",
-            f'# event = "{event}"',
-            f'# line = "{example["line"]}"',
-            f'# emotion = "{example["emotion"]}"',
-        ]
     return "\n".join(lines) + "\n"

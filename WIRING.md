@@ -125,7 +125,7 @@ Run: `strawberryd [--port 8770]` (the console script; in a checkout `.venv/bin/s
 
 Both paths end by calling `perform(...)`. Route notifications/git/media → reaction path; voice → action path (reaction path again when `[thinker] enabled = false`).
 
-**Model choice (bake-off, `scripts/reactor_bakeoff.py`, results in `scripts/bakeoff_*.json`).** The reflex needs speed and residency, not intelligence: the 27B would cold-load for 10–20 s after a quiet half hour and hog the GPU. Among ~1B models on the Ollama library, **`gemma3:1b`** won: 815 MB, ~0.5 s warm, 0/32 schema misses, short lines (median 7 words), emotions right, and it does not invent details. `qwen3.5:0.8b` was as fast and livelier but hallucinated specifics ("Dinner Friday at 7 PM" for "dinner on Sunday?"), leaked the examples, and ran long. For a mascot reading your real notifications, saying less beats saying wrong. The decisive lever was **few-shot examples**: with the description alone Gemma answered "Interesting…" to everything; with five example exchanges it became a crab. The examples live in config (§15), so her voice is tunable without code.
+**Model choice (bake-off, `scripts/reactor_bakeoff.py`, results in `scripts/bakeoff_*.json`).** The reflex needs speed and residency, not intelligence: the 27B would cold-load for 10–20 s after a quiet half hour and hog the GPU. Among ~1B models on the Ollama library, **`gemma3:1b`** won: 815 MB, ~0.5 s warm, 0/32 schema misses, short lines (median 7 words), emotions right, and it does not invent details. `qwen3.5:0.8b` was as fast and livelier but hallucinated specifics ("Dinner Friday at 7 PM" for "dinner on Sunday?"), leaked the examples, and ran long. For a mascot reading your real notifications, saying less beats saying wrong. The decisive lever was **few-shot examples**: with the description alone Gemma answered "Interesting…" to everything; with five example exchanges it became a crab. The examples live in persona.md (§21), so her voice is tunable without code.
 
 **Keeping a 1B model from repeating itself.** Left alone it finds a pet adjective and puts it in every line ("lovely" twelve times in one evening, after the persona once listed it as an example word: never name favourite words in the persona). Three counters in `brain.py`: the example order is shuffled per call, so no single example is the template; the reactor remembers her last eight lines and, when a new line reuses a content word from two or more of them (or the same opener three times), asks once more with those words banned and the temperature raised by 0.3, keeping the second line if it is less stale, within the same time budget; and the persona asks for varied sentence shapes. `/health` counts the `retries`.
 
@@ -445,7 +445,7 @@ It calls tools until it answers; each call goes through the same client with tru
 
 **The reply is hers.** Qwen's system prompt is her voice (`thinker.VOICE`: small, dry, warm, British, ≤ 15 words for small talk, two or three sentences when there are facts, never the user's name) plus the tool-use rules (`TOOLS_GUIDE`: be decisive, a misheard name is probably a library name, 'play' means play, report only what a tool did) — or, with no servers answering, `NO_TOOLS` (answer from memory, no internet, say so when the question needs today's news), or with only a web search, `LOOKUP_ONLY` (`NO_TOOLS`'s music clauses without "no internet") — followed by the paragraph each offered server's adapter brings (`guide`), or the one for a configured server that is not answering (`unavailable`: "say search isn't available"). The line is performed as it stands: no Gemma quip on top of a Qwen answer. It is asked to start with its mood in square brackets, `[happy] Skipped. Blue Monday next.`, which `split_emotion` parses off into the performance's `emotion`; a missing or unknown tag is `neutral`, and a tool that failed forces `alert`. `tidy_sentence` takes the first paragraph, strips markdown and caps it at 380 chars (`speech.max_chars` is 400).
 
-Cover for the wait scales with it: `Daemon.think` puts her in the `thinking` pose at once and says nothing (a warm round is ~2 s, and "On it." before the answer to "what's up?" read odd), speaks a random acknowledgement from `[thinker] acks` only if the reply has not come after `ack_after_s` (2.5 s), says "Still on it." once after `still_on_it_s` (8 s), then her line. Measured: cold load 7–17 s (the first request of a session), a warm round ~2 s, prompt 326 tokens plus 2382 for 25 Spotify tools. Loading Qwen can evict Gemma and the embedding model from VRAM; both re-warm themselves in the background after a timeout (see §3). `strawberry think "…"` runs it by hand and prints the calls; `/health.thinker` keeps the last one. Tests on a scripted fake Ollama and the fake Spotify (`tests/test_thinker.py`).
+Cover for the wait scales with it: `Daemon.think` puts her in the `thinking` pose at once and says nothing (a warm round is ~2 s, and "On it." before the answer to "what's up?" read odd), speaks a random acknowledgement from persona.md's `cover.ack` (§21; the deprecated `[thinker] acks` when set) only if the reply has not come after `ack_after_s` (2.5 s), says "Still on it." once after `still_on_it_s` (8 s), then her line. Measured: cold load 7–17 s (the first request of a session), a warm round ~2 s, prompt 326 tokens plus 2382 for 25 Spotify tools. Loading Qwen can evict Gemma and the embedding model from VRAM; both re-warm themselves in the background after a timeout (see §3). `strawberry think "…"` runs it by hand and prints the calls; `/health.thinker` keeps the last one. Tests on a scripted fake Ollama and the fake Spotify (`tests/test_thinker.py`).
 
 **Web search (2026-10-07): `adapters/web.py`, ADAPTERS.md.** A SearXNG instance the user runs, behind `mcp-searxng` (`[tools.servers.web]`, topic `other`; the README has the block). Its adapter offers the search and the page reader only, with short schemas, compacts a listing to numbered results, rewords its failures without the query, logs a result count and never a result, and allows three calls a sentence.
 
@@ -473,7 +473,7 @@ Read-only on a throwaway daemon (port 8783, temp dirs, every tool that changes a
 
 **Why one brain (2026-09-22).** The tiers between the reflex and chat were where every live failure came from: a wrong reflex on a sentence that carried a name, "it's already playing" when she had misheard, and offers nobody had asked for. Gemma keeps what it is good at — the desktop events (§3, §4) and the quip after a reflex — and the user gets one voice for everything else. `[thinker] enabled = false` (the unit tests, `scripts/check_config.toml`, a machine without Qwen) falls back to the old Gemma chat path, so voice still works with a 1B model and no MCP servers.
 
-**The ledger (built 2026-09-21).** `strawberry/ledger.py` is her only memory across turns: the last `[actions] ledger_turns` (6) exchanges no older than `ledger_age_s` (10 min), each "the user said …; you did … and said …". Qwen gets all of them in the situation, Gemma the last three when it is the fallback, so "the other one" and "skip this one too" resolve; nothing else accumulates. `/health` shows it. **Typed input:** `strawberry talk` posts each terminal line as a voice event, so a typed sentence and a spoken one take the same path and she answers in both places; the prompt prints the gate's reading and the reflex or the thinker's tool calls with its mood.
+**The ledger (built 2026-09-21; a shared timeline since the persona stage, §23).** `strawberry/ledger.py` is her only memory across turns: the last `[ledger] turns` (8) exchanges and `notices` (8) things she reacted to on her own, no older than `window_minutes` (60), each "the user said …; you did … and said …" or "(git) a commit in …; you said …". Qwen gets all of them in the situation, Gemma the last three when it is the fallback, so "the other one" and "skip this one too" resolve; nothing else accumulates. `/health` shows it. **Typed input:** `strawberry talk` posts each terminal line as a voice event, so a typed sentence and a spoken one take the same path and she answers in both places; the prompt prints the gate's reading and the reflex or the thinker's tool calls with its mood.
 
 ### 8c. The learning loop, first half: outcomes (`strawberry/outcomes.py`)
 
@@ -780,12 +780,7 @@ timeout_s = 1.5
 temperature = 0.8
 max_words = 15
 keep_alive = -1                  # seconds; -1 = stay in VRAM, or "10m" to unload when idle
-# persona = """..."""           # her system prompt
-
-[[brain.examples]]               # replaces the built-in five; the real lever on her voice
-event = "source: git\napp: post-commit\ntitle: lighthouse\nbody: Fix flaky login test"
-line = "A fix! Did that wobbly login test finally stop wiggling?"
-emotion = "happy"
+# persona, examples: deprecated; her persona and examples are persona.md (§21)
 
 [media]
 only = []                        # e.g. ["spotify"]
@@ -866,6 +861,9 @@ src/strawberry_crab/assets/icons/  the tray icon PNGs (package data), rendered b
 src/strawberry_crab/runs.py  runs (§18): Run, RunBook, the event whitelist, `is_stop`; hub.py keeps a Body per socket (protocol v2)
 src/strawberry_crab/approvals.py  approvals (§19): ApprovalBook, the digest, `needed`; confirm.py words the question and keeps the call
 src/strawberry_crab/trust.py  the trust model (§20): the private / foreign / egress flags, `clean`; bussecret.py the bus secret (§2)
+src/strawberry_crab/persona.py  her persona (§21): persona.md parsed, checked and read live; data/persona.md the shipped one
+src/strawberry_crab/profile.py  what she knows about the user (§22): profile.md, its history, her remember/forget/undo tools
+src/strawberry_crab/ledger.py  her short memory (§23): the user's turns and System 1's notices, one timeline with trust labels
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, turn.gd, touch.gd, legs.gd, wander.gd, easing.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), approval_card.gd (§19), paths.gd (XDG, the CLI, the version), validate_*.gd
@@ -901,7 +899,37 @@ Or press play in any media player: the MPRIS watcher (§4b) does the rest.
 
 A local web page, served by the daemon, that shows what the router decides and what the learning loop learns (§8a–8d), and lets the user act on it. `strawberry ui` opens it. It calls `learning.py` and reads the daemon's parts; it decides nothing itself.
 
-**What it shows**, in six sections:
+**The layout (since the persona stage).** Eight sections in five groups, in the side bar: **Her** (Persona,
+Profile), **Activity** (Runs with its approvals and the shared timeline, Router live), **Learning** (Learning,
+Data and scores), **Settings** (Settings and privacy) and **System**. The page opens on Persona. The header has
+the 🍓 mark (the page title too) and one "needs your attention" spot: the most urgent of an open approval
+("She is waiting for your yes"), a persona.md that does not check out, and a candidate head waiting, with how
+many more there are; a click goes to its section. The new parts:
+
+- *Persona* (§21): the user's persona.md (the shipped one when there is none) in an editor. While typing, the
+  draft is checked as the daemon would read it (`POST /ui/api/persona/check`, 0.4 s after the last key): its
+  problems and warnings, each section's tokens against its cap as a bar, and the diff against the file. **Save**
+  (a second click to confirm) writes it atomically, keeps the file it replaces as `persona.md.bak`, and she uses
+  it from her next line; a draft with a problem is never written (400). **Try it** runs the draft on four
+  made-up events (a commit, a message, a track, a quip after a skip; `brainui.SAMPLE_EVENTS`) through the
+  reaction model (`OllamaReactor.sample`: the live call's shape and keep_alive, never an unload, one try at a
+  time, nothing performed, counted or logged but the count). **Start from the shipped one** loads the
+  package's file into the draft. A persona.md that is not used shows its problems above the editor.
+- *Profile* (§22): profile.md in an editor with its token count against the cap and **Save** (a change by
+  `ui`, kept in the history), what she reads of it (the quoted block), and every change, newest first, with
+  who made it, the lines added and removed and **Revert to before this** (itself a change).
+- *Runs* gains the *Timeline* (§23): what the thinker's next sentence gets, newest first, each entry's age,
+  kind, what it was, her line, and its trust ("strangers' text: a change asks first", "past its time" when it
+  no longer counts and is left out of the prompt). Turns' sentences and her replies only while outcome
+  logging is on, as everywhere on the page (otherwise their lengths); a notice's app, sender, commit or track
+  and her line always (what she said aloud; the ledger never holds a message's body).
+- *Settings and privacy* gains *What applies when* (persona.md and profile.md live, `[notifications]` on
+  **Apply** (`POST /ui/api/apply`: `Daemon.reload_notifications`, as the tray's Message bodies rows; a file that
+  does not load is a 409 and she keeps the settings she has), everything else at a restart) and the effective
+  settings as config.toml text, read-only (`brainui.as_toml`, with the secret-looking values shown as `(set)`
+  as before). Editing config.toml from the page is a later stage.
+
+**What it shows**, in six sections (the original ones):
 
 1. *Learning*: the head in use, the candidate, the labelled examples, the last run and the trainer, with **Train now** (`IdleTrainer.train_now`: the idle run's own path, the gate's embedder, stopped when the user speaks, the child process, without waiting for quiet) and **Roll back**. The candidate against the head it was compared with: fields, strict sentences, Finnish fields, privacy readings, wrong reflexes and AUROC on the held-out set, the per-field scores, how many sentences it learned and how many are new to it, with **Accept** and **Reject**. The learned examples with their labels, avoids, conflicts, signals and review state, each with **Approve** and **Reject** (`Learning.review`; reject deletes the sentence for good). The outcome log's last 60 records and its counts per signal. Every head with its status, held-out score, the score of the head it beat and **Use**, and the history of switches. The week's report.
 2. *Router live*: each sentence as it is handled: kind and topic with confidence, the decision, the tool and its confidence, what handled it (the reflex, the thinker and its tool calls, no_catalogue, chat), the gate's ms and the whole sentence's ms. `routefeed.py` keeps the last 100 in memory (`Daemon.feed`, filled in `handle_voice` beside the outcome log) and the page gets them over a stream.
@@ -923,6 +951,10 @@ A local web page, served by the daemon, that shows what the router decides and w
 | `POST /ui/api/cancel` (`{run_id}`) | stops that run if it is going on (`{"cancelled": id}`), else 409 | the page |
 | `POST /ui/api/approval` (`{approval_id, answer}`) | a yes or no to the open approval (`{"answered": id, "answer": …}`); 409 with `reason` (`not_open`, `resolved`) when it is not open; `GET /ui/api/runs` carries `approvals` (`open`, with its line, and `history`) | the page |
 | `POST /ui/api/accept`, `reject` (`{version?}`), `rollback`, `use` (`{version}`), `review` (`{key, verdict}`), `train`, `forget` (`{confirm: "forget", everything}`) | `Learning`'s own calls; a refusal from it ("no candidate is waiting", "a training run is already going") is a 409 with the reason | the page |
+| `GET /ui/api/persona`; `POST /ui/api/persona/check`, `persona/save`, `persona/try` (`{text}`) | the persona.md in use (or the shipped one), the shipped one and the store's status; a draft checked (`ok`, `problems`, `warnings`, `sizes`, `caps`, `diff`); saved (400 with the problems when it does not check out); tried on the sample events (409 with the reaction model off or a try running). A draft is at most 41 000 characters (413) | the page |
+| `GET /ui/api/profile`; `POST /ui/api/profile/save` (`{text}`), `profile/revert` (`{id}`) | the text, its status, what she reads, the history; a change's refusal (over the cap, nothing changed, a version not kept) is a 409 with the reason | the page |
+| `POST /ui/api/apply` | `[notifications]` read again from config.toml (`{"applied": "notifications", "body": …}`), else 409 | the page |
+| `GET /ui/api/runs` | also carries `timeline` (above) | the page |
 
 **The security model.** Every other route refuses any request with an `Origin` header (§2), so no web page the user visits can make her talk, read `/health` or open `/ws`. `/ui` is the one place a browser is let in, on these terms (`brainui.checked`, one decorator on every UI handler; `server.local_only` lets a handler through only when it carries the decorator's mark, so a new route cannot open itself by accident, and an unmatched path such as `/ui/../health` still meets the Origin rule):
 
@@ -941,481 +973,18 @@ A local web page, served by the daemon, that shows what the router decides and w
 **Measured end to end** (2026-10-08, a throwaway daemon on port 8796 with temp dirs, the real ONNX model, outcome logging on, 11 synthetic outcome records and ten typed sentences, headless Chrome over the DevTools protocol): `strawberry ui --no-browser` printed the link; the login left `/ui#learning` in the address bar and an empty `document.cookie`; the canary sentence showed as text with no `img` element and no dialog; **Train now** built a candidate in the daemon's child process, which the held-out gate rejected (wrong reflexes 4 > 3); two pause examples rejected in the page and a second run gave a passing candidate (95.0% against 94.9%); **Accept** moved `/health.learning.head` and the gate's head to it at once (`follow_pointer` after the switch, not at the next 5 s tick) and **Roll back** moved both back to the shipped head; a typed sentence appeared in Router live within a second; after a daemon restart the old session got the sign-in page; **Forget** left 0 examples. The daemon's log had no sentence, token or cookie in it.
 
 Tests: `tests/test_brainui.py` (the token's single use and expiry, the session's idle and total limits and its end with the daemon, no session, a wrong Host, Origin or CSRF header, JSON only, every other route refusing any Origin including the UI's own, the headers, the script's text-only rule, no sentence with logging off and the sentences with it on, the live feed's privacy, nothing in a log line, each action reaching `Learning`, a real accept and rollback through the API, the event stream, `strawberry ui`).
+`tests/test_brainui_her.py` (every new write behind the session, the CSRF header and the Origin; the persona
+read, checked, refused when it does not check out, saved with its backup and used at once, too long a draft;
+Try it through a stand-in reactor and the real reactor's call on a fake Ollama, never an unload, nothing saved;
+the profile saved, its history and a revert, the cap; the timeline beside the runs, sentences only with logging
+on; the effective config.toml, what applies when, Apply and its refusal; the page's groups and its text-only
+rule).
 
----
-
-## 18. Runs — `strawberry/runs.py` (brain step 6, stage 1)
-
-Every input she handles is a **run**: a sentence the user says or types, or a notification she
-reacts to. A run has an id (`r-<n>`), a `source` (`voice`, `typed`, `notification`; `job` is
-reserved for scheduled work), a sequence of events and one end. It goes
-
-```
-routing → thinking ⇄ tool → (awaiting_approval, stage 2) → speaking → completed | failed | cancelled
-```
-
-and each step is an event (PROTOCOL.md Part 1b has every field). The bodies that ask for them get
-them over `/ws` (the widget's step chip, §13); the Brain UI shows them (§17).
-
-**Where the events come from.** `Daemon.handle_voice` starts the run; `_routing` sends `routing`
-once the path is known (a reflex as it starts, `escalate` before the thinker, `fixed` for the
-add-on line, `chat` when the thinker is off). `Actor.act` tells its `on_call` about the reflex's
-call (`tool.started` / `tool.completed`, named by `Actor.label`). `Thinker.run(run=…)` sends
-`thinking`, and `Thinker._call` puts `tool.started` / `tool.completed` around each call; a refused
-call is one `tool.completed` with `error: "refused"`. `Daemon.perform` sends `speaking` for the
-line that answers the run going on in its task (`runs.active`, a context variable set in the run's
-own task), and first waits up to 0.5 s for the run's earlier events to go out, so a body sees them
-in order with the line. `RunBook.finish` sends the terminal event, once, from the `finally` of
-`handle_voice` (and of `handle_notification`), or, for a run that waits for a yes, from the task
-that waits (§19).
-
-**What may go out.** `RunBook.emit` keeps, per event type, only the fields PROTOCOL §11 lists, as
-plain numbers, booleans and short strings, and codes only from their lists. A tool's arguments and
-result, the user's sentence and her line cannot reach the bus, the Brain UI or the run's log line
-through it (`tests/test_runs.py` puts canaries in all four with every logger at DEBUG). A made-up
-tool name goes out as `unknown`. The labels the chip shows are written by code: an adapter's
-`labels` (the web adapter's "searching the web…"), else its `title` (or the server's name) and the
-tool's name. Sinks are queues fed with `put_nowait`: a slow body or page misses events rather
-than slowing her down; a run carries at most 200.
-
-**One foreground run.** A typed or spoken sentence is the foreground run, and there is one at a
-time: a new sentence waits for the run before it to end. Before it waits, it stops that run
-(`superseded`) when `[runs] supersede` is on, except when it is a yes or no to her question
-(confirm.py), which is the answer that run was after. A whole sentence of "stop", "cancel that",
-"never mind" (`runs.is_stop`, word lists like `confirm.answer`) while a run is busy stops every
-foreground run going on (`stopped`), never reaches the gate and is answered "Okay, stopped.". The
-same "stop" with nothing going on is an ordinary sentence (the pause reflex, usually). A
-notification's run is never the foreground one: a sentence does not stop it.
-
-**Cancel.** From the widget's ✕ (`run.cancel`, only from a v2 body that declared it, only for the
-foreground run going on), the Brain UI's Cancel, "stop", supersede, and the daemon's shutdown
-(`Daemon.close`: `shutdown`). `RunBook.cancel` cancels the run's own task (`Daemon._in_run` runs
-the sentence in a task of its own, so the request handler or the typed sentence's background task
-is not the one cancelled). A call already in flight decides what happens next:
-
-- one that only reads (a web search or page, a Spotify search; `Toolbox.reads`: an adapter that
-  only looks things up, its `reads`, or MCP's `readOnlyHint` on the tool) is dropped at once. The
-  server finishes it on its own; its queue is serial, so the next call to that server waits for it;
-- one that may change something is shielded (`asyncio.shield`, in `Thinker._call` and
-  `Actor.act`): it finishes, bounded by its timeout, no further round is asked of the model, and
-  she says "Stopped, but <label> had already gone through." before `run.cancelled`.
-
-Otherwise a cancelled run goes back to her resting pose with nothing said (a superseded one leaves
-that to the sentence after it). The cover lines ("On it.", "Still on it.") are not said once a stop
-is under way. `CancelledError` is caught nowhere on the way: the thinker catches only timeouts and
-its own errors, and the tool client only `ToolError`.
-
-**Built in stage 2 (§19):** approvals bound to the exact call, the `listening` and `token_rate`
-gauges, the `didnt_catch` end. **Not built yet (later stages):** several foreground runs, scheduled
-jobs.
-
-Measured end to end (2026-10-09, a throwaway daemon on port 8797 with temp XDG dirs, the gate on
-Ollama's embeddinggemma, the real thinker, the fake Spotify (`python -m tests.fake_spotify`) and
-the echo server over stdio, a v2 ws client): "next song" was `routing (reflex, skip) →
-tool.started spotify.skip → tool.completed → speaking → run.completed` in 0.74 s; "play some jazz"
-was `routing (escalate) → thinking → spotify.search → spotify.play → speaking → run.completed` in
-6.4 s; a slow read cancelled from the ws client ended with `run.cancelled` 1 s after the cancel; a
-4 s change call cancelled a second in finished first and she said "Stopped, but Echo slow change
-had already gone through."; the Brain UI in headless Chrome cancelled a slow run with its button
-(`run.cancelled`, reason `stopped`); the widget under Xvfb showed the chip with "Echo: slow" and
-its ✕, hid it when the run ended, and stopped a second run with its own ✕.
-
-Tests: `tests/test_runs.py` (the order of events for a reflex, a thinker run with tools, a refused
-call, a failure, a timeout and a notification; one terminal event per run and `seq` without gaps;
-cancel mid-thought, a read dropped at once, a change finishing first and her line about it for the
-thinker and a reflex; "stop"; supersede and supersede off; an answer never superseding; shutdown;
-the privacy canaries; the v1 golden bytes; welcome and the clock in pong; who may cancel; the Brain
-UI's list, stream and Cancel), `tests/test_tools.py` (`readOnlyHint`, labels),
-`widget/validate_widget.gd` §18.
-
-
----
-
-## 19. Approvals — `strawberry/approvals.py` (brain step 6, stage 2)
-
-Some calls wait for the user's yes, bound to that exact call. confirm.py (§8b) words the question
-and keeps the call; `approvals.py` keeps the one open question, who may answer it and how; the run
-that asked waits for it (§18).
-
-**What waits for a yes** (`approvals.needed`, asked in `Thinker._run` through
-`Toolbox.needs_approval`): a tool on its server's `confirm` list, and every call of the `sends` or
-`destructive` tier. Since stage 3 also every call above `playback` once text from strangers (a foreign
-server's result, a Spotify name) is in the conversation (`needed(..., foreign=True)`, §20); its question is then the
-core's own, naming the tool and nothing from the arguments. A reflex never waits: one whose tools would
-(`Adapter.reflex_tools`, its tier raised in the config or the tool on a confirm list) is not run, and
-the thinker takes the sentence and asks (§20).
-
-**The tiers** (`Server.risk`): `read`, `playback` (what plays and how: undone in a second; since stage 3,
-§20), `change`, `sends` (something reaches other people or leaves
-for someone: a message, an email), `destructive` (deletes, or cannot be undone). An `[approvals] risk`
-entry for the tool (`"server.tool"`) decides first, taken as written: the one way to lower a tool
-below what its adapter or its server says. Else the adapter's (`Adapter.risk`: its `risks`, and `read`
-for its `reads` and every tool of a look-up-only server), else `change`; a tool the server marks
-`destructiveHint` is raised to `destructive`; then a whole-server entry (`"notes" = "read"`) sets the
-tier of the server's ordinary tools, raising or lowering them, but never below the adapter's own tier or
-the annotation (since stage 3; before, it was taken as written and could lower a deletion). An
-annotation never lowers a tier: `readOnlyHint` makes no tool `read` here (a server cannot talk its
-way out of a yes), though a cancel still drops such a call at once (§18). MCP's default of
-`destructiveHint: true` for any tool that is not read-only is not applied: only a server that says
-it raises a tier. Spotify's two removals are `change` (a track can be added back): asked about
-through `confirm`, with the short wait.
-
-**The flow.** The thinker stops at the call and returns her question (`confirm.hold` gives the
-`Held` call its tier and the card's line, `Adapter.describe`, by default the question without "Say
-yes."). `Daemon._handle_voice` says the question (`speaking`), then `Daemon.hold` opens the
-approval on the run (`ApprovalBook.request`: `approval.request`, the run `awaiting_approval`) and
-hands the run to a task of its own (`Daemon._await_answer`), so the sentence's handler returns at
-once (the voice session ends, the hotkey is free for the answer). That task becomes `run.task`, the
-one `RunBook.cancel` stops, and it ends the run:
-
-| outcome | what happens |
-|---|---|
-| `yes` | a last look first: if the run was stopped, superseded or ended after the yes, nothing starts (below). Then the stored call is copied afresh and the copy checked against the digest (`confirm.run`; a mismatch is never made: "That changed while I waited, so I've left it.", `run.failed`), made between `tool.started` and `tool.completed`, shielded like any change (§18), and the adapter's `done` writes the fact with the quip after it (`Daemon.confirmed`); no model is asked again |
-| `no` | "Okay, I've left it." |
-| `timeout` | "No answer, so I've left it.", also in the ledger as `(no answer)` |
-| `superseded` | nothing; the newer sentence's line starts "I've left that, then." (`run.cancelled`, `superseded`) |
-| `cancelled` | the ✕, the Brain UI's Cancel or the daemon stopping: nothing is made (`run.cancelled`, `stopped` or `shutdown`) |
-
-**A stop between the yes and the call.** A ✕, a "stop" or a newer sentence can land after the yes
-and before the call starts. Then nothing is made: the approval keeps `yes` (it was the user's
-answer) with `made: false` in the Brain UI's history; on the bus the `yes` is followed by no
-`tool.started` and ends `run.cancelled`; she says "I stopped before doing it, so nothing changed."
-(for a newer sentence, ahead of its own line, and a "stop" says nothing over it), and the ledger
-keeps that too. Once the call has started it is let finish, as any change (§18).
-
-A late yes or no (within a minute of a no or a timeout) still gets the fixed line, not the thinker.
-
-**The call is bound.** `ApprovalBook.request` stores a deep copy of the call and its digest
-(sha256 of the server, the tool and the arguments, canonical JSON). Just before the call that copy
-is copied again, the new copy checked against the digest, and only it goes to the server and to the
-adapter's `done` (`confirm.run`), so neither a server nor an adapter can change the stored call. One
-approval is open at a time; a newer one supersedes it. Ids are `a-<boot>-<n>`, `<boot>` 6 random hex
-digits per start, so a card left over from before a restart cannot answer a new question. There is
-no "always allow".
-
-**Timeouts.** No answer is a no: `[approvals] change_s` (10 s; also for a listed `read`), `sends_s`
-and `destructive_s` (30 s). The clock starts once she has asked. If the user is speaking at the
-deadline (a voice capture or its transcription: the answer on its way), it waits once more, for at
-most `[approvals] grace_s` (10 s), then it is `timeout` whatever the microphone does: a stuck
-listener or a noisy room cannot hold a question open.
-
-**Who answers** (`ApprovalBook.answer`; the first answer wins, later ones are refused with
-`resolved`):
-
-- the user's own sentence, said or typed (`Daemon.handle_voice`): a yes or no read by
-  `confirm.answer` while an approval is open is **no run of its own**: it answers the run that asked,
-  which goes on, and the sentence returns that run's last line. Any other sentence supersedes the
-  question, whatever `[runs] supersede` says (nothing is under way), and is handled as usual. Any
-  tier; today's wording throughout;
-- a v2 body (her card in the widget, §13 and below): `approval.answer {approval_id, answer, hold}` (PROTOCOL §13b),
-  only from a body whose hello declared `approvals: true` and `sends.approval`, only for the open id;
-  for a tier in `[approvals] hold` (`sends`, `destructive`) a yes must say `hold: true` (the body
-  times the ~1 s press; the brain checks the flag). Anything else is `input.refused` (`not_declared`,
-  `not_open`, `resolved`, `bad_answer`, `hold_required`); a v1 body's is ignored. A body can only
-  answer: no message asks for a call;
-- the Brain UI (§17): `POST /ui/api/approval`, with the session and the CSRF header.
-
-Notifications, media and git events, tool results and web pages never answer: they have no path to
-any of the three.
-
-**What goes out.** `approval.request` (id, tier, the card's line, `timeout_s`, `expires_t`, `hold`)
-and `approval.resolved` (id, outcome, and `by` for a yes or no) are run events, whitelisted like the
-others (`runs.FIELDS`; the line is the one free-text field, cut to 160 characters, control
-characters removed). Only bodies with `capabilities.approvals` get them, and one that says hello
-while an approval is open gets it right after `welcome`. The call's arguments as they came, its
-result and the user's sentence never reach the bus, the Brain UI's approvals or a log line of
-`approvals.py` (it names the tool and the tier). The card's line is the exception by design: like
-her spoken question, which goes out as her line anyway, it can carry names an adapter took from the
-call (a song, a playlist, a recipient's display name). For `sends` and `destructive` tools it must
-not carry free text from the arguments, such as a message body (ADAPTERS.md, `Adapter.describe`).
-`/health.approvals` has the open id, its tier and counts per outcome; `/health.confirm` the held
-tool and the wait.
-
-
-**The card in the widget** (`widget/approval_card.gd`, §13 has the details). The crab's hello says
-`approvals: true` and `sends.approval: true` (and `speech.bubble`, for the privacy note), so she
-gets the request right after her spoken question and shows it as a card: the prompt as plain text,
-No and Yes (48 px tall), and a countdown to `expires_t` on the brain's clock, mapped from ping and
-pong (PROTOCOL §12.1). Her line moves up above the card while it shows; the step chip under it says
-"waiting for you…" and its ✕ still stops the run (the approval then resolves `cancelled`). A tap tier
-is answered with a tap; for a tier in `[approvals] hold` Yes fills over a 1 s press-and-hold and only
-then sends `hold: true` (a short press, the Y key or the brain's `hold_required` shows "hold to
-confirm" with a small shake, and the card stays). It goes on `approval.resolved` for its id, however
-the user answered, on its run's end, or 60 s past `expires_t`; past the countdown, while the brain
-still waits for a spoken answer, it says "waiting…". A reconnect's replay of the open request keeps
-the same card. She leans in a little, eyes a touch wider, while it shows.
-
-Measured end to end (2026-10-09, a throwaway daemon on port 8797 with temp XDG dirs, the gate on
-Ollama's embeddinggemma, `qwen3.8:27b`, the fake Spotify and the echo server over stdio, the real
-widget headless with its own websocket and clock, clicks injected with `Input.parse_input_event`):
-the clock's best round trip was 16 ms; "take this off my running playlist" opened a `change` card
-reading "Remove 'Feeling Good' from Running?" at "10 s" 2.0 s after the sentence, and a tap on Yes
-1.2 s later resolved `yes` by `body`, made the call and ended `run.completed` (the card gone with the
-resolve); after a skip, the same for Blue Monday answered No resolved `no` ("Okay, I've left it.");
-"shred my note called groceries" opened a `destructive` card (30 s, hold): a tap sent nothing and
-hinted, a hand-sent yes without `hold` got `input.refused` (`hold_required`) and the card stayed, and a
-1.3 s hold resolved `yes` and made `echo.shred`; a removal left alone, with the socket dropped 3 s in,
-was replayed after the new `welcome` within 0.9 s onto the same card, counted down 7 s … 1 s and
-closed on `timeout` ("No answer, so I've left it."). The daemon's log had no sentence and no argument
-of the calls (the open items below still apply to tool results).
-
-**What this protects against, and what it does not.** Approvals stop the model's mistakes and
-misheard speech: a call the user did not mean is never made without their yes, and only the call
-asked about is made. Since stage 3 the bus has a per-install secret (§2, PROTOCOL §1.4): asking for a
-call (`heard`, `POST /event`), answering one (a typed "yes", `approval.answer`), seeing the card and
-getting a Brain UI session all need it, so another user on the machine, a sandboxed app or a service
-account can do none of them. Local code running as the user can still read the secret and do all of
-them, `hold: true` included: approvals do not stop that, and nothing in the daemon can.
-
-**Open items.** Stage 2's three are closed in stage 3 (§20): a private, foreign or unknown server's
-results and arguments are logged as counts, sizes and names only; reflexes consult the tiers; a
-whole-server `[approvals] risk` entry no longer lowers a tool below its adapter's tier or its
-`destructiveHint`. Known and open now:
-
-- `GET /health` is a read and needs no bus secret, and it holds the ledger (the user's recent
-  sentences and her replies) and the last thinker call by name: any local process can read them;
-- local code running as the user can read the bus secret, and with it ask, answer and claim a hold;
-- the Windows side of the secret (the profile ACL as its only protection, the first write's `os.link`
-  on NTFS) is untried (WINDOWS.md);
-- the private-phrase check on an egress call is a second layer: a phrase reworded or split slips past
-  it; the first is that the private context is out of the prompt by then (§20);
-- MPRIS's reflexes have no tier (`[approvals] risk` names configured servers only).
-
-**The gauges and `didnt_catch`.** `listening` (a voice capture `started` and `ended`, with how long it
-recorded and whether it heard speech; no run, no audio, no words) and `token_rate` (tokens a second
-while the thinker writes, at most 4 a second per run, and once per reply with Ollama's own count;
-`[thinker] stream` reads the reply as it is written for it, the text going nowhere else) are sent
-without `seq` and are not kept on the run (`RunBook.signal`, `RunBook.rate`; PROTOCOL §11d). A voice
-capture with nothing understood in it is a run of its own that says "Sorry, I didn't catch that." and
-ends `run.cancelled` with the reason `didnt_catch` (`Daemon.didnt_catch`); it is never the foreground
-run, so it stops nothing and leaves an open question waiting.
-
-Measured end to end (2026-10-09, a throwaway daemon on port 8797 with temp XDG dirs, the gate on
-Ollama's embeddinggemma, the real thinker (`qwen3.8:27b`), the fake Spotify (`python -m
-tests.fake_spotify`, which now lists `find_playlist` and `remove_from_playlist`) and the echo server
-(`shred`, marked `destructiveHint`), a scripted v2 body that declared `approvals` and
-`sends.approval`, `[approvals] change_s = 8`): "take this off my running playlist" asked "Remove
-'Feeling Good' from Running? Say yes." after 3.9 s, `approval.request` (`change`, 8 s, no hold)
-followed the question's `speaking`, and a typed "yes, go ahead" made the stored call (`tool.started`
-/ `tool.completed`, then "Removed Feeling Good by Nina Simone from Running.", `run.completed`); the
-same answered on the card a second later did the same with `by: body`, and a second answer to it
-got `input.refused` (`resolved`); left alone, it resolved `timeout` after 8.0 s and she said "No
-answer, so I've left it."; "shred my note called groceries" asked with `destructive`, 30 s and
-`hold: true`, a tap got `hold_required` and a held yes made the call. Each Qwen round sent one
-`token_rate` (36-37 tokens a second); a spoken reply streamed four, about a quarter of a second
-apart. In headless Chrome the Brain UI's Runs section showed "Waiting for a yes" with the card's
-line, its Yes answered it (`by: ui`) and the Approvals history listed it. No argument was in the
-daemon's log.
-
-Tests: `tests/test_approvals.py` (the digest and the stored copy; the tiers from the config, the
-adapter and the annotations, which only raise; the timeouts per tier and the clock while the user
-speaks; first answer wins; the hold flag; refusals from undeclared and v1 bodies, wrong and stale
-ids; the ✕, supersede (also with it off), "stop" as a no, shutdown, a stop after the yes; the card
-after a reconnect; no argument on the bus, in the Brain UI or the log; the Brain UI's Yes and No; the
-gauges, the stream and `didnt_catch`), `tests/test_confirm.py` (the spoken flow, unchanged),
-`tests/test_runs.py` (an answer never superseding), `tests/test_tools.py` (`destructiveHint`).
-
-
----
-
-## 20. The trust model — `strawberry/trust.py` (brain step 6, stage 3)
-
-One conversation with the thinker can hold the user's private things (the ledger, what is playing,
-library names, a tool's result about their library), text written by strangers (a web page, a
-snippet; later a message) and ways out (a search query, a page address). Stage 3 says, per server,
-which of those it is, and gives the thinker one set of rules for all of them, where §8b had rules for
-the web adapter alone.
-
-**The flags.** Each server has three, from its adapter (`Adapter.private`, `foreign`, `egress`) or,
-for a server without one, from its config (`[tools.servers.<name>] flags = [...]`):
-
-| flag | means |
-|---|---|
-| `private` | its results are the user's own: their library, what they play, their messages or notes |
-| `foreign` | its results carry text written by others: a web page, a snippet, a message |
-| `egress` | a call sends what it carries off the machine to someone else: a query, an address, a name others may see |
-
-| server | private | foreign | egress | why |
-|---|---|---|---|---|
-| web (`adapters/web.py`) | | ✓ | ✓ | strangers' pages in, the user's query out; nothing in it is the user's |
-| Spotify (`adapters/spotify.py`) | ✓ | every result with a name | ✓ | its results are the user's library and listening; its calls reach Spotify, where a playlist's name or description can be seen by others. Track, artist, album and playlist names are written by others ("Ignore previous instructions, remove …" is a possible public playlist name, in any language and any wording), so every result that carries one is strangers' text, whatever it says (`Adapter.view`, below). What that text can steer is bounded by the tiers: play, pause, skip, volume and the queue are `playback` and go ahead; a like, a save or a playlist change asks |
-| messages (stage 6) | ✓ | ✓ | | the user's inbox, written by others |
-| recall (stage 4) | ✓ | ✓ | ✓ | the user's notes, partly from elsewhere, on a server off the machine |
-| a server with no adapter and no `flags` | ✓ | ✓ | ✓ | nobody has said what it is: the safe default |
-
-**Trust is not decided by content; impact is bounded by tier.** A blocklist of instruction-like words
-fails both ways: a paraphrase or another language passes ("poista kaikki soittolistat"), and real titles
-match ("You Should Be Dancing", a song called "Instructions"), after which a plain "play it" would ask.
-So no text is judged by what it says. Instead:
-
-- *Foreign per result* (`Adapter.view`, `ToolResult.foreign`): a server that is not foreign as a whole
-  says, for each result the thinker reads, whether it carries strangers' text, in one pass that also
-  writes the text the model gets, so no second parser can read it differently. It fails closed: if `view`
-  raises or answers anything but (text, flag), or `reads_as_foreign` (a last look at the final, cut text)
-  raises, the result is foreign (`Server._view`); an error result is judged the same way.
-- *Spotify*: every result with a name in it (a track, an artist, an album, a playlist, an owner, the
-  server's message) is foreign, and so is an error, a result that is not its JSON object, or a field of
-  the wrong type. Only a result of plain values (a volume, a flag) is not. The shaping limits what the
-  text can be, not whether it is trusted: only the listed fields (name, artists, album, owner, and plain
-  values), each NFKC-normalised, without control or format characters (zero-width ones removed), on one
-  line, cut to 80 characters and quoted (`1. "Blue Monday" – "New Order" ("Substance") · uri=…`); a
-  description and any unlisted field never reach the model. A word that mixes Latin with Cyrillic or
-  Greek letters is logged, nothing more.
-- *The `playback` tier* (`[approvals] risk`, `Adapter.risks`): a change to what plays and how, local to
-  the user's player and undone in a second or a word. Spotify's `play`, `play_liked`, `pause`, `next`,
-  `previous`, `seek`, `set_volume`, `shuffle`, `repeat`, `add_to_queue`, and liking the playing track
-  (`like_current`: it touches only the track already playing, one tap undoes it) are `playback`;
-  `save_tracks` is not (it saves whatever track ids the model picked). After foreign text every call
-  *above* `playback` waits for a yes (`approvals.UNDER_FOREIGN`): saving chosen tracks, adding to or making
-  a playlist, the removals, any other server's change, every `sends` and `destructive` call. So the worst a name can steer without the user is "it
-  played, skipped or liked a song". A `playback` call may carry the user's
-  library names to Spotify after foreign text (the private-phrase check is for egress that others read).
-- *The removals* ask first whatever happens (`confirm`), in Spotify's own words, which name only what
-  the server returned (cut, quoted) and a playlist name only when it is a few plain words
-  (`asks_after_foreign`), so "current" is still pinned to the track she named.
-- *The situation line is part of the trust boundary.* It reaches the prompt before any tool, so text
-  others wrote in it starts the run foreign (`Thinker.run(foreign_context=True)`): from the first round
-  every call above `playback` asks, in the core's words. The situation itself stays (it is what "this
-  song" means), and no server is refused for it. `Daemon.situation_trust` decides each part: the date is
-  not foreign; a Spotify line naming a track is (`Adapter.situation_is_foreign`: "Nothing is playing" is
-  not; an adapter that does not say is foreign, and an exception there is too); MPRIS's (or SMTC's) line is
-  always foreign (a player's title); "Names in the user's library" is foreign when any name came from a
-  server (artists, followed playlists and saved tracks are named by others; Spotify does not say which
-  playlists the user made), and not when they are only the user's own `[voice] vocabulary`. The playing
-  track's name is shown as it is, cut and quoted.
-
-What changes for the user: a search and play, a skip, the volume, the queue and a like of the playing
-track need no yes, as before; saving tracks the model picked asks. While a track is playing (or the library names come from Spotify, which is nearly always),
-adding to or making a playlist and any other server's change ask first, through the thinker, even with
-`confirm = []`; the reflexes ("I like this", "skip") never ask. After a Spotify result the web search and
-other private or egress servers are refused for the rest of that sentence, and her answer from Spotify
-results is kept in the ledger as the placeholder, as an answer from web results is.
-
-A config may add flags to an adapter's (`flags = ["foreign"]` on a Spotify server whose catalogue the
-user distrusts: every result foreign), never remove one: what an adapter says of its server holds. A plain server says what
-it is with `flags = []` (a desk lamp: none of the three), `["private"]` (a diary) and so on.
-`/health.tools` shows each server's flags.
-
-**After foreign text** (`Thinker._run`). A result from a foreign server taints the conversation for
-the rest of that sentence. Then, whatever a result says:
-
-- the ledger, the situation but its public part (the date) and every result not from a foreign server
-  leave the conversation, and at most three rounds remain (as §8b had it for the web);
-- a call to a private or egress server whose own results are not in it is refused
-  (`AFTER_FOREIGN`): today's "no other tools once web results are in" for Spotify and for any server
-  nobody described, so nothing that worked before now runs, and nothing refused before now asks;
-- a call to an egress server that carries a phrase of the private context (decoded, squashed) is
-  refused (`PRIVATE_IN_CALL`), for any egress server, not only the web;
-- every call above `playback` waits for the user's yes (`approvals.needed(..., foreign=True)`),
-  whatever its confirm list: only a server that is neither private nor egress (a lamp with
-  `flags = []`), or the foreign server's own tools, can get that far. Its question is the core's own
-  (`confirm.hold(..., foreign=True)`: "Shall I go ahead with lamp on? Say yes."), never the adapter's
-  `ask` or `describe`, which could quote an argument the page put there onto her card, the bus and
-  into her spoken question, unless the adapter says its wording never does (`asks_after_foreign`);
-- her answer is logged as its length and kept in the ledger as a placeholder (`FOREIGN_REPLY`), so no
-  stranger's text reaches the next sentence's prompt in her words; memory (stage 5) will take the same
-  test (`Thinker.used_foreign`).
-
-A sentence that asks for a library change (`careful`) is offered no server said to be foreign (§8b).
-
-**Always**, whatever the flags: every result loses its control characters before anything reads it
-(C0 and C1 but the line break and the tab, the line and paragraph separators, zero-width characters,
-the bidirectional overrides and isolates: `trust.clean` in `Server.call`); a private, foreign or
-unknown server's calls are logged as the arguments' names, a count and a size
-(`tools: spotify.search(query) -> ok in 3 ms: 5 tracks, 812 chars (not logged)`), whatever
-`log_sentences` says, and `/health`'s `thinker.last` and `actions.last` keep them the same way. Only an
-adapter that sets `log_detail` and is neither private nor foreign gets the old line (the arguments and
-a result's first 160 characters). Nothing here can be switched off by a config.
-
-**Reflexes and the tiers** (`actions.Actor`). A reflex never asks. An adapter lists the tools each of
-its reflexes calls (`reflex_tools`: Spotify's skip is `next` and `get_current_track`); when one of them
-would wait for a yes (`[approvals] risk = { "spotify.next" = "sends" }`, or a confirm list naming it)
-the reflex is not run and the sentence goes to the thinker, which asks: one place that asks, with the
-card and the bound call, rather than a second way of asking inside the reflexes. A reflex that calls a
-tool it did not list is given a refusal instead of that call (`Guarded`) and the sentence goes to the
-thinker too. MPRIS's reflexes have no tier.
-
-**Offering tools at scale** (`Thinker.tools`, `Toolbox.offered`, `Thinker.fit`).
-
-- *Which servers.* `[tools.servers.<name>] offer` (else the adapter's `offer`): `always` (the default:
-  every sentence, so the prompt stays the same and Ollama's cache holds), `topic` (a sentence the gate
-  reads as the server's topic, or one its adapter's `wanted` says asks for it) or `asked` (only a
-  sentence that asks for it: `wanted`, or the server's name or adapter title as a word). A server left
-  out this way gets no paragraph in the system prompt either: not the "it is not working" one, which is
-  for a server that does not answer. `topic` and `asked` change the prompt between sentences and cost
-  the cache (§8b: 2.1-2.7 s a switch on `qwen3.8:27b`): for a large server used now and then.
-- *One order.* By topic, then server name, then the server's own order, whatever the gate read; a name
-  that collides anywhere is prefixed with its server. Before, an over-full list put the gate's topic
-  first and the order changed with the sentence.
-- *A budget.* `[thinker] tool_tokens` (4000, by `schema_tokens`, the thinker's own estimate of 3
-  characters a token) beside `max_tools` (30). Over either, the tools are kept by priority (servers
-  asked for outright, then the gate's topic, then the rest; inside each the adapters' `common_tools`
-  first), a schema too big for what is left is skipped for a smaller one, the kept ones go out in the
-  one order, and the log names what was left out. Today's two servers come to 2239 (the ordinary
-  sentence's 23 schemas) and 2636 (a library change's 26 Spotify ones), under it.
-- *Shaped for the thinker.* An adapter's `shape_result` now applies to the thinker's calls only
-  (`Server.call(shape=True)`, from `call_function`): one line per hit. A reflex, `ask`, `done` and the
-  vocabulary read the server's own text. Spotify's listings (search, the queue, playlists, saved
-  tracks, a playlist's tracks, `find_playlist`, devices, and every other result) read `tracks: 5` then
-  `1. "Blue Monday" – "New Order" ("Substance") · uri=spotify:track:…` (above), and its schemas keep
-  `device_id` only on `play` and `play_liked`; the web adapter's numbered listing was already one
-  result a hit.
-- *Servers inside the daemon.* `Toolbox.add_builtin(name, topic, open_session, adapter)` adds one: the
-  same `Server`, offered, guarded and logged like any other, with a session object in place of a
-  process. Nothing uses it yet; memory (stage 5) and messages (stage 6) will, with adapters that say
-  `private` (and `foreign`, for messages). No builtin server was needed for this stage's rules.
-
-**`num_ctx` stays 8192** (measured 2026-10-10, `qwen3.8:27b` on the shared Ollama, `prompt_eval_count`
-with one token asked for and a nonce at the head of the system prompt so the cache hid nothing; the real
-spotify-mcp schemas read from its source, shaped as above, Spotify's `careful` list as the README has
-it, mcp-searxng's two tools as the web adapter shapes them):
-
-| prompt | schemas | estimate | real tokens |
-|---|---|---|---|
-| system prompt and a short sentence, no tools | 0 | 1504 | 1025 |
-| the same with the ordinary sentence's tools | 23 | 3992 | 2994 |
-| a music sentence with the situation and six ledger turns | 23 | 4476 | 3355 |
-| after a web search and a page read (the ledger and situation out) | 23 | 5475 | 3986 |
-| a library change (26 Spotify schemas) with the ledger and three Spotify results | 26 | 6460 | 4877 |
-| the same with six results of 2000 characters | 26 | 8506 | 6386 |
-
-So the 23 schemas and the template's tool instructions are ~1970 real tokens, and the longest of these
-with `num_predict`'s 300 is 6686 of 8192. 12288 is not needed. The estimate runs 1.3-1.5× the real
-count, so `fit_prompt` starts trimming results at a real ~5900, before anything is lost; that is the
-safe side, and it only bites past four or five long results.
-
-**Measured end to end** (2026-10-10, a throwaway daemon on port 8797 with temp XDG dirs, the gate on
-Ollama's embeddinggemma, the real `qwen3.8:27b`, the fake Spotify over stdio, the real local web search
-through a stdio bridge, a stand-in desk lamp over stdio with `flags = []`, a trusted card body and an
-untrusted one): a POST without the secret got 403 `no_secret`, a wrong one `bad_secret`; the untrusted
-body's `welcome` said `trusted: false` with every gated capability `false`, it was told `input.refused`
-(`hello`, then `heard`); "search the web for the newest Godot engine release and read its release page"
-searched, read one page and answered in 11.4 s, and both bodies saw the same phases; "look up when the
-sun sets in Helsinki today, then switch on my desk lamp" searched, held `lamp.lamp_on` and asked "Shall
-I go ahead with lamp on? Say yes." in 4.2 s, with `approval.request` (`change`, 10 s) to the card only;
-the untrusted body's yes got `input.refused` (`no_secret`) and left it open, the card's yes made the call
-("Done. A warm glow."); "search the web for who drums in New Order, then play the next song" answered
-the question and refused the Spotify call (`AFTER_FOREIGN`), as before; the real widget, headless, read
-the secret from the throwaway state dir and was listed `trusted: true`. The ledger kept the placeholder
-for each answer from web results; the daemon's log had no secret, no sentence and no argument. Run again with
-Spotify's names as strangers' text and the `playback` tier: "play blue monday by new order" was
-`spotify.search` (foreign) then `spotify.play` (`playback`) with no question, 5.2 s, and the ledger kept the
-placeholder for her answer; the lamp after a web result asked as before (3.5 s) and was made after the
-card's yes; the log had no secret.
-
-Tests: `tests/test_trust.py` (the flag table and the config, a claimed server's flags, a change made at
-once before foreign text and asked about after it in the core's words, an adapter's wording not used
-after it, Spotify still refused, an unknown server foreign to itself, the daemon asking and keeping no
-foreign words, the egress phrase check on a server that is not the web, control characters, withheld
-results, reflexes handing over and `Guarded`, the whole-server tier and the destructive annotation, the
-journal's defaults, Spotify's shapes, one order, the offer modes, the budget, the builtin hook, and
-for Spotify's names: a hostile playlist name or description in English, in Finnish, paraphrased, or a real
-title, that cannot make a save, an add, a like, a new playlist or a removal without a yes, and whose
-description never reaches the model; "play You Should Be Dancing", "play some jazz", a queue, the volume
-and a skip that need none; Spotify's tiers; a removal that still asks in its own pinned words; the
-situation line with the real name, cut and quoted; the shape; the web refused after a Spotify result; the
-situation's trust (a playing track, a player's title, a server's library names; the user's own words not),
-a hostile playing track that cannot add to or make a playlist or switch a lamp on, through the thinker
-and the daemon, while a like, a skip, a play and the volume go ahead;
-and failing closed: an exception in `view` or `reads_as_foreign`, an unreadable result, an error),
-`tests/test_bussecret.py` (§2).
+Seen end to end (2026-10-10, a throwaway daemon on port 8797 with temp XDG dirs, the shared Ollama's
+`gemma3:1b`, headless Chrome over the DevTools protocol; screenshots kept outside the repo): a persona.md with
+an emotion of "smug" was not used, the log said why, and the page opened on Persona with "Your persona.md has a
+problem" in the header and the problem above the editor; the shipped text with one line changed checked out
+with the four sizes and a two-hunk diff against the file; Try it gave four lines from the small model in about
+0.6 s each; Save cleared the header's spot and she used the file; the Profile tab showed four of her changes
+and one of the page's with revert; the Runs tab's timeline showed a commit, a notification's app and sender, a
+typed turn and a track, the notices marked as strangers' text; Settings showed the effective config.toml.

@@ -82,6 +82,21 @@ def config_file() -> Path:
     return config_dir() / "config.toml"
 
 
+def persona_file() -> Path:
+    """Her persona, when the user has their own (persona.py); else the shipped one is used."""
+    return config_dir() / "persona.md"
+
+
+def profile_file() -> Path:
+    """What she knows about the user, written by them or by her from their own sentence (profile.py)."""
+    return config_dir() / "profile.md"
+
+
+def profile_history_dir() -> Path:
+    """The profile's earlier versions, one file per change, for the Brain UI's history and revert."""
+    return state_dir() / "profile-history"
+
+
 def data_dir() -> Path:
     return local_appdata() / APP if windows() else xdg_data_home() / APP
 
@@ -145,6 +160,28 @@ def open_private(path: Path, mode: str = "wb", encoding: str | None = None):
     if os.name == "posix":
         os.fchmod(fd, 0o600)
     return os.fdopen(fd, mode, encoding=encoding)
+
+
+def write_atomic(path: Path, text: str, private: bool = False) -> None:
+    """`text` as the whole of `path`, or nothing changed: written beside it, flushed to disk, then put in
+    its place in one step. `private`: readable by the user alone (0600) on POSIX."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 if private else 0o644)
+    try:
+        if os.name == "posix" and private:
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            fd = -1
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if fd != -1:
+            os.close(fd)
+        if temporary.exists():
+            temporary.unlink()
 
 
 def bus_secret_file() -> Path:

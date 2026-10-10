@@ -26,6 +26,7 @@ earns once you use it every day:
                     in a conversation brings the thinker's containment; with `guard`, `forward`,
                     `screen` and `observe`, what may follow one, and in what form it is sent
     offer           when the thinker is offered its tools: always, topic, asked (Thinker.tools)
+    own_words_only  its tools act on the user's own words only: refused once strangers' text is in (profile.py)
     view, reads_as_foreign
                     a result as the thinker reads it and whether it carries strangers' text, in one pass,
                     for a server that is not foreign; and the final text read once more
@@ -102,6 +103,11 @@ class Adapter:
     #: server returned, cut, and plain words): they are then still used after strangers' text (confirm.hold);
     #: otherwise the core's own question, naming the tool, is
     asks_after_foreign: bool = False
+    #: True: its tools act only on the user's own words (the profile, profile.py): once strangers' text is in the
+    #: conversation, or the situation line carries some, a call is refused rather than asked about, and the
+    #: model is told `refusal_foreign` (Thinker._run)
+    own_words_only: bool = False
+    refusal_foreign: str = ""
     #: True: the journal may say what this server's calls carry (the first 160 characters of a result,
     #: the arguments); only for a server that is neither private nor foreign. Off: counts and sizes
     log_detail: bool = False

@@ -59,6 +59,9 @@ class Outcome:
     calls: tuple[ToolResult, ...] = ()
     emotion: str = ""   # set by the thinker (her own line, her own mood); "" = the reaction path picks
     held: Any = None    # a confirm.Held: a call the thinker stopped at, made only after a spoken yes
+    # Strangers' text was in the run that wrote it (the thinker: a foreign situation line or timeline entry, a
+    # foreign result): the timeline keeps the turn as foreign (ledger.py)
+    foreign: bool = False
 
     def event(self, asked: str) -> Event:
         """For the reaction path: it adds a quip after `fact` (brain.describe)."""
@@ -115,7 +118,8 @@ def carries_argument(text: str, tool: str) -> bool:
 # What she says when a sentence wants particular music found (the gate's `needs_catalogue`) and no
 # configured server has a catalogue to find it in: MPRIS only has the player's buttons. A fixed
 # line, because a model with no tool for it either pretends ("Queued again.") or says she cannot
-# touch the player at all, which is wrong (ADAPTERS.md says how to add a music server).
+# touch the player at all, which is wrong (ADAPTERS.md says how to add a music server). She says
+# persona.md's `no_catalogue` lines (Daemon.no_catalogue); these are the shipped ones, the fallback.
 NO_CATALOGUE = (
     "I can skip, pause and change the volume, but finding particular music needs a music add-on, like the Spotify one.",
     "Picking music is beyond my claws without a music add-on, such as the Spotify one. The add-ons guide says how.",

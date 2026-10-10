@@ -21,6 +21,7 @@ from . import logtext
 from .config import BrainConfig
 from .contract import EMOTIONS, Performance, anim_for
 from .events import MAX_LINE, Event, Reactor
+from . import persona as personas
 from .persona import BODY_RULE
 
 log = logging.getLogger("strawberryd.brain")
@@ -128,9 +129,14 @@ def tidy(line: str, max_words: int) -> str:
 
 
 class OllamaReactor:
-    def __init__(self, brain: BrainConfig, fallback: Reactor) -> None:
+    def __init__(self, brain: BrainConfig, fallback: Reactor, persona: personas.PersonaStore | None = None,
+                 profile: Any = None) -> None:
         self.brain = brain
         self.fallback = fallback
+        # Her persona (persona.md, read again when it changes) and the user's profile (profile.py): the
+        # profile's one-line summary goes in only while it is short (Profile.summary).
+        self.persona = persona or personas.store()
+        self.profile = profile
         self.session: aiohttp.ClientSession | None = None
         self.calls = 0
         self.fallbacks = 0
@@ -203,11 +209,28 @@ class OllamaReactor:
         self.rewarm = asyncio.get_running_loop().create_task(self.warm_up(reason))
         return self.rewarm
 
-    def _messages(self, event_text: str, avoid: list[str] | None = None) -> list[dict[str, str]]:
-        out = [{"role": "system", "content": self.brain.persona}]
+    def system(self) -> str:
+        """The system prompt: `[brain] persona` as written when it is set (deprecated), else persona.md's,
+        with the profile's short summary when there is one."""
+        if self.brain.persona:
+            return self.brain.persona
+        summary = ""
+        if self.profile is not None:
+            summary = self.profile.summary(personas.REACT_PROFILE_TOKENS)
+        return self.persona.current().reaction_system(self.brain.max_words, summary)
+
+    def examples(self) -> list[dict[str, str]]:
+        """`[brain] examples` when set (deprecated), else persona.md's, shown as real events are."""
+        return [dict(e) for e in self.brain.examples] if self.brain.examples else self.persona.current().reaction_examples()
+
+    def _messages(self, event_text: str, avoid: list[str] | None = None,
+                  draft: personas.Persona | None = None) -> list[dict[str, str]]:
+        """`draft`: a persona not in use yet (the Brain UI's Try it), in place of the one in use."""
+        system = draft.reaction_system(self.brain.max_words) if draft is not None else self.system()
+        out = [{"role": "system", "content": system}]
         # Example order is shuffled per call: a fixed order makes the last example the template
         # for everything, and the same opener comes back every time.
-        examples = list(self.brain.examples)
+        examples = draft.reaction_examples() if draft is not None else self.examples()
         self.rng.shuffle(examples)
         for example in examples:
             out.append({"role": "user", "content": example["event"]})
@@ -217,11 +240,12 @@ class OllamaReactor:
         out.append({"role": "user", "content": event_text})
         return out
 
-    async def _ask(self, event_text: str, avoid: list[str] | None = None, temperature: float | None = None) -> dict[str, Any]:
+    async def _ask(self, event_text: str, avoid: list[str] | None = None, temperature: float | None = None,
+                   draft: personas.Persona | None = None, timeout_s: float | None = None) -> dict[str, Any]:
         assert self.session
         payload = {
             "model": self.brain.reaction_model,
-            "messages": self._messages(event_text, avoid),
+            "messages": self._messages(event_text, avoid, draft),
             "format": SCHEMA,
             "think": False,
             "stream": False,
@@ -229,7 +253,7 @@ class OllamaReactor:
             "options": {"temperature": temperature if temperature is not None else self.brain.temperature, "num_predict": 80},
         }
         async with self.session.post(
-            "/api/chat", json=payload, timeout=aiohttp.ClientTimeout(total=self.brain.timeout_s)
+            "/api/chat", json=payload, timeout=aiohttp.ClientTimeout(total=timeout_s or self.brain.timeout_s)
         ) as response:
             if response.status != 200:
                 raise BrainError(f"HTTP {response.status}: {(await response.text())[:200]}")
@@ -242,6 +266,26 @@ class OllamaReactor:
         if not isinstance(data, dict) or not isinstance(data.get("line"), str) or data.get("emotion") not in EMOTIONS:
             raise BrainError(f"schema miss: {content[:120]!r}")
         return data
+
+    TRY_TIMEOUT_S = 8.0
+
+    async def sample(self, draft: personas.Persona, events: list[Event]) -> list[dict[str, Any]]:
+        """A draft persona on these events, for the Brain UI's Try it: the live call's shape (its model, its
+        keep_alive, never an unload), one call each, with a longer allowance; nothing is performed, nothing
+        counted in the stats, and no line goes to the journal. Each result is its line and emotion, or why not."""
+        if not self.session:
+            raise BrainError("the reaction model is off (canned lines)")
+        out: list[dict[str, Any]] = []
+        for event in events:
+            started = time.perf_counter()
+            try:
+                data = await self._ask(describe(event), draft=draft, timeout_s=max(self.brain.timeout_s, self.TRY_TIMEOUT_S))
+                out.append({"line": tidy(data["line"], self.brain.max_words), "emotion": data["emotion"],
+                            "s": round(time.perf_counter() - started, 2)})
+            except (aiohttp.ClientError, asyncio.TimeoutError, BrainError) as exc:
+                out.append({"error": type(exc).__name__ if not isinstance(exc, BrainError) else "the model's answer did not fit"})
+        log.info("brain: a draft persona tried on %d event(s)", len(events))
+        return out
 
     async def gist(self, event: Event) -> str | None:
         """Glance mode (§4), step one: a neutral third-person line saying what a message is about.

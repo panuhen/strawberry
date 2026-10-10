@@ -1,6 +1,5 @@
 import pytest
 
-from strawberry_crab import persona
 from strawberry_crab.config import ConfigError, default_toml, load
 
 
@@ -9,7 +8,7 @@ def test_defaults_when_no_file(tmp_path):
     assert config.path is None
     assert config.daemon.port == 8770
     assert config.brain.reaction_model == "gemma3:1b"
-    assert config.brain.examples == persona.EXAMPLES
+    assert config.brain.examples == [] and config.brain.persona == ""     # persona.md (persona.py) holds them
     assert config.media.only == []
     assert config.notifications.ignore_apps == ["Spotify"]
     assert config.notifications.body == "off"          # bodies stay in the watcher unless you say so
@@ -122,7 +121,7 @@ def test_default_template_round_trips(tmp_path):
     assert config.brain.reaction_model == "gemma3:1b"
     assert config.brain.keep_alive == -1
     assert config.thinker.keep_alive == "30m"   # she is rarely cold; a cold load is 7-17 s
-    assert config.actions.ledger_turns == 6
+    assert config.ledger.turns == 8 and config.ledger.window_minutes == 60.0 and config.ledger.foreign_minutes == 10.0
     assert config.actions.mpris is True and config.thinker.max_tools == 30
     # No MCP server ships configured; the template shows how to add one (ADAPTERS.md).
     assert config.tools.servers == {}

@@ -24,6 +24,8 @@ from .learning import IdleTrainer
 from .ledger import Ledger
 from .logtext import sentence
 from . import logtext, media, privacy
+from . import persona as personas
+from . import profile as profiles
 from .outcomes import OutcomeLog
 from .pokes import Pokes
 from .reactions import decorate, is_burst
@@ -48,6 +50,9 @@ class Daemon:
                  actor: Actor | None = None, thinker: Thinker | None = None) -> None:
         self.config = config or Config()
         logtext.configure(self.config.daemon.log_sentences)
+        # What she knows about the user (profile.md, profile.py): in the thinker's prompt, a short summary in the
+        # reaction model's, and hers to change from the user's own sentence through a builtin server (below).
+        self.profile = profiles.store()
         self.hub = WidgetHub()
         self.reactor: Reactor = reactor or self._default_reactor()
         self.speaker = speaker or Speaker(self.config.speech)
@@ -62,8 +67,25 @@ class Daemon:
         self.mpris = media.controls() if actor is None and self.config.actions.mpris else None
         self.actor = actor or Actor(self.config.actions, self.toolbox, mpris=self.mpris)
         self.thinker = thinker or Thinker(self.config.thinker, self.toolbox, self.config.brain.action_model,
-                                          self.config.brain.ollama_url)
+                                          self.config.brain.ollama_url, profile=self.profile)
+        if getattr(self.thinker, "profile", False) is None:
+            self.thinker.profile = self.profile
+        self.profile_session: profiles.ProfileSession | None = None
+        self.profile_adapter: profiles.ProfileAdapter | None = None
+        if self.config.thinker.enabled and "profile" not in self.toolbox.servers:
+            self.profile_session = profiles.ProfileSession(self.profile)
+            self.profile_adapter = profiles.ProfileAdapter(self.profile)
+            session = self.profile_session
+
+            async def open_profile() -> profiles.ProfileSession:
+                return session
+
+            self.toolbox.add_builtin("profile", "other", open_profile, adapter=self.profile_adapter)
+        elif self.config.thinker.enabled:
+            log.warning("tools: a configured server is called profile; her own profile tools are not added")
         self.rng = random.Random()
+        # Her persona (persona.md, read again when it changes, else the shipped one): her fixed lines here.
+        self.persona = personas.store()
         self.listen_task: asyncio.Task | None = None
         self.last_poke = -1e9
         self.ears_said_at = -1e9
@@ -90,8 +112,11 @@ class Daemon:
         self.vocabulary_foreign = False     # any of them from a server (refresh_vocabulary): named by others
         self.vocabulary_task: asyncio.Task | None = None
         self.vocabulary_at = 0.0
-        # Her memory across turns (§8b): the last few exchanges, given to whoever answers.
-        self.ledger = Ledger(self.config.actions.ledger_turns, self.config.actions.ledger_age_s)
+        # Her memory across turns (§8b, §23): the user's last exchanges and what she reacted to on her own,
+        # one timeline, given to the thinker with each entry's age.
+        ledger = self.config.ledger
+        self.ledger = Ledger(ledger.turns, ledger.window_minutes * 60.0, foreign_age_s=ledger.foreign_minutes * 60.0,
+                             max_notices=ledger.notices)
         # The router's learning loop, data only (§8c): each routed sentence and what came of it,
         # in a local file, when [learning] log_outcomes is on. Off, every call is a no-op.
         self.outcomes = OutcomeLog(self.config.learning)
@@ -100,7 +125,7 @@ class Daemon:
         # Every input she handles is a run (runs.py, WIRING.md §18): its steps go to the bodies that
         # asked for them and to the Brain UI, and a run can be stopped. One foreground run at a time.
         self.runs = RunBook(keep=self.config.runs.keep, events=self.config.runs.events)
-        self.pokes = Pokes()          # the widget's "Talk when poked" lines (pokes.py)
+        self.pokes = Pokes(lines=self.persona.variants)   # the widget's "Talk when poked" lines (pokes.py)
         self.phases: asyncio.Queue | None = None    # the hub's feed of run events (start)
         # Its second half (§8d): labels from those outcomes, a candidate head trained on them when she
         # has been idle a while, and the gate following the heads dir's `current` without a restart.
@@ -143,7 +168,7 @@ class Daemon:
             return canned
         from .brain import OllamaReactor  # local import keeps tests of the plumbing model-free
 
-        return OllamaReactor(self.config.brain, fallback=canned)
+        return OllamaReactor(self.config.brain, fallback=canned, profile=self.profile)
 
     @property
     def uptime(self) -> float:
@@ -258,7 +283,8 @@ class Daemon:
             gap, self.last_poke = now - self.last_poke, now
             if gap >= self.POKE_GAP_S and now - self.ears_said_at >= self.EARS_GAP_S:
                 self.ears_said_at = now
-                self.background(self.perform(Performance(state="talking", text=EARS_LOADING, emotion="neutral")),
+                line = self.persona.line("ears_loading") or EARS_LOADING
+                self.background(self.perform(Performance(state="talking", text=line, emotion="neutral")),
                                 "ears loading line")
             return {"listening": False, "loading": self.listener.reason}
         if not self.listener.ready:
@@ -410,14 +436,34 @@ class Daemon:
             return Performance(state=self.rest_state), 0
         if event.source == "action":
             # Posted by hand (or by a future doorway that did something): body is the fact.
-            return await self.report(event, event.category != "failed")
+            performance, sent = await self.report(event, event.category != "failed")
+            # Every field of a posted action is whatever the poster wrote: strangers' text.
+            self.ledger.notice("reflex", f"you {event.app}" if event.app else "an action", performance.text or "",
+                               foreign=True)
+            return performance, sent
         if event.source == "voice" and event.title:
             return await self.handle_voice(event)
         if event.source == "notification":
             return await self.handle_notification(event)
         performance = decorate(event, await self.reactor.react(event))
         sent = await self.perform(performance)
+        self.noticed(event, performance)
         return performance, sent
+
+    def noticed(self, event: Event, performance: Performance) -> None:
+        """A commit or a track she reacted to, into the timeline (ledger.py) with her line: a commit from the
+        user's own repos is theirs; a track's name and a player's are strangers' text (WIRING §20)."""
+        if not performance.text:
+            return
+        if event.source == "git":
+            # A commit's subject is not reliably the user's words (an agent writes commits in their repos, and a
+            # subject can quote a page or a tool), so a git notice counts as strangers' text like any other.
+            what = "a commit" if event.app == "post-commit" else "a push" if event.app == "pre-push" else "git"
+            about = f"{what} in {event.title or 'a repo'}" + (f': "{event.body}"' if event.body else "")
+            self.ledger.notice("git", about, performance.text, foreign=True)
+        elif event.source == "media":
+            about = f'{event.app or "a player"} started "{event.title}"' if event.title else (event.app or "music")
+            self.ledger.notice("music", about, performance.text, foreign=True)
 
     def reload_notifications(self) -> str:
         """Read [notifications] from the config file again and use it from the next event on
@@ -437,7 +483,13 @@ class Daemon:
         run = self.runs.start("notification")
         token = runs.active.set(run)
         try:
-            return await self._handle_notification(event)
+            performance, sent = await self._handle_notification(event)
+            if performance.text:
+                # The app and the sender (only the app when it was private), never the body; her line.
+                private = performance.text == privacy.private_line(event.app)
+                about = (event.app or "an app") + (f", from {event.title}" if event.title and not private else "")
+                self.ledger.notice("notification", about, performance.text, foreign=True)
+            return performance, sent
         except asyncio.CancelledError:
             run.cancel_reason = run.cancel_reason or "shutdown"
             raise
@@ -617,7 +669,7 @@ class Daemon:
                 raise
         return await self._after_cancel(run)
 
-    STOPPED = "Okay, stopped."
+    STOPPED = "Okay, stopped."    # the shipped persona.md's `stopped`; hers comes from persona.md
 
     async def _after_cancel(self, run: Run) -> tuple[Performance, int]:
         """After a stop: one short line if a change had gone through before it (a shielded call),
@@ -646,7 +698,8 @@ class Daemon:
         if previous is not None and any(a.run is previous and a.outcome == "yes" and not a.made
                                         for a in self.approvals.history):
             return Performance(state=self.rest_state), 0   # it said "I stopped before doing it" itself
-        performance = decorate(event, Performance(state="talking", text=self.STOPPED, emotion="neutral"))
+        line = self.persona.line("stopped", self.rng) or self.STOPPED
+        performance = decorate(event, Performance(state="talking", text=line, emotion="neutral"))
         sent = await self.perform(performance)
         self.ledger.record(event.title, performance.text or "", did="stopped what she was doing")
         return performance, sent
@@ -683,7 +736,8 @@ class Daemon:
             self.acted(record, live, "reflex", outcome.ok,
                        reflex=f"{last.get('server', '')}.{last.get('tool') or route.tool}")
             performance, sent = await self.report(outcome.event(text), outcome.ok, preface)
-            self.ledger.record(text, performance.text or "", did=outcome.did)
+            # A reflex's fact is written from what a server or the player said (a track's name): foreign.
+            self.ledger.record(text, performance.text or "", did=outcome.did, foreign=True)
             return performance, sent
         if route is not None and self.actor.needs_catalogue(route):
             routing("fixed")
@@ -696,14 +750,21 @@ class Daemon:
             self.acted(record, live, "chat", True)
             return await self.chat(event, preface)
         routing("escalate")
-        outcome = await self.think(text, route, run)
+        changed = len(self.profile_session.changes) if self.profile_session is not None else 0
+        with profiles.own_sentence(run, text):   # the user's own sentence, bound to this run (her profile tools)
+            outcome = await self.think(text, route, run)
         self.acted(record, live, "thinker", outcome.ok, calls=outcome.calls)
         if music and not outcome.calls:
             self.quiet_media_until = 0.0  # she only talked; a track change now is somebody else's
         elif outcome.calls:
             # Again after the tools: the thinker can take longer than the window.
             self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S
-        performance = decorate(event, Performance(state="talking", text=prefaced(preface, outcome.fact),
+        fact = outcome.fact
+        if self.profile_session is not None and len(self.profile_session.changes) > changed:
+            # She says back what changed in the profile (profile.py); when her reply does not, code adds it.
+            extra = profiles.Profile.readback(fact, self.profile_session.changes[changed:])
+            fact = f"{fact} {extra}".strip() if extra else fact
+        performance = decorate(event, Performance(state="talking", text=prefaced(preface, fact),
                                                   emotion=outcome.emotion or "neutral"))
         sent = await self.perform(performance)
         if outcome.held is not None:
@@ -715,7 +776,10 @@ class Daemon:
         # Her question before a held call is not kept in her words either: with it in the ledger, Qwen
         # asked "Remove Blue Monday from your Liked Songs? Say yes." itself, with no call held (confirm.py).
         said = WEB_REPLY if web else confirm.LEDGER_HELD if outcome.held is not None else performance.text or ""
-        self.ledger.record(text, said, did=outcome.did)
+        # Her answer from a tool's result can carry its names (a playlist, a track): foreign in the timeline.
+        named = said == performance.text and (getattr(outcome, "foreign", False) or any(
+            not getattr(self.toolbox.adapters.get(c.server), "own_words_only", False) for c in outcome.calls))
+        self.ledger.record(text, said, did=outcome.did, foreign=named)
         return performance, sent
 
     @staticmethod
@@ -764,8 +828,8 @@ class Daemon:
         self.quiet_media_until = 0.0   # she changed nothing; a track change now is somebody else's
         log.info("voice: %s wants music found (needs_catalogue %.2f) and no music server is configured; "
                  "saying so (ADAPTERS.md: adding a server)", sentence(event.title), route.catalogue)
-        performance = decorate(event, Performance(state="talking", text=prefaced(preface, self.rng.choice(NO_CATALOGUE)),
-                                                  emotion="neutral"))
+        line = self.persona.line("no_catalogue", self.rng) or self.rng.choice(NO_CATALOGUE)
+        performance = decorate(event, Performance(state="talking", text=prefaced(preface, line), emotion="neutral"))
         sent = await self.perform(performance)
         self.ledger.record(event.title, performance.text or "", did="needs a music add-on")
         return performance, sent
@@ -773,13 +837,14 @@ class Daemon:
     async def chat(self, event: Event, preface: str = "") -> tuple[Performance, int]:
         """Gemma answers, with the recent exchanges for context. The voice fallback when the
         thinker is off (and the path every desktop event takes)."""
-        context = self.ledger.context(limit=3) if event.source == "voice" else ""
+        # Her reply is foreign in the timeline when a foreign turn was in what she read (ledger.context_trust).
+        context, foreign = self.ledger.context_trust(limit=3) if event.source == "voice" else ("", False)
         performance = decorate(event, await self.reactor.react(event, context))
         if preface:
             performance = replace(performance, text=prefaced(preface, performance.text or ""))
         sent = await self.perform(performance)
         if event.source == "voice":
-            self.ledger.record(event.title, performance.text or "")
+            self.ledger.record(event.title, performance.text or "", foreign=foreign)
         return performance, sent
 
     # What the ledger says the user said when the answer was not a sentence of theirs.
@@ -901,7 +966,7 @@ class Daemon:
         if run is not None and not outcome.ok:
             run.error = "tools"
         performance, sent = await self.report(outcome.event(text), outcome.ok)
-        self.ledger.record(text, performance.text or "", did=outcome.did)
+        self.ledger.record(text, performance.text or "", did=outcome.did, foreign=True)   # the adapter's fact
         return performance, sent
 
     @staticmethod
@@ -926,19 +991,31 @@ class Daemon:
             # Not once the run is being stopped (a change finishing first): she is not still on it.
             await asyncio.sleep(self.config.thinker.ack_after_s)
             if run is None or not run.cancel_reason:
-                await self.perform(Performance(state="thinking", text=self.rng.choice(self.config.thinker.acks)))
+                # `[thinker] acks` (deprecated) when set, else persona.md's cover lines.
+                acks = self.config.thinker.acks or self.persona.variants("cover.ack")
+                await self.perform(Performance(state="thinking", text=self.rng.choice(acks)))
             await asyncio.sleep(max(self.config.thinker.still_on_it_s - self.config.thinker.ack_after_s, 0.1))
             if run is None or not run.cancel_reason:
-                await self.perform(Performance(state="thinking", text="Still on it."))
+                await self.perform(Performance(state="thinking", text=self.persona.line("cover.still", self.rng)))
 
         reminder = asyncio.get_running_loop().create_task(cover())
         try:
             careful = route is not None and route.library_change >= 0.5
             today = self.today()
             context, foreign = await self.situation_trust(today)
-            extra = {"foreign_context": True} if foreign else {}
+            # The timeline (§23): her recent exchanges and what she reacted to on her own. A notice with
+            # strangers' text in it (a sender, a track) starts the run foreign, as the situation line does.
+            recent, noticed = self.ledger.timeline()
+            if self.profile_adapter is not None and self.profile_adapter.wanted(text, route):
+                # A sentence about the profile gets only the date as its situation: "this song" is not hers to
+                # write into the user's profile. The run is foreign or not by what is still in its prompt (the
+                # timeline: a foreign notice or turn keeps it foreign, and her profile tools then refuse).
+                context, foreign = today, False
+            extra = {"foreign_context": True} if foreign or noticed else {}
+            if noticed and not foreign:
+                log.info("thinker: a recent notice carries names others wrote; every call above playback asks")
             return await self.thinker.run(text, context, careful=careful,
-                                          topic=route.topic if route is not None else "", recent=self.ledger.lines(),
+                                          topic=route.topic if route is not None else "", recent=recent,
                                           route=route, public_context=today, run=run, **extra)
         finally:
             reminder.cancel()

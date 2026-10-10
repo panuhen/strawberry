@@ -26,6 +26,24 @@ _hearing: ContextVar[str] = ContextVar("hearing", default="")
 # Set once her answer to that sentence carries text from web results (Thinker.run): her line is
 # then logged as its length only, as the results are (adapters/web.py).
 _from_web: ContextVar[bool] = ContextVar("from_web", default=False)
+# Set once her answer says back a change to the user's profile (Thinker.run, profile.py): her line is then
+# logged as its length only, as the user's sentence is.
+_about_profile: ContextVar[bool] = ContextVar("about_profile", default=False)
+
+
+# Sentences that stay out of the journal whatever log_sentences says, and whose answer does too: one asking her
+# to remember something about the user (profile.ASKS, registered by profile.py). Their words end up in the
+# profile, which is never logged.
+_private: list[re.Pattern] = []
+
+
+def private_sentences(pattern: re.Pattern) -> None:
+    if pattern not in _private:
+        _private.append(pattern)
+
+
+def private(text: str) -> bool:
+    return any(pattern.search(text or "") for pattern in _private)
 
 
 def configure(log_sentences: bool) -> None:
@@ -36,7 +54,7 @@ def configure(log_sentences: bool) -> None:
 
 def sentence(text: str) -> str:
     """The user's sentence for a log line: quoted when log_sentences is on, else only its length."""
-    if LOG_SENTENCES:
+    if LOG_SENTENCES and not private(text):
         return repr(text)
     return f"<sentence, {len(text)} chars>"
 
@@ -64,9 +82,11 @@ def hearing(text: str) -> Iterator[None]:
     """Mark `text` as the sentence being answered while the block runs."""
     token = _hearing.set(text)
     web = _from_web.set(False)
+    about = _about_profile.set(private(text))   # a sentence for the profile: her answer is withheld too
     try:
         yield
     finally:
+        _about_profile.reset(about)
         _from_web.reset(web)
         _hearing.reset(token)
 
@@ -80,12 +100,20 @@ def from_web() -> None:
 from_foreign = from_web
 
 
+def about_profile() -> None:
+    """Her line for the sentence being answered says back a change to the user's profile (profile.py): see
+    line()."""
+    _about_profile.set(True)
+
+
 def line(text: str) -> str:
     """Her line for a log line: as it is, with the sentence she is answering replaced by its
     placeholder when log_sentences is off."""
     heard = _hearing.get()
     if not LOG_SENTENCES and text and _from_web.get():
         return f"<her line from web results, {len(text)} chars>"
+    if text and _about_profile.get():
+        return f"<her line about the profile, {len(text)} chars>"   # whatever log_sentences says
     if LOG_SENTENCES or not heard or not text:
         return text
     return re.sub(re.escape(heard), lambda _: sentence(heard), text, flags=re.IGNORECASE)
