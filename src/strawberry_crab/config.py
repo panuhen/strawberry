@@ -383,6 +383,10 @@ class Config:
     touch: TouchConfig = field(default_factory=TouchConfig)
     gestures: GesturesConfig = field(default_factory=GesturesConfig)
     path: Path | None = None
+    # input.toml (inputs.py, WIRING.md §26): the file whose [gestures] and [touch] are in use, or None; and why
+    # one that is there is not used ("" when it is, or there is none).
+    input_path: Path | None = None
+    input_error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -406,6 +410,7 @@ class Config:
             "gestures": asdict(self.gestures),
         }
         out["path"] = str(self.path) if self.path else None
+        out["input_path"] = str(self.input_path) if self.input_path else None
         return out
 
 
@@ -777,7 +782,9 @@ def _migrate_ledger(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
+def load(path: Path | None = None, env: dict[str, str] | None = None, inputs: bool = True) -> Config:
+    """config.toml, checked, with input.toml beside it laid over [gestures] and [touch] (`inputs`; inputs.overlay:
+    a file that does not check out is left out, and `input_error` says why)."""
     env = os.environ if env is None else env
     path = path or default_path()
     config = Config(path=path if path.exists() else None)
@@ -807,6 +814,10 @@ def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
     if "STRAWBERRYD_LOG" in env:
         config.daemon.log_level = env["STRAWBERRYD_LOG"]
     _validate(config)
+    if inputs:
+        from .inputs import overlay   # local: inputs builds on this module
+
+        overlay(config, path)
     return config
 
 

@@ -51,10 +51,17 @@ def run(action: str, port: int, config_path: Path | None = None, say: Callable[[
                 say(line)
         return 0
     try:
-        cfg = load(path, env={}).gestures
+        loaded = load(path, env={})
     except ConfigError as exc:
         say(f"config: {exc}")
         return 1
+    cfg = loaded.gestures
+    from .inputs import input_file
+
+    if loaded.input_error:
+        say(f"{input_file(path)} is not used: {loaded.input_error}")
+    elif loaded.input_path is not None:
+        say(f"settings and maps: {loaded.input_path} (the Brain UI's Input tab writes it)")
     say(f"gestures: {'on' if cfg.enabled else 'off'} (watch {cfg.watch}, camera {cfg.camera or 'the first'})")
     say("map: " + ", ".join(f"{k} -> {v}" for k, v in cfg.map.items()))
     problems = missing()

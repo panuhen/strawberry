@@ -30,6 +30,7 @@ from . import logtext, media, privacy
 from . import persona as personas
 from . import profile as profiles
 from .inbox import Inbox, MessagesAdapter, MessagesSession
+from .inputs import InputDesk
 from .outcomes import OutcomeLog
 from .pokes import Pokes
 from .reactions import decorate, is_burst
@@ -178,6 +179,9 @@ class Daemon:
         self.touch_at = -1e9          # when the last touch action started ([touch] cooldown_s)
         self.touch_busy = False       # one touch action at a time
         self.touch_stats = {"acted": 0, "failed": 0, "refused": 0, "cooldown": 0}
+        # input.toml (live), the last gestures and touch actions, the Input tab's live view and practice mode
+        # (inputs.py, WIRING.md §17, §26).
+        self.input = InputDesk(self)
 
     def bus_secret(self) -> str | None:
         """The bus secret, made if this install has none yet; None (and a log line) when the state dir
@@ -226,6 +230,7 @@ class Daemon:
             self.hub.pump_task = asyncio.get_running_loop().create_task(self.hub.pump(self.phases))
         self.outcomes.start()
         self.trainer.start()
+        self.input.store.start()
         if self.config.voice.enabled and self.config.voice.hotwords and self.toolbox.servers:
             self.vocabulary_task = asyncio.get_running_loop().create_task(self._vocabulary_loop())
         if self.wake is not None:
@@ -278,6 +283,7 @@ class Daemon:
                 pass
         for task in list(self.background_tasks):
             task.cancel()
+        self.input.store.close()
         await self.trainer.close()
         self.outcomes.close()
         # Each part is closed even if another one fails: an HTTP session left open is an
@@ -1148,15 +1154,27 @@ class Daemon:
         (one at a time, `cooldown_s` apart). Nothing is said; the timeline gets a notice when it acted."""
         self.targets.touched(body, body.id, touch.entity, touch.kind, touch.t)
         action = self.touch_action(touch.entity.id, touch.kind)
-        if action:
+        entry = None
+        recent = self.input.recent
+        name = f"{touch.entity.id} {touch.kind}"
+        if action and self.input.practice:
+            # Practice mode (the Brain UI's Input tab, never saved): shown to the bodies, nothing done.
+            log.info("touch: %s %s -> %s in practice mode; nothing done", touch.entity.id, touch.kind, action)
+            recent.add("touch", name, "practice", action)
+            action = ""
+        elif action:
             now = time.monotonic()
             if self.touch_busy or now - self.touch_at < self.config.touch.cooldown_s:
                 self.touch_stats["cooldown"] += 1
                 log.info("touch: %s %s -> %s skipped (one at a time, %.1f s apart)", touch.entity.id, touch.kind,
                          action, self.config.touch.cooldown_s)
+                recent.add("touch", name, "ignored", action, "cooldown")
                 action = ""
             else:
                 self.touch_at, self.touch_busy = now, True
+                entry = recent.add("touch", name, "running", action)
+        else:
+            recent.add("touch", name, "ignored", why="not_mapped")
         message: dict[str, Any] = {"type": "touched", "t": round(time.monotonic(), 3), "body": body.id,
                                    "entity": touch.entity.id, "kind": touch.kind}
         if touch.with_ is not None:
@@ -1169,28 +1187,33 @@ class Daemon:
             await self.hub.send_phase(message, exclude=body)
         finally:
             if action:
-                self.background(self._touch_act(touch, action), f"touch {action}")
+                self.background(self._touch_act(touch, action, entry), f"touch {action}")
 
-    async def _touch_act(self, touch: Touch, action: str) -> None:
+    async def _touch_act(self, touch: Touch, action: str, entry: dict[str, Any] | None = None) -> None:
+        outcome_of = ("failed", "error")     # what the Input tab's recent row says when it ends
         try:
             found = self.actor.reflex_named(action)
             if found is None:
                 self.touch_stats["refused"] += 1
                 log.info("touch: %s %s -> %s: nothing can do it (no player, or actions off)", touch.entity.id,
                          touch.kind, action)
+                outcome_of = ("failed", "nothing_can_do_it")
                 return
             server, reflex = found
             if self.actor.asks_first(server, action):
                 # The config check missed it (a tier the server gives itself): a touch cannot answer a question.
                 self.touch_stats["refused"] += 1
                 log.warning("touch: %s.%s would wait for a yes; a touch does not make it", server, action)
+                outcome_of = ("ignored", "would_ask")
                 return
             self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S   # her doing: no reaction to the track
             outcome = await self.actor.fire(f"(touch {touch.entity.id} {touch.kind})", server, action, reflex)
             if outcome is None or not outcome.ok:
                 self.touch_stats["failed" if outcome is not None else "refused"] += 1
+                outcome_of = ("failed", "tool_failed" if outcome is not None else "refused")
                 return
             self.touch_stats["acted"] += 1
+            outcome_of = ("did", "")
             # Her timeline (§23): what the user did and what came of it, in code's words. The entity is named by
             # its id and kind (short tokens), never by the body's label; `did` is the reflex's own ("skipped to
             # the next track"), never a track's name. So it is the user's own act, not strangers' text.
@@ -1199,6 +1222,8 @@ class Daemon:
             self.ledger.notice("reflex", about, "", foreign=False)
         finally:
             self.touch_busy = False
+            if entry is not None:
+                self.input.recent.finish(entry, *outcome_of)
 
     async def body_target(self, body: Any, pointing: Pointing) -> None:
         """A trusted body's `target`: the current target for `[touch] target_s`, or cleared; the other bodies

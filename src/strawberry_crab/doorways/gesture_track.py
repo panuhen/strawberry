@@ -88,11 +88,14 @@ def features(hand: Hand, min_score: float = 0.5) -> Features:
 
 def hand_message(hand: Hand, f: Features, engaged: bool) -> dict[str, Any]:
     """What a body gets of a hand (PROTOCOL Part 1d): the palm, its size, pinch and openness, whether it is up, the
-    wrist and the five fingertips. Numbers and fixed names only."""
-    return {"present": True, "x": round(f.x, 3), "y": round(f.y, 3), "size": round(f.size, 3),
-            "pinch": round(f.pinch, 3), "open": round(f.open, 3), "engaged": engaged,
-            "points": {name: [round(_clip(hand.points[i][0]), 3), round(_clip(hand.points[i][1]), 3)]
-                       for name, i in TIPS.items()}}
+    shape seen now (absent for none), the wrist and the five fingertips. Numbers and fixed names only."""
+    message = {"present": True, "x": round(f.x, 3), "y": round(f.y, 3), "size": round(f.size, 3),
+               "pinch": round(f.pinch, 3), "open": round(f.open, 3), "engaged": engaged,
+               "points": {name: [round(_clip(hand.points[i][0]), 3), round(_clip(hand.points[i][1]), 3)]
+                          for name, i in TIPS.items()}}
+    if f.shape:
+        message["shape"] = f.shape
+    return message
 
 
 @dataclass
