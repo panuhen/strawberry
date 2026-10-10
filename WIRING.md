@@ -1045,7 +1045,7 @@ many more there are; a click goes to its section. The new parts:
 | `POST /ui/api/apply` | `[notifications]` read again from config.toml (`{"applied": "notifications", "body": …}`), else 409 | the page |
 | `GET /ui/api/input`; `GET /ui/api/input/live` (events); `POST /ui/api/input/check`, `input/save` (`{settings}`), `input/practice` (`{on}`), `input/camera` (`{on}`) | the Input tab: status (with `camera: {enabled, state}`), settings in use, the dropdowns' choices, bodies, the file and its status, recent; the live view; a draft checked (`ok`, `problems`, `text`, `diff`); saved as input.toml (400 when it does not check out); practice mode; the camera switch (`{enabled, status}`; 409 when config.toml cannot be written or does not load) | the page |
 | `GET /ui/api/apps`; `POST /ui/api/apps/check`, `apps/save` (`{apps: [{id, name, aliases, open, close, close_asks}]}`) | the Apps tab (§27): the list in use, the installed apps, the file and its status; a list checked (`ok`, `problems`, `text`, `diff`); saved as apps.toml (400 when it does not check out or names an id that is not installed) | the page |
-| `GET /ui/api/config`; `POST /ui/api/config/check` (`{text, edits?, base?}`), `config/save` (`{text, base}`); `GET /ui/api/tools` | the Config file and Tools tabs (§28): the schema, the file's text and values with secrets hidden, `base` (sha256, mtime), a change waiting on her card; a draft checked (`ok`, `problems`, `text`, `values`, `diff`, `lowering`, `changed`, `restart`, `live`, `stale`); saved (200), asked about on her card (202 `{pending}`), 400 with the problems, 409 when the file changed under the page or a change already waits; the tool servers with each tool's tier, flags and whether it is offered | the page |
+| `GET /ui/api/config`; `POST /ui/api/config/check` (`{text, edits?, base?}`), `config/save` (`{text, base}`); `GET /ui/api/tools` | the Config file and Tools tabs (§28): the schema, the file's text and values with secrets hidden, `base` (`tag`: an HMAC of the file under a per-start key, and the mtime), a change waiting on her card; a draft checked (`ok`, `problems`, `text`, `values`, `diff`, `lowering`, `changed`, `restart`, `live`, `stale`); saved (200), asked about on her card (202 `{pending}`), 400 with the problems, 409 when the file changed under the page or a change already waits; the tool servers with each tool's tier, flags and whether it is offered | the page |
 | `GET /ui/api/runs` | also carries `timeline` (above) | the page |
 
 **The security model.** Every other route refuses any request with an `Origin` header (§2), so no web page the user visits can make her talk, read `/health` or open `/ws`. `/ui` is the one place a browser is let in, on these terms (`brainui.checked`, one decorator on every UI handler; `server.local_only` lets a handler through only when it carries the decorator's mark, so a new route cannot open itself by accident, and an unmatched path such as `/ui/../health` still meets the Origin rule):
@@ -1284,8 +1284,8 @@ listener or a noisy room cannot hold a question open.
 - the Brain UI (§17): `POST /ui/api/approval`, with the session and the CSRF header.
 
 An approval may name who can say yes (`Approval.yes_by`, `ApprovalBook.request(..., yes_by=)`): a Brain UI settings
-change that loosens safety (§28) takes a yes from the user's sentence or her card only (`voice`, `typed`, `body`),
-never from the page that asked for it (`not_here`, and the page shows no Yes) nor a thumb; a no from anyone. Its
+change that loosens safety (§28) takes a held yes on her card only (`body`), never from the page that asked for it,
+a thumb, or a sentence (`not_here`: she says "That one needs a hold on Yes on my card."); a no from anyone. Its
 `hold` and `timeout_s` are set by the caller (a hold, 60 s), not by the tier, and a thumb never says yes to a hold
 (`GestureDesk.answerable`).
 
@@ -2518,13 +2518,13 @@ config.toml edited in the Brain UI (§17), under Settings: a **Config file** tab
 editor keeps working.
 
 ```
-page ──GET config──▶ the schema, the file's text with secrets hidden, base = (sha256, mtime)
+page ──GET config──▶ the schema, the file's text with secrets hidden, base = (tag, mtime)
      ──POST config/check {text, edits}──▶ unmask ─▶ edits (tomlkit) ─▶ config.load as at start ─▶ mask
                                            ◀── text, values, diff, lowering, restart / live, stale
      ──POST config/save {text, base}──▶ the same check; the file still at `base`?
            loosens nothing ─▶ backup + one-step write ─▶ apply_live ─────────────────────────▶ 200
            loosens safety  ─▶ a `settings` run: her line, approval.request (hold, 60 s, yes_by) ─▶ 202
-                                  hold Yes on her card / say or type yes ─▶ the file still at `base`?
+                                  a held Yes on her card, nothing else ─▶ the file still at `base`?
                                   ─▶ backup + write exactly the text asked about ─▶ apply_live
 ```
 
@@ -2546,39 +2546,57 @@ masked draft. `changed` compares the loaded sections, so a comment or a key writ
 reload; the Input store's `apply` with input.toml over them, `enabled` kept); every other section says *needs a
 restart* (`strawberry restart`; she never restarts herself).
 
-**A file changed under the page** is never overwritten: the page sends the hash it loaded (`base`), the check says
-`stale` when the file differs, the save answers 409, and the write itself compares the hash again just before it
-(`configform.write`, which raises `Stale`). The page offers *Reload from the file*. The write: the old file backed up
-beside it (`config.toml.bak-<time>`, as configedit does), the new one written in one step (`paths.write_atomic`, as
-private as the old file was), never with a placeholder in it.
+**A file changed under the page** is never overwritten: the page sends back the `tag` it loaded (an HMAC of the file
+under a key made at each start: the plain sha256 of a small file with one unknown token in it could be tested against
+guesses, so it stays in the daemon), the check says `stale` when the file differs, the save answers 409, and the
+write compares the tag again just before it (`configform.write`, which raises `Stale`). The page offers *Reload from
+the file*. The write holds config.toml's lock (`configedit.locked`: a lock in the process and an flock in the state
+dir, which configedit's own writers, the camera switch, the tray and `strawberry setup`, take too) across the tag
+check, the backup and the replace; the backup (`config.toml.bak-<time>`) is created 0600 (O_EXCL) before a byte goes
+in, the new file is written to a fresh `mkstemp` file (0600) and renamed over it, so config.toml is the user's alone;
+the last ten backups are kept; a text with a placeholder in it is never written.
 
 **What loosens safety** (`configform.lowering(old, new)`, on the two files as loaded, whatever made the change: the
 form, the raw view or the Tools tab; a table of cases in the tests):
 
 | Setting | Loosens when |
 |---|---|
-| `[tools.servers.*]` | a server is new; its `command`, `args`, `env`, `cwd` or `url` changes; its adapter changes; a trust flag goes (with the adapter's: trust.flags_for); a tool leaves its `confirm` list (absent: the adapter's) or its `careful` list; `offer` goes asked → topic → always; a recall workspace is added |
-| `[tools] enabled` | false → true |
-| `[approvals] risk` | a tier goes down against the entry before, or, with none, the adapter's own tier for a tool (else `change`) |
-| `[approvals] hold` | a tier is taken off |
-| `[notifications] body`, `body_apps` | an app's mode goes off → react → glance |
-| `[daemon] log_sentences`, `[learning] log_outcomes`, `[messages] enabled` | false → true |
-| `[daemon] host` | from this machine to beyond it |
-| `[brain] ollama_url` | to another machine |
-| `[gestures] watch`, `approvals` | armed → always; false → true |
-| `[ledger] foreign_minutes` | shorter |
+| Kind (her card, most severe first) | Setting | Loosens when |
+|---|---|---|
+| runs | `[tools.servers.*]` | a server with a command is new; its `command`, `args`, `env` or `cwd` changes; its adapter changes |
+| egress | `[tools.servers.*]`, `[daemon] host`, `[brain] ollama_url` | a server with an address is new or its `url` changes; the daemon on every address (`0.0.0.0`, `::`, empty) or from this machine to beyond it; the models on another machine |
+| approvals | `[tools.servers.*]`, `[tools] enabled` | a trust flag goes (with the adapter's: trust.flags_for); a tool leaves its `confirm` list (absent: the adapter's) or its `careful` list; `offer` goes asked → topic → always; tools switched on |
+| approvals | `[approvals] risk` | a tool's **effective** tier goes down (`configform.tier`, with Server.risk's own precedence: a per-tool entry as written; a whole-server entry never under the adapter's tier or a destructiveHint the toolbox knows), for every server either file names, a tool the server lists, one an entry or the adapter names, and an ordinary one nothing names |
+| approvals | `[approvals] hold`, `change_s`, `sends_s`, `destructive_s`, `grace_s` | a tier taken off; a longer wait for a yes |
+| approvals | `[ledger]`, `[gestures] approvals` | `foreign_minutes` shorter, or the shorter of it and `window_minutes`; `notices` to 0 (strangers' text would leave her memory and stop making changes ask); a thumb answering her card |
+| privacy | `[notifications]` | an app's body mode goes off → react → glance; `max_body_chars` longer; an app off `ignore_apps`; `only_apps` wider or emptied |
+| privacy | `[daemon]`, `[learning]`, `[messages]`, recall `workspaces` | `log_sentences`, `log_outcomes`, the inbox switched on; `log_level` to DEBUG; a workspace added |
+| gestures | `[gestures]` | `watch` armed → always; `require_facing` or `arming` off; `hold_ms` shorter; `zone` lower on the picture (larger); `min_size` smaller; `armed_s` longer |
 
-Everything else is neutral or raises safety and saves after the diff. A file broken under her is compared with the
-settings she runs, never with the defaults. `[gestures] enabled` is refused here outright (`configform.refused`): the
-camera goes on only by its explicit switches (the Input tab's, the tray's, the CLI). A change that loosens anything
-waits for **her card**: a `settings` run (§18) says one line ("That settings change loosens my safety rules. Hold yes
-on my card if it was you.") and opens an approval (§19) with the card line "Save the settings? <the first reason>
-(+N more).", a hold for a yes, 60 s, and `yes_by` = voice, typed, body: the page that asked cannot say yes
-(`not_here`; its Runs and Config file tabs show no Yes) and neither can a thumb; a No may come from anywhere. The
-text written after the yes is the text checked at the save, kept in the daemon and bound to the approval by its
-sha256; the file must still be at `base`. One such change waits at a time. The Input tab's input.toml replaces
-`[gestures]` whole, so its save goes through the same check against what she runs with: a thumb that answers her
-card or a camera always watching asks on her card there too (`brainui._input_asks`, the same `Pending`).
+Everything else is neutral or raises safety and saves after the diff. The draft is read twice, the file alone and
+with input.toml laid over `[gestures]` and `[touch]` as she runs it (`inputs.overlay`), and the findings of both are
+merged; a change that would make input.toml stop checking out (a server whose touch reflex would now ask first) is
+refused. A file broken under her is compared with the settings she runs, never with the defaults. `[gestures]
+enabled` is refused here outright (`configform.refused`): the camera goes on only by its explicit switches (the Input
+tab's, the tray's, the CLI); so is an Ollama address with a login part, a backslash or a space.
+
+A change that loosens anything waits for **her card**, and only when she is asking nothing else: while any approval
+is open the save answers 409 (`busy`; a new question would supersede that one, and a yes meant for it could land on
+this). A `settings` run (§18) says one line ("That settings change loosens my safety rules. Hold yes on my card if it
+was you.") and opens an approval (§19): a hold for a yes, 60 s, `yes_by` = body. Only a held Yes on her card takes it:
+not the page that asked (`not_here`; its Runs and Config file tabs show no Yes), not a thumb, and not a yes said or
+typed, which may have been meant for an earlier question; she answers that with "That one needs a hold on Yes on my
+card." A No may come from anywhere. Her card's line (`configui._card_line`) cannot be forged from the draft: fixed
+words first ("Settings change:"), then every kind of loosening there is, most severe first; what runs or connects by
+its command line or address (an app by its desktop id), each quoted, without quotes, semicolons or control
+characters of its own, cut so the fixed words always fit, at most two and then how many more; every other kind by
+its count. "Settings change: runs "notes-mcp --verbose"; fewer approvals ×2; less privacy ×1." The text written after
+the yes is the text checked at the save, kept in the daemon and bound to the approval by its sha256; the file must
+still be at `base`. One such change waits at a time; an unexpected error while she waits ends it as failed. The Input
+tab's input.toml replaces `[gestures]` whole, so its save goes through the same check against what she runs with (a
+thumb that answers her card, a camera always watching, an easier gesture: `brainui._input_asks`), and the Apps tab's
+apps.toml likewise (an app she may newly open or close, or close without asking: `appsui._apps_asks`), each with the
+same `Pending` and its own writer. Tightening and neutral lists save at once.
 
 **Secrets never reach the page** (`configform.Vault`, one per page session, in memory). Hidden as `<hidden N: kept
 as is>`: every value of a server's `env`; any value (a string, or a number) under a key named like a secret (token,
@@ -2593,9 +2611,13 @@ env table, an address with a login, a token-like word) or holds a hidden value i
 N: kept as is>`, and comes back only where it is still a comment. The shipped template's lines are never hidden.
 Before anything leaves the daemon the masked text is parsed again: every secret place must hold a placeholder and no
 hidden value or comment may be anywhere in it, else nothing is shown ("cannot be shown here safely; edit it in a text
-editor"). The page sends the masked text back and the vault puts the values in (a number as a number); a placeholder
-it never gave out, one with text added, or one in a key or moved out of a comment is refused. Messages for the page
-and her card (a startup refusal that quotes a value, a reason naming a command) are scrubbed of every hidden value.
+editor"). The page sends the masked text back and the vault puts the values in (a number as a number), each only at
+the path it was shown at; a placeholder it never gave out, one with text added, one moved to another key, or one in
+a key or moved out of a comment is refused. Messages for the page and her card (a startup refusal that quotes a
+value, a reason naming a command) are scrubbed of every hidden value, as written and as repr() and JSON quote it.
+No pattern runs over more than 4096 characters (`MAX_SCAN`; some backtrack, and a 200 000-character line must not
+stall the daemon): a longer comment or argument is hidden whole, so is the word after a longer flag and a longer query
+key, and a longer value counts as a token when it has no space; the token test itself is linear (`token_like`).
 Nothing here logs a value. The Settings tab's read-only view hides the same places (`secret_paths`).
 
 **The Tools tab** lists every server she has, configured and built in (`desktop`, `messages`, `profile`), with its
@@ -2611,8 +2633,8 @@ read_note), and widening it asks on her card.
 widget and read by the tray (§13, §14); config.toml has no section for them, so there is no clean path from this
 editor, and the page does not write the file behind the widget's back.
 
-**Not done here.** apps.toml (§27) keeps its own tab and ticks: unticking *ask before closing* saves without her card.
-The OAuth login is not run from the daemon.
+**Not done here.** The OAuth login is not run from the daemon. Her card shows a settings change with the `change`
+tier's look: the widget has no wording of its own for it yet (the line's "Settings change:" says what it is).
 
 **The Input tab's second hand** (§26, PROTOCOL Part 1d): the live view draws `hands` as they come, the primary as
 before and the other thinner in a grey, each labelled L or R (`handedness`), a dotted line between the palms with the

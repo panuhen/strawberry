@@ -15,8 +15,9 @@ package and the widget binary.
   with the changes against the file and what needs a restart; `[notifications]`, `[gestures]` and `[touch]`
   apply at once. A change that loosens safety (a new or changed tool server, a lower tier, a confirm list
   shortened, more of a message read, sentences logged, the daemon or the models off this machine, a thumb
-  answering her card, and so on) is saved only after a held **Yes** on her card or your own spoken or typed
-  yes; the page that asked cannot say yes. The camera is still switched only by its own switches. Secrets
+  answering her card, and so on) is saved only after a held **Yes** on her card, and only while she asks
+  nothing else; neither the page nor a spoken yes counts. The Input and Apps tabs ask the same way when
+  they would let her do more (a thumb answering her card, an app she may newly open or close). The camera is still switched only by its own switches. Secrets
   in the file never reach the page, the diff, her card or the log. A file changed under the page is never
   overwritten, and every save keeps a backup. WIRING §28.
 - **A Tools tab in the Brain UI.** Every tool server with each tool's approval tier, trust flags and whether
