@@ -106,6 +106,23 @@ def no_real_notification_area(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_desktop_commands(monkeypatch, tmp_path_factory):
+    """Nor the desktop: no test may launch, close or lock anything, or change the volume, for real. Every program
+    the desktop controls run goes through desktop.run_command, refused here; tests/test_desktop.py hands them a
+    fake runner. The installed apps are a throwaway dir's (none), so the default list does not depend on what
+    this machine has installed."""
+    from strawberry_crab import apps, desktop
+
+    async def refuse(argv, **kwargs):
+        raise AssertionError(f"a test tried to run {argv[:1]} for real")
+
+    monkeypatch.setattr(desktop, "run_command", refuse)
+    empty = tmp_path_factory.mktemp("share")
+    monkeypatch.setenv("XDG_DATA_DIRS", str(empty))
+    monkeypatch.setattr(apps, "SNAP_DIR", empty / "snapd")
+
+
+@pytest.fixture(autouse=True)
 def no_real_tray_start(monkeypatch):
     """Nor may a test start a real tray the way `strawberry install` does on Windows; the tests of
     install record the start instead (tests/test_startup.py)."""

@@ -555,6 +555,9 @@ class Toolbox:
         }
         self.functions: dict[str, ToolSpec] = {}   # model-facing function name -> spec, per last tools_for
         self.risks: dict[str, str] = {}             # [approvals] risk, set by the daemon (Server.risk)
+        # recover(toolbox, server, name, arguments, result, shape) -> a better ToolResult or None: one more try after
+        # a failed call, set by the daemon (desktop.SpotifyWake: a play with no Spotify device opens Spotify).
+        self.recover: Callable[..., Awaitable[ToolResult | None]] | None = None
         for server in self.servers.values():
             server.on_adapter = self.adapters.__setitem__
 
@@ -633,7 +636,16 @@ class Toolbox:
         `shape`: as a model reads it (Server.call)."""
         if server not in self.servers:
             return ToolResult(server, name, False, f"no server named {server!r} in [tools.servers]", 0.0, arguments=arguments or {})
-        return await self.servers[server].call(name, arguments, result_chars or self.config.result_chars, shape=shape)
+        result = await self.servers[server].call(name, arguments, result_chars or self.config.result_chars, shape=shape)
+        if not result.ok and self.recover is not None:
+            try:
+                better = await self.recover(self, server, name, dict(arguments or {}), result, shape)
+            except Exception as exc:   # noqa: BLE001 - the hook must never cost the call its own answer
+                log.warning("tools: %s.%s: the recovery after a failure failed (%s)", server, name, type(exc).__name__)
+                better = None
+            if isinstance(better, ToolResult):
+                return better
+        return result
 
     def label(self, server: str, name: str) -> str:
         """The tool as the widget's step chip names it ("Spotify: next", "searching the web…"): the
@@ -654,22 +666,32 @@ class Toolbox:
         found = self.servers.get(server)
         return found is not None and name in found.read_only
 
-    def needs_confirm(self, server: str, name: str) -> bool:
-        """Is this tool on its server's `confirm` list: a spoken yes first (confirm.py)?"""
+    def needs_confirm(self, server: str, name: str, arguments: dict[str, Any] | None = None) -> bool:
+        """Is this tool on its server's `confirm` list: a spoken yes first (confirm.py)? With the call's `arguments`,
+        an adapter may decide for that one call (`Adapter.confirm_call`: the desktop server's close asks unless the
+        app says otherwise), unless the server's config has a `confirm` list of its own."""
         found = self.servers.get(server)
-        return found is not None and name in found.confirm
+        if found is None:
+            return False
+        if arguments is not None and "confirm" not in found.config:
+            decided = found._adapted("confirm_call", None, name, arguments)
+            if isinstance(decided, bool):
+                return decided
+        return name in found.confirm
 
     def risk(self, server: str, name: str) -> str:
         """The tool's approval tier (Server.risk, with `[approvals] risk`); `change` for an unknown server."""
         found = self.servers.get(server)
         return found.risk(name, self.risks) if found is not None else "change"
 
-    def needs_approval(self, server: str, name: str, foreign: bool = False) -> bool:
-        """Does this call wait for a yes (approvals.needed): on its server's `confirm` list, or `sends` or
-        `destructive`, or, with `foreign` (strangers' text is in the conversation), anything but `read`?"""
+    def needs_approval(self, server: str, name: str, foreign: bool = False,
+                       arguments: dict[str, Any] | None = None) -> bool:
+        """Does this call wait for a yes (approvals.needed): on its server's `confirm` list (for these `arguments`,
+        when given: `needs_confirm`), or `sends` or `destructive`, or, with `foreign` (strangers' text is in the
+        conversation), anything above `playback`?"""
         from .approvals import needed   # local: approvals imports confirm, which imports this module
 
-        return needed(self.needs_confirm(server, name), self.risk(server, name), foreign=foreign)
+        return needed(self.needs_confirm(server, name, arguments), self.risk(server, name), foreign=foreign)
 
     def flags(self, server: str) -> frozenset[str]:
         """The server's trust flags (trust.py); all three for a server that is not configured."""

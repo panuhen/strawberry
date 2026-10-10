@@ -31,6 +31,8 @@ from . import persona as personas
 from . import profile as profiles
 from .inbox import Inbox, MessagesAdapter, MessagesSession
 from .inputs import InputDesk
+from .apps import AppStore, apps_file
+from .desktop import SERVER, TOPIC as DESKTOP_TOPIC, Desktop, DesktopAdapter, DesktopSession, SpotifyWake
 from .outcomes import OutcomeLog
 from .pokes import Pokes
 from .reactions import decorate, is_burst
@@ -65,6 +67,7 @@ class Daemon:
         self.speaker = speaker or Speaker(self.config.speech)
         self.listener = listener or Listener(self.config.voice)
         self.toolbox = toolbox or Toolbox(self.config.tools)
+        self._desktop_controls()
         # A configured server with an adapter brings its own phrases for the gate ("save this song"
         # only means something with a library behind it) and its own reflexes; the bare music
         # commands no server covers go to the desktop's media controls, which every player
@@ -72,6 +75,7 @@ class Daemon:
         self.gate = gate or Gate(self.config.gate, self.config.brain.ollama_url,
                                  examples=gate_examples(self.toolbox.adapters))
         self.mpris = media.controls() if actor is None and self.config.actions.mpris else None
+        self.desktop.bus = getattr(self.mpris, "bus", None)     # a media player's Quit, for close_app
         self.actor = actor or Actor(self.config.actions, self.toolbox, mpris=self.mpris)
         self.thinker = thinker or Thinker(self.config.thinker, self.toolbox, self.config.brain.action_model,
                                           self.config.brain.ollama_url, profile=self.profile)
@@ -183,6 +187,30 @@ class Daemon:
         # (inputs.py, WIRING.md §17, §26).
         self.input = InputDesk(self)
 
+    def _desktop_controls(self) -> None:
+        """The desktop's own controls (desktop.py, apps.py, WIRING §27): the apps on the user's list (apps.toml, read
+        again when it changes), the computer's volume and the screen lock, as a builtin server whose whole sentences
+        are said reflexes, added before the actor so it knows them. A play with no Spotify device opens Spotify when
+        the list allows it (`Toolbox.recover`)."""
+        self.apps = AppStore(apps_file(self.config.path))
+        self.desktop = Desktop()
+        if not hasattr(self.toolbox, "add_builtin"):
+            return
+        if SERVER in self.toolbox.servers:
+            log.warning("tools: a configured server is called %s; her own desktop tools are not added", SERVER)
+            return
+        session = DesktopSession(self.apps, self.desktop)
+
+        async def open_desktop() -> DesktopSession:
+            return session
+
+        self.toolbox.add_builtin(SERVER, DESKTOP_TOPIC, open_desktop, adapter=DesktopAdapter(self.apps))
+        self.toolbox.recover = SpotifyWake(self.apps, self.desktop, say=self.say_aside)
+
+    async def say_aside(self, text: str) -> None:
+        """A short line while a run goes on ("Opening Spotify…", desktop.SpotifyWake): in her thinking pose."""
+        await self.perform(Performance(state="thinking", text=text))
+
     def bus_secret(self) -> str | None:
         """The bus secret, made if this install has none yet; None (and a log line) when the state dir
         cannot be written, in which case nothing can post to the daemon or answer her."""
@@ -231,6 +259,7 @@ class Daemon:
         self.outcomes.start()
         self.trainer.start()
         self.input.store.start()
+        self.apps.start()
         if self.config.voice.enabled and self.config.voice.hotwords and self.toolbox.servers:
             self.vocabulary_task = asyncio.get_running_loop().create_task(self._vocabulary_loop())
         if self.wake is not None:
@@ -284,6 +313,7 @@ class Daemon:
         for task in list(self.background_tasks):
             task.cancel()
         self.input.store.close()
+        self.apps.close()
         await self.trainer.close()
         self.outcomes.close()
         # Each part is closed even if another one fails: an HTTP session left open is an

@@ -270,7 +270,10 @@ def test_the_map_keys_are_gestures_optionally_for_a_target(tmp_path):
 
 def test_the_shipped_map_is_read_and_playback_only():
     assert gestures.check_map(DEFAULT_GESTURE_MAP) == DEFAULT_GESTURE_MAP
-    assert set(gestures.ACTIONS.values()) <= set(gestures.TIERS)
+    # The screen lock is the one action above playback a gesture may run (WIRING §26, §27), and it is not mapped
+    # by default.
+    assert {t for a, t in gestures.ACTIONS.items() if a not in gestures.EXCEPTIONS} <= set(gestures.TIERS)
+    assert gestures.EXCEPTIONS == {"lock"} and "lock" not in DEFAULT_GESTURE_MAP.values()
     assert GesturesConfig().enabled is False                                    # opt-in
 
 
@@ -517,7 +520,7 @@ async def test_a_reflex_whose_calls_are_above_playback_is_not_run_by_a_gesture()
         def risk(self, server, tool):
             return self.risks.get(f"{server}.{tool}", "playback")
 
-        def needs_approval(self, server, tool):
+        def needs_approval(self, server, tool, foreign=False, arguments=None):
             return self.risk(server, tool) in ("sends", "destructive")
 
         def label(self, server, tool):

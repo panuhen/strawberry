@@ -8,7 +8,8 @@ the CPU) turns frames into hand landmarks and gesture names and posts only those
 
 A recognised gesture is already typed, so it goes neither to the gate nor to a model: the map in
 `[gestures.map]` names one of the reflex actions voice has (`ACTIONS`), and only those of the `read` and
-`playback` tiers (what plays and how; undone in a second). Anything else is refused when the config loads.
+`playback` tiers (what plays and how; undone in a second), and the screen lock, the one deliberate exception
+(`EXCEPTIONS`, WIRING §27). Anything else is refused when the config loads.
 While an approval is open, a thumbs up or down held for the hold time answers it, for the tiers a card
 answers with a tap (not one in `[approvals] hold`, never `destructive`); a thumbs down may refuse any.
 
@@ -84,8 +85,14 @@ ACTIONS = {
     "wave_back": "read",
     # Her voice off for `[gestures] shh_minutes` (the widget's quiet: the bubble stays): what plays, her own voice.
     "quiet": "playback",
+    # The screen locked (desktop.py, WIRING §27): never mapped by default; see EXCEPTIONS.
+    "lock": "change",
 }
 TIERS = ("read", "playback")
+# The one action above `playback` a gesture may run, by design: locking the screen is a security feature the user
+# wants within reach of a hand, it changes nothing that a password does not undo, and it never asks. It is mapped
+# only by the user (the Input tab), never by default, and nothing else may join it here (WIRING §26, §27).
+EXCEPTIONS = frozenset({"lock"})
 # What `done` may say came of it, besides an ACTIONS name: an approval answered, command mode armed.
 OUTCOMES = ("yes", "no", "arm")
 # The gestures that answer her card, and with what: a thumb or the head.
@@ -263,7 +270,7 @@ def check_map(mapping: dict[str, Any]) -> dict[str, str]:
                 f"gestures.map.{key} = {action!r}: a gesture runs only read and playback actions, which are "
                 f"{', '.join(ACTIONS)}. Saving, playlists, messages and removals are said or typed, where she "
                 "can ask first.")
-        if ACTIONS[action] not in TIERS:     # a table edit that adds a higher action trips here, not at runtime
+        if ACTIONS[action] not in TIERS and action not in EXCEPTIONS:   # a table edit adding a higher action trips here
             raise GestureError(f"gestures.map.{key} = {action!r} is of the {ACTIONS[action]} tier; gestures run "
                                f"{' and '.join(TIERS)} only")
         if (name in SLIDES) != (action == "volume"):
@@ -674,9 +681,11 @@ class GestureDesk:
         token = runs.active.set(run)
         try:
             daemon.quiet_media_until = time.monotonic() + daemon.QUIET_MEDIA_S
+            # The lock's own tier, and only for it (EXCEPTIONS): its calls are still checked against it.
+            tiers = TIERS + ((ACTIONS[action],) if action in EXCEPTIONS else ())
             outcome = await daemon.actor.act_named(action, found,
                                                    on_call=daemon._reflex_events(run, daemon._routing(run, None)),
-                                                   tiers=TIERS)
+                                                   tiers=tiers)
             if outcome is None:
                 run.error = "tools"
                 self.last = {"name": name, "action": action, "ok": False}
