@@ -708,7 +708,8 @@ def test_nothing_of_the_face_leaves_the_watcher(tmp_path, monkeypatch, caplog):
     assert [p["name"] for p in posts if p.get("phase") == "done"] == ["thumb_up"]
     hands = [p for p in posts if p.get("present")]
     assert hands and all(set(p) - {"facing", "face"} <= {"present", "x", "y", "size", "pinch", "open", "engaged",
-                                                         "shape", "points", "curl", "gap"} for p in hands)
+                                                         "shape", "points", "curl", "gap", "hands"} for p in hands)
+    assert all("facing" not in h and "face" not in h for p in hands for h in p["hands"])   # the face: top level only
     assert all(p["facing"] is True for p in hands)
     text = json.dumps(posts) + caplog.text + watcher.report
     for leaked in ("1.2345", "6.789", "0.4321", "0.5678", "0.2468", "yaw", "pitch", "mouth"):

@@ -44,7 +44,7 @@ MAX_TEXT = 20_000
 # The [gestures] keys input.toml holds, in the order it is written: everything but `enabled`, which is the
 # tray's switch and stays in config.toml.
 GESTURE_KEYS = ("camera", "watch", "fps", "idle_fps", "hold_ms", "arming", "armed_s", "approvals", "zone",
-                "min_size", "hand_hz", "require_facing", "face_fps", "shh_minutes", "map", "calibration")
+                "min_size", "hand_hz", "hands", "require_facing", "face_fps", "shh_minutes", "map", "calibration")
 TABLES = ("map", "calibration")      # [gestures.map] and [gestures.calibration], after the section's keys
 TOUCH_KEYS = ("target_s", "cooldown_s", "actions")
 HEADER = """\

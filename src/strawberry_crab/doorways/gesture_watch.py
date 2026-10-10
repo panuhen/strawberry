@@ -102,37 +102,50 @@ def open_camera(spec: str, fps: float) -> OpenCvCamera:
 
 
 class Recognizer:
-    """MediaPipe's gesture recogniser on the CPU, in video mode: one hand, its 21 landmarks mirrored (x as the user
-    sees themselves) and the top gesture category."""
+    """MediaPipe's gesture recogniser on the CPU, in video mode: up to `hands` hands (`[gestures] hands`), each with
+    its 21 landmarks mirrored (x as the user sees themselves), the top gesture category and which hand it is.
 
-    def __init__(self, model: Path) -> None:
+    Handedness: MediaPipe's label read on the camera's own frame (not mirrored), which is the hand itself: the
+    user's right hand is "Right" (its test picture of two right hands reads so). Mirroring x for the user does not
+    change which hand it is, so it goes on as is, lowercased: `right` is the user's own right hand, which in a
+    mirror (x) is usually on the right."""
+
+    def __init__(self, model: Path, hands: int = 2) -> None:
         from mediapipe.tasks.python import vision
         from mediapipe.tasks.python.core.base_options import BaseOptions
 
         options = vision.GestureRecognizerOptions(
             base_options=BaseOptions(model_asset_path=str(model), delegate=BaseOptions.Delegate.CPU),
-            running_mode=vision.RunningMode.VIDEO, num_hands=1)
+            running_mode=vision.RunningMode.VIDEO, num_hands=hands)
         self.recognizer = vision.GestureRecognizer.create_from_options(options)
         self.last_ms = -1
 
     def recognize(self, rgb: Any, t: float) -> Hand | None:
+        """The first hand found, or None."""
+        hands = self.recognize_hands(rgb, t)
+        return hands[0] if hands else None
+
+    def recognize_hands(self, rgb: Any, t: float) -> list[Hand]:
         import mediapipe as mp
 
         ms = max(int(t * 1000), self.last_ms + 1)      # video mode wants rising timestamps
         self.last_ms = ms
         result = self.recognizer.recognize_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ms)
-        if not result.hand_landmarks:
-            return None
-        points = tuple((1.0 - p.x, p.y) for p in result.hand_landmarks[0])
-        world = None
-        if getattr(result, "hand_world_landmarks", None):
-            world = tuple((-p.x, p.y, p.z) for p in result.hand_world_landmarks[0])   # mirrored as the points
-        label, score = "", 0.0
-        if result.gestures and result.gestures[0]:
-            top = result.gestures[0][0]
-            label, score = str(top.category_name or ""), float(top.score or 0.0)
         height, width = rgb.shape[:2]
-        return Hand(points, label, score, world, width / max(height, 1))
+        worlds = getattr(result, "hand_world_landmarks", None) or []
+        found = getattr(result, "gestures", None) or []
+        sides = getattr(result, "handedness", None) or []
+        hands = []
+        for i, marks in enumerate(result.hand_landmarks or []):
+            points = tuple((1.0 - p.x, p.y) for p in marks)
+            world = tuple((-p.x, p.y, p.z) for p in worlds[i]) if i < len(worlds) else None   # mirrored as the points
+            label, score = "", 0.0
+            if i < len(found) and found[i]:
+                label, score = str(found[i][0].category_name or ""), float(found[i][0].score or 0.0)
+            side = str(sides[i][0].category_name or "").lower() if i < len(sides) and sides[i] else ""
+            hands.append(Hand(points, label, score, world, width / max(height, 1),
+                              side if side in ("left", "right") else ""))
+        return hands
 
     def close(self) -> None:
         self.recognizer.close()
@@ -274,7 +287,7 @@ class Watcher:
                  face_factory: Callable[[Path], Any] | None = None) -> None:
         self.config_path = config_path
         self.open_camera = camera_opener or (lambda spec, fps: open_camera(spec, fps))
-        self.make_recognizer = recognizer_factory or Recognizer
+        self.make_recognizer = recognizer_factory or (lambda model: Recognizer(model, self.recognizer_hands))
         self.make_face = face_factory or FaceReader
         self.face: Any = None              # the face model (FaceReader), or None: missing, or it did not load
         self.face_state = ""               # on | missing | failed; "" until the camera first opened
@@ -288,6 +301,7 @@ class Watcher:
         self.tracker = Tracker()
         self.camera: Any = None
         self.recognizer: Any = None
+        self.recognizer_hands = 1          # the hands the recogniser was made for (hands_wanted)
         self.camera_failed_at = -1e9
         self.last_frame_at = 0.0
         self.state: dict[str, Any] = {"enabled": False, "armed_s": 0.0, "approval": None,
@@ -391,6 +405,7 @@ class Watcher:
                 self.release("not armed")
                 return 0.5
             self.tracker.arm(self.open_until)   # opened for commands: they count while it is open
+        self.follow_hands(started)
         if not self.ensure_camera(started):
             return 1.0
         self.frame(started)
@@ -419,6 +434,7 @@ class Watcher:
             return False
         try:
             if self.recognizer is None:
+                self.recognizer_hands = self.hands_wanted()
                 self.recognizer = self.make_recognizer(gestures.model_file())
             self.load_face()
             self.camera = self.open_camera(self.settings.camera, self.settings.fps)
@@ -465,6 +481,43 @@ class Watcher:
             self.send_hand({"present": False})
         self.tracker = Tracker(self.tracker.settings)
 
+    def hands_wanted(self) -> int:
+        """How many hands to follow now: `[gestures] hands` (2) while a body asks for the hand (the orbs, the Input
+        tab's live view: the second hand is for them), else one. The second costs about as much again as the first
+        while a hand is up (WIRING §26, measured), and nothing while none is."""
+        return self.settings.hands if self.state.get("wanted", {}).get("hand") else 1
+
+    def follow_hands(self, now: float) -> None:
+        """A change in the hands wanted makes the recogniser again (about 25 ms), the camera staying open."""
+        want = self.hands_wanted()
+        if self.recognizer is None or want == self.recognizer_hands:
+            return
+        log.info("following %s now", "two hands" if want == 2 else "one hand")
+        self.drop_recognizer()
+        if self.camera is None:
+            return
+        try:
+            self.recognizer_hands = want
+            self.recognizer = self.make_recognizer(gestures.model_file())
+        except Exception as exc:   # noqa: BLE001 - a broken model: let the camera go, try again later
+            self.release("the recogniser did not load")
+            self.camera_failed_at = now
+            self.once(f"recognizer:{exc}", logging.WARNING, f"the recogniser did not load: {exc}")
+
+    def drop_recognizer(self) -> None:
+        """Let the model go: the next camera opening (or follow_hands) makes it again."""
+        recognizer, self.recognizer = self.recognizer, None
+        close = getattr(recognizer, "close", None)
+        if close is not None:
+            close()
+
+    def hands(self, rgb: Any, now: float) -> list[Hand]:
+        """The frame's hands: the recogniser's list (a stand-in giving one hand, or None, is read as a list)."""
+        if hasattr(self.recognizer, "recognize_hands"):
+            return list(self.recognizer.recognize_hands(rgb, now))
+        found = self.recognizer.recognize(rgb, now)
+        return [] if found is None else list(found) if isinstance(found, (list, tuple)) else [found]
+
     def frame(self, now: float) -> None:
         rgb = self.camera.read()
         if rgb is None:
@@ -475,7 +528,7 @@ class Watcher:
         self.last_frame_at = now
         self.frames += 1
         try:
-            hand = self.recognizer.recognize(rgb, now)
+            hands = self.hands(rgb, now)
         except Exception as exc:   # noqa: BLE001 - a frame the model chokes on: let the camera go, try again later
             del rgb
             log.warning("the recogniser failed (%s); releasing the camera for a while", type(exc).__name__)
@@ -483,7 +536,7 @@ class Watcher:
             self.camera_failed_at = now
             return
         events: list[tuple[str, dict[str, Any]]] = []
-        if self.face is not None and self.tracker.wants_face(now, hand):
+        if self.face is not None and self.tracker.wants_face(now, hands):
             rate = max(self.settings.face_fps, HEAD_FPS) if self.tracker.approval is not None else self.settings.face_fps
             if now - self.face_at >= 1.0 / rate - 0.01:
                 self.face_at = now
@@ -496,9 +549,9 @@ class Watcher:
                     face = None
                 events += self.tracker.look(now, face)    # yaw, pitch and the mouth stay in the tracker
         del rgb                                   # the frame goes no further than this
-        if hand is not None and self.settings.watch == "armed":
+        if hands and self.settings.watch == "armed":
             self.open_until = max(self.open_until, now + self.settings.armed_s)
-        for kind, payload in events + self.tracker.step(now, hand):
+        for kind, payload in events + self.tracker.step_hands(now, hands):
             if kind == "gesture":
                 self.send_gesture(payload)
             elif self.state.get("wanted", {}).get("hand") or not payload.get("present", True):

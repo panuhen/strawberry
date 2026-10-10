@@ -18,6 +18,14 @@ package and the widget binary.
   "you can talk again", "you can speak again", "talk to me" or "unmute" as a whole sentence turns it back on,
   and she says so. A sentence that only contains the words is an ordinary one, and only your own sentence
   counts: never a notification or a song title. A run she is on carries on. WIRING §18, §26.
+- **Two hands.** The gesture watcher follows up to two hands while a body asks for the hand (the orbs, the
+  Input tab's live view), each with its handedness and an id that stays while the hand does. The `hand`
+  message keeps its fields for the primary hand (the raised, higher one; the other takes over only when
+  clearly higher for 0.3 s, never mid-hold or mid-slide) and gains `hands` (each hand) and `pair` (the
+  distance and angle between them, whether both pinch). Gestures still come from the primary alone: the other
+  hand never makes one, and a hand coming or going makes no swipe and no second trigger. The second hand
+  doubles the recogniser's CPU while a hand is up (about 16 % of a core to 30 %, measured) and costs nothing
+  while none is; `[gestures] hands = 1` keeps it at one always. PROTOCOL Part 1d, WIRING §26.
 - **Hand gestures, version 2.** New gestures: point to your left or right (previous, skip), pinch and
   slide your hand up or down to set the volume (a slider the bodies draw; at most four volume calls a
   second, the last level when you let go), wave to have her wave back, a finger to your lips to keep her

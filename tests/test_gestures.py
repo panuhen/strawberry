@@ -225,7 +225,7 @@ def test_hand_messages_are_numbers_and_fixed_names_only():
 
 def assert_plain(value: Any, depth: int = 0) -> None:
     """Numbers, booleans and short fixed names: nothing that could be a frame, an image or text."""
-    assert depth < 4
+    assert depth < 6          # hand -> hands -> an entry -> points -> a pair -> a number
     if isinstance(value, dict):
         for key, inner in value.items():
             assert isinstance(key, str) and len(key) <= 16 and key.replace("_", "").isalnum()
