@@ -14,6 +14,8 @@ from typing import Any
 from .actions import NO_CATALOGUE, READ_REFLEXES, Actor, Outcome
 from .adapters import gate_examples
 from .approvals import Approval, ApprovalBook
+from . import bodylink
+from .bodylink import Pointing, Targets, Touch
 from . import bussecret, confirm
 from .confirm import Held
 from .config import Config
@@ -167,6 +169,12 @@ class Daemon:
         # The per-install bus secret (bussecret.py): made on the first start, read from the file after
         # that. Every POST and every body's input must present it (server.py).
         self._secret: str | None = None
+        # Input from bodies (bodylink.py, WIRING §25): what the user points at and holds, for the situation line
+        # and for other parts of the brain (`targets.current()`), and what a touch on an entity does ([touch]).
+        self.targets = Targets(ttl_s=self.config.touch.target_s)
+        self.touch_at = -1e9          # when the last touch action started ([touch] cooldown_s)
+        self.touch_busy = False       # one touch action at a time
+        self.touch_stats = {"acted": 0, "failed": 0, "refused": 0, "cooldown": 0}
 
     def bus_secret(self) -> str | None:
         """The bus secret, made if this install has none yet; None (and a log line) when the state dir
@@ -1114,10 +1122,101 @@ class Daemon:
             parts.append(here)
         else:
             foreign = False
+        # What the user points at or holds on a body (bodylink.Targets): the user's own act, reported by a
+        # trusted body and named by its cleaned label, so it does not make the run foreign.
+        pointed = self.targets.situation()
+        if pointed:
+            parts.append(pointed)
         if self.vocabulary:
             parts.append(f"Names in the user's library: {self.hotwords()}.")
             foreign = foreign or getattr(self, "vocabulary_foreign", True)
         return " ".join(parts), foreign
+
+    # ----------------------------------------------------------------- input from bodies (bodylink.py, §25)
+
+    def touch_action(self, entity: str, kind: str) -> str:
+        """The reflex `[touch]` maps this touch to ("skip"), or "" for none."""
+        return self.config.touch.actions.get(entity, {}).get(kind, "")
+
+    async def body_touch(self, body: Any, touch: Touch) -> None:
+        """A trusted body's `touch`, already checked (server.py): kept in `targets`, told to the other bodies
+        that asked (`touched`), and, when [touch] maps it to a reflex, that reflex is run in the background
+        (one at a time, `cooldown_s` apart). Nothing is said; the timeline gets a notice when it acted."""
+        self.targets.touched(body, body.id, touch.entity, touch.kind, touch.t)
+        action = self.touch_action(touch.entity.id, touch.kind)
+        if action:
+            now = time.monotonic()
+            if self.touch_busy or now - self.touch_at < self.config.touch.cooldown_s:
+                self.touch_stats["cooldown"] += 1
+                log.info("touch: %s %s -> %s skipped (one at a time, %.1f s apart)", touch.entity.id, touch.kind,
+                         action, self.config.touch.cooldown_s)
+                action = ""
+            else:
+                self.touch_at, self.touch_busy = now, True
+        message: dict[str, Any] = {"type": "touched", "t": round(time.monotonic(), 3), "body": body.id,
+                                   "entity": touch.entity.id, "kind": touch.kind}
+        if touch.with_ is not None:
+            message["with"] = touch.with_.id
+        if touch.strength is not None:
+            message["strength"] = round(touch.strength, 3)
+        if action:
+            message["action"] = action
+        try:
+            await self.hub.send_phase(message, exclude=body)
+        finally:
+            if action:
+                self.background(self._touch_act(touch, action), f"touch {action}")
+
+    async def _touch_act(self, touch: Touch, action: str) -> None:
+        try:
+            found = self.actor.reflex_named(action)
+            if found is None:
+                self.touch_stats["refused"] += 1
+                log.info("touch: %s %s -> %s: nothing can do it (no player, or actions off)", touch.entity.id,
+                         touch.kind, action)
+                return
+            server, reflex = found
+            if self.actor.asks_first(server, action):
+                # The config check missed it (a tier the server gives itself): a touch cannot answer a question.
+                self.touch_stats["refused"] += 1
+                log.warning("touch: %s.%s would wait for a yes; a touch does not make it", server, action)
+                return
+            self.quiet_media_until = time.monotonic() + self.QUIET_MEDIA_S   # her doing: no reaction to the track
+            outcome = await self.actor.fire(f"(touch {touch.entity.id} {touch.kind})", server, action, reflex)
+            if outcome is None or not outcome.ok:
+                self.touch_stats["failed" if outcome is not None else "refused"] += 1
+                return
+            self.touch_stats["acted"] += 1
+            # Her timeline (§23): what the user did and what came of it, in code's words. The entity is named by
+            # its id and kind (short tokens), never by the body's label; `did` is the reflex's own ("skipped to
+            # the next track"), never a track's name. So it is the user's own act, not strangers' text.
+            other = f" with {touch.with_.name()}" if touch.with_ is not None else ""
+            about = f"the user {bodylink.VERBS[touch.kind]} {touch.entity.name()}{other}, so you {outcome.did}"
+            self.ledger.notice("reflex", about, "", foreign=False)
+        finally:
+            self.touch_busy = False
+
+    async def body_target(self, body: Any, pointing: Pointing) -> None:
+        """A trusted body's `target`: the current target for `[touch] target_s`, or cleared; the other bodies
+        that asked are told (`targeted`) when it changed, or again once half that time has passed."""
+        if self.targets.point(body, body.id, pointing.entity, pointing.via, pointing.t):
+            entity = pointing.entity.id if pointing.entity is not None else None
+            await self.hub.send_phase(self._targeted(body.id, entity, pointing.via), exclude=body)
+
+    def body_gone(self, body: Any) -> None:
+        """A body's socket closed: what it pointed at and held goes too, and the others hear the target cleared."""
+        if self.targets.forget(body):
+            self.background(self.hub.send_phase(self._targeted(body.id, None, "pointer"), exclude=body),
+                            "target cleared")
+
+    def _targeted(self, body_id: str, entity: str | None, via: str) -> dict[str, Any]:
+        return {"type": "targeted", "t": round(time.monotonic(), 3), "body": body_id, "entity": entity, "via": via,
+                "ttl_s": self.config.touch.target_s}
+
+    def body_stats(self) -> dict[str, Any]:
+        """For /health: the target, what is held and the touch actions (ids and counts, never a label)."""
+        return {"targets": self.targets.stats(), "actions": dict(self.touch_stats),
+                "mapped": {entity: dict(kinds) for entity, kinds in self.config.touch.actions.items()}}
 
     # `strawberry doctor --talk` (POST /probe): fixed sentences, so the only text this path ever
     # handles is ours, and nothing the user wrote can end up in a log line.

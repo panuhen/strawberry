@@ -259,6 +259,26 @@ class Actor:
             log.info("actions: %s.%s would wait for a yes ([approvals] risk, or a confirm list); over to the thinker, "
                      "which asks", server, tool)
             return None
+        return await self.fire(text, server, tool, reflex, on_call)
+
+    def reflex_named(self, tool: str) -> tuple[str, Reflex] | None:
+        """Who does the bare reflex `tool` ("skip") when nothing but its name is known (a touch, bodylink.py): a
+        configured server of the music topic whose adapter has it, else MPRIS. None: nobody can."""
+        if not self.config.enabled:
+            return None
+        for name, server in self.toolbox.servers.items():
+            if server.topic == MPRIS_TOPIC and tool in self.reflexes.get(name, {}):
+                return name, self.reflexes[name][tool]
+        if self.mpris is not None:
+            reflex = self.mpris.reflexes().get(tool)
+            if reflex is not None:
+                return "mpris", reflex
+        return None
+
+    async def fire(self, text: str, server: str, tool: str, reflex: Reflex,
+                   on_call: OnCall | None = None) -> Outcome | None:
+        """Run one reflex (`act` once it has found it; a touch, Daemon.body_touch). `text` is what asked for it,
+        for the log and /health. None when a call it made would wait for a yes (Guarded): nothing more is made."""
         started = time.perf_counter()
         if on_call is not None:
             on_call("started", server, tool)

@@ -13,6 +13,10 @@ it is `trusted` and gets what it declared, every byte as before. One without it 
 hello yet) gets the shape only (`shape`, `phase_shape`): states, clips, reactions, emotion, tempo, commands
 and the run phases it asked for with their ids, codes, counts and timings, never her words, her voice, an
 app's icon, a tool's name or a label; never the approvals; and it may send nothing but pings.
+
+Input from bodies (bodylink.py, PROTOCOL Part 1c): a trusted v2 body's hello may name its entities and say it
+sends `touch` and `target`; the Body keeps them, with a rate limit per kind and its counts. The `touched` and
+`targeted` events go to the other v2 bodies that asked for the `touch` / `target` family, trusted ones only.
 """
 
 from __future__ import annotations
@@ -26,14 +30,19 @@ from typing import Any
 
 from aiohttp import WSCloseCode, web
 
-from . import bussecret
+from . import bodylink, bussecret
+from .bodylink import Entity, Rate
 
 log = logging.getLogger("strawberryd.hub")
 
 PROTOCOL = 2                     # the highest protocol the brain speaks
 # The phase families of PROTOCOL §11b this brain sends. `subagent` is not produced yet, so a body that
 # asks for it is not told it gets it. Approvals are their own capability (`approvals`, §13b).
-PHASES = ("listening", "routing", "thinking", "tool", "token_rate", "speaking", "run")
+PHASES = ("listening", "routing", "thinking", "tool", "token_rate", "speaking", "run", "touch", "target")
+# Event types whose family is not the part before the dot (bodylink: what other bodies reported).
+FAMILIES = {"touched": "touch", "targeted": "target"}
+# Families only a trusted body gets: they have no shape (what the user touches is theirs, the ids are body text).
+TRUSTED_FAMILIES = frozenset({"touch", "target"})
 MAX_ID = 64
 
 # What a socket without the bus secret gets of a performance (PROTOCOL §1.4): how she moves, never what she
@@ -98,7 +107,15 @@ class Body:
                                              # (heard, poked, run.cancel, approval.answer) and see approvals
     secret: str = "none"                     # what its hello presented: "none", "wrong" or "ok" (never the value)
     declared: frozenset[str] = frozenset()   # the gated capabilities its hello asked for (cancel, approvals,
-                                             # approval), whether or not it was given them
+                                             # approval, touch, target), whether or not it was given them
+    # Input (bodylink.py, PROTOCOL Part 1c), given only to a trusted body: what it draws, and what it may send.
+    entities: tuple[Entity, ...] = ()
+    touch_kinds: frozenset[str] = frozenset()   # accepted: the touch kinds it may send (none: no `touch`)
+    target: bool = False                        # accepted: it may send `target`
+    asked_input: frozenset[str] = frozenset()   # which of entities / touch / target its hello mentioned
+    inputs: dict[str, int] = field(default_factory=lambda: {"touch": 0, "target": 0, "refused": 0, "dropped": 0})
+    rates: dict[str, Rate] = field(default_factory=lambda: {"touch": Rate(bodylink.TOUCH_PER_S),
+                                                            "target": Rate(bodylink.TARGET_PER_S)})
     connected: float = field(default_factory=time.monotonic)
 
     def wants(self, kind: str) -> bool:
@@ -116,10 +133,25 @@ class Body:
             out["approval"] = self.answers
         return out
 
+    def accepted_input(self) -> dict[str, Any]:
+        """`entities` (the ids taken), `touch` and `target` for welcome's `accepted` and /health, each only
+        when its hello mentioned it (so a body that did not ask gets the earlier shape, unchanged)."""
+        out: dict[str, Any] = {}
+        if "entities" in self.asked_input:
+            out["entities"] = [entity.id for entity in self.entities]
+        if "touch" in self.asked_input:
+            out["touch"] = bool(self.touch_kinds)
+        if "target" in self.asked_input:
+            out["target"] = self.target
+        return out
+
+    def entity_map(self) -> dict[str, Entity]:
+        return {entity.id: entity for entity in self.entities}
+
 
 def family(kind: str) -> str:
-    """"tool.started" -> "tool", "run.completed" -> "run", "thinking" -> "thinking"."""
-    return kind.split(".", 1)[0]
+    """"tool.started" -> "tool", "run.completed" -> "run", "thinking" -> "thinking", "touched" -> "touch"."""
+    return FAMILIES.get(kind) or kind.split(".", 1)[0]
 
 
 def _text(value: Any, limit: int = MAX_ID) -> str:
@@ -158,11 +190,22 @@ def body_from_hello(data: dict[str, Any], secret: str | None = None) -> Body:
     body.answers = body.approvals and (answer is True or (isinstance(answer, list) and bool(answer)))
     body.asked = frozenset(k for k, v in (("approvals", capabilities.get("approvals")), ("approval", answer))
                            if v is not None)
+    # Input (PROTOCOL Part 1c): what it draws, and whether it reports touches and targets.
+    body.entities = bodylink.parse_entities(capabilities.get("entities"))
+    body.touch_kinds = bodylink.parse_kinds(sends.get("touch"))
+    body.target = sends.get("target") is True
+    body.asked_input = frozenset(k for k, v in (("entities", capabilities.get("entities")),
+                                                ("touch", sends.get("touch")), ("target", sends.get("target")))
+                                 if v is not None)
     body.declared = frozenset(name for name, wanted in (("cancel", body.cancel), ("approvals", body.approvals),
-                                                         ("approval", body.answers)) if wanted)
+                                                         ("approval", body.answers), ("touch", bool(body.touch_kinds)),
+                                                         ("target", body.target)) if wanted)
     if not body.trusted:
-        # No secret, no input and no approvals: a visual body (the orbs without the file) keeps its phases.
-        body.cancel = body.approvals = body.answers = False
+        # No secret, no input and no approvals: a visual body (the orbs without the file) keeps its phases. Its
+        # entities are not kept either: their labels are text the brain takes only from a trusted body.
+        body.cancel = body.approvals = body.answers = body.target = False
+        body.phases -= TRUSTED_FAMILIES
+        body.entities, body.touch_kinds = (), frozenset()
     return body
 
 
@@ -214,6 +257,9 @@ class WidgetHub:
             row: dict[str, Any] = {"protocol": body.protocol, "trusted": body.trusted}
             if body.protocol >= 2:
                 row |= {"id": body.id, "phases": sorted(body.phases), "cancel": body.cancel} | body.accepted_approvals()
+                if body.asked_input:
+                    row |= body.accepted_input() | {"entities": [e.to_dict() for e in body.entities],
+                                                    "inputs": dict(body.inputs)}
             out.append(row)
         return out
 
@@ -269,15 +315,16 @@ class WidgetHub:
                 self._sockets.discard(ws)
         return sent
 
-    async def send_phase(self, message: dict[str, Any]) -> int:
+    async def send_phase(self, message: dict[str, Any], exclude: Body | None = None) -> int:
         """One run event (runs.emit) to every v2 body that accepted its family; v1 bodies never. A body
-        without the bus secret gets `phase_shape(message)`."""
+        without the bus secret gets `phase_shape(message)`. `exclude`: a body that is not sent it (the one
+        whose touch it reports)."""
         kind = str(message.get("type", ""))
         texts: dict[bool, str | None] = {}
         sent = 0
         for ws in list(self._sockets):
             body = self.body(ws)
-            if ws.closed or not body.wants(kind):
+            if ws.closed or not body.wants(kind) or body is exclude:
                 continue
             if body.trusted not in texts:
                 out = message if body.trusted else phase_shape(message)
