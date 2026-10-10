@@ -761,6 +761,9 @@ class Thinker:
                         log.warning("thinker: %s adapter could not note a result (%s)", spec.server, exc)
                 tool_message = {"role": "tool", "tool_name": name,
                                 "content": result.text or ("ok" if result.ok else "failed")}
+                # A foreign server's result, or one its adapter says carries strangers' text (Spotify: a
+                # description, a name worded as an instruction): the conversation is tainted from here.
+                foreign = foreign or result.foreign
                 if not foreign:
                     private_results.append(tool_message)
                 else:
@@ -814,7 +817,7 @@ class Thinker:
 
     def used_foreign(self, outcome: Outcome) -> bool:
         """Did this answer come with results from a foreign server (a web search, a page; trust.py)?"""
-        return any(self.toolbox.foreign(c.server) for c in outcome.calls)
+        return any(c.foreign or self.toolbox.foreign(c.server) for c in outcome.calls)
 
     used_untrusted = used_foreign
 

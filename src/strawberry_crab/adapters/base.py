@@ -26,6 +26,7 @@ earns once you use it every day:
                     in a conversation brings the thinker's containment; with `guard`, `forward`,
                     `screen` and `observe`, what may follow one, and in what form it is sent
     offer           when the thinker is offered its tools: always, topic, asked (Thinker.tools)
+    foreign_result  one result that carries strangers' text, from a server that is not foreign
     reflex_tools    which of its tools each reflex calls, so a tier that needs a yes hands the
                     sentence to the thinker instead (actions.Actor)
     confirm         the tools she asks about before calling, unless the config's `confirm` says
@@ -157,6 +158,14 @@ class Adapter:
         of a search listing would otherwise fill it): one line per hit. Only for the thinker's calls; a
         reflex, `ask`, `done` and the vocabulary get the server's own text. Returned unchanged by default."""
         return text
+
+    def foreign_result(self, name: str, text: str, ok: bool) -> bool:
+        """Does this one result carry strangers' text, though the server is not `foreign`? A server whose
+        results are mostly the user's own but can hold text others wrote (a playlist's description, a name
+        worded as an instruction) says so per result: such a result then counts as foreign for the rest of
+        the sentence (Thinker._run, trust.py). `text` is the server's own, before `shape_result`. False by
+        default; a `foreign` server's results are foreign whatever this says."""
+        return False
 
     def log_result(self, name: str, text: str, ok: bool) -> str | None:
         """The journal's summary of a call's result in place of its text (a count, a size), or None for

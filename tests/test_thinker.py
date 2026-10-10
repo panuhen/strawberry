@@ -475,6 +475,9 @@ async def test_tool_results_are_shortened_after_the_ledger_keeping_their_head(ca
     script = [[("search", {"query": "jazz"})], "[happy] Jazz it is."]
     recent = ledger_lines(2, width=40)
     spotify, toolbox, roomy, thinker = make(list(script), tools=[FakeTool("search")], handler=handler)
+    # About the trimming alone: without the Spotify adapter, whose per-result check would read this long free
+    # text as strangers' (adapters/spotify.py `free_text`) and take the ledger out on that ground instead.
+    toolbox.servers["spotify"].adapter = None
     thinker.chat = roomy = Snapshots(list(script))
     await thinker.run("play some jazz", recent=recent)
     first, second = (prompt_tokens(p["messages"], p.get("tools") or []) for p in roomy.payloads)

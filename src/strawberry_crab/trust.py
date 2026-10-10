@@ -9,13 +9,15 @@ without one, from its config (`[tools.servers.<name>] flags = [...]`):
               address, a name others may see
 
     web        foreign + egress        (adapters/web.py)
-    spotify    private + egress        (adapters/spotify.py: why not foreign is written there)
+    spotify    private + egress, and foreign per result (adapters/spotify.py: names reach the thinker only
+               as short quoted fields; a result with free text or instruction-like wording is foreign)
     messages   private + foreign       (brain step 6, stage 6)
     recall     private + foreign + egress   (stage 4)
     a server with no adapter and no `flags`: all three, the safe default
 
 A config may add flags to an adapter's, never take one away: what an adapter says about its server
-holds. What the thinker does with them (Thinker._run) cannot be switched off:
+holds. A server that is not foreign may still say one result is (`Adapter.foreign_result`,
+`ToolResult.foreign`): that result counts as a foreign server's. What the thinker does with them (Thinker._run) cannot be switched off:
 
     once a foreign result is in the conversation ("tainted"):
       the ledger, the situation but its public part and every result not from a foreign server
