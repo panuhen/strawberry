@@ -373,9 +373,13 @@ func run() -> void:
 	check(absf(widget.player.speed_scale - 130.0 / 119.0) < 0.02, "clip should run at the music's speed, got %.2f" % widget.player.speed_scale)
 	report["dance_speed_rave"] = snappedf(widget.player.speed_scale, 0.01)
 	check(widget.dance.applied, "rave should be layering moves")
+	# With the bar and the section (PROTOCOL §4), which the widget does not read: the same style.
 	var groove := {"bpm": 92.0, "period_s": 60.0 / 92.0, "confidence": 0.7, "next_beat": now + 0.5,
-		"evenness": 0.4, "low_ratio": 0.35, "density": 2.0, "loudness_db": -20.0}
-	await post("/tempo", groove)
+		"evenness": 0.4, "low_ratio": 0.35, "density": 2.0, "loudness_db": -20.0,
+		"beats_per_bar": 4, "beat_index": 0, "next_downbeat": now + 0.5, "downbeat_confidence": 0.6,
+		"section": "drop", "section_confidence": 0.8, "section_since": now - 0.2}
+	var taken := await post("/tempo", groove)
+	check(taken[1] == 200, "/tempo should take the bar and the section, got %s" % str(taken))
 	check(widget.dance.style == "rave", "one estimate should not flip the style yet")
 	await post("/tempo", groove)
 	await wait(0.2)
