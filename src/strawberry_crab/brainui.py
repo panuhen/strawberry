@@ -978,7 +978,7 @@ def input_status(ui: BrainUI) -> dict[str, Any]:
     stats = d.gestures.stats()
     return {"enabled": g.enabled, "watch": g.watch, "arming": g.arming,
             "armed_s": d.gestures.state()["armed_s"], "watcher": d.input.watcher_view(),
-            "hand_age_s": stats["hand_age_s"], "practice": d.input.practice,
+            "hand_age_s": stats["hand_age_s"], "practice": d.input.practice, "quiet_s": stats["quiet_s"],
             "gestures": {k: stats[k] for k in ("received", "acted", "answered", "refused")},
             "touch": dict(d.touch_stats), "targets": d.targets.stats()}
 
@@ -1000,12 +1000,18 @@ def input_view(ui: BrainUI) -> dict[str, Any]:
         entities += [{"id": e["id"], "kind": e["kind"], "label": e["label"], "body": row.get("id")}
                      for e in row["entities"]]
     store = d.input.store
+    settings = {k: getattr(g, k) for k in inputs.GESTURE_KEYS}
+    settings["map"], settings["calibration"] = dict(g.map), dict(g.calibration)
     return {"status": input_status(ui) | {"mediapipe": gestures.mediapipe_missing() or None,
-                                         "model": gestures.model_ready(), "model_path": str(gestures.model_file())},
-            "settings": {"gestures": {k: getattr(g, k) for k in inputs.GESTURE_KEYS},
+                                         "model": gestures.model_ready(), "model_path": str(gestures.model_file()),
+                                         "face_model": gestures.face_model_ready(),
+                                         "face_model_path": str(gestures.face_model_file())},
+            "settings": {"gestures": settings,
                          "touch": {"target_s": t.target_s, "cooldown_s": t.cooldown_s,
                                    "actions": {e: dict(kinds) for e, kinds in t.actions.items()}}},
             "options": {"gestures": list(gestures.MAPPABLE), "gesture_actions": dict(gestures.ACTIONS),
+                        "partners": dict(gestures.PARTNERS), "slides": list(gestures.SLIDES),
+                        "calibration": dict(gestures.CALIBRATION_DEFAULTS), "digits": list(gestures.DIGITS),
                         "touch_kinds": list(bodylink.TOUCH_KINDS), "touch_actions": dict(bodylink.TOUCH_ACTIONS),
                         "watch": list(GESTURE_WATCH), "entities": entities},
             "bodies": bodies, "file": store.status() | {"text": store.text()},
