@@ -464,7 +464,7 @@ Read-only on a throwaway daemon (port 8783, temp dirs, every tool that changes a
 
 **Why one brain (2026-09-22).** The tiers between the reflex and chat were where every live failure came from: a wrong reflex on a sentence that carried a name, "it's already playing" when she had misheard, and offers nobody had asked for. Gemma keeps what it is good at — the desktop events (§3, §4) and the quip after a reflex — and the user gets one voice for everything else. `[thinker] enabled = false` (the unit tests, `scripts/check_config.toml`, a machine without Qwen) falls back to the old Gemma chat path, so voice still works with a 1B model and no MCP servers.
 
-**The ledger (built 2026-09-21).** `strawberry/ledger.py` is her only memory across turns: the last `[actions] ledger_turns` (6) exchanges no older than `ledger_age_s` (10 min), each "the user said …; you did … and said …". Qwen gets all of them in the situation, Gemma the last three when it is the fallback, so "the other one" and "skip this one too" resolve; nothing else accumulates. `/health` shows it. **Typed input:** `strawberry talk` posts each terminal line as a voice event, so a typed sentence and a spoken one take the same path and she answers in both places; the prompt prints the gate's reading and the reflex or the thinker's tool calls with its mood.
+**The ledger (built 2026-09-21; a shared timeline since the persona stage, §23).** `strawberry/ledger.py` is her only memory across turns: the last `[ledger] turns` (8) exchanges and `notices` (8) things she reacted to on her own, no older than `window_minutes` (60), each "the user said …; you did … and said …" or "(git) a commit in …; you said …". Qwen gets all of them in the situation, Gemma the last three when it is the fallback, so "the other one" and "skip this one too" resolve; nothing else accumulates. `/health` shows it. **Typed input:** `strawberry talk` posts each terminal line as a voice event, so a typed sentence and a spoken one take the same path and she answers in both places; the prompt prints the gate's reading and the reflex or the thinker's tool calls with its mood.
 
 ### 8c. The learning loop, first half: outcomes (`strawberry/outcomes.py`)
 
@@ -854,6 +854,7 @@ src/strawberry_crab/approvals.py  approvals (§19): ApprovalBook, the digest, `n
 src/strawberry_crab/trust.py  the trust model (§20): the private / foreign / egress flags, `clean`; bussecret.py the bus secret (§2)
 src/strawberry_crab/persona.py  her persona (§21): persona.md parsed, checked and read live; data/persona.md the shipped one
 src/strawberry_crab/profile.py  what she knows about the user (§22): profile.md, its history, her remember/forget/undo tools
+src/strawberry_crab/ledger.py  her short memory (§23): the user's turns and System 1's notices, one timeline with trust labels
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, turn.gd, touch.gd, legs.gd, wander.gd, easing.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), approval_card.gd (§19), paths.gd (XDG, the CLI, the version), validate_*.gd
@@ -1546,3 +1547,71 @@ revert, the cap for her, for the page and for a long hand edit, the prompts and 
 from the user's sentence and refused when not in their words, not offered to an ordinary sentence, refused
 with a foreign situation and after a foreign result with the profile out of the prompt, the daemon's
 read-back and undo with no line in the journal, a profile sentence without the foreign situation).
+
+---
+
+## 23. The shared timeline — `strawberry/ledger.py` (System 1 → System 2)
+
+**The problem, seen 2026-10-10.** She announced an agent's commit aloud; asked "what was that commit
+about?" 30 s later, the thinker said it had no idea: it only saw the ledger of the user's own turns.
+System 1's reactions (the reaction model on a commit, a notification, a track) never reached System 2.
+
+**The record.** The ledger is one short timeline with two kinds of entry, in memory only:
+
+| kind | written by | holds |
+|---|---|---|
+| turn | the daemon, for each of the user's sentences (as before) | what the user said, her reply, what she did |
+| notice | the daemon, after each reaction she said on her own: a commit or push (`git`), a notification (`notification`), a track (`music`), an action posted to `/event` (`reflex`) | when; the source; what the privacy mode lets through (the repo and the commit's subject; the app and the sender, only the app when the message counted as private; the player and the track; what the action said it did); the line she said |
+
+Never a notification's body: the doorway's body goes to the reaction model only (and only in `react` or
+`glance`), and the notice takes the app and the sender; what she said aloud is in it as her line. A media
+change she caused (swallowed) and a performance with no line write nothing.
+
+**What the thinker gets.** `Ledger.timeline()`: turns and notices, oldest first, each with its age ("40 s
+ago", "25 min ago", "2 h ago"), as the "Recent exchanges" lines of its prompt, at most ~900 tokens by its
+estimate (the oldest go first; `fit_prompt` trims further when the whole prompt would not fit `num_ctx`):
+
+    - 40 s ago (git) a commit in strawberry: "Gate the health detail behind the bus secret"; you said "…"
+    - 10 s ago the user said "what was that commit about"; you said "…"
+
+The reaction model, when it answers a sentence (the thinker off), gets the last three turns as before
+(`context`), never a notice: it reacts to events, and its gate and sensitive checks are unchanged.
+
+**Trust.** Every entry has a `foreign` flag (WIRING §20):
+
+- every notice is foreign: a sender's and a track's names are strangers' text, a commit's subject is not
+  reliably the user's words (an agent writes commits in the user's repos, and a subject can quote a page or
+  a tool's output), and every field of a posted action is whatever the poster wrote;
+- a turn is foreign when her reply was written in a run that was foreign (`Outcome.foreign`: a foreign
+  situation line or timeline entry, or a foreign result), or from what a tool or the player answered (a
+  reflex's fact, a held call's result after the yes, a thinker answer that used a tool other than her
+  profile's: a track's or a playlist's name). The placeholders (an answer from web results, her question
+  before a held call) stay plain: they carry no stranger's text. With the thinker off, the reaction model's
+  reply is foreign when a foreign turn was in its context (`context_trust`).
+
+A run whose timeline has a foreign entry starts foreign (`Thinker.run(foreign_context=True)`), exactly as
+with a foreign situation line: every call above `playback` asks, in the core's words, and her profile tools
+refuse (§22). After `[ledger] foreign_minutes` a foreign entry stops counting and is left out of both
+models' lines (the safe choice: it is still listed in the Brain UI, marked, for the window). Once a
+foreign result is in the thinker's conversation the whole timeline leaves it, with the rest of the private
+context (§20).
+
+**Settings** (`[ledger]`): `turns = 8` (the user's last exchanges), `notices = 8` (0: none), `window_minutes =
+60` (none older), `foreign_minutes = 10`. The old `[actions] ledger_turns` and `ledger_age_s` (6 and 600 s)
+are read as `turns` and `window_minutes`, with a warning. Why ages as well as counts: "that" and "it" go
+stale; small models lean on old context (stage 2's "Already done" from an earlier removal); strangers' text
+must stop forcing approvals; and old sentences should not resurface when someone else is at the desk. The
+window is longer than before (60 min instead of 10) so the commit question works 20 minutes later; each
+line carries its age so she can tell.
+
+**Where it shows.** `/health`'s `ledger` (`to_list(notices=True)`): the turns as before, and the notices as
+their kind, age, source and trust only, without the sender, the subject or her line (another agent gates
+/health's detail behind the bus secret). The Brain UI's Activity tab gets the timeline whole (`view`, with
+`in_prompt`: what the thinker's next run gets), behind its session (§17). No notice is logged.
+
+Tests: `tests/test_timeline.py` (one timeline with ages, the foreign age and the window, a foreign turn,
+counts and the budget, /health's reduced notices and the page's whole ones, the old settings, the commit
+question end to end, a notification's app and sender but never its body, a profile sentence after a foreign
+notice staying foreign with the change asking, a foreign turn tainting the next run, the profile and her
+answer out of the journal with `log_sentences` on, the reaction model's context and its taint),
+`tests/test_ledger.py`.

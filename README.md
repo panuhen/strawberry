@@ -162,6 +162,7 @@ The settings you are most likely to change:
 | `[runs]` | `events`, `supersede`, `keep` | the chip under her bubble and the Brain UI's Runs (`events`); whether a new sentence stops the one she is on (`supersede`, on) or waits; how many finished runs the Brain UI keeps |
 | `[approvals]` | `change_s`, `sends_s`, `destructive_s`, `grace_s`, `hold`, `risk` | the calls that wait for your yes: how long she waits per tier (10, 30, 30 s) and at most how much longer while you are still answering (10 s), which tiers need a press-and-hold on her card, and a tool's (or a server's) tier: `read`, `playback`, `change`, `sends`, `destructive` |
 | `[thinker]` | `stream` | read the big model's reply as it is written, for the tokens-per-second gauge (on) |
+| `[ledger]` | `turns`, `notices`, `window_minutes`, `foreign_minutes` | her short memory: your last exchanges (8) and what she reacted to on her own (8), none older than 60 minutes; for 10 minutes after a sender's or a track's name, a change asks first |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
 Her persona is a file of its own: copy the shipped `persona.md` (in the package's `data/` folder,
@@ -242,7 +243,8 @@ says only how long a sentence was (`<sentence, 23 chars>`). `[daemon] log_senten
 your sentences into the log as they are, which helps when tuning how she routes them. The first time she starts she says in her bubble that
 notification bodies are off and where to change it, and logs the same note.
 
-She remembers the last few exchanges of conversation in memory, for context, and what you ask her
+She remembers the last few exchanges of conversation in memory, for context, with what she reacted
+to on her own (a notification's app and sender, a commit, a track; never a message's text), and what you ask her
 to remember about you ("remember I prefer 24-hour time", "call me Sam") in `profile.md` beside
 your settings: readable only by you, edited by hand or in the Brain UI, with every earlier version
 kept in the state folder so a change can be undone ("forget that") or reverted. She writes to it

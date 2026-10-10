@@ -23,6 +23,12 @@ package and the widget binary.
   it back; "forget that" undoes it. Only from your own sentence, never while a notification, a song
   or a web page is in what she is answering; every change keeps the earlier file, so the Brain UI
   can show the history and revert. The log keeps counts only. WIRING.md §22.
+- **She remembers what she reacted to.** A commit she announced, a notification's app and sender, a
+  track: the big model now sees them beside your last exchanges, each with its age, so "what was that
+  commit about?" has an answer. Never a message's text. Names others wrote count as strangers' text:
+  for ten minutes after one, a change above play, pause, skip and volume asks first. New
+  `[ledger] turns` (8), `notices` (8), `window_minutes` (60), `foreign_minutes` (10);
+  `[actions] ledger_turns` and `ledger_age_s` still work and are deprecated. WIRING.md §23.
 
 - She turns. A slow, small sway while idle; a glance toward a notification as it arrives, toward
   the middle of the screen now and then, and toward the cursor when it comes to rest near her;
