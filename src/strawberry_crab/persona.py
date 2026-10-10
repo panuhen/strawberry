@@ -430,9 +430,11 @@ class PersonaStore:
         return rng.choice(options) if rng is not None else options[0]
 
     def text(self) -> str:
-        """The persona.md in use, as text: the user's file, or the shipped one."""
-        persona = self.current()
-        return persona.text if self.source == "file" else shipped_path().read_text(encoding="utf-8")
+        """The user's persona.md as it is, also when it does not check out (to be fixed), else the shipped one."""
+        try:
+            return self.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return shipped_path().read_text(encoding="utf-8")
 
     def status(self) -> dict[str, Any]:
         persona = self.current()

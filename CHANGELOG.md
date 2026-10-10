@@ -29,6 +29,12 @@ package and the widget binary.
   for ten minutes after one, a change above play, pause, skip and volume asks first. New
   `[ledger] turns` (8), `notices` (8), `window_minutes` (60), `foreign_minutes` (10);
   `[actions] ledger_turns` and `ledger_age_s` still work and are deprecated. WIRING.md §23.
+- **The Brain UI, regrouped.** Her (Persona, Profile), Activity (Runs, Router live), Learning (Learning,
+  Data and scores), Settings, System; one spot in the header for what needs you now. Persona: an
+  editor checked as you type, with each section's size, the changes and **Try it** on the small model
+  before you save. Profile: the editor, her changes and yours, and revert. Runs shows the timeline.
+  Settings shows what applies when, **Apply** for the notification settings and the effective
+  `config.toml` read-only. WIRING.md §17.
 
 - She turns. A slow, small sway while idle; a glance toward a notification as it arrives, toward
   the middle of the screen now and then, and toward the cursor when it comes to rest near her;

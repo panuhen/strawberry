@@ -304,17 +304,29 @@ strawberry ui
 opens a page in your browser, served by her own daemon, that shows what she does with what you
 say and what she has learned from it:
 
+The page has five groups: **Her**, **Activity**, **Learning**, **Settings** and **System**, and a
+spot in the header for whatever needs you now (her question waiting for a yes, a persona.md with a
+problem, a new router head waiting).
+
+- **Persona**: her persona.md in an editor, checked as you type (each section's size against its
+  limit, what is wrong, the changes against the file), **Save** (the old file kept as
+  `persona.md.bak`) and **Try it**, which shows what the small model says with your draft on a few
+  made-up events before you save.
+- **Profile**: what she knows about you, with every change she or you made and a way back to any of
+  them.
 - **Learning**: the head in use and the one waiting, side by side on the test set (fields right,
   wrong reflexes, each question), with Accept, Reject, Train now and Roll back; the sentences she
   learned from, each with Approve and Reject; the learning log; every head, with Use; the week.
 - **Router live**: each sentence as she routes it: what she read it as, how sure she was, what
   handled it and how long it took.
-- **Runs**: each thing she did, step by step (how she read it, thinking, each tool and how long it
+- **Runs**: the timeline (what the big model is told happened lately, and which of it was written
+  by others), and each thing she did, step by step (how she read it, thinking, each tool and how long it
   took, what she said, how it ended), with Cancel on the one going on. Tool names and timings
   only: never what you said, what a tool was given or what it found.
 - **Data and scores**: what a head is trained and tested on, and each head's test score over time.
 - **Settings and privacy**: what is kept and logged, and the line in `config.toml` that changes
-  it (the page does not change settings), and Forget.
+  it, what applies at once and what needs a restart, **Apply** for the notification settings, the
+  whole effective `config.toml` (read-only: the page does not edit it), and Forget.
 - **System**: the models, where the gate runs, the head in use.
 
 The link works once, within a minute; the page then runs on a cookie that ends after 12 hours

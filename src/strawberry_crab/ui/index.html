@@ -4,14 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf" content="{{csrf}}">
-<title>Strawberry: Brain</title>
+<title>🍓 Strawberry: Brain</title>
 <link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ui/style.css">
 <script src="/ui/app.js" defer></script>
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="mark" aria-hidden="true">🍓</span><span>Strawberry</span><span class="dim">Brain</span></div>
+  <div class="brand"><span class="mark" aria-hidden="true">🍓</span><span class="name">Strawberry</span><span class="dim">Brain</span></div>
+  <button type="button" class="attention hidden" id="attention" aria-live="polite"></button>
   <div class="chips" id="chips"></div>
   <div class="top-right">
     <span class="live" id="live" title="Live updates">offline</span>
@@ -21,17 +22,31 @@
 <div class="banner hidden" id="banner" role="alert"></div>
 <div class="layout">
   <nav class="nav" id="nav" aria-label="Sections">
-    <button type="button" data-section="learning" class="on">Learning</button>
-    <button type="button" data-section="router">Router live</button>
-    <button type="button" data-section="runs">Runs</button>
-    <button type="button" data-section="data">Data and scores</button>
-    <button type="button" data-section="settings">Settings and privacy</button>
-    <button type="button" data-section="system">System</button>
+    <div class="group"><h3>Her</h3>
+      <button type="button" data-section="persona" class="on">Persona</button>
+      <button type="button" data-section="profile">Profile</button>
+    </div>
+    <div class="group"><h3>Activity</h3>
+      <button type="button" data-section="runs">Runs</button>
+      <button type="button" data-section="router">Router live</button>
+    </div>
+    <div class="group"><h3>Learning</h3>
+      <button type="button" data-section="learning">Learning</button>
+      <button type="button" data-section="data">Data and scores</button>
+    </div>
+    <div class="group"><h3>Settings</h3>
+      <button type="button" data-section="settings">Settings and privacy</button>
+    </div>
+    <div class="group"><h3>System</h3>
+      <button type="button" data-section="system">System</button>
+    </div>
   </nav>
   <main id="main">
-    <section id="learning" class="section"></section>
-    <section id="router" class="section hidden"></section>
+    <section id="persona" class="section"></section>
+    <section id="profile" class="section hidden"></section>
     <section id="runs" class="section hidden"></section>
+    <section id="router" class="section hidden"></section>
+    <section id="learning" class="section hidden"></section>
     <section id="data" class="section hidden"></section>
     <section id="settings" class="section hidden"></section>
     <section id="system" class="section hidden"></section>

@@ -6,11 +6,12 @@ nothing here decides anything.
                               (server.local_only) and answers a loopback client only
     GET  /ui/login?token=     swaps the token for a session cookie, then redirects to /ui
     GET  /ui                  the page; /ui/app.js, /ui/style.css, /ui/icon.svg beside it
-    GET  /ui/api/learning | routes | runs | data | settings | system
+    GET  /ui/api/learning | routes | runs | data | settings | system | persona | profile
     GET  /ui/api/events       server-sent events: `route` (a sentence routed), `run` (a step of a run,
                               runs.py), `learning` (a file of the loop changed), a comment line as a
                               keep-alive
-    POST /ui/api/accept | reject | rollback | use | review | train | forget | cancel | approval
+    POST /ui/api/accept | reject | rollback | use | review | train | forget | cancel | approval | apply
+    POST /ui/api/persona/check | persona/save | persona/try | profile/save | profile/revert
 
 Everything else on the port refuses a request with an Origin header, so no web page can reach
 it. The routes under /ui are the one place a browser is let in, and only this way:
@@ -37,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import difflib
 import hmac
 import html
 import json
@@ -50,7 +52,10 @@ from typing import Any, Awaitable, Callable
 
 from aiohttp import web
 
-from . import privacy, routefeed
+from . import paths, persona, privacy, routefeed
+from . import profile as profiles
+from .config import ConfigError
+from .events import Event
 from .learning import LearningError, check_version
 
 log = logging.getLogger("strawberryd.ui")
@@ -171,6 +176,7 @@ class BrainUI:
         self.wake: set[asyncio.Event] = set()
         self.streams = 0
         self._sizes: dict[str, Any] | None = None
+        self.trying = False      # a persona Try it is running (one at a time: it asks the shared Ollama)
 
     @property
     def learning(self):
@@ -215,6 +221,14 @@ def setup(app: web.Application, daemon) -> BrainUI:
         web.post("/ui/api/forget", api_forget),
         web.post("/ui/api/cancel", api_cancel),
         web.post("/ui/api/approval", api_approval),
+        web.post("/ui/api/apply", api_apply),
+        web.get("/ui/api/persona", api_persona),
+        web.post("/ui/api/persona/check", api_persona_check),
+        web.post("/ui/api/persona/save", api_persona_save),
+        web.post("/ui/api/persona/try", api_persona_try),
+        web.get("/ui/api/profile", api_profile),
+        web.post("/ui/api/profile/save", api_profile_save),
+        web.post("/ui/api/profile/revert", api_profile_revert),
     ])
     return ui
 
@@ -505,7 +519,7 @@ async def api_runs(request: web.Request, ui: BrainUI, session: Session) -> web.R
     book = ui.daemon.runs
     return web.json_response({"events": ui.daemon.config.runs.events,
                               "runs": [run.view() for run in book.recent(ui.daemon.config.runs.keep)],
-                              "approvals": ui.daemon.approvals.views()})
+                              "approvals": ui.daemon.approvals.views(), "timeline": timeline_view(ui)})
 
 
 @checked("get")
@@ -516,7 +530,10 @@ async def api_data(request: web.Request, ui: BrainUI, session: Session) -> web.R
 @checked("get")
 async def api_settings(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
     config = ui.daemon.config
-    return web.json_response({"path": str(config.path) if config.path else None, "config": redacted(config.to_dict())})
+    shown = redacted(config.to_dict())
+    return web.json_response({"path": str(config.path) if config.path else None, "config": shown,
+                              "toml": as_toml(shown), "live": LIVE, "persona_path": str(paths.persona_file()),
+                              "profile_path": str(paths.profile_file())})
 
 
 @checked("get")
@@ -731,3 +748,211 @@ async def api_approval(request: web.Request, ui: BrainUI, session: Session) -> w
         return web.json_response({"error": why, "reason": reason}, status=409)
     log.info("ui: approval %s answered %s by hand", approval_id, answer)
     return web.json_response({"answered": approval_id, "answer": answer})
+
+
+@checked("post")
+async def api_apply(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """[notifications] read again from config.toml and used from the next notification on (the tray's Message
+    bodies rows do the same); the rest of the file needs a restart."""
+    await _payload(request)
+    try:
+        mode = ui.daemon.reload_notifications()
+    except ConfigError as exc:
+        return web.json_response({"error": f"config.toml does not load: {exc}"}, status=409)
+    log.info("ui: [notifications] applied")
+    return web.json_response({"applied": "notifications", "body": mode})
+
+
+# What changes without a restart (the Settings tab says so beside the effective config).
+LIVE = {
+    "persona.md": "read again when it changes, at her next line",
+    "profile.md": "read again for every sentence",
+    "[notifications]": "Apply below (or the tray's Message bodies rows)",
+    "everything else in config.toml": "needs a restart (strawberry restart)",
+}
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{_toml_key(k)} = {_toml_value(v)}" for k, v in value.items()) + " }" if value else "{}"
+    if value is None:
+        return '""'
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _toml_key(key: Any) -> str:
+    key = str(key)
+    return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else json.dumps(key, ensure_ascii=False)
+
+
+def as_toml(config: dict[str, Any]) -> str:
+    """The effective settings as config.toml would say them (read-only, for the Settings tab): a table per
+    section, a nested table (`[tools.servers.<name>]`) per server, inline tables for the rest."""
+    source = f" (from {config['path']})" if config.get("path") else ""
+    lines = [f"# the effective settings{source}; defaults for every key not in the file"]
+    for section, values in config.items():
+        if not isinstance(values, dict):
+            continue
+        lines += ["", f"[{section}]"]
+        nested = []
+        for key, value in values.items():
+            if section == "tools" and key == "servers" and isinstance(value, dict):
+                nested += [(f"tools.servers.{_toml_key(name)}", server) for name, server in value.items()]
+                continue
+            lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
+        for name, table in nested:
+            lines += ["", f"[{name}]"] + [f"{_toml_key(k)} = {_toml_value(v)}" for k, v in (table or {}).items()]
+    return "\n".join(lines) + "\n"
+
+
+def timeline_view(ui: BrainUI) -> list[dict[str, Any]]:
+    """The shared timeline (ledger.py), newest first: what the thinker's next run gets. A turn's sentence and her
+    reply only while outcome logging is on (as every sentence on this page); a notice's app, sender, commit or
+    track and her line always (what she said aloud; never a message's body, which the ledger never holds)."""
+    out = []
+    for entry in reversed(ui.daemon.ledger.view()):
+        if entry.get("kind") == "turn" and not ui.logging_on:
+            entry = {k: v for k, v in entry.items() if k not in ("said", "reply")} | {
+                "said_chars": len(entry.get("said") or ""), "reply_chars": len(entry.get("reply") or "")}
+        out.append(entry)
+    return out
+
+
+# ----------------------------------------------------------------------------- her: persona and profile
+
+# What Try it shows her draft: one of each kind of event, none of them the user's.
+SAMPLE_EVENTS = [
+    ("a commit", Event(source="git", app="post-commit", title="garden-planner", body="Fix the watering schedule")),
+    ("a message", Event(source="notification", app="Signal", title="Robin")),
+    ("a track", Event(source="media", app="Spotify", title="Kraftwerk — The Model")),
+    ("after a skip", Event(source="action", app="skipped to the next track", title="skip this",
+                           body="Skipped. Now Heroes by David Bowie.")),
+]
+MAX_DRAFT = persona.MAX_FILE_CHARS + 1000
+MAX_DIFF_LINES = 400
+
+
+def _draft(data: dict[str, Any], limit: int) -> str:
+    text = data.get("text")
+    if not isinstance(text, str):
+        raise web.HTTPBadRequest(text="text must be the file's text")
+    if len(text) > limit:
+        raise web.HTTPRequestEntityTooLarge(max_size=limit, actual_size=len(text), text="that is too long")
+    return text.replace("\r\n", "\n")
+
+
+def _diff(old: str, new: str, old_name: str, new_name: str) -> list[str]:
+    lines = list(difflib.unified_diff(old.splitlines(), new.splitlines(), old_name, new_name, n=1, lineterm=""))
+    return lines[:MAX_DIFF_LINES] + ([f"… {len(lines) - MAX_DIFF_LINES} more lines"] if len(lines) > MAX_DIFF_LINES else [])
+
+
+def persona_view(ui: BrainUI) -> dict[str, Any]:
+    store = ui.daemon.persona
+    return {"text": store.text(), "shipped": persona.shipped_path().read_text(encoding="utf-8"), "status": store.status()}
+
+
+@checked("get")
+async def api_persona(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    return web.json_response(persona_view(ui))
+
+
+def _checked_draft(ui: BrainUI, text: str) -> dict[str, Any]:
+    draft, problems = persona.check(text)
+    sizes = draft.sizes() if draft is not None else {}
+    return {"ok": draft is not None, "problems": problems, "warnings": list(draft.warnings) if draft else [],
+            "sizes": sizes, "caps": dict(persona.CAPS),
+            "diff": _diff(ui.daemon.persona.text(), text, "persona.md (the file)", "persona.md (draft)")}
+
+
+@checked("post")
+async def api_persona_check(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """A draft checked as the daemon would read it, its sections' sizes and the diff against the one in use."""
+    text = _draft(await _payload(request), MAX_DRAFT)
+    return web.json_response(_checked_draft(ui, text))
+
+
+@checked("post")
+async def api_persona_save(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """A draft that checks out written as the user's persona.md (atomic, the old file kept as persona.md.bak);
+    she uses it from her next line."""
+    text = _draft(await _payload(request), MAX_DRAFT)
+    checked_ = _checked_draft(ui, text)
+    if not checked_["ok"]:
+        return web.json_response({"error": "the draft does not check out", "problems": checked_["problems"]}, status=400)
+    try:
+        backup = await asyncio.to_thread(persona.save, text)
+    except (persona.PersonaError, OSError) as exc:
+        return web.json_response({"error": f"not saved ({type(exc).__name__})"}, status=409)
+    log.info("ui: persona.md saved%s", " (the old one kept as persona.md.bak)" if backup else "")
+    return web.json_response({"saved": str(paths.persona_file()), "backup": str(backup) if backup else None,
+                              "status": ui.daemon.persona.status()})
+
+
+@checked("post")
+async def api_persona_try(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """The draft on a few sample events through the reaction model (the shared Ollama, the live call's shape:
+    read-only use, never an unload). Nothing is performed or saved; one at a time."""
+    text = _draft(await _payload(request), MAX_DRAFT)
+    draft, problems = persona.check(text)
+    if draft is None:
+        return web.json_response({"error": "the draft does not check out", "problems": problems}, status=400)
+    sample = getattr(ui.daemon.reactor, "sample", None)
+    if sample is None:
+        return web.json_response({"error": "the reaction model is off ([brain] enabled = false): canned lines only"},
+                                 status=409)
+    if ui.trying:
+        return web.json_response({"error": "a try is already running"}, status=409)
+    ui.trying = True
+    try:
+        results = await sample(draft, [event for _label, event in SAMPLE_EVENTS])
+    except Exception as exc:   # BrainError and the like: the model is not there
+        return web.json_response({"error": f"the reaction model did not answer ({type(exc).__name__})"}, status=409)
+    finally:
+        ui.trying = False
+    from .brain import describe
+
+    return web.json_response({"samples": [{"label": label, "event": describe(event)} | result
+                                          for (label, event), result in zip(SAMPLE_EVENTS, results)]})
+
+
+def profile_view(ui: BrainUI) -> dict[str, Any]:
+    profile = ui.daemon.profile
+    return {"text": profile.text(), "status": profile.status(), "prompt": profile.prompt_block(),
+            "cap": profiles.CAP_TOKENS, "history": [c.view() for c in reversed(profile.history())]}
+
+
+@checked("get")
+async def api_profile(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    return web.json_response(await asyncio.to_thread(profile_view, ui))
+
+
+@checked("post")
+async def api_profile_save(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """The whole profile.md as the user wrote it here (atomic, 0600, the file before it kept in its history)."""
+    text = _draft(await _payload(request), 20_000)
+    try:
+        change = await asyncio.to_thread(ui.daemon.profile.write, text, "ui")
+    except profiles.ProfileError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    log.info("ui: profile.md saved (+%d -%d lines)", len(change.added), len(change.removed))
+    return web.json_response({"change": change.view()} | await asyncio.to_thread(profile_view, ui))
+
+
+@checked("post")
+async def api_profile_revert(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """profile.md back to what it was before one change (itself a change, so it can be undone)."""
+    change_id = (await _payload(request)).get("id")
+    if not isinstance(change_id, str) or not re.fullmatch(r"\d{8}T\d{6}-\d{6}", change_id):
+        raise web.HTTPBadRequest(text="id must be a change's id")
+    try:
+        change = await asyncio.to_thread(ui.daemon.profile.revert, change_id, "ui")
+    except profiles.ProfileError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    log.info("ui: profile.md reverted (+%d -%d lines)", len(change.added), len(change.removed))
+    return web.json_response({"change": change.view()} | await asyncio.to_thread(profile_view, ui))

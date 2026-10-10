@@ -8,13 +8,20 @@
 
 (() => {
   const CSRF = document.querySelector('meta[name="csrf"]').content;
-  const SECTIONS = ["learning", "router", "runs", "data", "settings", "system"];
+  const SECTIONS = ["persona", "profile", "runs", "router", "learning", "data", "settings", "system"];
   const MAX_ROUTES = 100;
   const MAX_RUNS = 50;
   const TERMINAL = { "run.completed": "completed", "run.failed": "failed", "run.cancelled": "cancelled" };
 
   const state = {
-    section: "learning",
+    section: "persona",
+    persona: null,          // GET persona: the text in use, the shipped one, its status
+    personaDraft: null,     // the editor's text while it differs from the file (null: not edited)
+    personaCheck: null,     // the draft checked: problems, warnings, sizes, the diff
+    personaTry: null,       // Try it: the sample events and her lines
+    profile: null,          // GET profile: the text, its status, what she reads, the history
+    profileDraft: null,
+    timeline: [],
     learning: null,
     routes: [],
     runs: [],
@@ -57,6 +64,13 @@
       if (kid === null || kid === undefined || kid === false) continue;
       node.append(kid instanceof Node ? kid : String(kid));
     }
+  }
+
+  // A node's children replaced by `kids`, skipping null and false and flattening arrays (replaceChildren
+  // itself would show them as "null" and "[object …]").
+  function fill(node, ...kids) {
+    node.replaceChildren();
+    add(node, kids);
   }
 
   const SVG = "http://www.w3.org/2000/svg";
@@ -242,7 +256,26 @@
 
   // --------------------------------------------------------------------------- the header
 
+  // The one place that says what needs the user now, most urgent first; a click goes there.
+  function renderAttention() {
+    const node = $("#attention");
+    const items = [];
+    if (state.approvals.open) items.push(["She is waiting for your yes", "runs", "berry"]);
+    const p = state.persona && state.persona.status;
+    if (p && p.error && p.error.length) items.push(["Your persona.md has a problem: she uses the shipped one", "persona", "berry"]);
+    const L = state.learning;
+    if (L && L.status && L.status.candidate) items.push([`A new router head (${L.status.candidate.version}) waits for you`, "learning", "warn"]);
+    if (!items.length) { node.classList.add("hidden"); node.onclick = null; return; }
+    const [text, section, kind] = items[0];
+    fill(node, el("span", { class: "dot", "aria-hidden": "true" }), el("span", { text }),
+      items.length > 1 ? el("span", { class: "more", text: `+${items.length - 1} more` }) : null);
+    node.className = `attention ${kind}`;
+    node.title = items.map((i) => i[0]).join("\n");
+    node.onclick = () => show(section);
+  }
+
   function renderChips() {
+    renderAttention();
     const L = state.learning;
     const node = $("#chips");
     if (!L) { node.replaceChildren(); return; }
@@ -563,10 +596,37 @@
         state.runEvents ? null : el("p", { class: "note", text: "Run events are off ([runs] events = false): runs show once they end." }),
         table(["Time", "From", "Steps", "Tools", "Outcome", { label: "Duration", num: true }, ""], rows,
           { empty: "No runs since the daemon started. Say something, or type to her." })),
+      timelinePanel(),
       panel("Approvals", "the calls she asked about first and how each was answered; never what they carried",
         table(["Time", "Run", "Tool", "Risk", "Outcome", "By", { label: "Waited", num: true }], history,
           { empty: "Nothing asked about since the daemon started." }))].filter(Boolean));
     state.freshRuns.clear();
+    renderAttention();
+  }
+
+  // The shared timeline (ledger.py): what the big model gets as "recently" with its next sentence.
+  function timelinePanel() {
+    const rows = (state.timeline || []).map((e) => {
+      const ago = `${duration(e.ago_s)} ago`;
+      let what;
+      if (e.kind === "turn") {
+        const said = typeof e.said === "string" ? e.said : el("span", { class: "faint", text: `a sentence, ${e.said_chars} chars` });
+        const reply = typeof e.reply === "string" ? e.reply : el("span", { class: "faint", text: `her reply, ${e.reply_chars} chars` });
+        what = [el("span", { class: "who", text: "you: " }), said, el("span", { class: "sub" }, el("span", { class: "who", text: "she: " }), reply,
+          e.did ? ` (${e.did})` : null)];
+      } else {
+        what = [e.about || dash, e.line ? el("span", { class: "sub" }, el("span", { class: "who", text: "she said: " }), e.line) : null];
+      }
+      const trust = e.foreign
+        ? chip(e.tainting ? "strangers' text: a change asks first" : "strangers' text, past its time", e.tainting ? "warn" : null)
+        : chip("plain", "good");
+      return el("tr", { class: e.in_prompt ? null : "stale" },
+        td(ago, "nowrap"), td(chip(e.kind === "turn" ? "you" : e.source, e.kind === "turn" ? null : "berry")),
+        el("td", { class: "sentence" }, what), td([trust, el("span", { class: "sub", text: e.in_prompt ? "in her next prompt" : "left out" })]));
+    });
+    return panel("Timeline", "what the big model is told happened lately, oldest last; in memory only",
+      state.logging ? null : el("p", { class: "note", text: "Your sentences and her replies are hidden while outcome logging is off. What she reacted to on her own shows." }),
+      table(["When", "Kind", "What", "Trust"], rows, { empty: "Nothing yet: her memory starts empty with each start." }));
   }
 
   // A step from the stream: the run it belongs to is updated in place (or started, if it is new).
@@ -729,9 +789,24 @@
           ["Records kept", `${l.max_days} days, ${l.max_records} records at most`]]),
         el("p", { class: "dim" }, "All under ", el("code", { text: "[learning]" }), ` in ${where}.`)),
       forgetPanel(),
-      panel("Everything else", `the effective settings, from ${where}`,
-        el("details", null, el("summary", { text: "Show the full settings" }),
-          el("pre", { class: "config", text: JSON.stringify(c, null, 2) }))));
+      panel("What applies when", "her persona and your profile are live; config.toml is read at start",
+        kv(Object.entries(S.live || {})),
+        el("p", { class: "dim" }, "Persona: ", el("code", { text: S.persona_path || "persona.md" }), " · profile: ",
+          el("code", { text: S.profile_path || "profile.md" })),
+        el("div", { class: "actions" },
+          actionButton("Apply [notifications] now", (b) => applySettings(b), "primary"),
+          el("span", { class: "faint", text: "reads config.toml again for the notification settings; the rest needs strawberry restart" }))),
+      panel("config.toml, as in effect", `read-only: edit ${where}`,
+        el("details", null, el("summary", { text: "Show every setting" }),
+          el("pre", { class: "config", text: S.toml || JSON.stringify(c, null, 2) }))));
+  }
+
+  function applySettings(button) {
+    button.disabled = true;
+    api("apply", {})
+      .then((r) => { toast(`Applied: notification bodies are ${r.body}.`); refreshSettings(); })
+      .catch((e) => toast(e.message, true))
+      .finally(() => { button.disabled = false; });
   }
 
   function forgetPanel() {
@@ -798,6 +873,223 @@
           : el("p", { class: "empty", text: "No MCP servers configured." }))));
   }
 
+  // --------------------------------------------------------------------------- her: persona
+
+  const PERSONA_SECTIONS = ["Who she is", "How she talks", "Examples", "Lines"];
+  let checkTimer = null;
+
+  function personaText() {
+    return state.personaDraft !== null ? state.personaDraft : (state.persona ? state.persona.text : "");
+  }
+
+  function renderPersona() {
+    const root = $("#persona");
+    const P = state.persona;
+    if (!P) {
+      root.replaceChildren(panel("Persona", null, el("p", { class: "empty", text: "Loading..." })));
+      return;
+    }
+    const s = P.status;
+    const inUse = s.source === "file" ? chip("in use: your persona.md", "good") : chip("in use: the shipped persona", null);
+    const notes = [];
+    if (s.error && s.error.length) {
+      notes.push(el("div", { class: "note berry" }, el("b", { text: "Your persona.md is not used. " }),
+        "She keeps the shipped persona until it checks out:", el("ul", null, s.error.map((p) => el("li", { text: p })))));
+    }
+    if (s.warnings && s.warnings.length) notes.push(el("div", { class: "note" }, s.warnings.map((w) => el("p", { text: w }))));
+    const area = el("textarea", { id: "persona-text", class: "editor", spellcheck: "false", "aria-label": "persona.md",
+      on: { input: (ev) => { state.personaDraft = ev.target.value; scheduleCheck(); } } });
+    area.value = personaText();
+    const save = confirmButton("Save persona.md", "Save it? She uses it at once", (b) => savePersona(b), "primary");
+    save.id = "persona-save";
+    fill(root,
+      panel("Persona", "who she is, how she talks, the examples the small model copies and her fixed lines",
+        el("div", { class: "actions" }, inUse, el("span", { class: "dim mono", text: s.path })), notes,
+        el("div", { class: "editor-grid" },
+          el("div", { class: "editor-col" }, area,
+            el("div", { class: "actions" }, save,
+              actionButton("Try it", (b) => tryPersona(b)),
+              actionButton("Undo my edits", () => { state.personaDraft = null; state.personaCheck = null; renderPersona(); scheduleCheck(); }, "ghost"),
+              confirmButton("Start from the shipped one", "Replace the draft?", () => {
+                state.personaDraft = P.shipped; renderPersona(); scheduleCheck(); }, "ghost"))),
+          el("div", { class: "editor-side", id: "persona-check" }))),
+      el("div", { id: "persona-try" }));
+    renderPersonaCheck();
+    renderPersonaTry();
+    if (!state.personaCheck) scheduleCheck(0);
+  }
+
+  function scheduleCheck(ms = 400) {
+    clearTimeout(checkTimer);
+    checkTimer = setTimeout(checkPersona, ms);
+  }
+
+  async function checkPersona() {
+    try { state.personaCheck = await api("persona/check", { text: personaText() }); }
+    catch (e) { state.personaCheck = { ok: false, problems: [e.message], warnings: [], sizes: {}, caps: {}, diff: [] }; }
+    renderPersonaCheck();
+  }
+
+  function meter(label, used, cap) {
+    const share = cap ? Math.min(1, used / cap) : 0;
+    const over = cap && used > cap;
+    return el("div", { class: over ? "meter over" : "meter" },
+      el("div", { class: "meter-head" }, el("span", { text: label }), el("span", { class: "mono", text: `~${used ?? dash} / ${cap ?? dash} tokens` })),
+      el("div", { class: "bar" }, el("i", { style: null, data: { share: share.toFixed(3) } })));
+  }
+
+  function renderPersonaCheck() {
+    const node = document.getElementById("persona-check");
+    if (!node) return;
+    const C = state.personaCheck;
+    const save = document.getElementById("persona-save");
+    const dirty = state.personaDraft !== null && state.persona && state.personaDraft !== state.persona.text;
+    if (save) save.disabled = !(C && C.ok && dirty);
+    if (!C) { node.replaceChildren(el("p", { class: "faint", text: "Checking..." })); return; }
+    const sizes = PERSONA_SECTIONS.map((name) => meter(name, (C.sizes || {})[name], (C.caps || {})[name]));
+    const diff = (C.diff || []).map((line) => el("span", {
+      class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : null,
+      text: `${line}\n` }));
+    fill(node,
+      el("h3", { text: "Check" }),
+      C.ok ? el("p", null, chip("checks out", "good"), dirty ? " Save it to put it in use." : " Same as the file.")
+        : el("div", { class: "note berry" }, el("b", { text: "Not saved like this:" }), el("ul", null, (C.problems || []).map((p) => el("li", { text: p })))),
+      (C.warnings || []).length ? el("div", { class: "note" }, C.warnings.map((w) => el("p", { text: w }))) : null,
+      el("h3", { text: "Size per section" }), sizes,
+      el("h3", { text: "Changes against the file" }),
+      diff.length ? el("pre", { class: "diff" }, diff) : el("p", { class: "faint", text: "No changes." }));
+    for (const bar of node.querySelectorAll(".bar i")) bar.style.width = `${Math.round(Number(bar.dataset.share) * 100)}%`;
+  }
+
+  async function savePersona(button) {
+    button.disabled = true;
+    try {
+      const r = await api("persona/save", { text: personaText() });
+      toast(r.backup ? "Saved. The old one is kept as persona.md.bak." : "Saved. She uses it from her next line.");
+      state.personaDraft = null;
+      state.personaCheck = null;
+      await refreshPersona();
+    } catch (e) {
+      toast(e.message, true);
+      button.disabled = false;
+    }
+  }
+
+  async function tryPersona(button) {
+    button.disabled = true;
+    state.personaTry = { running: true };
+    renderPersonaTry();
+    try { state.personaTry = await api("persona/try", { text: personaText() }); }
+    catch (e) { state.personaTry = { error: e.message }; }
+    button.disabled = false;
+    renderPersonaTry();
+  }
+
+  function renderPersonaTry() {
+    const node = document.getElementById("persona-try");
+    if (!node) return;
+    const T = state.personaTry;
+    if (!T) { node.replaceChildren(); return; }
+    let body;
+    if (T.running) body = el("p", { class: "faint", text: "Asking the small model with the draft..." });
+    else if (T.error) body = el("p", { class: "note berry", text: T.error });
+    else body = el("div", { class: "samples" }, (T.samples || []).map((s) => el("div", { class: "sample" },
+      el("div", { class: "k", text: s.label }),
+      el("pre", { class: "event", text: s.event }),
+      s.line ? el("p", { class: "line" }, chip(s.emotion, s.emotion === "angry" || s.emotion === "alert" ? "warn" : "good"), " ", s.line,
+        el("span", { class: "faint", text: ` · ${num(s.s, 2)} s` }))
+        : el("p", { class: "faint", text: `no line: ${s.error || "unknown"}` }))));
+    fill(node, panel("Try it", "the draft on a few made-up events, through the small model; nothing is said or saved", body));
+  }
+
+  async function refreshPersona() {
+    try { state.persona = await api("persona"); } catch (e) { if (!state.ended) toast(e.message, true); }
+    renderAttention();
+    if (state.personaDraft === null || state.section !== "persona") rerender("persona");
+  }
+
+  // --------------------------------------------------------------------------- her: profile
+
+  function estimate(text) {
+    const plain = text.replace(/<!--[\s\S]*?-->/g, "").trim();
+    return plain ? Math.floor(plain.length / 3) + 1 : 0;
+  }
+
+  const OPS = { remember: "she noted", forget: "she forgot", replace: "she updated", undo: "she undid", edit: "you edited", revert: "you reverted" };
+
+  function renderProfile() {
+    const root = $("#profile");
+    const F = state.profile;
+    if (!F) {
+      root.replaceChildren(panel("Profile", null, el("p", { class: "empty", text: "Loading..." })));
+      return;
+    }
+    const text = state.profileDraft !== null ? state.profileDraft : F.text;
+    const counter = el("span", { class: "mono", id: "profile-count" });
+    const area = el("textarea", { id: "profile-text", class: "editor short", spellcheck: "true", "aria-label": "profile.md",
+      placeholder: "- Call me Sam\n- I use 24-hour time\n- The left monitor is the work one",
+      on: { input: (ev) => { state.profileDraft = ev.target.value; countProfile(); } } });
+    area.value = text;
+    const save = actionButton("Save profile.md", (b) => saveProfile(b), "primary");
+    save.id = "profile-save";
+    const rows = (F.history || []).map((c) => el("tr", null,
+      td(when(c.at), "nowrap"),
+      td(chip(OPS[c.op] || c.op, c.by === "her" ? "berry" : null)),
+      el("td", { class: "sentence" },
+        (c.added || []).map((l) => el("span", { class: "change add", text: `+ ${l}` })),
+        (c.removed || []).map((l) => el("span", { class: "change del", text: `- ${l}` })),
+        !(c.added || []).length && !(c.removed || []).length ? el("span", { class: "faint", text: "layout only" }) : null),
+      td(confirmButton("Revert to before this", "Put it back as it was?", (b) => revertProfile(b, c.id), "small"))));
+    fill(root,
+      panel("Profile", "what she knows about you: your name, how to address you, standing preferences",
+        el("p", { class: "dim" }, "She reads it with every sentence. Say “remember …” and she adds a line in your own words and says it back; “forget that” undoes it. She never writes it from a notification, a song or a web page."),
+        el("div", { class: "actions" }, el("span", { class: "dim mono", text: F.status.path }), counter),
+        area,
+        el("div", { class: "actions" }, save,
+          actionButton("Undo my edits", () => { state.profileDraft = null; renderProfile(); }, "ghost"))),
+      panel("What she reads", "quoted as facts you stated, not as instructions; out of the prompt once a stranger's text is in",
+        F.prompt ? el("pre", { class: "config wrap", text: F.prompt }) : el("p", { class: "empty", text: "Nothing yet: the profile is empty." })),
+      panel("Changes", "every change keeps the file as it was before it; newest first",
+        table(["When", "What", "Lines", ""], rows, { empty: "No changes yet." })));
+    countProfile();
+  }
+
+  function countProfile() {
+    const node = document.getElementById("profile-count");
+    if (!node || !state.profile) return;
+    const text = state.profileDraft !== null ? state.profileDraft : state.profile.text;
+    const used = estimate(text);
+    node.textContent = `~${used} / ${state.profile.cap} tokens`;
+    node.classList.toggle("down", used > state.profile.cap);
+    const save = document.getElementById("profile-save");
+    if (save) save.disabled = state.profileDraft === null || state.profileDraft === state.profile.text || used > state.profile.cap;
+  }
+
+  async function saveProfile(button) {
+    button.disabled = true;
+    try {
+      state.profile = await api("profile/save", { text: state.profileDraft !== null ? state.profileDraft : state.profile.text });
+      state.profileDraft = null;
+      toast("Saved. The file before it is in Changes.");
+      renderProfile();
+    } catch (e) { toast(e.message, true); button.disabled = false; }
+  }
+
+  async function revertProfile(button, id) {
+    button.disabled = true;
+    try {
+      state.profile = await api("profile/revert", { id });
+      state.profileDraft = null;
+      toast("Reverted. That is a change too, so it can be reverted in turn.");
+      renderProfile();
+    } catch (e) { toast(e.message, true); button.disabled = false; }
+  }
+
+  async function refreshProfile() {
+    try { state.profile = await api("profile"); } catch (e) { if (!state.ended) toast(e.message, true); }
+    if (state.profileDraft === null) rerender("profile");
+  }
+
   // --------------------------------------------------------------------------- loading
 
   async function refreshLearning() {
@@ -826,7 +1118,9 @@
       state.runEvents = r.events;
       state.runs = r.runs.slice(0, MAX_RUNS);
       state.approvals = r.approvals || { open: null, history: [] };
+      state.timeline = r.timeline || [];
     } catch (e) { /* the stream will say */ }
+    renderAttention();
     rerender("runs");
   }
 
@@ -845,13 +1139,13 @@
     rerender("system");
   }
 
-  const RENDER = { learning: renderLearning, router: renderRouter, runs: renderRuns, data: renderData, settings: renderSettings,
-                   system: renderSystem };
-  const REFRESH = { learning: refreshLearning, router: refreshRoutes, runs: refreshRuns, data: refreshData,
-                    settings: refreshSettings, system: refreshSystem };
+  const RENDER = { persona: renderPersona, profile: renderProfile, learning: renderLearning, router: renderRouter,
+                   runs: renderRuns, data: renderData, settings: renderSettings, system: renderSystem };
+  const REFRESH = { persona: refreshPersona, profile: refreshProfile, learning: refreshLearning, router: refreshRoutes,
+                    runs: refreshRuns, data: refreshData, settings: refreshSettings, system: refreshSystem };
 
   function show(section, anchor) {
-    if (!SECTIONS.includes(section)) section = "learning";
+    if (!SECTIONS.includes(section)) section = "persona";
     state.section = section;
     for (const name of SECTIONS) $(`#${name}`).classList.toggle("hidden", name !== section);
     for (const b of document.querySelectorAll("#nav button")) b.classList.toggle("on", b.dataset.section === section);
@@ -948,8 +1242,9 @@
     });
     for (const b of document.querySelectorAll("#nav button")) b.addEventListener("click", () => show(b.dataset.section));
     const first = location.hash.slice(1);
-    show(SECTIONS.includes(first) ? first : "learning");
+    show(SECTIONS.includes(first) ? first : "persona");
     if (state.section !== "learning") refreshLearning();
+    if (state.section !== "persona") refreshPersona();     // the attention spot says when persona.md has a problem
     stream();
     setInterval(() => {
       if (state.ended || document.hidden) return;
