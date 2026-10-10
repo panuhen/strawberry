@@ -23,7 +23,7 @@ dependencies = [
     "aiohttp>=3.10",
     "faster-whisper>=1.2.1",
     "jeepney>=0.9.0; sys_platform == 'linux'",
-    "mcp>=1.2",
+    "mcp>=2.2",          # the streamable HTTP client and OAuth over httpx2 (remote.py)
     "numpy>=1.26",
     # The gate's embeddinggemma in-process (embedder.py). The CPU build on every system: onnxruntime
     # has Linux and Windows wheels, and the GPU stays Ollama's.

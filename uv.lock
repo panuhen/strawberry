@@ -1690,7 +1690,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "faster-whisper", specifier = ">=1.2.1" },
     { name = "jeepney", marker = "sys_platform == 'linux'", specifier = ">=0.9.0" },
-    { name = "mcp", specifier = ">=1.2" },
+    { name = "mcp", specifier = ">=2.2" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "nvidia-cublas-cu12", marker = "extra == 'gpu'", specifier = ">=12.9.2.10" },
     { name = "nvidia-cudnn-cu12", marker = "extra == 'gpu'", specifier = ">=9.26.0.51" },

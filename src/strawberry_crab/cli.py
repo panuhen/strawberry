@@ -1342,8 +1342,11 @@ def parser() -> argparse.ArgumentParser:
     g.add_argument("verdict", choices=("approve", "reject"))
     g = learning.add_parser("forget", help="delete the learned sentences and ignore the outcome records so far")
     g.add_argument("--all", action="store_true", help="also delete every head the loop made: the shipped head is in use")
-    p = add("tools", "list the MCP tools she can reach")
-    p.add_argument("topic", nargs="?", default=None)
+    p = add("tools", "list the MCP tools she can reach; `tools login SERVER` signs in to a server with a url "
+                     "(OAuth, in the browser) and `tools logout SERVER` deletes its saved login")
+    p.add_argument("topic", nargs="?", default=None, help="a topic to list, or login | logout")
+    p.add_argument("server", nargs="?", default=None, help="with login or logout: the server's name")
+    p.add_argument("--no-browser", action="store_true", help="with login: only print the sign-in address")
     p = add("tool", "call one MCP tool by hand, e.g. strawberry tool spotify next")
     p.add_argument("server")
     p.add_argument("name")
@@ -1441,7 +1444,13 @@ def dispatch(command: str, args: argparse.Namespace, extra: list[str]) -> int:
     # The by-hand tools read the config themselves, exactly as `strawberryd --route` does.
     if command == "route":
         return run_daemon_main(["--route", " ".join(args.text)])
+    if command == "tools" and args.topic in ("login", "logout"):
+        if not args.server:
+            raise CliError(f"strawberry tools {args.topic}: name the server, e.g. strawberry tools {args.topic} recall", 2)
+        return run_daemon_main([f"--{args.topic}", args.server, *(["--no-browser"] if args.no_browser else [])])
     if command == "tools":
+        if args.server or args.no_browser:
+            raise CliError("strawberry tools: a second name or --no-browser goes with login or logout", 2)
         return run_daemon_main(["--tools", *([args.topic] if args.topic else [])])
     if command == "tool":
         return run_daemon_main(["--tool", args.server, args.name, "--args", args.json])
