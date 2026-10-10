@@ -15,6 +15,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from . import bussecret
+
 log = logging.getLogger("strawberryd.client")
 
 
@@ -38,9 +40,10 @@ class DaemonClient:
 
     def post_sync(self, path: str, payload: dict) -> bool:
         """True when the daemon answered (even with a rejection); False when it was unreachable."""
+        # The bus secret, read from its file each time (bussecret.py): every POST needs it.
         request = urllib.request.Request(
             self.url + path, data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}, method="POST",
+            headers=bussecret.headers({"Content-Type": "application/json"}), method="POST",
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:

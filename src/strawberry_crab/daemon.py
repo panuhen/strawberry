@@ -14,7 +14,7 @@ from typing import Any
 from .actions import NO_CATALOGUE, READ_REFLEXES, Actor, Outcome
 from .adapters import gate_examples
 from .approvals import Approval, ApprovalBook
-from . import confirm
+from . import bussecret, confirm
 from .confirm import Held
 from .config import Config
 from .contract import Performance
@@ -120,6 +120,20 @@ class Daemon:
         # no registration: one log line, nothing else.
         self.wake = wake.watcher(self.on_wake) if self.config.daemon.warm_on_wake else None
         self.wake_task: asyncio.Task | None = None
+        # The per-install bus secret (bussecret.py): made on the first start, read from the file after
+        # that. Every POST and every body's input must present it (server.py).
+        self._secret: str | None = None
+
+    def bus_secret(self) -> str | None:
+        """The bus secret, made if this install has none yet; None (and a log line) when the state dir
+        cannot be written, in which case nothing can post to the daemon or answer her."""
+        if self._secret is None:
+            try:
+                self._secret = bussecret.ensure()
+            except OSError as exc:
+                log.error("secret: %s could not be made (%s); nothing can post to the daemon or send her input "
+                          "until it can", bussecret.path(), exc)
+        return self._secret
 
     def _default_reactor(self) -> Reactor:
         canned = CannedReactor()
@@ -141,6 +155,7 @@ class Daemon:
         canned line, a line waits for Piper (a second), /listen says she is getting her ears on,
         a sentence waits up to 2 s for the gate and is then chat, a notification body waits for it
         as for a reload. A part without begin() (a stand-in in the tests) is started in full."""
+        self.bus_secret()    # first, so the widget and the doorways find the file once the port opens
         for part in (self.reactor, self.speaker, self.listener, self.gate):
             begin = getattr(part, "begin", None)
             if begin is not None:

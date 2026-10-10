@@ -36,6 +36,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from .. import bussecret
 from ..paths import config_file
 from ..winproc import utf8_streams
 from .beat_track import BeatTracker
@@ -151,7 +152,7 @@ class Watcher:
     def post(self, payload: dict) -> None:
         body = json.dumps(payload).encode()
         request = urllib.request.Request(self.daemon + "/tempo", data=body,
-                                         headers={"Content-Type": "application/json"}, method="POST")
+                                         headers=bussecret.headers({"Content-Type": "application/json"}), method="POST")
         try:
             with urllib.request.urlopen(request, timeout=1.5) as response:
                 reply = json.loads(response.read() or b"{}")

@@ -32,9 +32,10 @@ took from the call (a song, a playlist, a recipient), as her spoken question doe
 `destructive` tools never the free text being sent (Adapter.describe). The log names the tool, never
 its arguments.
 
-What this protects against: the model's mistakes and misheard speech. Not against local code with
-the user's privileges, which can already ask for a call (ws `heard`, POST /event) and say yes to it,
-and can claim `hold: true`; a per-install secret for the bus is planned for stage 3 (WIRING §19).
+What this protects against: the model's mistakes and misheard speech. Asking for a call (ws `heard`,
+POST /event) and answering one need the bus secret (bussecret.py), so a process that cannot read the
+user's files can do neither; local code running as the user can read it, ask, say yes and claim
+`hold: true` (WIRING §19).
 """
 
 from __future__ import annotations

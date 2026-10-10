@@ -6,6 +6,7 @@ import pytest
 from strawberry_crab.contract import ONE_SHOTS
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.server import create_app
+from tests.bus import connect
 
 
 @pytest.fixture
@@ -243,7 +244,7 @@ async def test_widget_ping_gets_a_pong(client):
 
 
 async def test_widget_typed_line_takes_the_voice_path(client, daemon):
-    ws = await client.ws_connect("/ws")
+    ws = await connect(client)
     await ws.send_json({"type": "heard", "text": "  "})          # blank: ignored
     await ws.send_json({"type": "heard", "text": "hello there"})
     reply = await ws.receive_json(timeout=5)

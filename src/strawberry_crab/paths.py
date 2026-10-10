@@ -4,7 +4,8 @@ r"""Where Strawberry keeps things on disk: the XDG base directories, in one plac
     data     $XDG_DATA_HOME/strawberry/     (~/.local/share/strawberry/)   voices/, widget/strawberry-widget,
                                                                     models/ (the gate's ONNX model), gate/heads/
     state    $XDG_STATE_HOME/strawberry/    (~/.local/state/strawberry/)   tray.json, pidfiles, logs, token caches,
-                                                                    privacy-notice-shown, outcomes.jsonl
+                                                                    privacy-notice-shown, outcomes.jsonl,
+                                                                    bus-secret (0600, bussecret.py)
     cache    $XDG_CACHE_HOME/strawberry/    (~/.cache/strawberry/)         what can be made again: widget/, app-icons/
 
 An unset, empty or relative XDG variable falls back to the default, as the spec says. Nothing
@@ -16,7 +17,7 @@ read there:
 
     config   %APPDATA%\strawberry\               config.toml, widget.cfg, git-hooks\
     data     %LOCALAPPDATA%\strawberry\          voices\, widget\strawberry-widget.exe, models\
-    state    %LOCALAPPDATA%\strawberry\state\    tray.json, pidfiles, logs, ...
+    state    %LOCALAPPDATA%\strawberry\state\    tray.json, pidfiles, logs, bus-secret, ...
     cache    %LOCALAPPDATA%\strawberry\cache\    widget\, app-icons\ (the notifying apps' logos)
 
 An unset, empty or relative APPDATA or LOCALAPPDATA falls back to ~\AppData\Roaming or
@@ -144,6 +145,11 @@ def open_private(path: Path, mode: str = "wb", encoding: str | None = None):
     if os.name == "posix":
         os.fchmod(fd, 0o600)
     return os.fdopen(fd, mode, encoding=encoding)
+
+
+def bus_secret_file() -> Path:
+    """The per-install bus secret the daemon makes and its clients present (bussecret.py, PROTOCOL §1.4)."""
+    return state_dir() / "bus-secret"
 
 
 def outcomes_file() -> Path:

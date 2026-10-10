@@ -37,7 +37,8 @@ fi
 
 echo "== starting strawberryd on :$PORT"
 # Its own state dir, with the first-run privacy note marked as shown: the validators expect
-# exactly the performances they ask for, not her one-time bubble (firstrun.py).
+# exactly the performances they ask for, not her one-time bubble (firstrun.py). The daemon makes its
+# bus secret there too (bussecret.py), never in the user's own state dir.
 DSTATE="$(mktemp -d)"
 if [ -d "$ROOT/.venv/Scripts" ]; then
   mkdir -p "$DSTATE/strawberry/state" && touch "$DSTATE/strawberry/state/privacy-notice-shown"
@@ -46,7 +47,9 @@ else
   mkdir -p "$DSTATE/strawberry" && touch "$DSTATE/strawberry/privacy-notice-shown"
   STATE_ENV=(XDG_STATE_HOME="$DSTATE")
 fi
-env "${STATE_ENV[@]}" "$BIN/strawberryd" --port "$PORT" --config "$(native "$ROOT/scripts/check_config.toml")" &
+# The validators get the same state dir: the widget reads the bus secret the daemon makes there.
+export "${STATE_ENV[@]}"
+"$BIN/strawberryd" --port "$PORT" --config "$(native "$ROOT/scripts/check_config.toml")" &
 DPID=$!
 cleanup() { kill "$DPID" 2>/dev/null || true; wait "$DPID" 2>/dev/null || true; rm -rf "$DSTATE"; }
 trap cleanup EXIT

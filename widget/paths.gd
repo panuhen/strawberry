@@ -5,6 +5,7 @@ extends RefCounted
 ##
 ##   preferences   $XDG_CONFIG_HOME/strawberry/widget.cfg      (the tray reads it back, §14)
 ##   config        $XDG_CONFIG_HOME/strawberry/config.toml     (the daemon's; "Settings file…")
+##   bus secret    $XDG_STATE_HOME/strawberry/bus-secret       (the daemon's; our hello presents it)
 ##   voices        $XDG_DATA_HOME/strawberry/voices/            ("Voices folder…")
 ##   extracted     $XDG_CACHE_HOME/strawberry/widget/           (files the pack carries, copied out to run)
 ##
@@ -12,6 +13,7 @@ extends RefCounted
 ##
 ##   preferences   %APPDATA%\strawberry\widget.cfg
 ##   config        %APPDATA%\strawberry\config.toml
+##   bus secret    %LOCALAPPDATA%\strawberry\state\bus-secret
 ##   voices        %LOCALAPPDATA%\strawberry\voices\
 ##   extracted     %LOCALAPPDATA%\strawberry\cache\widget\
 ##
@@ -71,6 +73,29 @@ static func cache_dir() -> String:
 
 static func config_file() -> String:
 	return config_dir().path_join("config.toml")
+
+static func state_home() -> String:
+	return _xdg("XDG_STATE_HOME", ".local/state")
+
+## The daemon's state dir: $XDG_STATE_HOME/strawberry, or %LOCALAPPDATA%\strawberry\state.
+static func state_dir() -> String:
+	if windows():
+		return data_dir().path_join("state")
+	return state_home().path_join(APP)
+
+## The per-install bus secret the daemon makes on its first start (PROTOCOL §1.4, bussecret.py).
+static func bus_secret_file() -> String:
+	return state_dir().path_join("bus-secret")
+
+## The secret itself, read afresh (the daemon may have made it after we started), or "" when there is
+## none. Our hello presents it; without it she shows phases but takes no typing, taps or answers.
+static func bus_secret(path := "") -> String:
+	var file := FileAccess.open(path if path != "" else bus_secret_file(), FileAccess.READ)
+	if file == null:
+		return ""
+	var text := file.get_as_text().strip_edges()
+	file.close()
+	return text
 
 static func prefs_file() -> String:
 	return config_dir().path_join(PREFS_FILE)

@@ -21,11 +21,15 @@ cleanup() {
   [ -n "${TRAY_PID:-}" ] && kill "$TRAY_PID" 2>/dev/null || true
   [ -n "$OWN_DAEMON" ] && kill "$OWN_DAEMON" 2>/dev/null || true
   wait 2>/dev/null || true
+  [ -n "${OWN_STATE:-}" ] && rm -rf "$OWN_STATE" || true
 }
 trap cleanup EXIT
 
 if ! curl -fsS "$BASE/health" >/dev/null 2>&1; then
   echo "== starting a daemon of our own on :$PORT"
+  # Its own state dir, for the tray too: the daemon's bus secret and the tray's tray.json go there.
+  export XDG_STATE_HOME="$(mktemp -d)"
+  OWN_STATE="$XDG_STATE_HOME"
   "$D" --port "$PORT" --config "$ROOT/scripts/check_config.toml" >/tmp/strawberry-check-tray.log 2>&1 &
   OWN_DAEMON=$!
   for _ in $(seq 1 60); do curl -fsS "$BASE/health" >/dev/null 2>&1 && break; sleep 0.2; done

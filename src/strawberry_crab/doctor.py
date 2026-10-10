@@ -74,8 +74,11 @@ class Probes:
         import urllib.error
         import urllib.request
 
+        from . import bussecret
+
         data = json.dumps(body).encode() if body is not None else None
-        headers = {"Content-Type": "application/json"} if body is not None else {}
+        # A POST carries the bus secret (bussecret.py), as every client of the daemon does.
+        headers = bussecret.headers({"Content-Type": "application/json"}) if body is not None else {}
         request = urllib.request.Request(url, data=data, headers=headers, method="POST" if body is not None else "GET")
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:

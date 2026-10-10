@@ -28,6 +28,7 @@ from strawberry_crab.voice import DIDNT_CATCH
 from tests.fake_spotify import TRACKS
 from tests.test_brainui import read_event, sign_in
 from tests.test_confirm import REMOVE, REMOVE_CALL, RUNNING, daemon_over
+from tests.bus import BUS_SECRET, trusted
 from tests.test_runs import HELLO_V2, PHASES, kinds, settle, steps, until, v2_sink, well_formed
 from tests.test_thinker import FakeQwen, ScriptedGate, plain_config, voice_daemon
 from tests.test_tools import FakeContent, FakeResult, FakeSession, FakeTool, make_connect
@@ -35,7 +36,8 @@ from tests.test_voice import fake_recording, make_daemon
 
 FEELING_GOOD = TRACKS[0]["uri"]
 CARD = {"type": "hello", "client": "test-card", "version": "dev", "protocol": 2, "body": {"id": "card"},
-        "capabilities": {"phases": ["run", "speaking"], "approvals": True, "sends": {"heard": True, "approval": True}}}
+        "capabilities": {"phases": ["run", "speaking"], "approvals": True, "sends": {"heard": True, "approval": True}},
+        "secret": BUS_SECRET}
 CANARY = "CANARY-ARG-4471"
 
 
@@ -469,7 +471,7 @@ async def test_a_typed_heard_answers_and_a_v1_body_sees_only_performances(aiohtt
     client = await aiohttp_client(create_app(daemon))
     await daemon.start()
     v1 = await client.ws_connect("/ws")
-    await v1.send_str(json.dumps({"type": "hello", "client": "old", "version": "dev"}))
+    await v1.send_str(json.dumps(trusted({"type": "hello", "client": "old", "version": "dev"})))
     await say(client, REMOVE)
     await v1.send_str(json.dumps({"type": "heard", "text": "yes please"}))
     await until(lambda: daemon.runs.busy() is None and spotify.removed)

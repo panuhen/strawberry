@@ -10,6 +10,7 @@ from strawberry_crab import pokes
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.pokes import Pokes
 from strawberry_crab.server import create_app
+from tests.bus import connect
 
 
 @pytest.fixture
@@ -66,7 +67,7 @@ def test_cooldown_and_busy_decline():
 
 async def test_a_poke_gets_a_line_then_the_cooldown_holds(client, daemon, caplog):
     caplog.set_level(logging.INFO)
-    ws = await client.ws_connect("/ws")
+    ws = await connect(client)
     await ws.send_json({"type": "poked", "zone": "belly", "level": 1})
     reply = await ws.receive_json(timeout=2)
     assert reply["state"] == "talking" and reply["text"] in pokes.LINES["belly"] and reply["emotion"] == "happy"
@@ -80,7 +81,7 @@ async def test_a_poke_gets_a_line_then_the_cooldown_holds(client, daemon, caplog
 
 
 async def test_no_line_while_she_is_busy(client, daemon):
-    ws = await client.ws_connect("/ws")
+    ws = await connect(client)
     run = daemon.runs.start("typed")                             # a run going on: the step chip shows
     await ws.send_json({"type": "poked", "zone": "shell", "level": 1})
     await ws.send_json({"type": "ping"})
@@ -97,7 +98,7 @@ async def test_no_line_while_she_is_busy(client, daemon):
 
 
 async def test_unknown_pokes_are_ignored(client, daemon):
-    ws = await client.ws_connect("/ws")
+    ws = await connect(client)
     for bad in ({"type": "poked"}, {"type": "poked", "zone": "tail", "level": 1},
                 {"type": "poked", "zone": "shell", "level": 9}):
         await ws.send_str(json.dumps(bad))

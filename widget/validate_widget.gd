@@ -7,6 +7,8 @@ extends SceneTree
 ## The exported binary has no --script (release templates drop it):
 ## strawberry-widget --headless -- --acceptance=res://validate_widget.gd --daemon=... --ws=... --report=/tmp/checks.json
 
+const Paths = preload("res://paths.gd")
+
 var daemon_url := "http://127.0.0.1:8770"
 var report_path := "res://widget_checks.json"   # an exported binary's res:// is read-only: pass --report=
 var failures: Array[String] = []
@@ -29,8 +31,13 @@ func check(ok: bool, message: String) -> void:
 		failures.append(message)
 		push_error("FAIL: " + message)
 
-func post(path: String, body: Dictionary) -> Array:
-	var err := http.request(daemon_url + path, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(body))
+## Every POST carries the bus secret, from the file the daemon made (PROTOCOL §1.4), as the doorways do.
+func post(path: String, body: Dictionary, secret := "<file>") -> Array:
+	var headers := ["Content-Type: application/json"]
+	var value := Paths.bus_secret() if secret == "<file>" else secret
+	if value != "":
+		headers.append("X-Strawberry-Secret: " + value)
+	var err := http.request(daemon_url + path, headers, HTTPClient.METHOD_POST, JSON.stringify(body))
 	if err != OK:
 		return [err, 0, {}]
 	var result: Array = await http.request_completed
@@ -431,6 +438,19 @@ func run() -> void:
 	report["runs_seen_by_chip"] = chip.runs_seen
 	check(chip.runs_seen >= 1 and chip.runs_ended >= 1, "the typed line's run events should reach the chip")
 	check(chip.shown_count == 0 and not chip.visible, "a quick run should never show the chip")
+
+	# 18a. The bus secret (PROTOCOL §1.4): the hello presented the file's secret, so the daemon trusts
+	#      this body; a POST without it, or with a wrong one, is refused with the reason.
+	check(Paths.bus_secret().length() == 43, "the daemon should have made the bus secret at " + Paths.bus_secret_file())
+	var trusted := false
+	for body: Dictionary in bodies[2].get("bodies", []):
+		trusted = trusted or bool(body.get("trusted", false))
+	check(trusted, "the widget's hello should present the bus secret, /health has %s" % str(bodies[2].get("bodies", [])))
+	var bare := await post("/perform", {"state": "idle"}, "")
+	check(bare[1] == 403 and str(bare[2].get("reason", "")) == "no_secret", "a POST without the secret should be refused, got %s" % str(bare))
+	var wrong := await post("/perform", {"state": "idle"}, "x".repeat(43))
+	check(wrong[1] == 403 and str(wrong[2].get("reason", "")) == "bad_secret", "a POST with a wrong secret should be refused, got %s" % str(wrong))
+	report["bus_secret_trusted"] = trusted
 
 	# 18b. A slower run: the chip shows after SHOW_AFTER with the step in plain words, takes clicks
 	#      (its corners join the click-through hull), and its ✕ sends run.cancel to the daemon, which

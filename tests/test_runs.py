@@ -25,17 +25,18 @@ from tests.fake_spotify import fake_gate
 from tests.test_brainui import read_event, sign_in
 from tests.test_thinker import FakeQwen, ScriptedGate, make, plain_config, reading, voice_daemon
 from tests.test_voice import Sink
+from tests.bus import BUS_SECRET
 
 PHASES = ["routing", "thinking", "tool", "speaking", "run"]
 HELLO_V2 = {"type": "hello", "client": "test-body", "version": "dev", "protocol": 2, "body": {"id": "t-1"},
-            "capabilities": {"phases": PHASES, "sends": {"heard": True, "cancel": True}}}
+            "capabilities": {"phases": PHASES, "sends": {"heard": True, "cancel": True}}, "secret": BUS_SECRET}
 JAZZ = "play some jazz"
 
 
 def v2_sink(daemon: Daemon, hello: dict | None = None) -> Sink:
     sink = Sink()
     daemon.hub.add(sink)  # type: ignore[arg-type]
-    daemon.hub.hello(sink, hello or HELLO_V2)  # type: ignore[arg-type]
+    daemon.hub.hello(sink, hello or HELLO_V2, daemon.bus_secret())  # type: ignore[arg-type]
     return sink
 
 
@@ -158,7 +159,8 @@ def test_a_whole_sentence_stop(text, stop):
 
 def test_a_hello_without_protocol_is_v1_whatever_else_it_says():
     assert body_from_hello({"type": "hello", "capabilities": {"phases": PHASES, "sends": {"cancel": True}}}).protocol == 1
-    body = body_from_hello(HELLO_V2 | {"capabilities": {"phases": ["tool", "subagent", 3], "sends": {"cancel": "yes"}}})
+    body = body_from_hello(HELLO_V2 | {"capabilities": {"phases": ["tool", "subagent", 3], "sends": {"cancel": "yes"}}},
+                           BUS_SECRET)
     assert body.protocol == 2 and body.phases == {"tool"} and body.cancel is False
     assert body_from_hello(HELLO_V2 | {"protocol": 9}).protocol == 2
 
@@ -537,7 +539,7 @@ async def test_a_v2_hello_is_welcomed_and_pings_carry_the_clock(aiohttp_client):
             break
     assert [m["type"] for m in got if "type" in m] == ["run.completed"]    # only the families it accepted
     health = await (await client.get("/health")).json()
-    assert {"protocol": 2, "id": "t-1", "phases": ["run", "tool"], "cancel": True} in health["bodies"]
+    assert {"protocol": 2, "trusted": True, "id": "t-1", "phases": ["run", "tool"], "cancel": True} in health["bodies"]
     await ws.close()
     await daemon.close()
 

@@ -11,13 +11,16 @@ D=("$ROOT/.venv/bin/strawberryd" --config "$ROOT/scripts/check_config.toml")
 RESTART_AFTER=3
 DOWN_FOR="${DOWN_FOR:-2}"
 PIDFILE="$ROOT/widget/.reconnect_daemon.pid"
+# A state dir of its own: the daemon makes its bus secret there and the widget reads it from there,
+# never from the user's own (bussecret.py).
+export XDG_STATE_HOME="$(mktemp -d)"
 
 wait_gone() { for _ in $(seq 1 100); do kill -0 "$1" 2>/dev/null || return 0; sleep 0.1; done; return 1; }
 wait_health() { for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && return 0; sleep 0.1; done; return 1; }
 
 "${D[@]}" --port "$PORT" >/dev/null 2>&1 &
 echo $! >"$PIDFILE"
-cleanup() { [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; }
+cleanup() { [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; rm -rf "$XDG_STATE_HOME"; }
 trap cleanup EXIT
 wait_health || { echo "daemon did not start" >&2; exit 1; }
 
