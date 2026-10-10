@@ -1124,7 +1124,7 @@ func capture() -> void:
 		var t := {"bpm": f[0], "period_s": 60.0 / f[0], "confidence": f[1], "next_beat": now + 1.9,
 			"evenness": f[2], "low_ratio": f[3], "density": f[4], "loudness_db": -16.0}
 		dance.set_tempo(t)
-		dance.set_tempo(t)
+		dance.set_tempo(t, now + dance.HEARTBEAT_S)
 		await get_tree().create_timer(2.0).timeout  # ~0.1 s after the beat: the pulse is near its peak
 	else:
 		var icon := Paths.on_disk("res://capture_phase1.png")

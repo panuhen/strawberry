@@ -22,6 +22,8 @@ const LIFT_BPM := 119.0          # dance_loop: 4.033 s, 8 leg lifts -> one lift 
 const FRESH_S := 6.0
 const CONFIRM_MESSAGES := 2      # a new style has to win this many estimates in a row
 const CONFIRM_SWAY := 4          # dropping to sway takes longer: breakdowns are 4–8 s and the beat comes back
+const HEARTBEAT_S := 2.0         # the watcher's regular post; extra posts (a section change) come sooner, so a
+                                 # new style must also have held for (votes - 1) heartbeats, as before them
 const MIN_SPEED := 0.65
 const MAX_SPEED := 1.6
 const FADE_S := 0.3              # the moves ease in when she starts and out when the beat goes
@@ -44,6 +46,7 @@ var received_at := 0.0
 var style := ""
 var candidate := ""
 var candidate_votes := 0
+var candidate_since := 0.0
 var applied := false
 var styles_seen := {}
 var wrote_speed := false
@@ -70,8 +73,10 @@ func setup(owner: Node3D, animation_player: AnimationPlayer, model: Node, blink_
 			squashers.append(mesh)
 			squash_indices.append(index)
 
-func set_tempo(data: Dictionary) -> void:
-	received_at = Time.get_unix_time_from_system()
+## `at`: when the estimate arrived (now by default); a capture or a check passes a later time to stand
+## for the next heartbeat.
+func set_tempo(data: Dictionary, at: float = -1.0) -> void:
+	received_at = at if at >= 0.0 else Time.get_unix_time_from_system()
 	if data.get("silent", false):
 		tempo = {}
 		return
@@ -82,8 +87,10 @@ func set_tempo(data: Dictionary) -> void:
 	else:
 		candidate = pick
 		candidate_votes = 1
+		candidate_since = received_at
 	var needed := CONFIRM_SWAY if candidate == "sway" and style != "" else CONFIRM_MESSAGES
-	if candidate_votes >= needed and candidate != style:
+	var held := received_at - candidate_since >= (needed - 1) * HEARTBEAT_S - 0.25
+	if candidate_votes >= needed and held and candidate != style:
 		previous_style = style
 		since_switch = 0.0
 		style = candidate
