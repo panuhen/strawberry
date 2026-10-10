@@ -2071,10 +2071,10 @@ not ask get nothing of either, in any shape. The crab asks for `gesture` only: a
 `done` and fades on a cancel, and as a hold starts she glances toward the middle of the screen, where the user
 and the camera are. The orbs can ask for `hand` to render it.
 
-**Gesture + target (a hook).** A map key may name a target before the gesture, `"music:thumb_up" = "like"`,
-for when the user points at something; `GestureDesk.action_for` takes it over the plain entry when
-`GestureDesk.target()` returns that entity id. Until the body link's targets (`touch` / `target` from the
-bodies) are on main, `target()` returns "" and the plain entries are used.
+**Gesture + target.** A map key may name a target before the gesture, `"music:thumb_up" = "like"`, for when
+the user points at something; `GestureDesk.action_for` takes it over the plain entry when `GestureDesk.target()`
+returns that entity id: the body link's current target (`daemon.targets.current()`, §25). With no target, or a
+target with no entry of its own, the plain entry is used.
 
 **input.toml** (`inputs.py`). The Brain UI's Input tab (§17) saves the gesture and touch settings to
 `~/.config/strawberry/input.toml` (beside the config file; on Windows `%APPDATA%\strawberry\input.toml`), as
