@@ -1,0 +1,416 @@
+"""The Brain UI's Config file and Tools tabs (configform.py, configui.py, WIRING.md §28): the form from config.py's
+schema, edits that keep the file's comments, the startup checks, a file changed under the page, what loosens safety
+and her card's yes for it, the secrets that never reach the page, and the tool servers' listing."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from pathlib import Path
+
+import pytest
+
+from strawberry_crab import brainui, configform, configui, paths
+from strawberry_crab.config import _SECTIONS, Config, ConfigError, default_toml, load
+from strawberry_crab.daemon import Daemon
+from strawberry_crab.events import CannedReactor
+from strawberry_crab.server import create_app
+from strawberry_crab.tools import ToolSpec, Toolbox
+from tests.test_brainui import quiet_config, sign_in
+from tests.test_runs import until
+
+SECRET = "sk-kestrel-0429"          # a token: it may be in config.toml, never on the page, in a diff or in a log
+FILE = f"""\
+# the user's own comment
+[daemon]
+port = 8770   # keep this one
+
+[notifications]
+body = "off"          # quiet
+
+[tools.servers.notes]   # a server of the user's
+command = "notes-mcp"
+args = ["--api-key", "{SECRET}", "--verbose"]
+env = {{ NOTES_TOKEN = "{SECRET}", NOTES_HOME = "/srv/notes" }}
+flags = ["private"]
+# api_key = "{SECRET}"
+"""
+
+
+def write_config(text: str) -> Path:
+    path = paths.config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+# ----------------------------------------------------------------------------- the schema
+
+
+def test_the_form_has_every_section_and_key_of_config_py_with_its_default_kind_and_the_codes_hint():
+    sections = configform.schema()
+    assert [s["name"] for s in sections] == list(_SECTIONS)
+    json.dumps(sections)                                                       # the page gets it as JSON
+    by = {(s["name"], f["key"]): f for s in sections for f in s["fields"]}
+    assert len(by) == sum(len(cls.__dataclass_fields__) for cls in _SECTIONS.values())
+    assert by[("daemon", "port")] | {} == by[("daemon", "port")] and by[("daemon", "port")]["kind"] == "int"
+    assert by[("daemon", "port")]["default"] == 8770 and by[("speech", "speed")]["kind"] == "float"
+    assert by[("speech", "enabled")]["kind"] == "bool" and by[("voice", "model")]["kind"] == "str"
+    assert by[("notifications", "body")]["kind"] == "choice" and by[("notifications", "body")]["choices"] == ["off", "react", "glance"]
+    assert by[("gestures", "hands")]["choices"] == [1, 2] and by[("approvals", "hold")]["kind"] == "multi"
+    assert by[("media", "ignore")]["kind"] == "list" and by[("notifications", "body_apps")]["kind"] == "map"
+    assert by[("gate", "examples")]["kind"] == "json" and by[("brain", "keep_alive")]["kind"] == "duration"
+    assert "resume from suspend" in by[("daemon", "warm_on_wake")]["hint"]                  # the comment on its line
+    assert "<sentence, 23 chars>" in by[("daemon", "log_sentences")]["hint"]                # the comment above it
+    assert "until a restart" in by[("voice", "fallback_model")]["hint"]                     # the lines carrying it on
+    assert by[("tools", "servers")]["elsewhere"]["tab"] == "tools"
+    assert by[("gestures", "enabled")]["elsewhere"]["tab"] == "input"
+    assert by[("brain", "persona")]["deprecated"] is True
+    live = {s["name"]: s["live"] for s in sections}
+    assert live["notifications"] and live["gestures"] and live["daemon"] is None
+
+
+# ----------------------------------------------------------------------------- edits keep the file
+
+
+def test_an_edit_keeps_every_comment_and_the_order_and_a_reset_takes_the_key_out():
+    text = configform.apply_edits(FILE, [{"key": "daemon.port", "value": 8790}, {"key": "speech.speed", "value": 2},
+                                         {"key": "notifications.body", "reset": True}])
+    assert "# the user's own comment" in text and "port = 8790   # keep this one" in text
+    assert "[tools.servers.notes]   # a server of the user's" in text and f'# api_key = "{SECRET}"' in text
+    assert text.index("[daemon]") < text.index("[notifications]") < text.index("[tools.servers.notes]")
+    assert 'body = "off"' not in text and "speed = 2.0" in text                 # an int where a float goes
+    loaded = load_text(text)
+    assert loaded.daemon.port == 8790 and loaded.notifications.body == "off" and loaded.speech.speed == 2.0
+    assert configform.apply_edits(FILE, [{"key": "daemon.port", "value": 8770}]) == FILE   # the same value: untouched
+
+
+def load_text(text: str) -> Config:
+    return configform.load_text(text)
+
+
+def test_a_section_that_is_only_a_parent_gets_its_own_header_and_servers_are_set_whole():
+    text = configform.apply_edits(FILE, [{"key": "tools.enabled", "value": False}])
+    assert text.count("[tools]") == 1 and text.count("# a server of the user's") == 1
+    assert load_text(text).tools.enabled is False and "notes" in load_text(text).tools.servers
+    added = configform.apply_edits(text, [{"key": "tools.servers.recall",
+                                           "value": {"topic": "notes", "url": "https://recall.example/mcp",
+                                                     "workspaces": ["Garden"]}}])
+    assert '[tools.servers.recall]\ntopic = "notes"\nurl = "https://recall.example/mcp"' in added
+    server = load_text(added).tools.servers["recall"]
+    assert server == {"topic": "notes", "url": "https://recall.example/mcp", "workspaces": ["Garden"]}
+    edited = configform.apply_edits(added, [{"key": "tools.servers.notes",
+                                             "value": {"command": "notes-mcp", "args": ["--verbose"], "flags": ["private"]}}])
+    assert "[tools.servers.notes]   # a server of the user's" in edited and "env =" not in edited.split("[tools.servers.recall]")[0]
+    gone = configform.apply_edits(edited, [{"key": "tools.servers.recall", "reset": True}])
+    assert "recall" not in load_text(gone).tools.servers
+    fresh = configform.apply_edits("", [{"key": "tools.servers.web", "value": {"command": "/usr/bin/npx",
+                                                                               "args": ["-y", "mcp-searxng"]}}])
+    assert load_text(fresh).tools.servers == {"web": {"command": "/usr/bin/npx", "args": ["-y", "mcp-searxng"]}}
+
+
+@pytest.mark.parametrize("edits, words", [
+    ([{"key": "nope.port", "value": 1}], "not a setting"),
+    ([{"key": "daemon.nope", "value": 1}], "not a setting"),
+    ([{"key": "gestures.enabled", "value": True}], "camera switch"),
+    ([{"key": "tools.servers", "value": {}}], "the Tools page"),
+    ([{"key": "tools.servers.bad name", "value": {"command": "x"}}], "letters, digits"),
+    ([{"key": "tools.servers.x", "value": {"command": "x", "shell": "sh"}}], "unknown keys"),
+    ([{"key": "daemon.port"}], "needs a value"),
+    ("daemon.port", "a list"),
+])
+def test_an_edit_the_form_cannot_make_is_refused_with_the_reason(edits, words):
+    with pytest.raises(ConfigError, match=words):
+        configform.apply_edits(FILE, edits)
+
+
+# ----------------------------------------------------------------------------- secrets
+
+
+def test_secrets_are_hidden_and_come_back_and_a_hidden_value_cannot_be_moved_or_forged():
+    vault = configform.Vault()
+    masked = vault.mask(FILE + '\n[brain]\nollama_url = "https://u:pw@ollama.example/?token=abc"\n')
+    assert SECRET not in masked and "pw@" not in masked and "/srv/notes" not in masked      # every env value
+    assert '"--api-key", "<hidden 1: kept as is>", "--verbose"' in masked
+    assert "# <hidden comment" in masked and "port = 8770   # keep this one" in masked
+    assert vault.unmask(masked) == FILE + '\n[brain]\nollama_url = "https://u:pw@ollama.example/?token=abc"\n'
+    assert vault.mask(FILE) == vault.mask(FILE)                                 # the same numbers every time
+    with pytest.raises(ConfigError, match="not one this page showed"):
+        vault.unmask(masked.replace("<hidden 1:", "<hidden 99:"))
+    with pytest.raises(ConfigError, match="changed by hand"):
+        vault.unmask(masked.replace("<hidden 1: kept as is>", "x<hidden 1: kept as is>"))
+    with pytest.raises(ConfigError, match="not one this page showed"):
+        configform.Vault().unmask(masked)                                       # another page's numbers
+    for arg_list, hidden in ((["--token=abc"], [0]), (["--api-key", "abc"], [1]), (["-v", "abc"], []),
+                             (["Authorization: Bearer abc"], [0]), (["--api-key", "--other"], [])):
+        found = configform.secret_paths({"tools": {"servers": {"x": {"args": arg_list}}}})
+        assert [p[-1] for p in found] == hidden, arg_list
+
+
+# ----------------------------------------------------------------------------- what loosens safety
+
+SERVER = '[tools.servers.notes]\ncommand = "notes-mcp"\nflags = ["private"]\n'
+RECALL = '[tools.servers.recall]\nurl = "https://recall.example/mcp"\nworkspaces = ["Garden"]\n'
+SPOTIFY = '[tools.servers.spotify]\ncommand = "spotify-mcp"\n'
+
+LOWERING = [
+    # (the file, the draft, the keys that loosen; [] for an edit that is neutral or raises safety)
+    ("", "[speech]\nspeed = 1.5\n", []),
+    ("", "[daemon]\nhost = \"0.0.0.0\"\n", ["daemon.host"]),
+    ("", "[daemon]\nhost = \"localhost\"\n", []),
+    ("", "[daemon]\nlog_sentences = true\n", ["daemon.log_sentences"]),
+    ("[daemon]\nlog_sentences = true\n", "", []),
+    ("", "[learning]\nlog_outcomes = true\n", ["learning.log_outcomes"]),
+    ("[messages]\nenabled = false\n", "", ["messages.enabled"]),
+    ("", "[brain]\nollama_url = \"http://10.0.0.5:11434\"\n", ["brain.ollama_url"]),
+    ("", "[brain]\nollama_url = \"http://127.0.0.1:11500\"\n", []),
+    ("", "[notifications]\nbody = \"react\"\n", ["notifications.body"]),
+    ("[notifications]\nbody = \"glance\"\n", "[notifications]\nbody = \"react\"\n", []),
+    ("", "[notifications]\nbody_apps = { Slack = \"glance\" }\n", ["notifications.body_apps.Slack"]),
+    ("[notifications]\nbody_apps = { Slack = \"glance\" }\n", "", []),
+    ("[tools]\nenabled = false\n", "", ["tools.enabled"]),
+    ("", SERVER, ["tools.servers.notes"]),
+    (SERVER, "", []),
+    (SERVER, SERVER.replace("notes-mcp", "/tmp/other"), ["tools.servers.notes.command"]),
+    (SERVER, SERVER + 'args = ["--all"]\n', ["tools.servers.notes.args"]),
+    (SERVER, SERVER + 'env = { HOME = "/" }\n', ["tools.servers.notes.env"]),
+    (SERVER, SERVER + 'cwd = "/"\n', ["tools.servers.notes.cwd"]),
+    (SERVER, SERVER.replace('["private"]', '["private", "foreign"]'), []),
+    (SERVER.replace('["private"]', '["private", "egress"]'), SERVER, ["tools.servers.notes.flags"]),
+    (SERVER, SERVER.replace('flags = ["private"]\n', ""), []),                 # no flags: all three
+    (SERVER.replace('flags = ["private"]\n', ""), SERVER, ["tools.servers.notes.flags"]),
+    (SERVER, SERVER + 'adapter = "web"\n', ["tools.servers.notes.adapter"]),
+    (SERVER + 'careful = ["wipe"]\n', SERVER, ["tools.servers.notes.careful"]),
+    (SERVER + 'confirm = ["wipe"]\n', SERVER + "confirm = []\n", ["tools.servers.notes.confirm"]),
+    (SPOTIFY, SPOTIFY + "confirm = []\n", ["tools.servers.spotify.confirm"]),  # the adapter's two removals
+    (SPOTIFY, SPOTIFY + 'confirm = ["remove_saved_tracks", "remove_from_playlist", "save_tracks"]\n', []),
+    (SERVER + 'offer = "asked"\n', SERVER + 'offer = "topic"\n', ["tools.servers.notes.offer"]),
+    (SERVER, SERVER + 'offer = "asked"\n', []),
+    (RECALL, RECALL.replace('["Garden"]', '["Garden", "Work"]'), ["tools.servers.recall.workspaces"]),
+    (RECALL, RECALL.replace('["Garden"]', "[]"), []),
+    (RECALL, RECALL.replace("recall.example", "elsewhere.example"), ["tools.servers.recall.url"]),
+    (SERVER, SERVER + '[approvals]\nrisk = { "notes.wipe" = "read" }\n', ["approvals.risk.notes.wipe"]),
+    (SERVER, SERVER + '[approvals]\nrisk = { "notes" = "playback" }\n', ["approvals.risk.notes"]),
+    (SERVER, SERVER + '[approvals]\nrisk = { "notes.wipe" = "destructive" }\n', []),
+    (SERVER + '[approvals]\nrisk = { "notes.wipe" = "sends" }\n', SERVER, ["approvals.risk.notes.wipe"]),
+    (SERVER + '[approvals]\nrisk = { "notes.peek" = "read" }\n', SERVER, []),
+    (SPOTIFY, SPOTIFY + '[approvals]\nrisk = { "spotify.pause" = "playback" }\n', []),   # its adapter's own tier
+    ("", '[approvals]\nhold = ["destructive"]\n', ["approvals.hold"]),
+    ("", '[approvals]\nhold = ["change", "sends", "destructive"]\n', []),
+    ("", "[approvals]\nchange_s = 5.0\n", []),
+    ('[gestures]\nwatch = "armed"\n', "", ["gestures.watch"]),
+    ("", '[gestures]\nwatch = "armed"\n', []),
+    ("[gestures]\napprovals = false\n", "", ["gestures.approvals"]),
+    ("", "[ledger]\nforeign_minutes = 2.0\n", ["ledger.foreign_minutes"]),
+    ("", "[ledger]\nforeign_minutes = 20.0\n", []),
+    ("", "[gestures]\nhands = 1\nfps = 10.0\n", []),
+]
+
+
+@pytest.mark.parametrize("old, new, keys", LOWERING)
+def test_the_classifier_names_each_edit_that_loosens_safety_and_nothing_else(old, new, keys):
+    found = configform.lowering(load_text(old), load_text(new))
+    assert [f.key for f in found] == keys
+    assert all(f.why for f in found)
+
+
+def test_the_camera_is_never_switched_from_the_editor():
+    assert configform.refused(load_text(""), load_text("[gestures]\nenabled = true\n"))
+    assert configform.refused(load_text("[gestures]\nenabled = true\n"), load_text(""))
+    assert not configform.refused(load_text("[gestures]\nenabled = true\n"), load_text("[gestures]\nenabled = true\nfps = 10.0\n"))
+
+
+# ----------------------------------------------------------------------------- the routes
+
+
+@pytest.fixture
+async def client(aiohttp_client):
+    return await aiohttp_client(create_app(Daemon(reactor=CannedReactor(), config=quiet_config())))
+
+
+def daemon_of(client) -> Daemon:
+    return client.server.app[brainui.UI].daemon
+
+
+def desk_of(client) -> configui.ConfigDesk:
+    return client.server.app[configui.DESK]
+
+
+POSTS = [("/ui/api/config/check", {"text": ""}), ("/ui/api/config/save", {"text": "", "base": "0" * 64})]
+
+
+@pytest.mark.parametrize("path, body", POSTS)
+async def test_every_config_write_needs_the_session_the_csrf_header_and_the_origin(client, path, body):
+    signed = await sign_in(client)
+    origin = f"http://127.0.0.1:{client.port}"
+    assert (await client.post(path, json=body, headers={"Origin": origin})).status == 401
+    assert (await signed.post(path, body, csrf=False)).status == 403
+    assert (await signed.post(path, body, origin="http://127.0.0.1:1")).status == 403
+    assert (await signed.post(path, body, origin=None)).status == 403
+    for get in ("/ui/api/config", "/ui/api/tools"):
+        assert (await signed.get(get, origin="https://evil.example")).status == 403
+        assert (await signed.get(get, csrf=False)).status == 403
+    assert not paths.config_file().exists()
+
+
+async def test_the_page_never_gets_a_secret_and_a_save_keeps_them(client, caplog):
+    caplog.set_level(logging.DEBUG)
+    path = write_config(FILE)
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    assert SECRET not in json.dumps(view) and view["exists"] and view["error"] is None
+    assert view["values"]["daemon"]["port"] == 8770 and view["text"].startswith("# the user's own comment")
+    draft = view["text"].replace("port = 8770", "port = 8790")
+    checked = await (await signed.post("/ui/api/config/check", {"text": draft, "base": view["base"]["sha256"]})).json()
+    assert checked["ok"] and checked["lowering"] == [] and checked["restart"] == ["daemon"]
+    assert "-port = 8770   # keep this one" in checked["diff"] and SECRET not in json.dumps(checked)
+    saved = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})
+    assert saved.status == 200
+    body = await saved.json()
+    assert body["backup"] and SECRET not in json.dumps(body) and body["restart"] == ["daemon"]
+    text = path.read_text()
+    assert text == FILE.replace("port = 8770", "port = 8790")                  # the secrets kept, the rest as written
+    assert Path(body["backup"]).read_text() == FILE
+    form = await signed.post("/ui/api/config/check", {"text": body["text"], "edits": [
+        {"key": "tools.servers.notes", "value": body["values"]["tools"]["servers"]["notes"] | {"args": ["--verbose"]}}]})
+    form = await form.json()
+    assert form["ok"] and SECRET not in json.dumps(form)
+    assert [f["key"] for f in form["lowering"]] == ["tools.servers.notes.args"]
+    assert SECRET not in caplog.text
+
+
+async def test_a_draft_that_would_not_load_is_refused_with_the_startup_reason(client):
+    path = write_config(FILE)
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    for draft, words in ((view["text"] + "\n[speech]\nspeed = 9.0\n", "speech.speed must be between"),
+                         (view["text"] + "\n[daemon\n", "parse"),
+                         (view["text"].replace('body = "off"', 'body = "shout"'), "notifications.body must be"),
+                         (view["text"] + "\n[gestures]\nenabled = true\n", "camera switch")):
+        checked = await (await signed.post("/ui/api/config/check", {"text": draft})).json()
+        assert not checked["ok"] and words in " ".join(checked["problems"]), draft
+        reply = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})
+        assert reply.status == 400
+    assert path.read_text() == FILE
+
+
+async def test_a_file_changed_under_the_page_is_never_overwritten(client):
+    path = write_config(FILE)
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    path.write_text(FILE + "\n[speech]\nenabled = true\n", encoding="utf-8")   # the tray, an editor, the camera switch
+    draft = view["text"].replace("port = 8770", "port = 8790")
+    checked = await (await signed.post("/ui/api/config/check", {"text": draft, "base": view["base"]["sha256"]})).json()
+    assert checked["stale"] is True
+    reply = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})
+    assert reply.status == 409 and (await reply.json())["stale"] is True
+    assert "[speech]" in path.read_text() and "port = 8790" not in path.read_text()
+    with pytest.raises(configform.Stale):
+        configform.write(path, FILE, configform.sha256(FILE))
+
+
+async def test_a_new_file_starts_from_the_template_and_a_safe_change_saves_at_once_and_applies(client):
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    assert view["exists"] is False and view["text"] == default_toml()
+    checked = await (await signed.post("/ui/api/config/check", {"text": view["text"], "edits": [
+        {"key": "notifications.body", "value": "off"}, {"key": "notifications.ignore_apps", "value": ["Spotify", "Steam"]}]})).json()
+    assert checked["ok"] and checked["live"] == ["notifications"] and checked["lowering"] == []
+    saved = await (await signed.post("/ui/api/config/save", {"text": checked["text"], "base": view["base"]["sha256"]})).json()
+    assert saved["backup"] is None and saved["applied"] == ["notifications"]
+    assert daemon_of(client).config.notifications.ignore_apps == ["Spotify", "Steam"]       # used at once
+    assert load(paths.config_file()).notifications.ignore_apps == ["Spotify", "Steam"]
+    assert "# Strawberry settings." in paths.config_file().read_text()
+
+
+async def test_a_change_that_loosens_safety_waits_for_a_yes_on_her_card_never_from_the_page(client, caplog):
+    caplog.set_level(logging.DEBUG)
+    path = write_config(FILE)
+    signed = await sign_in(client)
+    daemon, desk = daemon_of(client), desk_of(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    draft = view["text"].replace('body = "off"', 'body = "glance"')
+    reply = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})
+    assert reply.status == 202
+    pending = (await reply.json())["pending"]
+    assert pending["state"] == "waiting" and pending["lowering"][0]["key"] == "notifications.body"
+    approval = daemon.approvals.open
+    assert approval is not None and approval.approval_id == pending["approval_id"] and approval.hold is True
+    assert approval.timeout_s == configui.CONFIRM_S and approval.run.source == "settings"
+    assert "Save the settings? message bodies: off -> glance" in approval.prompt
+    assert path.read_text() == FILE                                             # nothing written yet
+    # The page that asked cannot say yes; a thumb cannot either; a second save waits its turn.
+    refused = await signed.post("/ui/api/approval", {"approval_id": approval.approval_id, "answer": "yes"})
+    assert refused.status == 409 and (await refused.json())["reason"] == "not_here"
+    assert daemon.gestures.answerable() in (None, {"yes": False, "no": True})
+    again = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})
+    assert again.status == 409
+    # A tap on her card is not a yes for a hold; a held yes is.
+    assert daemon.approvals.answer(approval.approval_id, "yes", "body", hold=False) == "hold_required"
+    assert daemon.approvals.answer(approval.approval_id, "yes", "body", hold=True) is None
+    await until(lambda: desk.pending.state != "waiting")
+    assert desk.pending.state == "saved" and approval.made
+    assert 'body = "glance"' in path.read_text() and SECRET in path.read_text()
+    assert daemon.config.notifications.body == "glance"                          # applied at once
+    after = await (await signed.get("/ui/api/config")).json()
+    assert after["pending"]["state"] == "saved" and after["pending"]["by"] == "body"
+    assert approval.run.done and SECRET not in caplog.text
+
+
+async def test_a_no_or_no_answer_or_a_file_changed_meanwhile_writes_nothing(client):
+    path = write_config(FILE)
+    signed = await sign_in(client)
+    daemon, desk = daemon_of(client), desk_of(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    draft = view["text"].replace("[daemon]\n", "[daemon]\nlog_sentences = true\n")
+    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})).status == 202
+    no = await signed.post("/ui/api/approval", {"approval_id": daemon.approvals.open.approval_id, "answer": "no"})
+    assert no.status == 200                                                     # a no from the page is fine
+    await until(lambda: desk.pending.state != "waiting")
+    assert desk.pending.state == "left" and path.read_text() == FILE
+    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["sha256"]})).status == 202
+    path.write_text(FILE + "\n# edited meanwhile\n", encoding="utf-8")
+    daemon.approvals.answer(daemon.approvals.open.approval_id, "yes", "voice")
+    await until(lambda: desk.pending.state != "waiting")
+    assert desk.pending.state == "changed" and "log_sentences" not in path.read_text()
+    base = configform.sha256(path.read_text())
+    draft = (await (await signed.get("/ui/api/config")).json())["text"].replace("[daemon]\n", "[daemon]\nlog_sentences = true\n")
+    assert (await signed.post("/ui/api/config/save", {"text": draft, "base": base})).status == 202
+    daemon.approvals.config.change_s = 0.05
+    desk.pending.approval.expires = 0.0                                         # her wait ran out
+    await until(lambda: desk.pending.state != "waiting", timeout=5.0)
+    assert desk.pending.state == "left" and desk.pending.detail == "no answer in time"
+    assert "log_sentences" not in path.read_text()
+
+
+# ----------------------------------------------------------------------------- the Tools page
+
+
+async def test_the_tools_page_lists_each_server_its_tools_tiers_flags_and_logins_without_secrets(aiohttp_client):
+    write_config(FILE + RECALL)
+    config = load(paths.config_file())
+    config.brain.enabled = config.speech.enabled = config.voice.enabled = config.gate.enabled = False
+    config.thinker.enabled = config.actions.mpris = False
+    config.tools.preconnect = False
+    daemon = Daemon(reactor=CannedReactor(), config=config, toolbox=Toolbox(config.tools))
+    notes = daemon.toolbox.servers["notes"]
+    notes.listed = frozenset({"peek", "wipe"})
+    notes.tools = [ToolSpec("notes", "peek", "look", {})]
+    notes.destructive = frozenset({"wipe"})
+    client = await aiohttp_client(create_app(daemon))
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/tools")).json()
+    assert SECRET not in json.dumps(view)
+    rows = {row["name"]: row for row in view["servers"]}
+    assert rows["notes"]["kind"] == "command" and rows["notes"]["flags"] == ["private"]
+    assert rows["notes"]["tools"] == [
+        {"name": "peek", "tier": "change", "offered": True, "confirm": False, "careful": False, "destructive_hint": False},
+        {"name": "wipe", "tier": "destructive", "offered": False, "confirm": False, "careful": False, "destructive_hint": True}]
+    assert rows["recall"]["kind"] == "url" and rows["recall"]["adapter"] == "recall"
+    assert rows["recall"]["login"] == {"command": "strawberry tools login recall", "saved": False}
+    assert rows["recall"]["flags"] == ["egress", "foreign", "private"]
+    assert any(row["builtin"] for row in view["servers"])                      # her own (the desktop, messages)
+    assert view["file"]["notes"]["env"]["NOTES_TOKEN"].startswith("<hidden ")
+    assert "notes" in view["options"]["topics"] and "recall" in view["options"]["adapters"]
+    await daemon.close()

@@ -581,7 +581,8 @@ class GestureDesk:
         pending = self.daemon.approvals.open
         if pending is None or not self.config.approvals:
             return None
-        yes = pending.risk != "destructive" and pending.risk not in self.daemon.config.approvals.hold
+        yes = (pending.risk != "destructive" and pending.risk not in self.daemon.config.approvals.hold
+               and not pending.hold and (pending.yes_by is None or "gesture" in pending.yes_by))
         return {"yes": yes, "no": True}
 
     def arm(self, seconds: float | None = None) -> float:

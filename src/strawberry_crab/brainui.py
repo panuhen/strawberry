@@ -16,6 +16,7 @@ nothing here decides anything.
     POST /ui/api/persona/check | persona/save | persona/try | profile/save | profile/revert
     POST /ui/api/input/check | input/save | input/practice | input/camera
     GET  /ui/api/apps; POST /ui/api/apps/check | apps/save    the Apps tab (appsui.py)
+    GET  /ui/api/config | tools; POST /ui/api/config/check | config/save    the Config file and Tools tabs (configui.py)
 
 Everything else on the port refuses a request with an Origin header, so no web page can reach
 it. The routes under /ui are the one place a browser is let in, and only this way:
@@ -240,9 +241,10 @@ def setup(app: web.Application, daemon) -> BrainUI:
         web.post("/ui/api/input/practice", api_input_practice),
         web.post("/ui/api/input/camera", api_input_camera),
     ])
-    from . import appsui   # local: the Apps tab's routes use this module's checks (appsui.py, WIRING §27)
+    from . import appsui, configui   # local: these tabs' routes use this module's checks (WIRING §27, §28)
 
     appsui.add_routes(app)
+    configui.add_routes(app)
     return ui
 
 
@@ -758,7 +760,9 @@ async def api_approval(request: web.Request, ui: BrainUI, session: Session) -> w
         raise web.HTTPBadRequest(text="answer must be yes or no")
     reason = ui.daemon.approvals.answer(approval_id, answer, "ui")
     if reason is not None:
-        why = {"resolved": "that question has been answered already"}.get(reason, "she is not waiting on that question")
+        why = {"resolved": "that question has been answered already",
+               "not_here": "this one takes a yes on her card or out loud, not from this page (No works here)",
+               }.get(reason, "she is not waiting on that question")
         return web.json_response({"error": why, "reason": reason}, status=409)
     log.info("ui: approval %s answered %s by hand", approval_id, answer)
     return web.json_response({"answered": approval_id, "answer": answer})

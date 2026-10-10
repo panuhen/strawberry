@@ -35,7 +35,8 @@ from typing import Any
 
 log = logging.getLogger("strawberryd.runs")
 
-SOURCES = ("voice", "typed", "notification", "gesture", "job")   # job: reserved for scheduled work
+# job: reserved for scheduled work; settings: a Brain UI settings change she asks about on her card (configui.py)
+SOURCES = ("voice", "typed", "notification", "gesture", "job", "settings")
 FOREGROUND = ("voice", "typed")                          # one at a time (Daemon.handle_voice)
 TERMINAL = {"run.completed": "completed", "run.failed": "failed", "run.cancelled": "cancelled"}
 STATE_OF = {"routing": "routing", "thinking": "thinking", "tool.started": "tool", "tool.completed": "thinking",

@@ -14,7 +14,10 @@ import shutil
 import time
 import tomllib
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from .config import Config
 
 _HEADER = re.compile(r"^\s*\[\[?\s*([A-Za-z0-9_.\-\"' ]+?)\s*\]\]?\s*(#.*)?$")
 
@@ -104,8 +107,8 @@ def backup(path: Path, clock: Callable[[], float] = time.time) -> Path:
     return target
 
 
-def check_config_text(text: str) -> None:
-    """Raise ConfigError when `text` would not load; nothing is written until this passes."""
+def check_config_text(text: str) -> Config:
+    """Raise ConfigError when `text` would not load; nothing is written until this passes. Returns it as loaded."""
     import tempfile
 
     from .config import ConfigError, load
@@ -117,7 +120,7 @@ def check_config_text(text: str) -> None:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".toml", delete=False) as handle:
         handle.write(text)
     try:
-        load(Path(handle.name), env={}, inputs=False)   # config.toml alone: input.toml is not its business
+        return load(Path(handle.name), env={}, inputs=False)   # config.toml alone: input.toml is not its business
     finally:
         Path(handle.name).unlink(missing_ok=True)
 

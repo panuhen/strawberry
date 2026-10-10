@@ -97,6 +97,9 @@ class Approval:
     reply: Any = None              # (performance, sent) of what the run did after the answer
     made: bool = False             # the call was started after a yes (a yes cancelled before it: False)
     run: Run | None = None         # the run that asked: approval.resolved goes out on it
+    # Who may say yes (BY), when not everyone: a settings change that loosens safety takes a yes on her card or
+    # from the user's own sentence, never from the Brain UI page that asked for it (configui.py). A no from anyone.
+    yes_by: frozenset[str] | None = None
 
     @property
     def open(self) -> bool:
@@ -109,6 +112,8 @@ class Approval:
                "at": round(self.at, 3), "timeout_s": self.timeout_s, "hold": self.hold,
                "outcome": self.outcome or None, "by": self.by or None, "made": self.made,
                "waited": round((self.resolved_at or time.monotonic()) - self.asked, 3)}
+        if self.yes_by is not None:
+            out["yes_by"] = sorted(self.yes_by)
         if prompt and self.open:
             out["prompt"] = self.prompt
             out["expires_in"] = round(max(self.expires - time.monotonic(), 0.0), 3)
@@ -137,18 +142,20 @@ class ApprovalBook:
     def timeout_for(self, risk: str) -> float:
         return {"sends": self.config.sends_s, "destructive": self.config.destructive_s}.get(risk, self.config.change_s)
 
-    def request(self, run: Run | None, held: Held) -> Approval:
+    def request(self, run: Run | None, held: Held, timeout_s: float | None = None, hold: bool | None = None,
+                yes_by: frozenset[str] | None = None) -> Approval:
         """Open an approval for `held` on `run`: approval.request goes out and the run awaits it. An older
-        one still open is superseded first (one at a time)."""
+        one still open is superseded first (one at a time). `timeout_s`, `hold` and `yes_by` replace what the
+        tier says (a settings change: configui.py)."""
         older = self.open
         if older is not None:
             self.resolve(older, "superseded")
         risk = held.risk if held.risk in RISKS else "change"
         stored = replace(held, arguments=copy.deepcopy(held.arguments))
-        timeout = self.timeout_for(risk)
+        timeout = self.timeout_for(risk) if timeout_s is None else timeout_s
         approval = Approval(f"a-{self.boot}-{next(self.ids)}", run.run_id if run is not None else "", stored,
                             digest(stored.server, stored.name, stored.arguments), risk, held.prompt or held.question,
-                            timeout, risk in self.config.hold, run=run)
+                            timeout, risk in self.config.hold if hold is None else hold, run=run, yes_by=yes_by)
         approval.expires = approval.asked + timeout
         approval.future = asyncio.get_running_loop().create_future()
         self.current = approval
@@ -168,7 +175,8 @@ class ApprovalBook:
         """A yes or no to the open approval. None when it decided it; else why not (the code a body gets in
         `input.refused`): `not_open` (no such id, or not the open one), `resolved` (already answered:
         the first answer won), `bad_answer`, `hold_required` (a body's yes to a hold tier without
-        `hold: true`; the approval stays open)."""
+        `hold: true`; the approval stays open), `not_here` (a yes from someone its `yes_by` leaves out; it
+        stays open)."""
         found = self.get(approval_id) if isinstance(approval_id, str) else None
         reason = None
         if found is None or (found.open and found is not self.open):
@@ -179,6 +187,8 @@ class ApprovalBook:
             reason = "bad_answer"
         elif by == "body" and answer == "yes" and found.hold and hold is not True:
             reason = "hold_required"
+        elif answer == "yes" and found.yes_by is not None and by not in found.yes_by:
+            reason = "not_here"
         if reason is not None:
             self.refused += 1
             log.info("approvals: an answer by %s refused (%s)", by, reason)
