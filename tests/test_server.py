@@ -111,7 +111,7 @@ async def test_perform_without_widget_is_accepted_but_reaches_nobody(client):
 
 
 async def test_perform_reaches_connected_widget(client):
-    ws = await client.ws_connect("/ws")
+    ws = await connect(client)
     blob = {"state": "talking", "anim": "alert_snap", "text": "Did someone say my name?", "emotion": "alert"}
     response = await client.post("/perform", json=blob)
     assert (await response.json())["sent"] == 1
@@ -175,7 +175,7 @@ async def test_health_counts_connected_widget(client):
 
 
 async def test_event_produces_canned_reaction_and_forwards_it(client):
-    ws = await client.ws_connect("/ws")
+    ws = await connect(client)
     response = await client.post("/event", json={"source": "git", "title": "strawberry", "body": "Add websocket"})
     assert response.status == 200
     body = await response.json()

@@ -125,7 +125,8 @@ func _process(delta: float) -> void:
 ## asks for the run events its step chip shows and says it may send run.cancel (the chip's ✕); it
 ## shows approvals as a card and may answer them (approval_card.gd); it shows text (her bubble).
 ## The bus secret goes with it, read from the daemon's file at every connect (PROTOCOL §1.4): without
-## it the brain still sends the phases, but takes no typing, taps or answers and sends no cards.
+## it the brain sends only how she moves (no lines, no voice, no tool names), takes no typing, taps or
+## answers, and sends no cards.
 func hello() -> Dictionary:
 	var greeting := {"type": "hello", "client": "strawberry-widget", "version": Paths.version(),
 		"godot": Engine.get_version_info().string, "protocol": 2,
@@ -137,7 +138,7 @@ func hello() -> Dictionary:
 	if secret != "":
 		greeting["secret"] = secret
 	else:
-		push_warning("strawberryd: no bus secret at %s yet; she will show what she does but take no input" % Paths.bus_secret_file())
+		push_warning("strawberryd: no bus secret at %s yet; she will move but not speak, and take no input" % Paths.bus_secret_file())
 	return greeting
 
 func now() -> float:

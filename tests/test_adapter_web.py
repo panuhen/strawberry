@@ -25,6 +25,7 @@ from tests.fake_spotify import TOOLS as SPOTIFY_TOOLS, FakeSpotify, fake_gate
 from tests.test_thinker import FakeQwen, ScriptedGate, plain_config, reading
 from tests.test_tools import FakeContent, FakeResult, FakeSession, FakeTool, make_connect
 from tests.test_voice import Sink
+from tests.bus import add_trusted
 
 QUERY_CANARY = "quokka-query-7f1e"
 RESULT_CANARY = "numbat-result-22c4"
@@ -359,7 +360,7 @@ def web_daemon(config: Config, box: Toolbox, qwen: FakeQwen, gate=None):
     thinker = Thinker(config.thinker, box, "qwen-test", chat=qwen)
     daemon = Daemon(reactor=CannedReactor(), config=config, gate=gate or ScriptedGate({}), toolbox=box,
                     thinker=thinker)
-    daemon.hub.add(Sink())  # type: ignore[arg-type]
+    add_trusted(daemon.hub, Sink())
     return daemon
 
 

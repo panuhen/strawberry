@@ -174,11 +174,18 @@ package and the widget binary.
   and from then on every POST to it (`/event`, `/perform`, `/tempo`, `/command`, `/listen`, `/probe`,
   `/ui-token`) needs it in the `X-Strawberry-Secret` header, and a body's hello needs it as `secret`
   before she takes its typing, pokes, ✕ or approval answers, or shows it an approval card. Her
-  widget, tray, doorways, git hooks and the `strawberry` command present it. A body without it
-  still gets her performances and, on protocol 2, the run phases, so a purely visual body keeps
-  working; it is told `input.refused` (`no_secret`, `bad_secret`) when it tries more. Another user
-  on the computer or a sandboxed app can no longer make her act, answer her questions or open the
-  Brain UI. PROTOCOL.md §1.4, WIRING.md §2.
+  widget, tray, doorways, git hooks and the `strawberry` command present it. The reads need it too:
+  `GET /config` answers 403 without it, and `GET /health` without it says only that she is up (`ok`,
+  `version`, `uptime_s`, `widgets`, `state`, and `withheld` with the reason), never the ledger or what
+  she last did. A body without it gets the shape of what she does and nothing she says: her state,
+  clips, reactions, emotion, the beat and commands, and on protocol 2 the run phases with their ids,
+  codes, counts and timings, but no line (`text`), no voice (`audio`), no app icon, no tool name or
+  label and no reading of your sentence; it is told `input.refused` (`no_secret`, `bad_secret`) when
+  it tries to send more than a ping. A socket that has not said hello yet counts as one without it.
+  Another user on the computer or a sandboxed app can no longer make her act, answer her questions,
+  open the Brain UI, read what you said to her or listen in on what she says. If the secret file was
+  readable by others when the daemon starts, it makes a new secret (it may have been read) and the
+  clients read the new one on their next request. PROTOCOL.md §1.4, WIRING.md §2.
 - A trust model for her tools. Each server is `private` (its results are yours), `foreign` (they
   carry text others wrote) and `egress` (a call sends something off the computer), from its add-on
   or, for a server without one, from `flags` in its table; a server nobody described is all three.
@@ -208,11 +215,13 @@ package and the widget binary.
   hit with the names quoted and descriptions left out, and its tools lose `device_id` where it is not
   needed. Control characters are stripped from every tool result.
 - `num_ctx` stays 8192: measured with today's tools, the longest prompt was 6386 tokens (WIRING.md §20).
-- **Clients of the daemon need the bus secret.** A script that posted with `curl` adds
-  `-H "X-Strawberry-Secret: $(cat ~/.local/state/strawberry/bus-secret)"`; a widget built before
-  this version still shows everything, but cannot type to her or answer a card until it is
-  updated (`strawberry widget --fetch`). A body from elsewhere reads the same file and sends it in
-  its hello.
+- **Clients of the daemon need the bus secret.** A script that posts, or reads `/health` or
+  `/config`, with `curl` adds `-H "X-Strawberry-Secret: $(cat ~/.local/state/strawberry/bus-secret)"`
+  (a liveness check of `/health` works without it). A widget built before this version still moves,
+  dances and reacts, but shows no bubble and plays no voice, and cannot type to her or answer a card,
+  until it is updated (`strawberry widget --fetch`). **A third-party body must present the secret in
+  its hello to see any text or hear her**: without it, it gets the shape only (PROTOCOL.md §1.4). It
+  reads the same file the widget does.
 
 - Her moves are eased. The baked clips use Bézier keys, `alert_snap` snaps her claws a little past
   the mark and settles, and the end of `notify_perk` lands softly. In the widget the wave's claw

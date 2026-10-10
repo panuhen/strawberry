@@ -44,8 +44,12 @@ func post(path: String, body: Dictionary, secret := "<file>") -> Array:
 	var parsed: Variant = JSON.parse_string(result[3].get_string_from_utf8())
 	return [result[0], result[1], parsed if parsed is Dictionary else {}]
 
+## With the bus secret too: without it /health says only that she is up (PROTOCOL §1.1).
 func get_json(path: String) -> Array:
-	var err := http.request(daemon_url + path)
+	var headers := []
+	if Paths.bus_secret() != "":
+		headers.append("X-Strawberry-Secret: " + Paths.bus_secret())
+	var err := http.request(daemon_url + path, headers)
 	if err != OK:
 		return [err, 0, {}]
 	var result: Array = await http.request_completed

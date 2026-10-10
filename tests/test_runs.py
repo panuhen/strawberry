@@ -477,8 +477,9 @@ async def test_no_argument_result_or_sentence_reaches_a_run_event(aiohttp_client
 
 
 async def test_v1_bodies_get_exactly_the_bytes_they_always_did(aiohttp_client):
-    """Recorded from main before runs existed: a v1 body (no protocol in its hello) gets the same
-    frames, byte for byte, with a v2 body connected beside it and a run.cancel it may not send."""
+    """Recorded from main before runs existed: a v1 body (no protocol in its hello) that presents the bus
+    secret, as the widget does, gets the same frames, byte for byte, with a v2 body connected beside it and a
+    run.cancel it may not send. (Without the secret it gets their shape: tests/test_bussecret.py.)"""
     config = plain_config()
     config.gate.enabled = config.tools.enabled = config.thinker.enabled = config.actions.mpris = False
     daemon = Daemon(reactor=CannedReactor(), config=config)
@@ -486,7 +487,9 @@ async def test_v1_bodies_get_exactly_the_bytes_they_always_did(aiohttp_client):
     ws = await client.ws_connect("/ws")
     other = await client.ws_connect("/ws")
     await other.send_str(json.dumps(HELLO_V2))
-    await ws.send_str(json.dumps({"type": "hello", "client": "old-body", "version": "dev"}))
+    await ws.send_str(json.dumps({"type": "hello", "client": "old-body", "version": "dev", "secret": BUS_SECRET}))
+    await ws.send_str(json.dumps({"type": "ping"}))                     # the hello is read before anything goes out
+    assert (await ws.receive(timeout=1.0)).data == '{"type": "pong"}'
     await client.post("/perform", json={"state": "talking", "text": "Hello there.", "emotion": "happy"})
     await client.post("/event", json={"source": "voice", "title": "how are you"})
     await client.post("/event", json={"source": "notification", "app": "Chat", "title": "Alex", "body": "lunch?"})

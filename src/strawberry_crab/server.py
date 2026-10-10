@@ -15,8 +15,10 @@
 
 Every route refuses a request with a browser's Origin header (local_only), except the Brain UI's
 under /ui, which make their own, stricter checks (brainui.checked). Every POST but the Brain UI's
-API needs the bus secret in the X-Strawberry-Secret header, and a body's hello must present it for
-input and approvals (bussecret.py); without it a body still gets performances and plain run phases.
+API needs the bus secret in the X-Strawberry-Secret header, and so does GET /config; GET /health
+without it says only that she is up (`liveness`). A body's hello must present it for input, approvals
+and what she says (bussecret.py); without it a body gets the shape of a performance and of the run
+phases, never their words (hub.shape).
 """
 
 from __future__ import annotations
@@ -167,13 +169,16 @@ SECRET_ERRORS = {
 }
 
 
-def _secret_refusal(request: web.Request) -> dict[str, str] | None:
+def _secret_refusal(request: web.Request, quiet: bool = False) -> dict[str, str] | None:
     """None when the request carries the bus secret; else the 403's body. Logged once per route and reason
-    and then every hundredth time (an old doorway posts every two seconds), never with the value."""
+    and then every hundredth time (an old doorway posts every two seconds), never with the value. `quiet`:
+    not logged (a liveness poll of /health without the secret is normal: the check scripts' curl)."""
     given = request.headers.get(bussecret.HEADER, "")
     if bussecret.matches(request.app[DAEMON].bus_secret(), given):
         return None
     reason = "bad_secret" if given else "no_secret"
+    if quiet:
+        return {"error": SECRET_ERRORS[reason], "reason": reason}
     counts = request.app[REFUSALS]
     seen = counts.get((request.path, reason), 0)
     counts[(request.path, reason)] = seen + 1
@@ -195,8 +200,20 @@ async def _body(request: web.Request) -> Any:
         raise web.HTTPBadRequest(text=json.dumps({"error": "body must be JSON"}), content_type="application/json")
 
 
+# /health without the bus secret: enough to tell that she is up and which version (the check scripts' curl,
+# `strawberry status` against a daemon whose secret it cannot read). Everything else in /health can say what
+# the user said or did (the ledger, thinker.last, actions.last, the gate's last route), so it needs the
+# secret. `withheld` names why the rest is missing (no_secret or bad_secret), so `doctor` can say so.
+def liveness(daemon: Daemon) -> dict[str, Any]:
+    return {"ok": True, "version": __version__, "uptime_s": round(daemon.uptime, 1), "widgets": daemon.hub.count,
+            "state": daemon.current_state()}
+
+
 async def health(request: web.Request) -> web.Response:
     daemon = request.app[DAEMON]
+    refusal = _secret_refusal(request, quiet=not request.headers.get(bussecret.HEADER))
+    if refusal is not None:
+        return web.json_response(liveness(daemon) | {"withheld": refusal["reason"]})
     return web.json_response(
         {
             "ok": True,
@@ -229,7 +246,13 @@ async def health(request: web.Request) -> web.Response:
 
 
 async def config(request: web.Request) -> web.Response:
-    """The effective settings: defaults merged with the file and env (WIRING.md §15)."""
+    """The effective settings: defaults merged with the file and env (WIRING.md §15). They name the MCP
+    servers' commands, their environment and headers (which can hold a token), paths in the user's home, her
+    persona and the notification filters, so only a client with the bus secret gets them: 403 otherwise,
+    as for a POST."""
+    refusal = _secret_refusal(request)
+    if refusal is not None:
+        raise web.HTTPForbidden(text=json.dumps(refusal), content_type="application/json")
     return web.json_response(request.app[DAEMON].config.to_dict())
 
 
@@ -437,7 +460,8 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
         log.info("widget hello: %s", {k: v for k, v in data.items() if k not in ("type", "capabilities", bussecret.FIELD)})
         body = daemon.hub.hello(ws, data, daemon.bus_secret())
         if not body.trusted:
-            log.info("widget hello without %s bus secret: phases and performances only, no input or approvals",
+            log.info("widget hello without %s bus secret: the shape of performances and phases only, no words, "
+                     "input or approvals",
                      "the right" if body.secret == "wrong" else "the")
         if await _check_version(daemon, ws, data.get("version")) != "major":
             if body.protocol >= 2:
@@ -576,8 +600,9 @@ def _first_run_notice(daemon: Daemon, ws: web.WebSocketResponse, body) -> None:
     """The privacy note in her bubble, once per user, to a body that shows text: every v1 body, and a
     v2 body whose hello says `speech.bubble` (PROTOCOL §9b). A body that shows no text (the orbs) never
     gets it and never uses it up. It goes to that body alone, and is marked shown once it reached it;
-    while one is on its way, a second hello does not start another (firstrun.py)."""
-    if not body.shows_text or daemon.privacy_note or not firstrun.pending():
+    while one is on its way, a second hello does not start another (firstrun.py). A body without the bus
+    secret would get it without its text (hub.shape), so it neither gets it nor uses it up."""
+    if not body.shows_text or not body.trusted or daemon.privacy_note or not firstrun.pending():
         return
     daemon.privacy_note = "sending"
     daemon.background(_say_first_run_notice(daemon, ws), "first-run privacy note")

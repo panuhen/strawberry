@@ -1,8 +1,8 @@
 """The per-install bus secret (bussecret.py, PROTOCOL.md §1.4, WIRING.md §19).
 
 Made once, 0600, compared in constant time, never logged; required for every POST but the Brain UI's
-API and for a body's input and approvals; a body without it keeps its performances and plain phases;
-every first-party client presents it.
+API, for GET /config and /health's detail, and for a body's input, approvals and words; a body without it
+gets the shape of performances and phases (hub.shape); every first-party client presents it.
 """
 
 from __future__ import annotations
@@ -50,13 +50,26 @@ def test_the_daemon_makes_one_secret_readable_by_the_user_alone(tmp_path):
 
 
 @pytest.mark.linux_only
-def test_a_loose_file_is_made_0600_again_and_a_broken_one_replaced(tmp_path, caplog):
+def test_a_loose_file_gets_a_new_secret_and_a_broken_one_is_replaced(tmp_path, caplog):
+    """A secret others could read may have been read: a new one, 0600, and the log says so without either
+    value. A file only the user can read (0600, 0400, 0700) is kept as it is."""
     where = tmp_path / "bus-secret"
     made = bussecret.ensure(where)
-    where.chmod(0o644)
-    with caplog.at_level(logging.WARNING):
-        assert bussecret.ensure(where) == made
-    assert where.stat().st_mode & 0o777 == 0o600 and "mode 644" in caplog.text
+    for mode in (0o400, 0o700):
+        where.chmod(mode)
+        assert bussecret.ensure(where) == made and where.stat().st_mode & 0o777 == mode
+    where.chmod(0o600)
+    for mode in (0o644, 0o640, 0o604, 0o660):
+        where.chmod(mode)
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            fresh = bussecret.ensure(where)
+        assert fresh != made and bussecret.read(where) == fresh and where.stat().st_mode & 0o777 == 0o600
+        assert f"mode {mode:o}" in caplog.text and "made a new one" in caplog.text
+        assert made not in caplog.text and fresh not in caplog.text
+        assert not [p for p in where.parent.iterdir() if p.name != "bus-secret"]
+        made = fresh
+    assert bussecret.ensure(where) == made                                          # kept from then on
     where.write_text("not a secret\n")
     replaced = bussecret.ensure(where)
     assert replaced != made and bussecret.read(where) == replaced and where.stat().st_mode & 0o777 == 0o600
@@ -137,9 +150,38 @@ async def test_every_post_needs_the_secret(aiohttp_client, path, body):
     assert right.status != 403
 
 
-async def test_reads_need_no_secret_and_an_unknown_post_is_refused_all_the_same(aiohttp_client):
+LIVENESS = {"ok", "version", "uptime_s", "widgets", "state"}
+
+
+async def test_health_without_the_secret_says_only_that_she_is_up(aiohttp_client, caplog):
+    caplog.set_level(logging.INFO)
+    daemon = quiet_daemon()
+    bare = await aiohttp_client(create_app(daemon), headers={})
+    await bare.post("/event", json={"source": "voice", "title": "how are you"}, headers={bussecret.HEADER: BUS_SECRET})
+    assert daemon.ledger.to_list()
+    for headers, reason in (({}, "no_secret"), ({bussecret.HEADER: ""}, "no_secret"),
+                            ({bussecret.HEADER: WRONG}, "bad_secret")):
+        response = await bare.get("/health", headers=headers)
+        assert response.status == 200
+        body = await response.json()
+        assert set(body) == LIVENESS | {"withheld"} and body["withheld"] == reason and body["ok"] is True
+        assert "how are you" not in await response.text()
+    full = await (await bare.get("/health", headers={bussecret.HEADER: BUS_SECRET})).json()
+    assert LIVENESS < set(full) and "withheld" not in full
+    assert {"ledger", "thinker", "actions", "gate", "bodies", "tempo"} <= set(full)
+    assert "how are you" in json.dumps(full)
+    # A liveness poll without the header is normal (the check scripts' curl): not logged as a refusal.
+    assert "GET /health refused: no bus secret" not in caplog.text
+    assert "GET /health refused: a wrong bus secret" in caplog.text
+
+
+async def test_config_needs_the_secret_and_an_unknown_post_is_refused_all_the_same(aiohttp_client):
     bare = await aiohttp_client(create_app(quiet_daemon()), headers={})
-    assert (await bare.get("/health")).status == 200 and (await bare.get("/config")).status == 200
+    for headers, reason in (({}, "no_secret"), ({bussecret.HEADER: WRONG}, "bad_secret")):
+        response = await bare.get("/config", headers=headers)
+        assert response.status == 403 and (await response.json())["reason"] == reason
+    right = await bare.get("/config", headers={bussecret.HEADER: BUS_SECRET})
+    assert right.status == 200 and "daemon" in await right.json()
     assert (await bare.post("/nowhere", json={})).status == 403
 
 
@@ -208,7 +250,8 @@ async def test_a_body_without_the_secret_gets_phases_but_no_input_and_no_approva
     kinds = [m.get("type") for m in got if "type" in m]
     assert "routing" in kinds and "thinking" in kinds and "speaking" in kinds    # the run's phases
     assert not [k for k in kinds if k.startswith("approval")]                    # never the card or its line
-    assert any(m.get("state") == "talking" for m in got)                         # performances, as ever
+    assert any(m.get("state") == "talking" for m in got)                         # how she moves, as ever
+    assert not [m for m in got if {"text", "audio", "icon", "tool", "label", "topic"} & set(m)]   # never her words
     assert any(m.get("type") == "approval.request" for m in await receive_all(card))
     pending = daemon.approvals.open.approval_id
     for message in ({"type": "approval.answer", "approval_id": pending, "answer": "yes", "hold": True},
@@ -255,9 +298,11 @@ async def test_a_visual_body_that_asks_for_nothing_gated_is_not_scolded(aiohttp_
     await daemon.close()
 
 
-async def test_the_v1_bytes_stay_the_same_and_a_v1_body_without_the_secret_cannot_type(aiohttp_client, caplog):
-    """test_runs' golden frames, recorded before runs existed, for a v1 body that has no secret and tries to
-    type and poke: the same bytes, nothing more (a v1 body gets no typed message), and the input is dropped."""
+async def test_a_v1_body_without_the_secret_gets_the_shape_only_and_cannot_type(aiohttp_client, caplog):
+    """test_runs' golden frames, recorded before runs existed, as a v1 body without the secret gets them: the
+    same frames in the same order, with no `text` (her line, a notification's app and title, a commit message),
+    commands as they are, nothing more (a v1 body gets no typed message); and its typing and poking are
+    dropped."""
     caplog.set_level(logging.INFO)
     config = plain_config()
     config.gate.enabled = config.tools.enabled = config.thinker.enabled = config.actions.mpris = False
@@ -286,10 +331,10 @@ async def test_the_v1_bytes_stay_the_same_and_a_v1_body_without_the_secret_canno
             break
         frames.append(message.data)
     assert frames == [
-        '{"state": "talking", "emotion": "happy", "text": "Hello there."}',
-        '{"state": "talking", "emotion": "neutral", "text": "You said: how are you", "reaction": "nod"}',
-        '{"state": "talking", "emotion": "neutral", "text": "Chat: Alex", "reaction": "nod"}',
-        '{"state": "talking", "emotion": "neutral", "anim": "notify_perk", "text": "Commit in strawberry: Add runs"}',
+        '{"state": "talking", "emotion": "happy"}',
+        '{"state": "talking", "emotion": "neutral", "reaction": "nod"}',
+        '{"state": "talking", "emotion": "neutral", "reaction": "nod"}',
+        '{"state": "talking", "emotion": "neutral", "anim": "notify_perk"}',
         '{"command": "mute", "value": true}',
         '{"state": "dancing", "emotion": "neutral"}',
         '{"type": "pong"}',
@@ -309,6 +354,81 @@ async def test_a_v1_body_with_the_secret_may_type(aiohttp_client):
     await ws.send_json({"type": "heard", "text": "how are you"})
     reply = await ws.receive_json(timeout=5)
     assert reply["state"] == "talking" and daemon.ledger.to_list()[-1]["said"] == "how are you"
+    await ws.close()
+
+
+def timeless(message: dict) -> dict:
+    """A frame with its clock readings set to 0, so a run's frames can be compared whole."""
+    return {k: (0 if k in ("t", "ms", "duration") else v) for k, v in message.items()}
+
+
+async def test_a_v2_body_without_the_secret_gets_the_shape_of_a_run(aiohttp_client):
+    """Golden frames of a thinker run with a tool, as a v2 body without the secret gets them beside a trusted
+    one: the same frames in the same order, with ids, codes, counts and timings, and nothing of the sentence
+    (the gate's reading), the tool (its name, label, tier), the model, her line or her voice."""
+    client, daemon, spotify, qwen, sink, v1 = await thinker_daemon(aiohttp_client, [[("play", {})], "[happy] Jazz on."])
+    stranger = v2_sink(daemon, {k: v for k, v in HELLO_V2.items() if k != "secret"} | {"capabilities": {"phases": PHASES}})
+    await say(client, JAZZ)
+    await until(lambda: any(m.get("type") == "run.completed" for m in stranger.got))
+    assert [timeless(m) for m in stranger.got] == [
+        {"type": "routing", "run_id": "r-1", "seq": 1, "t": 0, "ms": 0},
+        {"state": "thinking", "emotion": "neutral"},
+        {"type": "thinking", "run_id": "r-1", "seq": 2, "t": 0},
+        {"type": "tool.started", "run_id": "r-1", "seq": 3, "t": 0, "call_id": "c1"},
+        {"type": "tool.completed", "run_id": "r-1", "seq": 4, "t": 0, "call_id": "c1", "duration": 0, "ok": True},
+        {"type": "speaking", "run_id": "r-1", "seq": 5, "t": 0, "duration": 0, "emotion": "happy"},
+        {"state": "talking", "emotion": "happy", "reaction": "nod", "run_id": "r-1", "source": "typed"},
+        {"type": "run.completed", "run_id": "r-1", "seq": 6, "t": 0, "duration": 0, "outcome": "spoken"},
+    ]
+    # The trusted body beside it got every byte: the same frames, with the words.
+    assert [m.get("type") or m["state"] for m in sink.got] == [m.get("type") or m["state"] for m in stranger.got]
+    assert {"kind", "topic", "decision", "path", "confidence"} <= set(sink.got[0])
+    assert sink.got[2]["model"] == "qwen-test" and sink.got[3]["tool"] == "spotify.play"
+    assert sink.got[6]["text"] == "Jazz on."
+    await daemon.close()
+
+
+def test_the_shape_keeps_how_she_moves_and_drops_what_she_says():
+    from strawberry_crab.hub import phase_shape, shape
+
+    full = {"state": "talking", "emotion": "alert", "anim": "alert_snap", "text": "Chat: Alex", "audio": "/tmp/x.wav",
+            "reaction": "shiver", "icon": "/usr/share/icons/chat.png", "hop": True, "run_id": "r-2",
+            "source": "notification", "anything_new": 1}
+    assert shape(full) == {"state": "talking", "emotion": "alert", "anim": "alert_snap", "reaction": "shiver",
+                           "hop": True, "run_id": "r-2", "source": "notification"}
+    assert shape({"tempo": {"silent": True}}) == {"tempo": {"silent": True}}
+    assert shape({"command": "mute", "value": True}) == {"command": "mute", "value": True}
+    assert shape({"something": "else"}) is None
+    assert phase_shape({"type": "listening", "t": 1.0, "phase": "ended", "seconds": 3.4, "speech": True}) == \
+        {"type": "listening", "t": 1.0, "phase": "ended", "seconds": 3.4, "speech": True}
+    assert phase_shape({"type": "token_rate", "run_id": "r-1", "t": 1.0, "tokens_per_s": 31.5, "tokens": 48}) == \
+        {"type": "token_rate", "run_id": "r-1", "t": 1.0, "tokens_per_s": 31.5, "tokens": 48}
+    assert phase_shape({"type": "run.failed", "run_id": "r-1", "seq": 3, "t": 1.0, "duration": 2.0,
+                        "error": "tools"}) == {"type": "run.failed", "run_id": "r-1", "seq": 3, "t": 1.0,
+                                               "duration": 2.0, "error": "tools"}
+    assert phase_shape({"type": "routing", "run_id": "r-1", "seq": 1, "t": 1.0, "kind": "request", "topic": "music",
+                        "decision": "act", "path": "reflex", "tool": "skip", "confidence": 0.9, "ms": 120.0}) == \
+        {"type": "routing", "run_id": "r-1", "seq": 1, "t": 1.0, "ms": 120.0}
+    assert phase_shape({"type": "approval.request", "run_id": "r-1", "prompt": "Remove it?"}) is None
+    assert phase_shape({"type": "subagent.started", "run_id": "r-1"}) is None
+
+
+async def test_broadcasts_before_the_hello_and_the_catch_up_are_the_shape(aiohttp_client):
+    """A socket that has not said hello yet is a stranger: a line said in that moment reaches it without its
+    words. The catch-up (state, tempo) has none to begin with."""
+    daemon = quiet_daemon()
+    client = await aiohttp_client(create_app(daemon))
+    await client.post("/perform", json={"state": "dancing"})
+    await client.post("/tempo", json={"silent": True})
+    ws = await client.ws_connect("/ws")
+    assert [await ws.receive_json(timeout=1) for _ in range(2)] == [{"state": "dancing"}, {"tempo": {"silent": True}}]
+    await client.post("/perform", json={"state": "talking", "text": "Chat: Alex", "emotion": "happy"})
+    assert await ws.receive_json(timeout=1) == {"state": "talking", "emotion": "happy"}
+    await ws.send_json(trusted())
+    await ws.send_json({"type": "ping"})
+    assert await ws.receive_json(timeout=1) == {"type": "pong"}
+    await client.post("/perform", json={"state": "talking", "text": "Chat: Alex", "emotion": "happy"})
+    assert (await ws.receive_json(timeout=1))["text"] == "Chat: Alex"
     await ws.close()
 
 
@@ -354,7 +474,8 @@ def captured(monkeypatch):
 def test_the_doorways_and_the_tray_present_it(captured):
     DaemonClient("http://127.0.0.1:1").post_sync("/event", {"source": "git"})
     beat_watch.Watcher("http://127.0.0.1:1", "", 2.0, capture=object()).post({"silent": True})
-    assert [h.get(bussecret.HEADER.lower()) for h in captured.headers()] == [BUS_SECRET, BUS_SECRET]
+    DaemonClient("http://127.0.0.1:1").get_sync("/health")                     # the tray's status
+    assert [h.get(bussecret.HEADER.lower()) for h in captured.headers()] == [BUS_SECRET] * 3
 
 
 def test_the_cli_presents_it(captured, monkeypatch):
@@ -364,7 +485,7 @@ def test_the_cli_presents_it(captured, monkeypatch):
     with pytest.raises(urllib.error.URLError):
         cli.post_event("http://127.0.0.1:1", {"source": "git"})
     secrets_sent = [h.get(bussecret.HEADER.lower()) for h in captured.headers()]
-    assert secrets_sent == [BUS_SECRET, None, BUS_SECRET]       # a GET needs none
+    assert secrets_sent == [BUS_SECRET] * 3       # a GET too: /health's detail and /config need it
 
 
 def test_the_hotkeys_bare_listen_presents_it(monkeypatch):
@@ -392,13 +513,14 @@ def test_doctor_and_strawberryd_talk_present_it(captured, monkeypatch):
     doctor.Probes().http("http://127.0.0.1:1/probe", body={})
     doctor.Probes().http("http://127.0.0.1:1/health")
     headers = captured.headers()
-    assert headers[0][bussecret.HEADER.lower()] == BUS_SECRET and bussecret.HEADER.lower() not in headers[1]
+    assert headers[0][bussecret.HEADER.lower()] == BUS_SECRET == headers[1][bussecret.HEADER.lower()]
     answers = iter(["hello"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers, ""))
     monkeypatch.setattr(urllib.request, "urlopen", Health(captured))
     strawberryd.talk(plain_config())
     posted = [r for r in captured.requests if r.get_method() == "POST"]
     assert posted and {k.lower(): v for k, v in posted[0].header_items()}[bussecret.HEADER.lower()] == BUS_SECRET
+    assert Health.got and all(h.get(bussecret.HEADER.lower()) == BUS_SECRET for h in Health.got)
 
 
 class Health:
@@ -407,8 +529,11 @@ class Health:
     def __init__(self, captured: Captured) -> None:
         self.captured = captured
 
+    got: list[dict] = []     # the GETs' headers
+
     def __call__(self, request, timeout=None):
         if isinstance(request, str) or request.get_method() == "GET":
+            Health.got.append({} if isinstance(request, str) else {k.lower(): v for k, v in request.header_items()})
             return Reply({"gate": {"ready": False}, "thinker": {"model": None}, "actions": {}})
         return self.captured(request, timeout)
 
@@ -459,6 +584,8 @@ def test_the_widget_reads_the_file_and_presents_it_in_its_hello():
     assert 'data_dir().path_join("state")' in widget_paths                     # Windows: as paths.state_dir
     validate = (ROOT / "widget" / "validate_widget.gd").read_text()
     assert "X-Strawberry-Secret" in validate and "trusted" in validate
+    get_json = validate[validate.index("func get_json"):validate.index("func wait(")]
+    assert "X-Strawberry-Secret" in get_json and "http.request(daemon_url + path, headers)" in get_json
 
 
 def test_the_check_scripts_keep_the_secret_out_of_the_users_state_dir():

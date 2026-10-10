@@ -133,9 +133,9 @@ def http(here: Here, method: str, path: str, body: dict | None = None, timeout: 
     from . import bussecret
 
     data = json.dumps(body).encode() if body is not None else None
-    headers = {"Content-Type": "application/json"} if body is not None else {}
-    if method != "GET":
-        headers = bussecret.headers(headers)    # every POST needs the bus secret
+    # Every request carries the bus secret: a POST needs it, /config too, and /health without it says only
+    # that she is up.
+    headers = bussecret.headers({"Content-Type": "application/json"} if body is not None else {})
     request = urllib.request.Request(here.base + path, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:

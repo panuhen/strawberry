@@ -14,6 +14,7 @@ from strawberry_crab.config import Config, VoiceConfig
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
 from strawberry_crab.voice import DIDNT_CATCH, EARS_LOADING, Listener, Recording, dbfs
+from tests.bus import add_trusted
 
 
 class Sink:
@@ -51,7 +52,7 @@ def make_daemon(transcript: str = "hello there", recording: Recording | None = N
     )
     daemon = Daemon(reactor=CannedReactor(), config=config, listener=listener)
     sink = Sink()
-    daemon.hub.add(sink)  # type: ignore[arg-type]
+    add_trusted(daemon.hub, sink)
     return daemon, sink
 
 
@@ -192,7 +193,7 @@ async def test_a_slow_whisper_load_does_not_hold_the_daemon_up(aiohttp_client):
     listener, started = slow_listener(release, cached=False)
     daemon = Daemon(reactor=CannedReactor(), config=quiet_config(), listener=listener)
     sink = Sink()
-    daemon.hub.add(sink)  # type: ignore[arg-type]
+    add_trusted(daemon.hub, sink)
     try:
         client = await asyncio.wait_for(aiohttp_client(create_app(daemon)), 2.0)   # startup is not held up
         await asyncio.to_thread(started.wait, 5.0)

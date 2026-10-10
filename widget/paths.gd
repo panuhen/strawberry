@@ -88,7 +88,8 @@ static func bus_secret_file() -> String:
 	return state_dir().path_join("bus-secret")
 
 ## The secret itself, read afresh (the daemon may have made it after we started), or "" when there is
-## none. Our hello presents it; without it she shows phases but takes no typing, taps or answers.
+## none. Our hello presents it; without it the daemon sends her no words or voice (only how to move), and takes
+## no typing, taps or answers.
 static func bus_secret(path := "") -> String:
 	var file := FileAccess.open(path if path != "" else bus_secret_file(), FileAccess.READ)
 	if file == null:

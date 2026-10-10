@@ -17,7 +17,7 @@ from strawberry_crab.events import CannedReactor, Event
 from strawberry_crab.server import create_app
 from strawberry_crab.systemone import Gate
 from strawberry_crab.voice import Listener
-from tests.bus import connect
+from tests.bus import add_trusted, connect
 from tests.test_outcomes import FakeMpris
 from tests.test_systemone import FakeEmbedder
 from tests.test_thinker import make, plain_config, reading
@@ -102,7 +102,7 @@ def canary_daemon(config: Config, spoken: str):
     actor = Actor(config.actions, toolbox, reflexes={}, mpris=FakeMpris())
     daemon = Daemon(reactor=CannedReactor(), config=config, gate=gate, toolbox=toolbox, thinker=thinker,
                     actor=actor, listener=listener)
-    daemon.hub.add(Sink())  # type: ignore[arg-type]
+    add_trusted(daemon.hub, Sink())
     return daemon, toolbox, qwen, (skip, other)
 
 
@@ -157,7 +157,7 @@ async def test_the_canned_echo_of_a_sentence_is_not_logged(caplog):
     config.thinker.enabled = config.gate.enabled = config.tools.enabled = False
     config.actions.mpris = False
     daemon = Daemon(reactor=CannedReactor(), config=config)
-    daemon.hub.add(Sink())  # type: ignore[arg-type]
+    add_trusted(daemon.hub, Sink())
     with caplog.at_level(logging.DEBUG):
         performance, _ = await daemon.handle_event(Event(source="voice", title=f"hi {CANARY}"))
     assert performance.text == f"You said: hi {CANARY}"                  # the widget still gets it

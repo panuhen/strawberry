@@ -10,6 +10,7 @@ from strawberry_crab.config import Config
 from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
 from strawberry_crab.server import create_app
+from tests.bus import BUS_SECRET, trusted
 
 
 @pytest.fixture
@@ -28,7 +29,7 @@ async def client(aiohttp_client):
 
 async def test_the_first_widget_hears_the_note_once(unseen, client):
     first = await client.ws_connect("/ws")
-    await first.send_json({"type": "hello", "client": "strawberry-widget", "version": "dev"})
+    await first.send_json(trusted({"type": "hello", "client": "strawberry-widget", "version": "dev"}))
     note = await first.receive_json(timeout=2)
     assert note["state"] == "talking"
     assert "never the message" in note["text"] and "Settings file" in note["text"]
@@ -36,7 +37,7 @@ async def test_the_first_widget_hears_the_note_once(unseen, client):
     await first.close()
 
     again = await client.ws_connect("/ws")
-    await again.send_json({"type": "hello", "client": "strawberry-widget", "version": "dev"})
+    await again.send_json(trusted({"type": "hello", "client": "strawberry-widget", "version": "dev"}))
     await again.send_json({"type": "ping"})
     assert await again.receive_json(timeout=2) == {"type": "pong"}   # no second note before it
     await again.close()
@@ -89,7 +90,7 @@ ORBS = {"type": "hello", "client": "orbs", "version": "dev", "protocol": 2,
         "body": {"id": "orbs", "name": "Orbs"}, "capabilities": {"phases": ["run"]}}
 CRAB = {"type": "hello", "client": "strawberry-widget", "version": "dev", "protocol": 2,
         "body": {"id": "crab", "name": "Strawberry"},
-        "capabilities": {"phases": ["run"], "speech": {"bubble": True}}}
+        "capabilities": {"phases": ["run"], "speech": {"bubble": True}}, "secret": BUS_SECRET}
 
 
 def test_a_v2_body_shows_text_only_when_its_hello_says_so():
@@ -119,6 +120,23 @@ async def test_a_body_that_shows_no_text_neither_gets_nor_uses_up_the_note(unsee
     await orbs.send_json({"type": "ping"})
     assert await orbs.receive_json(timeout=2) == {"type": "pong"}
     await orbs.close()
+    await crab.close()
+
+
+async def test_a_text_body_without_the_secret_neither_gets_nor_uses_up_the_note(unseen, client):
+    """It would get the note without its words (hub.shape), so it gets none: the next trusted body does."""
+    stranger = await client.ws_connect("/ws")
+    await stranger.send_json({k: v for k, v in CRAB.items() if k != "secret"})
+    assert (await stranger.receive_json(timeout=2))["type"] == "welcome"
+    await asyncio.sleep(0.2)
+    await stranger.send_json({"type": "ping"})
+    assert await stranger.receive_json(timeout=2) == {"type": "pong"}
+    assert firstrun.pending()
+    crab = await client.ws_connect("/ws")
+    await crab.send_json(CRAB)
+    assert (await crab.receive_json(timeout=2))["type"] == "welcome"
+    assert "never the message" in (await crab.receive_json(timeout=2))["text"]
+    await stranger.close()
     await crab.close()
 
 

@@ -314,6 +314,14 @@ def test_daemon_check():
     checks, _ = doctor.check_daemon(config, machine)
     loading = by_label(checks, "daemon voice")
     assert loading.status == OK and "downloading ~1.5 GB" in loading.detail and "42 s so far" in loading.detail
+    assert "daemon detail" not in [c.label for c in checks]
+    # A daemon whose bus secret this doctor cannot present says only that it is up (PROTOCOL §1.1).
+    machine.urls["http://127.0.0.1:8770/health"] = {"ok": True, "version": __version__, "uptime_s": 3.0,
+                                                    "widgets": 1, "state": "idle", "withheld": "bad_secret"}
+    checks, _ = doctor.check_daemon(config, machine)
+    assert checks[0].status == OK
+    withheld = by_label(checks, "daemon detail")
+    assert withheld.status == WARN and "not the daemon's" in withheld.detail
 
 
 def test_a_failure_exits_one():
