@@ -264,9 +264,11 @@ func moves(name: String, now: float) -> Dictionary:
 	match name:
 		"rave":
 			m.squash = 0.3 * pulse(phase, 7.0)
-			var swing := 0.5 - 0.5 * cos(TAU * phase)  # 0 on the beat, 1 between beats
-			m.lift_l = 1.0 * (swing if parity == 0 else 1.0 - swing) * 0.85 + 0.25
-			m.lift_r = 1.0 * (swing if parity == 1 else 1.0 - swing) * 0.85 + 0.25
+			# The arms trade places over two beats: the right one up on even beats, the left on odd
+			# ones. (A swing up and back within each beat, mirrored on odd beats, jumped on every beat.)
+			var swing := 0.5 - 0.5 * cos(PI * (float(parity) + phase))
+			m.lift_l = swing * 0.85 + 0.25
+			m.lift_r = (1.0 - swing) * 0.85 + 0.25
 			# A quick lean onto the beat's side that eases back by the next one (was a sawtooth).
 			var lean := Easing.out(phase / 0.12) * (1.0 - Easing.in_out((phase - 0.12) / 0.88))
 			m.roll = deg_to_rad(3.0) * (1.0 if parity == 0 else -1.0) * lean
