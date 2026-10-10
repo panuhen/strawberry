@@ -1,6 +1,5 @@
 import pytest
 
-from strawberry_crab import persona
 from strawberry_crab.config import ConfigError, default_toml, load
 
 
@@ -9,7 +8,7 @@ def test_defaults_when_no_file(tmp_path):
     assert config.path is None
     assert config.daemon.port == 8770
     assert config.brain.reaction_model == "gemma3:1b"
-    assert config.brain.examples == persona.EXAMPLES
+    assert config.brain.examples == [] and config.brain.persona == ""     # persona.md (persona.py) holds them
     assert config.media.only == []
     assert config.notifications.ignore_apps == ["Spotify"]
     assert config.notifications.body == "off"          # bodies stay in the watcher unless you say so

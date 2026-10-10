@@ -125,7 +125,7 @@ Run: `strawberryd [--port 8770]` (the console script; in a checkout `.venv/bin/s
 
 Both paths end by calling `perform(...)`. Route notifications/git/media → reaction path; voice → action path (reaction path again when `[thinker] enabled = false`).
 
-**Model choice (bake-off, `scripts/reactor_bakeoff.py`, results in `scripts/bakeoff_*.json`).** The reflex needs speed and residency, not intelligence: the 27B would cold-load for 10–20 s after a quiet half hour and hog the GPU. Among ~1B models on the Ollama library, **`gemma3:1b`** won: 815 MB, ~0.5 s warm, 0/32 schema misses, short lines (median 7 words), emotions right, and it does not invent details. `qwen3.5:0.8b` was as fast and livelier but hallucinated specifics ("Dinner Friday at 7 PM" for "dinner on Sunday?"), leaked the examples, and ran long. For a mascot reading your real notifications, saying less beats saying wrong. The decisive lever was **few-shot examples**: with the description alone Gemma answered "Interesting…" to everything; with five example exchanges it became a crab. The examples live in config (§15), so her voice is tunable without code.
+**Model choice (bake-off, `scripts/reactor_bakeoff.py`, results in `scripts/bakeoff_*.json`).** The reflex needs speed and residency, not intelligence: the 27B would cold-load for 10–20 s after a quiet half hour and hog the GPU. Among ~1B models on the Ollama library, **`gemma3:1b`** won: 815 MB, ~0.5 s warm, 0/32 schema misses, short lines (median 7 words), emotions right, and it does not invent details. `qwen3.5:0.8b` was as fast and livelier but hallucinated specifics ("Dinner Friday at 7 PM" for "dinner on Sunday?"), leaked the examples, and ran long. For a mascot reading your real notifications, saying less beats saying wrong. The decisive lever was **few-shot examples**: with the description alone Gemma answered "Interesting…" to everything; with five example exchanges it became a crab. The examples live in persona.md (§21), so her voice is tunable without code.
 
 **Keeping a 1B model from repeating itself.** Left alone it finds a pet adjective and puts it in every line ("lovely" twelve times in one evening, after the persona once listed it as an example word: never name favourite words in the persona). Three counters in `brain.py`: the example order is shuffled per call, so no single example is the template; the reactor remembers her last eight lines and, when a new line reuses a content word from two or more of them (or the same opener three times), asks once more with those words banned and the temperature raised by 0.3, keeping the second line if it is less stale, within the same time budget; and the persona asks for varied sentence shapes. `/health` counts the `retries`.
 
@@ -436,7 +436,7 @@ It calls tools until it answers; each call goes through the same client with tru
 
 **The reply is hers.** Qwen's system prompt is her voice (`thinker.VOICE`: small, dry, warm, British, ≤ 15 words for small talk, two or three sentences when there are facts, never the user's name) plus the tool-use rules (`TOOLS_GUIDE`: be decisive, a misheard name is probably a library name, 'play' means play, report only what a tool did) — or, with no servers answering, `NO_TOOLS` (answer from memory, no internet, say so when the question needs today's news), or with only a web search, `LOOKUP_ONLY` (`NO_TOOLS`'s music clauses without "no internet") — followed by the paragraph each offered server's adapter brings (`guide`), or the one for a configured server that is not answering (`unavailable`: "say search isn't available"). The line is performed as it stands: no Gemma quip on top of a Qwen answer. It is asked to start with its mood in square brackets, `[happy] Skipped. Blue Monday next.`, which `split_emotion` parses off into the performance's `emotion`; a missing or unknown tag is `neutral`, and a tool that failed forces `alert`. `tidy_sentence` takes the first paragraph, strips markdown and caps it at 380 chars (`speech.max_chars` is 400).
 
-Cover for the wait scales with it: `Daemon.think` puts her in the `thinking` pose at once and says nothing (a warm round is ~2 s, and "On it." before the answer to "what's up?" read odd), speaks a random acknowledgement from `[thinker] acks` only if the reply has not come after `ack_after_s` (2.5 s), says "Still on it." once after `still_on_it_s` (8 s), then her line. Measured: cold load 7–17 s (the first request of a session), a warm round ~2 s, prompt 326 tokens plus 2382 for 25 Spotify tools. Loading Qwen can evict Gemma and the embedding model from VRAM; both re-warm themselves in the background after a timeout (see §3). `strawberry think "…"` runs it by hand and prints the calls; `/health.thinker` keeps the last one. Tests on a scripted fake Ollama and the fake Spotify (`tests/test_thinker.py`).
+Cover for the wait scales with it: `Daemon.think` puts her in the `thinking` pose at once and says nothing (a warm round is ~2 s, and "On it." before the answer to "what's up?" read odd), speaks a random acknowledgement from persona.md's `cover.ack` (§21; the deprecated `[thinker] acks` when set) only if the reply has not come after `ack_after_s` (2.5 s), says "Still on it." once after `still_on_it_s` (8 s), then her line. Measured: cold load 7–17 s (the first request of a session), a warm round ~2 s, prompt 326 tokens plus 2382 for 25 Spotify tools. Loading Qwen can evict Gemma and the embedding model from VRAM; both re-warm themselves in the background after a timeout (see §3). `strawberry think "…"` runs it by hand and prints the calls; `/health.thinker` keeps the last one. Tests on a scripted fake Ollama and the fake Spotify (`tests/test_thinker.py`).
 
 **Web search (2026-10-07): `adapters/web.py`, ADAPTERS.md.** A SearXNG instance the user runs, behind `mcp-searxng` (`[tools.servers.web]`, topic `other`; the README has the block). Its adapter offers the search and the page reader only, with short schemas, compacts a listing to numbered results, rewords its failures without the query, logs a result count and never a result, and allows three calls a sentence.
 
@@ -771,12 +771,7 @@ timeout_s = 1.5
 temperature = 0.8
 max_words = 15
 keep_alive = -1                  # seconds; -1 = stay in VRAM, or "10m" to unload when idle
-# persona = """..."""           # her system prompt
-
-[[brain.examples]]               # replaces the built-in five; the real lever on her voice
-event = "source: git\napp: post-commit\ntitle: lighthouse\nbody: Fix flaky login test"
-line = "A fix! Did that wobbly login test finally stop wiggling?"
-emotion = "happy"
+# persona, examples: deprecated; her persona and examples are persona.md (§21)
 
 [media]
 only = []                        # e.g. ["spotify"]
@@ -857,6 +852,7 @@ src/strawberry_crab/assets/icons/  the tray icon PNGs (package data), rendered b
 src/strawberry_crab/runs.py  runs (§18): Run, RunBook, the event whitelist, `is_stop`; hub.py keeps a Body per socket (protocol v2)
 src/strawberry_crab/approvals.py  approvals (§19): ApprovalBook, the digest, `needed`; confirm.py words the question and keeps the call
 src/strawberry_crab/trust.py  the trust model (§20): the private / foreign / egress flags, `clean`; bussecret.py the bus secret (§2)
+src/strawberry_crab/persona.py  her persona (§21): persona.md parsed, checked and read live; data/persona.md the shipped one
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, turn.gd, touch.gd, legs.gd, wander.gd, easing.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), approval_card.gd (§19), paths.gd (XDG, the CLI, the version), validate_*.gd
@@ -1410,3 +1406,64 @@ a hostile playing track that cannot add to or make a playlist or switch a lamp o
 and the daemon, while a like, a skip, a play and the volume go ahead;
 and failing closed: an exception in `view` or `reads_as_foreign`, an unreadable result, an error),
 `tests/test_bussecret.py` (§2).
+
+---
+
+## 21. Her persona — `strawberry/persona.py`, `data/persona.md`
+
+Who she is and how she talks used to be spread over ten files: two drifting copies of her voice
+(`persona.py` for the reaction model, `thinker.py` `VOICE` for the thinker) and fixed lines in the
+daemon, the config, `pokes.py`, `actions.py` and `voice.py`. Now one file holds them. The package ships
+`data/persona.md`; `~/.config/strawberry/persona.md` (on Windows `%APPDATA%\strawberry\persona.md`)
+replaces it whole. Its sections are fixed:
+
+| section | what | who reads it |
+|---|---|---|
+| `## Who she is` | written to her, in the second person ("You are Strawberry, …") | both models, first |
+| `## How she talks` | one description of her voice | both: the reaction model as "…in your own voice: <it>", the thinker as "Your voice: <it>" (its first letter lower-cased, as it continues a sentence) |
+| `## Examples` | `- source: …` items with the event's fields, `line:` and `emotion:` | the reaction model, which copies them (§3) |
+| `## Lines` | `### key` with `- ` variants: `cover.ack`, `cover.still`, `stopped`, `no_catalogue`, `didnt_catch`, `ears_loading`, `no_microphone`, `poke.<zone>`, `poke.annoyed` | code, which says them without a model |
+
+An example names its fields as the event has them (`git`: app, title, body; `notification`: app,
+title, body, urgency, and `told` for a quip after a gist; `media`: app, title; `voice`: `said`;
+`action`: `told`, `asked`, `did`) and is shown to the model through the same `brain.describe` as a
+real event, so a message's body gets `BODY_RULE` after it in the examples exactly as in real use.
+
+**What stays in code**, put around and after the persona so no persona.md can take it out: the task
+framing ("Something just happened. React with ONE short sentence, at most `max_words` words"; "The user
+is talking to you now: …"), the shape of a spoken reply (no markdown, no lists, at most 15 words for small
+talk), the output contracts the code parses (the reaction model's JSON; the thinker's `[mood]` tag), the
+privacy wording ("A message someone sent is private: …", `BODY_RULE`), the tool rules (`TOOLS_RULES`,
+`FACTS`, `NO_TOOLS`, the adapters' paragraphs), and the approval and safety lines (`confirm.py`: "Okay,
+I've left it.", "I stopped before doing it, so nothing changed."; "Stopped, but … had already gone
+through."; the first-run privacy note).
+
+**The loader** (`persona.parse`, `PersonaStore`) parses the file into a `Persona` and checks it: the
+four sections (an unknown or doubled `##` section is a problem), each under its token cap (by the
+thinker's estimate of 3 characters a token: Who she is 120, How she talks 300, Examples 2000, Lines
+1500; the shipped persona is 42, 103, 1360 and 283), 1 to 40 examples with a known source, the fields
+that source has, a line of at most 140 characters and an emotion of `neutral`, `happy`, `alert` or
+`angry`, and phrasebook lines of at most 200 characters on one line. HTML comments are ignored. A key
+the code does not use, or one the file leaves out, is a warning (the left-out key keeps the shipped
+lines). On any problem the shipped persona is used, the daemon logs why once per version of the file
+(`persona: … is not used, the shipped persona is (…)`) and `PersonaStore.status()` keeps the reasons
+for the Brain UI: a bad edit never makes her mute. The store stats the file on every use and parses it
+again when its mtime or size changed, so an edit is live at her next line, without a restart.
+
+**The old settings** keep working, with a warning at start: `[brain] persona` (it was, and still is,
+the reaction model's whole system prompt), `[brain] examples` and `[thinker] acks` replace what
+persona.md says. Their defaults are empty now.
+
+**Proof that the move changed nothing.** `tests/golden/persona_before.json` holds what both models
+were shown and every fixed line, captured on main before the refactor; `tests/test_persona.py` checks
+the shipped persona.md renders the reaction model's system prompt and all 17 examples byte for byte,
+and every line. The one deliberate change is the thinker's first paragraph: the two copies of her voice
+are one, the reaction model's tuned description (the bake-off's), so the thinker now also reads "a dry
+understated wit", "Keep it easy to understand" and "Vary your wording from line to line …", and "who
+lives on the user's desktop and watches what happens on the computer". The `[mood]` contract and
+everything after it in the thinker's system prompt is byte for byte as before (the test strips the
+first paragraph and compares the rest).
+
+Tests: `tests/test_persona.py` (the golden prompts and lines, comments, the checks and their messages,
+the caps, warnings for keys, live reload and the fallback, `save` with its backup, the daemon's and the
+pokes' lines from the file, the deprecated keys, an edited description reaching both models).

@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from . import paths, persona
+from . import paths
 
 log = logging.getLogger("strawberryd.config")
 
@@ -50,8 +50,10 @@ class BrainConfig:
     temperature: float = 0.8
     max_words: int = 15
     keep_alive: int | str = -1                # seconds; -1 pins the model in VRAM, "10m" lets it unload
-    persona: str = persona.PERSONA
-    examples: list[dict[str, str]] = field(default_factory=lambda: [dict(e) for e in persona.EXAMPLES])
+    # Deprecated: her persona and examples are persona.md now (persona.py). Set here, they still replace the
+    # reaction model's whole system prompt and its examples, with a warning at start.
+    persona: str = ""
+    examples: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -229,7 +231,8 @@ class ThinkerConfig:
     timeout_s: float = 45.0        # the whole request, cold load included
     ack_after_s: float = 2.5       # silent thinking pose first; a spoken ack only if the reply takes longer
     still_on_it_s: float = 8.0     # she says so once if it takes longer than this
-    acks: list[str] = field(default_factory=lambda: ["On it.", "Let me see.", "One moment.", "Right, hang on."])
+    # Deprecated: the cover lines are persona.md's `cover.ack` now. Set here, they still replace them.
+    acks: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -493,8 +496,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("thinker.max_tools must be >= 1 (it caps the tool schemas in the prompt)")
     if not 0 <= config.thinker.tool_tokens < config.thinker.num_ctx:
         raise ConfigError("thinker.tool_tokens must be between 0 (no budget) and num_ctx")
-    if not config.thinker.acks or not all(isinstance(a, str) and a for a in config.thinker.acks):
-        raise ConfigError("thinker.acks must be a non-empty list of strings")
+    if not all(isinstance(a, str) and a for a in config.thinker.acks):
+        raise ConfigError("thinker.acks must be a list of strings (and is deprecated: persona.md's cover.ack)")
     learning = config.learning
     if learning.max_days < 1 or learning.max_records < 1:
         raise ConfigError("learning.max_days and learning.max_records must be >= 1")
@@ -551,6 +554,16 @@ def _migrate_actions(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _deprecated_persona(config: Config) -> None:
+    """`[brain] persona`, `[brain] examples` and `[thinker] acks` (until the persona stage) still replace what
+    persona.md says, with a warning: her persona, her examples and her cover lines live there now."""
+    for key, value in (("brain.persona", config.brain.persona), ("brain.examples", config.brain.examples),
+                       ("thinker.acks", config.thinker.acks)):
+        if value:
+            log.warning("config: %s is deprecated and still used, over persona.md; move it to %s (persona.md, "
+                        "WIRING.md §21) and delete it here", key, paths.persona_file())
+
+
 def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     path = path or default_path()
@@ -570,6 +583,7 @@ def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
             if section_name == "notifications":
                 values = _migrate_notifications(values)
             _apply(section_name, getattr(config, section_name), values)
+    _deprecated_persona(config)
     if "STRAWBERRYD_HOST" in env:
         config.daemon.host = env["STRAWBERRYD_HOST"]
     if "STRAWBERRYD_PORT" in env:
@@ -613,8 +627,8 @@ def default_toml() -> str:
         f"max_words = {b.max_words}",
         f'keep_alive = {b.keep_alive}               # seconds; -1 keeps the model in VRAM, "10m" lets it unload',
         "",
-        "# Her voice. The examples matter more than the description for a small model.",
-        "# persona = \"\"\"...\"\"\"",
+        "# Her persona, her example exchanges and her fixed lines are in persona.md beside this file",
+        "# (the Brain UI's Persona tab edits it; without one she uses the shipped persona).",
         "",
         "[media]",
         "only = []      # e.g. [\"spotify\"] to follow one player; empty = every player (MPRIS; SMTC on Windows)",
@@ -770,15 +784,5 @@ def default_toml() -> str:
         '# risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }',
         "#                              # a tool's (or a whole server's) tier: read | playback | change | sends | destructive;",
         "#                              # a whole server's never lowers a tool its adapter or server marks higher",
-        "",
-        "# Example exchanges she imitates. Uncomment and edit to change her register.",
     ]
-    for example in b.examples:
-        event = example["event"].replace("\n", "\\n")
-        lines += [
-            "# [[brain.examples]]",
-            f'# event = "{event}"',
-            f'# line = "{example["line"]}"',
-            f'# emotion = "{example["emotion"]}"',
-        ]
     return "\n".join(lines) + "\n"

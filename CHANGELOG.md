@@ -9,6 +9,15 @@ package and the widget binary.
 
 ### Added
 
+- **persona.md: who she is and how she talks, in one file.** Her persona, the example exchanges
+  the small model copies and her fixed lines ("On it.", "Okay, stopped.", the poke lines, …) are
+  one markdown file with four sections. Copy it to `~/.config/strawberry/persona.md` to make her
+  your own; she picks up an edit at her next line, and a file that does not check out is not used
+  (she keeps the shipped persona and the log says why). Rules for tools, the output formats and the
+  privacy and approval wording stay in code. Both models now read the same description of her voice;
+  the small model's prompt and examples are exactly as before. `[brain] persona`, `[brain] examples`
+  and `[thinker] acks` still work and are deprecated. WIRING.md §21.
+
 - She turns. A slow, small sway while idle; a glance toward a notification as it arrives, toward
   the middle of the screen now and then, and toward the cursor when it comes to rest near her;
   a quick turn and back in the peek and the wave; a turn on the beat when she dances. Always a

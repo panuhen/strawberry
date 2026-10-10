@@ -164,6 +164,12 @@ The settings you are most likely to change:
 | `[thinker]` | `stream` | read the big model's reply as it is written, for the tokens-per-second gauge (on) |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
+Her persona is a file of its own: copy the shipped `persona.md` (in the package's `data/` folder,
+or the Brain UI's *Her* tab) to `~/.config/strawberry/persona.md` and edit who she is, how she
+talks, the example reactions she copies and her fixed lines. No restart: she reads it again when
+it changes, and keeps the shipped persona while yours has a problem (the log and the Brain UI say
+which).
+
 Files she keeps: settings in `~/.config/strawberry/`, the widget binary and voices in
 `~/.local/share/strawberry/`, logs and state in `~/.local/state/strawberry/`. The XDG variables
 are respected. Her key for talking to the daemon is `bus-secret` in the state folder (see

@@ -37,6 +37,7 @@ from pathlib import Path
 from .config import VoiceConfig
 from .contract import Performance
 from .events import Event
+from . import persona as personas
 from .logtext import sentence
 
 log = logging.getLogger("strawberryd.voice")
@@ -44,7 +45,7 @@ log = logging.getLogger("strawberryd.voice")
 RATE = 16000
 CHUNK = 1600  # 0.1 s
 NO_DATA_S = 3.0  # pw-record produced nothing: the capture never got linked
-DIDNT_CATCH = "Sorry, I didn't catch that."
+DIDNT_CATCH = "Sorry, I didn't catch that."   # the shipped persona.md's didnt_catch (persona.py)
 
 
 class Transcriber(Protocol):
@@ -334,7 +335,7 @@ WHISPER_SIZES = {
     "distil-large-v2": "1.5 GB", "distil-large-v3": "1.5 GB", "distil-large-v3.5": "1.5 GB",
     "large-v3-turbo": "1.6 GB", "turbo": "1.6 GB",
 }
-EARS_LOADING = "I'm still getting my ears on."   # /listen while whisper loads
+EARS_LOADING = "I'm still getting my ears on."   # /listen while whisper loads; persona.md's ears_loading
 
 
 def whisper_cached(model: str) -> bool | None:
@@ -668,7 +669,7 @@ class Listener:
                 log.warning("voice: no microphone source found (preferred %r)", self.config.source)
                 listening("ended", seconds=0.0, speech=False)
                 ended = True
-                await daemon.perform(Performance(state="talking", text="I can't find a microphone.", emotion="alert"))
+                await daemon.perform(Performance(state="talking", text=personas.line("no_microphone"), emotion="alert"))
                 return {"transcript": None, "error": "no microphone"}
             try:
                 rec: Recording = await asyncio.to_thread(
@@ -699,10 +700,11 @@ class Listener:
                 self.empty += 1
                 # A run of its own that ends `didnt_catch` (Daemon.didnt_catch), where the daemon has runs.
                 caught = getattr(daemon, "didnt_catch", None)
+                line = personas.line("didnt_catch") or DIDNT_CATCH
                 if caught is not None:
-                    await caught(DIDNT_CATCH)
+                    await caught(line)
                 else:
-                    await daemon.perform(Performance(state="talking", text=DIDNT_CATCH))
+                    await daemon.perform(Performance(state="talking", text=line))
                 return {"transcript": "", "seconds": rec.seconds}
             log.info("voice: heard %s in %.0f ms", sentence(text), self.last_ms)
             performance, _sent = await daemon.handle_event(Event(source="voice", title=text, spoken=True))

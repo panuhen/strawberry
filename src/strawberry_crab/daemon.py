@@ -24,6 +24,7 @@ from .learning import IdleTrainer
 from .ledger import Ledger
 from .logtext import sentence
 from . import logtext, media, privacy
+from . import persona as personas
 from .outcomes import OutcomeLog
 from .pokes import Pokes
 from .reactions import decorate, is_burst
@@ -64,6 +65,8 @@ class Daemon:
         self.thinker = thinker or Thinker(self.config.thinker, self.toolbox, self.config.brain.action_model,
                                           self.config.brain.ollama_url)
         self.rng = random.Random()
+        # Her persona (persona.md, read again when it changes, else the shipped one): her fixed lines here.
+        self.persona = personas.store()
         self.listen_task: asyncio.Task | None = None
         self.last_poke = -1e9
         self.ears_said_at = -1e9
@@ -100,7 +103,7 @@ class Daemon:
         # Every input she handles is a run (runs.py, WIRING.md §18): its steps go to the bodies that
         # asked for them and to the Brain UI, and a run can be stopped. One foreground run at a time.
         self.runs = RunBook(keep=self.config.runs.keep, events=self.config.runs.events)
-        self.pokes = Pokes()          # the widget's "Talk when poked" lines (pokes.py)
+        self.pokes = Pokes(lines=self.persona.variants)   # the widget's "Talk when poked" lines (pokes.py)
         self.phases: asyncio.Queue | None = None    # the hub's feed of run events (start)
         # Its second half (§8d): labels from those outcomes, a candidate head trained on them when she
         # has been idle a while, and the gate following the heads dir's `current` without a restart.
@@ -258,7 +261,8 @@ class Daemon:
             gap, self.last_poke = now - self.last_poke, now
             if gap >= self.POKE_GAP_S and now - self.ears_said_at >= self.EARS_GAP_S:
                 self.ears_said_at = now
-                self.background(self.perform(Performance(state="talking", text=EARS_LOADING, emotion="neutral")),
+                line = self.persona.line("ears_loading") or EARS_LOADING
+                self.background(self.perform(Performance(state="talking", text=line, emotion="neutral")),
                                 "ears loading line")
             return {"listening": False, "loading": self.listener.reason}
         if not self.listener.ready:
@@ -617,7 +621,7 @@ class Daemon:
                 raise
         return await self._after_cancel(run)
 
-    STOPPED = "Okay, stopped."
+    STOPPED = "Okay, stopped."    # the shipped persona.md's `stopped`; hers comes from persona.md
 
     async def _after_cancel(self, run: Run) -> tuple[Performance, int]:
         """After a stop: one short line if a change had gone through before it (a shielded call),
@@ -646,7 +650,8 @@ class Daemon:
         if previous is not None and any(a.run is previous and a.outcome == "yes" and not a.made
                                         for a in self.approvals.history):
             return Performance(state=self.rest_state), 0   # it said "I stopped before doing it" itself
-        performance = decorate(event, Performance(state="talking", text=self.STOPPED, emotion="neutral"))
+        line = self.persona.line("stopped", self.rng) or self.STOPPED
+        performance = decorate(event, Performance(state="talking", text=line, emotion="neutral"))
         sent = await self.perform(performance)
         self.ledger.record(event.title, performance.text or "", did="stopped what she was doing")
         return performance, sent
@@ -764,8 +769,8 @@ class Daemon:
         self.quiet_media_until = 0.0   # she changed nothing; a track change now is somebody else's
         log.info("voice: %s wants music found (needs_catalogue %.2f) and no music server is configured; "
                  "saying so (ADAPTERS.md: adding a server)", sentence(event.title), route.catalogue)
-        performance = decorate(event, Performance(state="talking", text=prefaced(preface, self.rng.choice(NO_CATALOGUE)),
-                                                  emotion="neutral"))
+        line = self.persona.line("no_catalogue", self.rng) or self.rng.choice(NO_CATALOGUE)
+        performance = decorate(event, Performance(state="talking", text=prefaced(preface, line), emotion="neutral"))
         sent = await self.perform(performance)
         self.ledger.record(event.title, performance.text or "", did="needs a music add-on")
         return performance, sent
@@ -926,10 +931,12 @@ class Daemon:
             # Not once the run is being stopped (a change finishing first): she is not still on it.
             await asyncio.sleep(self.config.thinker.ack_after_s)
             if run is None or not run.cancel_reason:
-                await self.perform(Performance(state="thinking", text=self.rng.choice(self.config.thinker.acks)))
+                # `[thinker] acks` (deprecated) when set, else persona.md's cover lines.
+                acks = self.config.thinker.acks or self.persona.variants("cover.ack")
+                await self.perform(Performance(state="thinking", text=self.rng.choice(acks)))
             await asyncio.sleep(max(self.config.thinker.still_on_it_s - self.config.thinker.ack_after_s, 0.1))
             if run is None or not run.cancel_reason:
-                await self.perform(Performance(state="thinking", text="Still on it."))
+                await self.perform(Performance(state="thinking", text=self.persona.line("cover.still", self.rng)))
 
         reminder = asyncio.get_running_loop().create_task(cover())
         try:

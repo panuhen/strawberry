@@ -41,6 +41,7 @@ from .config import ThinkerConfig
 from .contract import EMOTIONS
 from .ledger import as_context
 from . import confirm, logtext
+from . import persona as personas
 from .logtext import line, sentence
 from .runs import Run, emit
 from .tools import Toolbox, ToolResult, ToolSpec
@@ -49,19 +50,15 @@ log = logging.getLogger("strawberryd.thinker")
 
 Chat = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]   # payload -> Ollama /api/chat reply
 
-# Who is speaking. The reaction path's persona (persona.py) describes events to a 1B model; this
-# is the same crab talking to the user directly, and it is the only voice in a Qwen reply.
-VOICE = (
-    "You are Strawberry, a small cheerful cartoon crab who lives on the user's desktop. The user is talking to you "
-    "now: the sentence below is theirs, heard through speech-to-text. Answer them yourself, as Strawberry. Your "
-    "voice: playful, warm, a little cheeky, dry, never mean. British English, British spelling, understated wit, "
-    "no American slang, no emojis, no markdown, no lists, no follow-up questions, and never a name for the user - "
-    "say 'you' to them. Small talk and confirmations get ONE short sentence of at most 15 words. An answer that "
-    "carries facts may run to two or three plain sentences, no more. Vary your wording and never lean on one "
-    "favourite adjective.\n"
-    "Start every reply with your mood in square brackets - [neutral], [happy], [alert] (something needs attention) "
-    "or [angry] (something went wrong) - then a space, then what you say. Example: [happy] Skipped. Blue Monday next."
-)
+# Who is speaking: persona.md's "Who she is" and "How she talks", in the thinker's frame, with the [mood] tag
+# the code parses (persona.Persona.thinker_voice). VOICE is the shipped persona's, for code and tests.
+
+
+def __getattr__(name: str) -> Any:
+    if name == "VOICE":
+        return personas.shipped().thinker_voice()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # How to use the tools. Tuned on real sentences; every clause here was a live failure once. The
 # clause on facts kept Qwen from searching the music catalogue to answer "who is Aphex Twin"; with a
@@ -197,12 +194,13 @@ def split_emotion(text: str, default: str = "neutral") -> tuple[str, str]:
 
 
 def system_prompt(has_tools: bool, guides: list[str] | tuple[str, ...] = (), acting: bool | None = None,
-                  lookup: bool = False) -> str:
+                  lookup: bool = False, voice: str | None = None, about: str = "") -> str:
     """Her voice, then the rules for what she has: the tool rules when there is something on the
     computer to act through (`acting`, the default whenever there are tools), the look-up-only rules
     when there is only a web search, NO_TOOLS when there is nothing; then the adapters' paragraphs
     (`guides`: how to use a web search, or that it is not answering). `lookup`: a web search is
-    among the tools, so the clause on facts says which tools it is about."""
+    among the tools, so the clause on facts says which tools it is about. `voice` is who is speaking
+    (persona.md's, the shipped persona's by default) and `about` the user's profile under it (profile.py)."""
     acting = has_tools if acting is None else acting
     if acting:
         rules = TOOLS_RULES.format(facts=FACTS_WITH_LOOKUP if lookup else FACTS)
@@ -210,7 +208,8 @@ def system_prompt(has_tools: bool, guides: list[str] | tuple[str, ...] = (), act
         rules = LOOKUP_ONLY
     else:
         rules = NO_TOOLS
-    return "\n\n".join([VOICE, rules, *[g for g in guides if g]])
+    voice = voice if voice is not None else personas.shipped().thinker_voice()
+    return "\n\n".join([voice, *([about] if about else []), rules, *[g for g in guides if g]])
 
 
 def user_message(text: str, context: str, recent: list[str], note: str = "") -> str:
@@ -362,8 +361,11 @@ class PromptTooLong(ThinkerError):
 
 class Thinker:
     def __init__(self, config: ThinkerConfig, toolbox: Toolbox, model: str, ollama_url: str = "",
-                 chat: Chat | None = None) -> None:
+                 chat: Chat | None = None, persona: personas.PersonaStore | None = None, profile: Any = None) -> None:
         self.config = config
+        # Who is speaking (persona.md, read again when it changes) and what she knows of the user (profile.py).
+        self.persona = persona or personas.store()
+        self.profile = profile
         self.toolbox = toolbox
         self.model = config.model or model
         self.ollama_url = ollama_url
@@ -483,11 +485,17 @@ class Thinker:
             if text_for and text_for not in guides:
                 guides.append(text_for)
         acting = any(not getattr(self.toolbox.adapters.get(s.server), "looks_up_only", False) for s in specs)
-        prompt = system_prompt(bool(specs), guides, acting=acting, lookup=lookup)
+        prompt = system_prompt(bool(specs), guides, acting=acting, lookup=lookup, **self.speaker())
         if first:
             log.info("thinker: the sentence wants %s; %s", ", ".join(sorted(first)),
                      "offered first" if first & offered else "not answering")
         return specs, prompt, " ".join(notes)
+
+    def speaker(self, private: bool = True) -> dict[str, str]:
+        """system_prompt's `voice` and `about`: persona.md's voice, and the user's profile under it (with
+        `private`; a conversation with strangers' text in it gets neither the profile nor its mention)."""
+        about = self.profile.prompt_block() if private and self.profile is not None else ""
+        return {"voice": self.persona.current().thinker_voice(profile=bool(about)), "about": about}
 
     def _guide(self, server: str, adapter: Any) -> str:
         """The adapter's paragraph for a server that answers, for the tools that server lists."""
@@ -645,7 +653,7 @@ class Thinker:
         if use_tools:
             specs, prompt, note = await self.offer(text, careful, topic, route)
         else:
-            specs, prompt, note = [], system_prompt(False), ""
+            specs, prompt, note = [], system_prompt(False, **self.speaker()), ""
         tools = [s.for_ollama() for s in specs]
         offered = {s.function or s.name for s in specs}
         recent = recent if recent is not None else []

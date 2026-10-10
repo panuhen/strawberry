@@ -21,6 +21,7 @@ from . import logtext
 from .config import BrainConfig
 from .contract import EMOTIONS, Performance, anim_for
 from .events import MAX_LINE, Event, Reactor
+from . import persona as personas
 from .persona import BODY_RULE
 
 log = logging.getLogger("strawberryd.brain")
@@ -128,9 +129,14 @@ def tidy(line: str, max_words: int) -> str:
 
 
 class OllamaReactor:
-    def __init__(self, brain: BrainConfig, fallback: Reactor) -> None:
+    def __init__(self, brain: BrainConfig, fallback: Reactor, persona: personas.PersonaStore | None = None,
+                 profile: Any = None) -> None:
         self.brain = brain
         self.fallback = fallback
+        # Her persona (persona.md, read again when it changes) and the user's profile (profile.py): the
+        # profile's one-line summary goes in only while it is short (Profile.summary).
+        self.persona = persona or personas.store()
+        self.profile = profile
         self.session: aiohttp.ClientSession | None = None
         self.calls = 0
         self.fallbacks = 0
@@ -203,11 +209,25 @@ class OllamaReactor:
         self.rewarm = asyncio.get_running_loop().create_task(self.warm_up(reason))
         return self.rewarm
 
+    def system(self) -> str:
+        """The system prompt: `[brain] persona` as written when it is set (deprecated), else persona.md's,
+        with the profile's short summary when there is one."""
+        if self.brain.persona:
+            return self.brain.persona
+        summary = ""
+        if self.profile is not None:
+            summary = self.profile.summary(personas.REACT_PROFILE_TOKENS)
+        return self.persona.current().reaction_system(self.brain.max_words, summary)
+
+    def examples(self) -> list[dict[str, str]]:
+        """`[brain] examples` when set (deprecated), else persona.md's, shown as real events are."""
+        return [dict(e) for e in self.brain.examples] if self.brain.examples else self.persona.current().reaction_examples()
+
     def _messages(self, event_text: str, avoid: list[str] | None = None) -> list[dict[str, str]]:
-        out = [{"role": "system", "content": self.brain.persona}]
+        out = [{"role": "system", "content": self.system()}]
         # Example order is shuffled per call: a fixed order makes the last example the template
         # for everything, and the same opener comes back every time.
-        examples = list(self.brain.examples)
+        examples = self.examples()
         self.rng.shuffle(examples)
         for example in examples:
             out.append({"role": "user", "content": example["event"]})
