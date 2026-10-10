@@ -179,7 +179,7 @@ The settings you are most likely to change:
 | `[ledger]` | `turns`, `notices`, `window_minutes`, `foreign_minutes` | her short memory: your last exchanges (8) and what she reacted to on her own (8), none older than 60 minutes; for 10 minutes after a sender's or a track's name, a change asks first |
 | `[messages]` | `enabled`, `keep`, `max_age_hours` | her inbox for "any new messages?": on, at most 100 notifications, none older than 24 hours, in memory only; message text only as `[notifications] body` allows |
 | `[touch]` | `target_s`, `cooldown_s`, `<entity>.<touch>` | what you point at on a body stays meant for 8 s after the body last said so; touch actions at least 1 s apart; the action map, e.g. `music.flick = "next"` (none by default: a touch changes nothing) |
-| `[gestures]` | `enabled`, `watch`, `camera`, `arming`, `map` | hand gestures through the webcam (off); see [Hand gestures](#hand-gestures-optional) |
+| `[gestures]` | `enabled`, `watch`, `camera`, `arming`, `map` | hand gestures through the webcam (off); see [Hand gestures](#hand-gestures-optional). The Brain UI's Input tab keeps this section and `[touch]` in `input.toml`, all but `enabled` |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
 Her persona is a file of its own: copy the shipped `persona.md` (in the package's `data/` folder,
@@ -361,6 +361,14 @@ problem, a new router head waiting).
 - **Settings and privacy**: what is kept and logged, and the line in `config.toml` that changes
   it, what applies at once and what needs a restart, **Apply** for the notification settings, the
   whole effective `config.toml` (read-only: the page does not edit it), and Forget.
+- **Input** (under Settings): hand gestures and touch. Whether the camera is open, the watcher's frame
+  rate and CPU, what is missing; the bodies and what they let you touch; your hand drawn live as a stick
+  figure from the few numbers the watcher sends (never a picture: frames never leave the watcher), with
+  the zone line, what it recognises now and the hold ring filling; the gesture and touch mappings (only
+  actions that need no yes are offered); the tuning (hold time, zone, smallest hand, frame rates, the
+  camera); the last twenty gestures and touches with what each did or why it did nothing; and **Practice
+  mode**, under which gestures and touches are shown and do nothing (not saved). **Save** writes
+  `~/.config/strawberry/input.toml` (see [Hand gestures](#hand-gestures-optional)), never `config.toml`.
 - **System**: the models, where the gate runs, the head in use.
 
 The link works once, within a minute; the page then runs on a cookie that ends after 12 hours
@@ -508,6 +516,15 @@ A map naming anything else (saving tracks, a playlist, a message) stops her from
 reason. A thumbs up answers her card only for a question it may answer with a tap (not a `sends` or
 `destructive` one: those need your voice, your typing or a press-and-hold); a thumbs down may refuse
 any. `[gestures] approvals = false` turns that off.
+
+**input.toml.** The Brain UI's *Input* tab saves the gesture and touch settings to
+`~/.config/strawberry/input.toml`, beside `config.toml`, and she reads it again within a second. It
+has the same `[gestures]` and `[touch]` sections as `config.toml`, and a section there replaces the
+one in `config.toml` whole (keys it leaves out take their defaults). The one exception is `[gestures]
+enabled`: it stays in `config.toml`, where the tray's *Hand gestures (camera)* row and `strawberry
+gestures on|off` write it, so input.toml never turns the camera on. An input.toml that does not check
+out is not used: she keeps the settings she had, and the *Input* tab and `strawberry gestures status`
+say why. Delete it to go back to `config.toml`'s sections.
 
 **The camera.** A separate watcher process owns it, and nothing else opens it. It runs MediaPipe
 on the CPU (about 5 % of one core while it looks for a hand, about 18 % while a hand is up), keeps

@@ -31,6 +31,17 @@ package and the widget binary.
   else stops her from starting, with the reason. A raised hand must be in the zone and held still, a swipe
   must start from a hand that was already up, and a shape fires once per hold. Bodies can ask for `gesture`
   and `hand` (PROTOCOL Part 1d). README *Hand gestures*, WIRING §26.
+- **An Input tab in the Brain UI**, under Settings, for gestures and touch. It shows whether the camera is
+  open, the watcher's frame rate and CPU, what is missing (MediaPipe, the model) and the bodies with what
+  they let you touch; your hand drawn live as a stick figure from the numbers the watcher sends (never a
+  frame), with the zone line, the shape it sees and the hold ring filling; the gesture and touch mappings,
+  whose dropdowns offer only actions that need no yes; the tuning; and the last twenty gestures and touches
+  with what each did or why it did nothing. **Practice mode** (not saved) shows gestures and touches and
+  does nothing. Its settings are saved to `~/.config/strawberry/input.toml` (atomic, a `.bak`, the diff
+  first), which replaces `[gestures]` and `[touch]` of `config.toml` whole, except `[gestures] enabled`,
+  which stays the tray's switch; she reads it again within a second, and one that does not check out
+  keeps the settings she has. The page never writes `config.toml`. A `hand` now names the shape seen
+  (`shape`, PROTOCOL Part 1d). README *Brain UI*, WIRING §17, §26.
 - A livelier voice without changing it. `[speech] noise_scale` and `noise_w` set Piper's own variation of
   pitch and tone and of rhythm; 0 (the default) keeps the voice's own. Around 0.85 and 1.1 she sounds
   less flat; much higher and the voice starts to slur.

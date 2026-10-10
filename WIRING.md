@@ -891,6 +891,7 @@ src/strawberry_crab/profile.py  what she knows about the user (§22): profile.md
 src/strawberry_crab/ledger.py  her short memory (§23): the user's turns and System 1's notices, one timeline with trust labels
 src/strawberry_crab/inbox.py  her inbox (§24): the notifications she got, in memory only, and the read-only `messages` tools
 src/strawberry_crab/gestures.py  hand gestures (§26): the map and its tiers, /gesture and /hand, the runs; gesturecmd.py `strawberry gestures`
+src/strawberry_crab/inputs.py    input.toml (§26) laid over [gestures] and [touch], read live; the Input tab's recent list, live view and practice mode (§17)
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, turn.gd, touch.gd, legs.gd, wander.gd, easing.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), approval_card.gd (§19), gesture_ring.gd (§26), paths.gd (XDG, the CLI, the version), validate_*.gd
@@ -926,9 +927,9 @@ Or press play in any media player: the MPRIS watcher (§4b) does the rest.
 
 A local web page, served by the daemon, that shows what the router decides and what the learning loop learns (§8a–8d), and lets the user act on it. `strawberry ui` opens it. It calls `learning.py` and reads the daemon's parts; it decides nothing itself.
 
-**The layout (since the persona stage).** Eight sections in five groups, in the side bar: **Her** (Persona,
+**The layout (since the persona stage).** Nine sections in five groups, in the side bar: **Her** (Persona,
 Profile), **Activity** (Runs with its approvals and the shared timeline, Router live), **Learning** (Learning,
-Data and scores), **Settings** (Settings and privacy) and **System**. The page opens on Persona. The header has
+Data and scores), **Settings** (Settings and privacy, Input) and **System**. The page opens on Persona. The header has
 the 🍓 mark (the page title too) and one "needs your attention" spot: the most urgent of an open approval
 ("She is waiting for your yes"), a persona.md that does not check out, and a candidate head waiting, with how
 many more there are; a click goes to its section. The new parts:
@@ -956,6 +957,40 @@ many more there are; a click goes to its section. The new parts:
   does not load is a 409 and she keeps the settings she has), everything else at a restart) and the effective
   settings as config.toml text, read-only (`brainui.as_toml`, with the secret-looking values shown as `(set)`
   as before). Editing config.toml from the page is a later stage.
+- *Input* (since the input stage; `inputs.py`, §25, §26): hand gestures and touch from bodies.
+  - *Status*: `[gestures] enabled` (the tray's switch), the watcher (heard from in the last 5 s or not), the
+    camera open or closed, `watch`, command mode armed (seconds left) or idle, the watcher's frames a second
+    and its share of one CPU core, the last hand's age, MediaPipe and the model (`gestures.mediapipe_missing`,
+    `model_ready`), the gesture and touch counts; the bodies that declared entities, with their ids, kinds,
+    labels and touch counts, and the target now. The watcher reports its camera, frame rate and CPU in an
+    `X-Strawberry-Watcher` header on each of its requests (`inputs.parse_watcher`, strict; numbers only).
+  - *Live*: a stick hand on a canvas, drawn from the `hand` numbers (the palm, the wrist and fingertips, pinch,
+    open, engaged, and `shape`, what the recogniser sees now), the zone line and the shaded part below it, the
+    `min_size` square, the hand's extent, and the hold ring filling from `gesture` progress (green on `done`,
+    fading on a cancel). Never a frame: none leaves the watcher. It comes over its own stream,
+    `GET /ui/api/input/live` (the same checks as the API; at most 4), opened when the tab is shown and closed
+    when it is left or the page is hidden: `hand`, `gesture`, `recent` rows and a `status` once a second
+    (`inputs.Live`). While one is open, `GestureDesk.state()` says `wanted.hand` (and `gesture`), so the
+    watcher sends the hand; when the last closes it stops again.
+  - *Mappings*: a gesture table (when pointing at an entity, or anything; the gesture; the action) and a touch
+    table (entity, touch kind, action). The dropdowns offer only `gestures.ACTIONS` and
+    `bodylink.TOUCH_ACTIONS` (each with its tier: read or playback); the entity fields suggest the ids the
+    bodies declared, and the ones already mapped. Two rows for the same key are marked and block Save.
+  - *Tuning*: `hold_ms`, `zone`, `min_size`, `arming`, `armed_s`, `approvals`, `camera`, `watch`, `idle_fps`,
+    `fps`, `hand_hz`; `[touch] target_s`, `cooldown_s`. The zone and the smallest hand redraw as they change.
+  - *input.toml*: the draft checked on the server (`POST /ui/api/input/check`, 0.4 s after an edit:
+    `inputs.from_view` renders it as the file's text and parses that with the loader's own functions,
+    `config._apply`, `_validate_touch`, `_validate_gestures`) with the problems and the diff against the file;
+    **Save** (a second click) writes `input.toml` (`POST /ui/api/input/save`: atomic, the old file kept as
+    `input.toml.bak`, then `InputStore.check` so she uses it at once; 400 with the problems when it does not
+    check out). The page never writes config.toml. A file that does not check out shows its reason at the top.
+  - *Recent*: the last 20 gestures (`done`) and touches with when, what (a gesture's name, an entity and a touch
+    kind), the outcome (`did`, `running`, `failed`, `ignored`, `practice`), the action and why
+    (`not_mapped`, `cooldown`, `not_armed`, `too_soon`, `not_answerable`, `nothing_can_do_it`, …); a repeat
+    within 2 s is one row with a count (`inputs.Recent`, in memory).
+  - *Practice mode* (`POST /ui/api/input/practice {on}`; `InputDesk.practice`, runtime only, off at every
+    start): a gesture's `done` and a mapped touch are shown (to the page, to the bodies) and do nothing: no
+    reflex, no approval answered, no arming; the recent row says what it would have done.
 
 **What it shows**, in six sections (the original ones):
 
@@ -982,6 +1017,7 @@ many more there are; a click goes to its section. The new parts:
 | `GET /ui/api/persona`; `POST /ui/api/persona/check`, `persona/save`, `persona/try` (`{text}`) | the persona.md in use (or the shipped one), the shipped one and the store's status; a draft checked (`ok`, `problems`, `warnings`, `sizes`, `caps`, `diff`); saved (400 with the problems when it does not check out); tried on the sample events (409 with the reaction model off or a try running). A draft is at most 41 000 characters (413) | the page |
 | `GET /ui/api/profile`; `POST /ui/api/profile/save` (`{text}`), `profile/revert` (`{id}`) | the text, its status, what she reads, the history; a change's refusal (over the cap, nothing changed, a version not kept) is a 409 with the reason | the page |
 | `POST /ui/api/apply` | `[notifications]` read again from config.toml (`{"applied": "notifications", "body": …}`), else 409 | the page |
+| `GET /ui/api/input`; `GET /ui/api/input/live` (events); `POST /ui/api/input/check`, `input/save` (`{settings}`), `input/practice` (`{on}`) | the Input tab: status, settings in use, the dropdowns' choices, bodies, the file and its status, recent; the live view; a draft checked (`ok`, `problems`, `text`, `diff`); saved as input.toml (400 when it does not check out); practice mode | the page |
 | `GET /ui/api/runs` | also carries `timeline` (above) | the page |
 
 **The security model.** Every other route refuses any request with an `Origin` header (§2), so no web page the user visits can make her talk, read `/health` or open `/ws`. `/ui` is the one place a browser is let in, on these terms (`brainui.checked`, one decorator on every UI handler; `server.local_only` lets a handler through only when it carries the decorator's mark, so a new route cannot open itself by accident, and an unmatched path such as `/ui/../health` still meets the Origin rule):
@@ -1016,6 +1052,25 @@ with the four sizes and a two-hunk diff against the file; Try it gave four lines
 0.6 s each; Save cleared the header's spot and she used the file; the Profile tab showed four of her changes
 and one of the page's with revert; the Runs tab's timeline showed a commit, a notification's app and sender, a
 typed turn and a track, the notices marked as strangers' text; Settings showed the effective config.toml.
+
+`tests/test_input.py` (input.toml over config.toml with `enabled` kept, a section left out, each refusal and
+she still starts, a touch tier raised by the config, render and parse agreeing, the page's settings through the
+loader's checks; the daemon's live reload, the last good file kept, the fall back when it goes, nothing about it
+in a log line; the tray's switch over input.toml; the watcher following the file and keeping its settings, its
+report header; the recent ring; practice mode for gestures and touches; every Input write behind the session,
+the CSRF header and the Origin; check, save with a backup and never config.toml; a bad file in the tab; the live
+view asking for the hand only while it is open).
+
+Seen end to end (2026-10-10, a throwaway daemon on port 8797 with temp XDG dirs, headless Chrome over the
+DevTools protocol, a fake orbs body and a fake crab over the websocket, a fake hand posted to /hand and /gesture
+with the throwaway bus secret and the watcher's header; no camera): the tab showed the camera open at 14.8 frames
+a second and 18.3% CPU, MediaPipe and the model missing, the orbs' three entities and the crab; an open palm
+with the ring two thirds round, a pinch, a hand below the zone line not engaged; practice mode's thumbs up
+"would like"; a target row (`music` + thumbs up → now_playing) and a touch row (music flick → skip) with a
+hold time of 500 checked and diffed, a hold time of 50 refused with the loader's words; Save wrote input.toml,
+the daemon applied it, a flick on music then ran skip (nothing plays there, so it failed, and Recent said
+why); a hand edit naming `save_tracks` showed "Your input.toml is not used" with the reason while she kept the
+last good settings; light theme and a narrow window. The daemon's log had names, counts and outcomes only.
 
 ---
 
@@ -1887,6 +1942,9 @@ music.flick = "next"  # skip; also: previous, pause, resume (or play), volume_up
 music.grab = "pause"
 ```
 
+The Brain UI's Input tab (§17) edits the map and the times and saves them to `input.toml` beside config.toml,
+whose `[touch]` replaces this one whole (§26, *input.toml*); the checks are these.
+
 The reflex runs as a spoken "skip this" would (`Actor.reflex_named`, then `Actor.fire`: the music server's
 adapter, else MPRIS), with no model and nothing said; one at a time, `cooldown_s` apart (a drag can repeat
 fast), and the MPRIS doorway's track reaction is swallowed as after a spoken skip. **A touch cannot answer a
@@ -2017,6 +2075,42 @@ and the camera are. The orbs can ask for `hand` to render it.
 for when the user points at something; `GestureDesk.action_for` takes it over the plain entry when
 `GestureDesk.target()` returns that entity id. Until the body link's targets (`touch` / `target` from the
 bodies) are on main, `target()` returns "" and the plain entries are used.
+
+**input.toml** (`inputs.py`). The Brain UI's Input tab (§17) saves the gesture and touch settings to
+`~/.config/strawberry/input.toml` (beside the config file; on Windows `%APPDATA%\strawberry\input.toml`), as
+persona.md and profile.md are saved: atomic, with a backup, after a diff. Its format is config.toml's own
+`[gestures]`, `[gestures.map]` and `[touch]` (`music.flick = "skip"`), so a section can be moved between the
+files. The rule:
+
+- A section in input.toml replaces the same section of config.toml **whole**: a key it leaves out takes its
+  default, not config.toml's (so an empty `[gestures.map]` maps nothing, and a `[touch]` without entity keys
+  maps no touch). A section it does not have stays config.toml's.
+- **`[gestures] enabled` stays in config.toml**, and input.toml may not hold it (a problem). The tray's *Hand
+  gestures (camera)* row and `strawberry gestures on|off` keep writing config.toml through `configedit`, and
+  `reload_gestures` takes `enabled` from it; nothing the page writes can turn the camera on.
+- `config.load` lays it over the config (`inputs.overlay`, last, after config.toml is checked), so the daemon,
+  the watcher, `strawberry gestures status` and the doctor read the same settings. It is checked with the
+  loader's own functions (`config._apply` for the types, `_validate_touch` with config.toml's tools and
+  approvals for the tiers, `_validate_gestures`); unknown keys and sections are problems, not warnings.
+- **One that does not check out** is not used and never stops her starting: `config.input_error` holds why,
+  the log says only that it is not used (a map key can name an entity and a gesture), the Input tab and
+  `strawberry gestures status` show the reason. Read live, the last good settings are kept.
+- **Live.** The daemon stats it once a second (`InputStore`, started with the daemon) and right after the page
+  saves it; on a change it parses it against the running config and swaps `config.gestures` (keeping
+  `enabled`) and `config.touch`, and the targets' TTL. A file that goes away gives config.toml's sections back.
+  The watcher looks at both files' mtimes each second and takes the new tuning (a new camera or fps reopens the
+  camera); with a bad input.toml it keeps its settings and follows `enabled` only.
+
+**What the Input tab gets from here.** `GestureDesk` writes each `done` into the recent ring (`inputs.Recent`:
+the name, the outcome and why; a run's row is finished when its reflex is), publishes `gesture` and `hand` to
+the tab's live view while it is open (`inputs.Live`) and says `wanted.hand` then. **Practice mode**
+(`Daemon.input.practice`, runtime only): a `done` does nothing (no reflex, no answer, no arming), `refused:
+"practice"` and what it would have done go back to the watcher, and the bus's `gesture` carries no `action`; a
+mapped touch is shown to the other bodies without its action and not run (`Daemon.body_touch`). `hand` carries
+`shape` (the recogniser's shape this frame, by name; PROTOCOL Part 1d), so the tab can say what it sees even
+when no gesture is held. The watcher reports `X-Strawberry-Watcher: camera=open|closed; fps=…; cpu=…` on each
+request (`Watcher.measure`, once a second: frames read and its own CPU time), which the daemon keeps for 5 s
+(`InputDesk.heard`); with gestures off the watcher makes no request, so the tab says it is waiting.
 
 **Dependencies and the model.** MediaPipe (and the OpenCV it brings) is the optional `gestures` group and
 extra: `uv sync --inexact --group gpu --group gestures`, or `uv tool install 'strawberry-crab[gestures]'`
