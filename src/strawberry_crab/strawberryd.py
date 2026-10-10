@@ -192,13 +192,14 @@ def talk(config) -> int:
 
     base = f"http://{config.daemon.host}:{config.daemon.port}"
 
+    from . import bussecret
+
     def get(path: str):
-        with urllib.request.urlopen(base + path, timeout=5) as response:
+        # With the bus secret: without it /health says only that she is up, and this reads the gate's route.
+        with urllib.request.urlopen(urllib.request.Request(base + path, headers=bussecret.headers()), timeout=5) as response:
             return json.loads(response.read())
 
     def post(path: str, body: dict):
-        from . import bussecret
-
         request = urllib.request.Request(base + path, data=json.dumps(body).encode(),
                                          headers=bussecret.headers({"Content-Type": "application/json"}))
         with urllib.request.urlopen(request, timeout=120) as response:

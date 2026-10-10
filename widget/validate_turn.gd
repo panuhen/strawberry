@@ -132,7 +132,11 @@ func run() -> void:
 	var techno := {"bpm": 130.0, "period_s": 60.0 / 130.0, "confidence": 0.8, "next_beat": now + 0.2,
 		"evenness": 0.7, "low_ratio": 0.45, "density": 3.0, "loudness_db": -18.0}
 	widget.dance.set_tempo(techno)
-	widget.dance.set_tempo(techno)
+	widget.dance.set_tempo(techno, now + 0.3)
+	# An extra post (a section change) right after: two estimates, but not two heartbeats apart.
+	report["style_after_quick_pair"] = widget.dance.style
+	check(widget.dance.style != "rave", "two estimates 0.3 s apart should not switch the style yet")
+	widget.dance.set_tempo(techno, now + widget.dance.HEARTBEAT_S)
 	var beat_yaw := 0.0
 	waited = 0.0
 	while waited < 2.0:

@@ -19,7 +19,21 @@ def trusted(hello: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 async def connect(client: Any, hello: dict[str, Any] | None = None) -> Any:
-    """A websocket to the test daemon whose hello presented the secret: it may type, poke and cancel."""
+    """A websocket to the test daemon whose hello presented the secret: it may type, poke and cancel, and it
+    gets every byte. Returned once the daemon has read the hello (a ping answered after it), so a broadcast
+    the test makes next cannot reach the socket while it is still untrusted; what came before that pong (a
+    catch-up, a v2 `welcome`) is read and dropped."""
     ws = await client.ws_connect("/ws")
     await ws.send_json(trusted(hello))
+    await ws.send_json({"type": "ping"})
+    while (await ws.receive_json(timeout=5)) != {"type": "pong"}:
+        pass
     return ws
+
+
+def add_trusted(hub: Any, sink: Any, hello: dict[str, Any] | None = None) -> Any:
+    """A fake socket on the hub, as the widget is: its hello presented the secret, so it gets every byte
+    (hub.shape is what a socket without it gets)."""
+    hub.add(sink)
+    hub.hello(sink, trusted(hello), BUS_SECRET)
+    return sink

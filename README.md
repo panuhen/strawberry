@@ -177,9 +177,12 @@ her voice run locally, and the daemon listens only on `127.0.0.1`. On its first 
 random key, `~/.local/state/strawberry/bus-secret` (on Windows
 `%LOCALAPPDATA%\strawberry\state\bus-secret`), readable only by you; her widget, her tray, the
 `strawberry` command and the watchers present it, and the daemon takes nothing that would make her
-act or speak without it. Another user on the computer, or a sandboxed app, can watch what she
-does but cannot type to her, answer her questions or open the Brain UI. Programs you run yourself
-can read the key, as her widget does. Strawberry makes no network
+act or speak without it, and gives nothing she hears or says to a program without it. Another
+user on the computer, or a sandboxed app, can see that she moves (her state, her dance, that a
+run is going on and how long its steps take) but not what she says, what you said or which tools
+she used, and cannot type to her, answer her questions or open the Brain UI. Programs you run
+yourself can read the key, as her widget does. If the key file was ever readable by others, she
+makes a new one at her next start. Strawberry makes no network
 requests of its own except to download what you ask for: the widget binary from this project's
 GitHub releases, and models and voices from Ollama and Hugging Face during setup. An MCP server
 you add is its own program and may use the network (the Spotify one talks to Spotify).
@@ -224,7 +227,7 @@ What she reads:
   media controls).
 - **Audio.** Only the playing media player's own output stream (on Windows, the player's own
   process through WASAPI process loopback, after its volume in the mixer), and only to measure
-  the tempo.
+  the tempo, where the bar starts and whether the track is in a build, a drop or a break.
   Nothing is recorded or stored. `[beat] enabled = false` turns it off.
 - **Microphone.** Only after you press the hotkey (or run `strawberry listen`), until you stop
   speaking. The audio is transcribed locally in memory and never written to disk.

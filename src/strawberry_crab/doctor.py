@@ -77,8 +77,9 @@ class Probes:
         from . import bussecret
 
         data = json.dumps(body).encode() if body is not None else None
-        # A POST carries the bus secret (bussecret.py), as every client of the daemon does.
-        headers = bussecret.headers({"Content-Type": "application/json"}) if body is not None else {}
+        # Every request carries the bus secret (bussecret.py), as every client of the daemon does: a POST
+        # needs it, and /health says only that she is up without it.
+        headers = bussecret.headers({"Content-Type": "application/json"} if body is not None else {})
         request = urllib.request.Request(url, data=data, headers=headers, method="POST" if body is not None else "GET")
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -743,6 +744,13 @@ def check_daemon(config, probes: Probes) -> tuple[list[Check], dict | None]:
     detail = f"{base}, version {health.get('version')}, {health.get('widgets', 0)} widget(s)"
     checks = [Check(OK if health.get("version") == __version__ else WARN, "daemon", detail,
                     f"the running daemon is not this package ({__version__}); strawberry restart")]
+    if health.get("withheld"):
+        # It answered with the liveness part only: this client has no bus secret, or not the daemon's.
+        from . import bussecret
+
+        why = "no bus secret here" if health["withheld"] == "no_secret" else "the bus secret here is not the daemon's"
+        checks.append(Check(WARN, "daemon detail", f"withheld ({why}, {bussecret.path()})",
+                            "run doctor as the user the daemon runs as, or strawberry restart"))
     others = [v for v in health.get("widget_versions") or [] if v not in (__version__, "dev")]
     if others:
         checks.append(Check(WARN, "connected widget", f"version {', '.join(others)}, daemon {health.get('version')}",

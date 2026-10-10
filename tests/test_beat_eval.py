@@ -33,6 +33,8 @@ def test_generated_set_scores(beat_eval):
     assert summary["phase_on_beat"] >= 0.85, summary
     assert summary["beatless_claims"] == 0.0, summary
     assert summary["steady_precision"] >= 0.85, summary
+    # The bar (WIRING.md §4c): a guess would put a quarter of the downbeats right; sure ones (>= 0.5) mostly are.
+    assert summary["downbeat"] >= 0.45 and summary["downbeat_sure"] >= 0.75, summary
 
 
 def test_scoring_rules(beat_eval):

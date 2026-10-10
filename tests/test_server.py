@@ -111,7 +111,7 @@ async def test_perform_without_widget_is_accepted_but_reaches_nobody(client):
 
 
 async def test_perform_reaches_connected_widget(client):
-    ws = await client.ws_connect("/ws")
+    ws = await connect(client)
     blob = {"state": "talking", "anim": "alert_snap", "text": "Did someone say my name?", "emotion": "alert"}
     response = await client.post("/perform", json=blob)
     assert (await response.json())["sent"] == 1
@@ -167,6 +167,36 @@ async def test_tempo_steady_flag_is_optional_and_boolean(client):
     await ws.close()
 
 
+BAR = {"beats_per_bar": 4, "beat_index": 2, "next_downbeat": 1_800_000_001.438, "downbeat_confidence": 0.64}
+SECTION = {"section": "drop", "section_confidence": 0.9, "section_since": 1_799_999_998.25}
+
+
+async def test_tempo_carries_the_bar_and_the_section_as_optional_groups(client):
+    """PROTOCOL §4: the bar and the section are optional, each whole or not at all; unknown fields are still
+    refused, and a body gets them as posted."""
+    ws = await connect(client)
+    for extra in (BAR, SECTION, BAR | SECTION, {**BAR, "beats_per_bar": 3, "beat_index": 0,
+                                                "next_downbeat": TEMPO["next_beat"]}):
+        response = await client.post("/tempo", json=TEMPO | extra | {"steady": True})
+        assert response.status == 200, await response.text()
+        assert await ws.receive_json(timeout=2) == {"tempo": TEMPO | extra | {"steady": True}}
+    health = await (await client.get("/health")).json()
+    assert health["tempo"] == TEMPO | extra | {"steady": True}                     # the last one, as posted
+    for bad in ({**TEMPO, "beats_per_bar": 4},                                     # half a group
+                {**TEMPO, "section": "drop", "section_confidence": 0.5},
+                {**TEMPO, **BAR, "beat_index": 4},                                  # past the bar
+                {**TEMPO, **BAR, "beats_per_bar": 4.0},                             # not a whole number
+                {**TEMPO, **BAR, "beat_index": True},
+                {**TEMPO, **BAR, "next_downbeat": TEMPO["next_beat"] - 1.0},        # before the next beat
+                {**TEMPO, **BAR, "next_downbeat": TEMPO["next_beat"] + 4 * TEMPO["period_s"] + 0.1},
+                {**TEMPO, **BAR, "downbeat_confidence": 1.5},
+                {**TEMPO, **SECTION, "section": "chorus"},
+                {**TEMPO, **SECTION, "section_since": "now"},
+                {**TEMPO, **SECTION, "bar": 1}):
+        assert (await client.post("/tempo", json=bad)).status == 400, bad
+    await ws.close()
+
+
 async def test_health_counts_connected_widget(client):
     ws = await client.ws_connect("/ws")
     await ws.send_json({"type": "hello", "client": "test"})
@@ -175,7 +205,7 @@ async def test_health_counts_connected_widget(client):
 
 
 async def test_event_produces_canned_reaction_and_forwards_it(client):
-    ws = await client.ws_connect("/ws")
+    ws = await connect(client)
     response = await client.post("/event", json={"source": "git", "title": "strawberry", "body": "Add websocket"})
     assert response.status == 200
     body = await response.json()

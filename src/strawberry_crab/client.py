@@ -59,9 +59,11 @@ class DaemonClient:
             return False
 
     def get_sync(self, path: str) -> dict[str, Any] | None:
-        """The parsed JSON, or None when the daemon is not answering."""
+        """The parsed JSON, or None when the daemon is not answering. With the bus secret: /health says
+        only that she is up to a client without it, and /config refuses one."""
+        request = urllib.request.Request(self.url + path, headers=bussecret.headers())
         try:
-            with urllib.request.urlopen(self.url + path, timeout=self.timeout) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read() or b"{}")
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
             return None

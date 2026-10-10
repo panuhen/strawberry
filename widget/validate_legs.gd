@@ -464,7 +464,7 @@ func dance_lift(style: String) -> float:
 	var t := {"bpm": f[0], "period_s": 60.0 / f[0], "confidence": f[1], "next_beat": Time.get_unix_time_from_system() + 0.3,
 		"evenness": f[2], "low_ratio": f[3], "density": f[4], "loudness_db": -16.0}
 	widget.dance.set_tempo(t)
-	widget.dance.set_tempo(t)
+	widget.dance.set_tempo(t, Time.get_unix_time_from_system() + widget.dance.HEARTBEAT_S)
 	await wait(0.8)
 	check(widget.dance.style == style, "dance style should be %s, was %s" % [style, widget.dance.style])
 	var most := 0.0

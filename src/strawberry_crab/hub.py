@@ -8,9 +8,11 @@ the v1 traffic, byte for byte; a v2 body also gets the run events it accepted in
 (`send_phase`: the phase families, and the approval events when it said `approvals`), and the
 performance that answers a run carries that run's id.
 
-What a body may do rests on the bus secret (bussecret.py, PROTOCOL §1.4): a hello that presents it is
-`trusted` and gets what it declared; one without it (or with a wrong one) gets the performances and the
-plain run phases it asked for, never the approvals, and may send nothing but pings.
+What a body may do and see rests on the bus secret (bussecret.py, PROTOCOL §1.4): a hello that presents
+it is `trusted` and gets what it declared, every byte as before. One without it (or with a wrong one, or no
+hello yet) gets the shape only (`shape`, `phase_shape`): states, clips, reactions, emotion, tempo, commands
+and the run phases it asked for with their ids, codes, counts and timings, never her words, her voice, an
+app's icon, a tool's name or a label; never the approvals; and it may send nothing but pings.
 """
 
 from __future__ import annotations
@@ -33,6 +35,47 @@ PROTOCOL = 2                     # the highest protocol the brain speaks
 # asks for it is not told it gets it. Approvals are their own capability (`approvals`, §13b).
 PHASES = ("listening", "routing", "thinking", "tool", "token_rate", "speaking", "run")
 MAX_ID = 64
+
+# What a socket without the bus secret gets of a performance (PROTOCOL §1.4): how she moves, never what she
+# says (`text`, which carries notification-derived lines), her voice (`audio`) or which app it was (`icon`).
+# `run_id` and `source` are the v2 tags (Body.send). Anything not listed here is left out, so a field added
+# to a performance later stays with trusted bodies until someone decides otherwise.
+SHAPE_FIELDS = frozenset({"state", "emotion", "anim", "reaction", "hop", "run_id", "source"})
+# And of a run event or gauge, besides type, run_id, seq and t: ids, fixed codes about the run itself, counts
+# and timings. Gone: the gate's reading of the sentence (kind, topic, decision, path, confidence), the tool's
+# name and label, `careful` (the tool's tier), the model's name. Approvals never reach such a socket at all.
+PHASE_SHAPE: dict[str, frozenset[str]] = {
+    "routing": frozenset({"ms"}),
+    "thinking": frozenset(),
+    "tool.started": frozenset({"call_id"}),
+    "tool.completed": frozenset({"call_id", "duration", "ok", "error"}),
+    "speaking": frozenset({"duration", "emotion"}),
+    "run.completed": frozenset({"duration", "outcome"}),
+    "run.failed": frozenset({"duration", "error"}),
+    "run.cancelled": frozenset({"duration", "reason"}),
+    "listening": frozenset({"phase", "seconds", "speech"}),
+    "token_rate": frozenset({"tokens_per_s", "tokens"}),
+}
+ENVELOPE = ("type", "run_id", "seq", "t")
+
+
+def shape(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """A broadcast as a socket without the bus secret gets it: a performance cut to SHAPE_FIELDS (the order
+    kept), tempo and commands as they are; None (not sent) for anything else."""
+    if "command" in payload or "tempo" in payload:
+        return payload
+    if "state" in payload:
+        return {key: value for key, value in payload.items() if key in SHAPE_FIELDS}
+    return None
+
+
+def phase_shape(message: dict[str, Any]) -> dict[str, Any] | None:
+    """A run event or gauge as a socket without the bus secret gets it (PHASE_SHAPE); None for a type that
+    has no shape (approvals, and anything new)."""
+    allowed = PHASE_SHAPE.get(str(message.get("type", "")))
+    if allowed is None:
+        return None
+    return {key: value for key, value in message.items() if key in ENVELOPE or key in allowed}
 
 
 @dataclass(eq=False)
@@ -193,10 +236,21 @@ class WidgetHub:
                    to: Any = None) -> int:
         """Push one JSON object to every open widget (or only to the sockets in `to`). Returns how many
         received it. `run_id`: the run this performance answers, and `source` what started it (voice,
-        typed, notification), added for v2 bodies only (a v1 body gets exactly `payload`)."""
-        text = json.dumps(payload, ensure_ascii=False)
+        typed, notification), added for v2 bodies only (a v1 body gets exactly `payload`). A socket whose
+        hello did not present the bus secret, or that has not said hello yet, gets `shape(payload)`."""
         tags = {"run_id": run_id} | ({"source": source} if source else {})
-        tagged = json.dumps(payload | tags, ensure_ascii=False) if run_id else text
+        texts: dict[tuple[bool, bool], str | None] = {}
+
+        def text_for(body: Body) -> str | None:
+            # Four possible texts (v1 or v2, trusted or not), each made once and only when a socket needs it.
+            key = (body.protocol >= 2 and bool(run_id), body.trusted)
+            if key not in texts:
+                message: dict[str, Any] | None = payload | tags if key[0] else payload
+                if not body.trusted:
+                    message = shape(message)
+                texts[key] = None if message is None else json.dumps(message, ensure_ascii=False)
+            return texts[key]
+
         sent = 0
         for ws in list(self._sockets):
             if ws.closed:
@@ -204,8 +258,11 @@ class WidgetHub:
                 continue
             if to is not None and ws not in to:
                 continue
+            text = text_for(self.body(ws))
+            if text is None:
+                continue
             try:
-                await ws.send_str(tagged if self.body(ws).protocol >= 2 else text)
+                await ws.send_str(text)
                 sent += 1
             except (ConnectionResetError, RuntimeError) as exc:
                 log.warning("dropping widget socket: %s", exc)
@@ -213,14 +270,21 @@ class WidgetHub:
         return sent
 
     async def send_phase(self, message: dict[str, Any]) -> int:
-        """One run event (runs.emit) to every v2 body that accepted its family; v1 bodies never."""
+        """One run event (runs.emit) to every v2 body that accepted its family; v1 bodies never. A body
+        without the bus secret gets `phase_shape(message)`."""
         kind = str(message.get("type", ""))
-        text = None
+        texts: dict[bool, str | None] = {}
         sent = 0
         for ws in list(self._sockets):
-            if ws.closed or not self.body(ws).wants(kind):
+            body = self.body(ws)
+            if ws.closed or not body.wants(kind):
                 continue
-            text = text or json.dumps(message, ensure_ascii=False)
+            if body.trusted not in texts:
+                out = message if body.trusted else phase_shape(message)
+                texts[body.trusted] = None if out is None else json.dumps(out, ensure_ascii=False)
+            text = texts[body.trusted]
+            if text is None:
+                continue
             try:
                 await ws.send_str(text)
                 sent += 1

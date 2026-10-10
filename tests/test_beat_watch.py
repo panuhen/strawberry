@@ -190,6 +190,113 @@ def test_silence_is_posted_as_silent():
     assert posts == [{"silent": True}] and w.silent_since == 100.0
 
 
+class Clock:
+    def __init__(self) -> None:
+        self.now = 5000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class ScriptedTracker:
+    """A tracker whose section changes and pending flag the test sets; an estimate is a fixed beat."""
+
+    def __init__(self, clock: Clock) -> None:
+        from strawberry_crab.doorways.beat_track import Tempo
+
+        self.clock = clock
+        self.sections = type("S", (), {"epoch": 0, "name": "steady"})()
+        self.changes: dict[float, str] = {}     # at this clock time, the section becomes this
+        self.pending_until = -1.0
+        self.estimates: list[float] = []
+        self.tempo = lambda now: Tempo(128.0, 0.469, 0.8, now + 0.2, 0.6, 0.4, 3.0, -18.0, True, 4, 1,
+                                       now + 0.2 + 3 * 0.469, 0.7, self.sections.name, 0.8, now - 0.3)
+
+    def feed(self, samples, now):
+        for at, name in list(self.changes.items()):
+            if self.clock.now >= at:
+                self.sections.epoch += 1
+                self.sections.name = name
+                del self.changes[at]
+
+    def estimate(self, now):
+        self.estimates.append(round(self.clock.now, 2))
+        return self.tempo(now)
+
+    def pending(self):
+        return self.clock.now < self.pending_until
+
+    def reset(self):
+        pass
+
+
+def scripted(monkeypatch, seconds: float, chunk_s: float = 0.1):
+    """A watcher on a fake clock: each read is `chunk_s` of audio; the capture ends after `seconds`."""
+    clock = Clock()
+    monkeypatch.setattr(beat_watch.time, "time", clock)
+    reads = []
+    for _ in range(int(seconds / chunk_s)):
+        reads.append(np.zeros(int(beat_watch.RATE * chunk_s), dtype=np.float32))
+    stream = FakeStream(reads)
+    original = stream.read
+
+    def read(timeout_s):
+        clock.now += chunk_s
+        return original(timeout_s)
+
+    stream.read = read
+    w, posts = watcher(FakeBackend([stream]))
+    w.tracker = ScriptedTracker(clock)
+    return w, posts, clock
+
+
+def test_a_section_change_is_posted_at_once_and_the_heartbeat_goes_on(monkeypatch):
+    w, posts, clock = scripted(monkeypatch, 9.0)
+    start = clock.now
+    w.tracker.changes = {start + 3.05: "break", start + 3.15: "build"}
+    assert w.capture("player") == "ended"
+    at = [round(t - start, 2) for t in w.tracker.estimates]
+    # A heartbeat at 2 s; the break at once (3.1), the build a quarter second after it at the earliest (3.4,
+    # the rate limit), then the heartbeat two seconds after the last post.
+    assert at == [2.1, 3.1, 3.4, 5.4, 7.4], at       # (the clock reads 0.05 s of capture latency late)
+    assert [p["section"] for p in posts] == ["steady", "break", "build", "build", "build"]
+    assert all({"beats_per_bar", "beat_index", "next_downbeat", "downbeat_confidence", "section",
+                "section_confidence", "section_since"} <= set(p) for p in posts)
+
+
+def test_never_more_than_four_posts_a_second(monkeypatch):
+    w, posts, clock = scripted(monkeypatch, 4.0, chunk_s=0.05)
+    start = clock.now
+    w.tracker.changes = {start + 0.3 + k * 0.05: name for k, name in enumerate(["break", "build"] * 20)}
+    w.capture("player")
+    times = w.tracker.estimates
+    assert min(b - a for a, b in zip(times, times[1:])) >= beat_watch.MIN_GAP_S - 1e-9
+    assert len(times) <= 4 * 4
+
+
+def test_a_tempo_change_being_confirmed_is_asked_again_a_second_later(monkeypatch):
+    w, posts, clock = scripted(monkeypatch, 7.0)
+    start = clock.now
+    w.tracker.pending_until = start + 3.0         # the estimate at 2 s finds a challenger; the one at 3 s settles it
+    w.capture("player")
+    assert [round(t - start, 2) for t in w.tracker.estimates] == [2.1, 3.1, 5.1], w.tracker.estimates
+
+
+def test_the_post_carries_the_tracker_fields_rounded():
+    w, posts = watcher(FakeBackend([]))
+    w.tracker.feed(np.zeros(10, dtype=np.float32), 100.0)
+    from strawberry_crab.doorways.beat_track import Tempo
+
+    w.tracker.estimate = lambda now: Tempo(128.0, 0.46875, 0.81234, 1789935826.5921234, 0.6, 0.4, 3.0, -18.0, True,
+                                           4, 3, 1789935826.5921234, 0.712345, "drop", 0.9, 1789935824.1234567)
+    w.report(100.0)
+    assert posts[-1]["next_beat"] == 1789935826.592 and posts[-1]["next_downbeat"] == 1789935826.592
+    assert posts[-1]["section_since"] == 1789935824.123 and posts[-1]["downbeat_confidence"] == 0.7123
+    from strawberry_crab.server import parse_tempo
+
+    assert parse_tempo(posts[-1]) == posts[-1]           # what the watcher posts, the daemon takes as it is
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows stop events")
 def test_the_stop_event_stops_the_watcher_on_windows():
     from strawberry_crab import winproc

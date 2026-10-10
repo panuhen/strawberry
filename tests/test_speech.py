@@ -22,6 +22,7 @@ from strawberry_crab.speech import (
     strip_for_speech,
     wav_seconds,
 )
+from tests.bus import add_trusted
 
 
 def fake_synth(text: str, wav: wave.Wave_write) -> None:
@@ -163,7 +164,7 @@ async def test_daemon_voices_lines_but_keeps_given_audio(voice: SpeechConfig, tm
         async def send_str(self, text: str):
             sent.append(json.loads(text))
 
-    daemon.hub.add(Sink())  # type: ignore[arg-type]
+    add_trusted(daemon.hub, Sink())
     await daemon.perform(Performance(state="talking", text="Hello there"))
     assert sent[-1]["audio"].endswith(".wav")
     assert wav_seconds(Path(sent[-1]["audio"])) == pytest.approx(0.11)

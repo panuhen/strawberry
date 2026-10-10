@@ -19,6 +19,7 @@ from tests.fake_spotify import TOOLS, FakeSpotify, fake_gate
 from tests.test_systemone import FakeEmbedder
 from tests.test_tools import FakeContent, FakeResult, FakeSession, FakeTool, make_connect
 from tests.test_voice import Sink
+from tests.bus import add_trusted
 
 
 class FakeQwen:
@@ -275,7 +276,7 @@ async def test_the_gates_topic_reaches_the_thinker(aiohttp_client):
 def voice_daemon(config: Config, toolbox, thinker, gate=None, actor=None):
     daemon = Daemon(reactor=CannedReactor(), config=config, gate=gate, toolbox=toolbox, thinker=thinker, actor=actor)
     sink = Sink()
-    daemon.hub.add(sink)  # type: ignore[arg-type]
+    add_trusted(daemon.hub, sink)
     return daemon, sink
 
 

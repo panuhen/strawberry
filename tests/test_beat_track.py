@@ -115,9 +115,19 @@ def test_to_dict_rounds():
     _, tempo, _ = run(drums(120.0, 8.0))
     d = tempo.to_dict()
     assert set(d) == {"bpm", "period_s", "confidence", "next_beat", "evenness", "low_ratio", "density", "loudness_db",
-                      "steady"}
+                      "steady", "beats_per_bar", "beat_index", "next_downbeat", "downbeat_confidence", "section",
+                      "section_confidence", "section_since"}
     assert isinstance(d["bpm"], float)
     assert isinstance(d["steady"], bool)
+    assert isinstance(d["beats_per_bar"], int) and isinstance(d["beat_index"], int) and d["section"] == "steady"
+    assert d["next_beat"] == round(tempo.next_beat, 3) and d["next_downbeat"] >= d["next_beat"]
+    # Fields not set are left out, as an older body expects.
+    from dataclasses import replace
+
+    bare = replace(tempo, beats_per_bar=None, beat_index=None, next_downbeat=None, downbeat_confidence=None,
+                   section=None, section_confidence=None, section_since=None).to_dict()
+    assert set(bare) == {"bpm", "period_s", "confidence", "next_beat", "evenness", "low_ratio", "density",
+                         "loudness_db", "steady"}
 
 
 def clicks(bpm: float, seconds: float) -> np.ndarray:

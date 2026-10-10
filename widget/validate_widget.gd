@@ -44,8 +44,12 @@ func post(path: String, body: Dictionary, secret := "<file>") -> Array:
 	var parsed: Variant = JSON.parse_string(result[3].get_string_from_utf8())
 	return [result[0], result[1], parsed if parsed is Dictionary else {}]
 
+## With the bus secret too: without it /health says only that she is up (PROTOCOL §1.1).
 func get_json(path: String) -> Array:
-	var err := http.request(daemon_url + path)
+	var headers := []
+	if Paths.bus_secret() != "":
+		headers.append("X-Strawberry-Secret: " + Paths.bus_secret())
+	var err := http.request(daemon_url + path, headers)
 	if err != OK:
 		return [err, 0, {}]
 	var result: Array = await http.request_completed
@@ -365,14 +369,24 @@ func run() -> void:
 	await post("/tempo", techno)
 	await post("/tempo", techno)
 	await wait(0.3)
+	# Two estimates close together (an extra post on a section change) are not two heartbeats: no style yet.
+	check(widget.dance.style == "", "two estimates 0.3 s apart should not pick a style yet, got %s" % widget.dance.style)
+	await wait(widget.dance.HEARTBEAT_S)
+	await post("/tempo", techno)
+	await wait(0.3)
 	check(widget.dance.style == "rave", "130 bpm even kick should be rave, got %s" % widget.dance.style)
 	check(absf(widget.player.speed_scale - 130.0 / 119.0) < 0.02, "clip should run at the music's speed, got %.2f" % widget.player.speed_scale)
 	report["dance_speed_rave"] = snappedf(widget.player.speed_scale, 0.01)
 	check(widget.dance.applied, "rave should be layering moves")
+	# With the bar and the section (PROTOCOL §4), which the widget does not read: the same style.
 	var groove := {"bpm": 92.0, "period_s": 60.0 / 92.0, "confidence": 0.7, "next_beat": now + 0.5,
-		"evenness": 0.4, "low_ratio": 0.35, "density": 2.0, "loudness_db": -20.0}
-	await post("/tempo", groove)
+		"evenness": 0.4, "low_ratio": 0.35, "density": 2.0, "loudness_db": -20.0,
+		"beats_per_bar": 4, "beat_index": 0, "next_downbeat": now + 0.5, "downbeat_confidence": 0.6,
+		"section": "drop", "section_confidence": 0.8, "section_since": now - 0.2}
+	var taken := await post("/tempo", groove)
+	check(taken[1] == 200, "/tempo should take the bar and the section, got %s" % str(taken))
 	check(widget.dance.style == "rave", "one estimate should not flip the style yet")
+	await wait(widget.dance.HEARTBEAT_S)
 	await post("/tempo", groove)
 	await wait(0.2)
 	check(widget.dance.style == "groove", "92 bpm with low end should be groove, got %s" % widget.dance.style)
