@@ -88,6 +88,9 @@ SAME_HAND = 0.25
 # Matching hands to slots: a hand that says it is the other hand costs this much more (of the frame) on top of the
 # distance between the palms (the label can blink, so it only tips a close call).
 HANDEDNESS_COST = 0.15
+# A hand this far (of the frame) from where a slot's was is another hand, not that one moved (a fast swipe moves
+# about 0.2 a frame at 15 frames a second).
+NEW_HAND = 0.35
 # A new primary may not fire the shape the old one fired within this long without leaving it first (the latch).
 SWITCH_LATCH_S = 3.0
 # The per-hand fields of the hand message, as in each entry of `hands`.
@@ -789,7 +792,8 @@ class Tracker:
     def _follow(self, t: float, hands: list[Hand]) -> None:
         """Match the frame's hands to the slots: the pairing with the least distance between palms (plus
         HANDEDNESS_COST where a hand says it is the other one) among all of them (two by two at most). A slot not
-        seen for lost_s is gone; a hand left over takes a new slot with a new id."""
+        seen for lost_s is gone; a hand left over (or one NEW_HAND or more from any slot: a hand that went and
+        another that came at once) takes a new slot with a new id."""
         s = self.settings
         self.slots = [slot for slot in self.slots if t - slot.seen_at <= s.lost_s]
         for slot in self.slots:
@@ -797,12 +801,14 @@ class Tracker:
         palms = [palm_of(hand) for hand in hands]
         k = min(len(self.slots), len(hands))
         best: tuple[tuple[int, int], ...] = ()
-        best_cost = math.inf
+        best_score = (0, math.inf)
         for picked in permutations(range(len(self.slots)), k):
             for chosen in combinations(range(len(hands)), k):
-                cost = sum(self._cost(self.slots[i], hands[j], palms[j]) for i, j in zip(picked, chosen))
-                if cost < best_cost:
-                    best, best_cost = tuple(zip(picked, chosen)), cost
+                pairs = tuple((i, j) for i, j in zip(picked, chosen)
+                              if math.dist(self.slots[i].palm, palms[j]) <= NEW_HAND)
+                score = (-len(pairs), sum(self._cost(self.slots[i], hands[j], palms[j]) for i, j in pairs))
+                if score < best_score:
+                    best, best_score = pairs, score
         for i, j in best:
             self._see(self.slots[i], t, hands[j], palms[j])
         taken = {j for _, j in best}

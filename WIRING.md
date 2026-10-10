@@ -2086,8 +2086,9 @@ them, and it doubles the recogniser's work while a hand is up (measured, below).
 `hands = 1`, it follows one, as before. A change makes the recogniser again (about 25 ms), the camera staying
 open (`Watcher.follow_hands`). The tracker follows the hands as **slots**: a frame's hands are matched to them
 by the least distance between palms (plus 0.15 where a hand says it is the other one), every pairing of the
-two by two tried; a slot unseen for `lost_s` (0.3 s) is gone, and a hand left over takes a new slot with a
-new id. Each slot has its own smoothing and its own shape reading (`Shaper`, with its hysteresis), so each
+two by two tried, and a hand 0.35 of the frame or more from a slot's last palm is not that hand (one that
+went as another came: no swipe across); a slot unseen for `lost_s` (0.3 s) is gone, and a hand left over
+takes a new slot with a new id. Each slot has its own smoothing and its own shape reading (`Shaper`, with its hysteresis), so each
 hand is smoothed once. Two palms within a quarter of the smaller hand's size are one hand found twice.
 
 One hand is the **primary**, and only it goes through the guards above and makes gestures: the raised one
@@ -2291,7 +2292,7 @@ one hand as before with a `hands` of one, the margin and the dwell, no flip-flop
 raised hand over a higher one that is not, ids kept and a new one for a hand that comes back, a hand found
 twice; the pair's distance, angle (and the aspect) and both pinches; the other hand making no gesture, two
 thumbs up firing once when the hand that fired is lowered, no swipe and no `present: false` when a hand comes
-or goes, a hold and a slide not taken over; handedness from a faked MediaPipe result, its vote and a blinking
+or goes, nor when one goes as another comes elsewhere, a hold and a slide not taken over; handedness from a faked MediaPipe result, its vote and a blinking
 label; `parse_hand`'s new fields and refusals, a body getting both hands; the watcher posting both, and
 following two only while a body wants the hand), `tests/test_gestures_v2.py` (pointing left, right and up with the mirror, a diagonal in the dead zone and
 the angle's hysteresis; counts and the pairs; a half-curled hand; the slider engaged, moved and let go, a pinch

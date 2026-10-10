@@ -239,6 +239,17 @@ def test_a_hand_coming_or_going_makes_no_swipe_and_no_hand_gone():
     assert done(swipe) == ["swipe_right"]
 
 
+def test_one_hand_going_as_another_comes_elsewhere_is_no_swipe():
+    """One hand at a time (as with `hands = 1`): the one on the left drops as one comes up on the right in the same
+    frame. That is another hand (a new id), not a swipe across."""
+    tracker = Tracker(Settings(names=SWIPES))
+    shown, told = stepped(tracker, frames(1.0, lambda t: [right(x=0.15, y=0.4)]))
+    first = told[-1]["hands"][0]["id"]
+    more, told = stepped(tracker, frames(1.0, lambda t: [right(x=0.75, y=0.4)], 1.05))
+    assert shown == [] and more == [] and told[-1]["hands"][0]["id"] != first
+    assert all(m["present"] for m in told)
+
+
 def test_a_hold_under_way_is_not_taken_by_a_hand_coming_in_higher():
     tracker = Tracker(Settings(names=frozenset({"palm_hold"}), hold_s=0.8))
     shown, _ = stepped(tracker, frames(0.2, lambda t: [right(y=0.45, label="Open_Palm")]))
