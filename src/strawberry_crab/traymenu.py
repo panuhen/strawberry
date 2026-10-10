@@ -11,7 +11,8 @@ only when /health.learning says there is one, and the daemon follows the switch 
 "Message bodies" writes `[notifications] body` into config.toml
 (configedit.py: comments kept, validated, backed up), then tells the daemon to re-read
 [notifications] and restarts the notification doorway child, the two readers of that setting
-(§4, §14).
+(§4, §14). "Hand gestures (camera)" writes `[gestures] enabled` the same way and tells the daemon; the
+camera doorway follows the file itself (§25).
 
 `TrayCore` is all of that without an icon. The icon is the front end's: a StatusNotifierItem on
 Linux (tray.py), a notification-area icon on Windows (wintray.py). Each builds its menu from
@@ -52,6 +53,8 @@ SKINS = (("strawberry", "Strawberry"), ("peach", "Peach"), ("blueberry", "Bluebe
 BODY_CHOICES = (("off", "Off"), ("react", "React"), ("glance", "Glance"))
 BODY_OVERRIDES_LABEL = "Per-app overrides in config"
 ROUTER_ROLLBACK_LABEL = "Router: roll back to previous"
+# [gestures] enabled in config.toml (WIRING.md §25): the camera doorway follows the file, the daemon is told.
+GESTURES_LABEL = "Hand gestures (camera)"
 
 STATE_LABELS = {
     "idle": "Idle",
@@ -119,6 +122,7 @@ class TrayState:
     body_overrides: bool = False      # the file has a body_apps table
     ears_loading: bool = False        # /health.voice.phase: whisper still loading (a first start downloads it)
     router_rollback: str = ""         # /health.learning.rollback: the head a rollback goes to ("" = none)
+    gestures: bool = False            # [gestures] enabled, read from config.toml (read_gestures_setting)
 
     @property
     def quiet(self) -> bool:
@@ -166,6 +170,7 @@ def menu_items(state: TrayState) -> list[MenuItem]:
         MenuItem(11, "hat", "Top hat", toggle="checkmark", checked=state.top_hat),
         MenuItem(12, "on_top", "Always on top", toggle="checkmark", checked=state.always_on_top),
         MenuItem(50, "submenu", "Message bodies", children=bodies),
+        MenuItem(70, "gestures", GESTURES_LABEL, toggle="checkmark", checked=state.gestures),
         MenuItem(60, "router_rollback", ROUTER_ROLLBACK_LABEL, visible=bool(state.router_rollback)),
         MenuItem(13, "separator", separator=True),
         MenuItem(14, "settings_file", "Settings file…"),
@@ -238,6 +243,20 @@ def read_body_setting(path: Path) -> tuple[str, bool] | None:
         body = NotificationsConfig().body
     apps = section.get("body_apps")
     return body, isinstance(apps, dict) and bool(apps)
+
+
+def read_gestures_setting(path: Path, current: bool = False) -> bool:
+    """`[gestures] enabled` from config.toml for the Gestures row; `current` when the file does not parse or
+    says nothing usable (tomllib alone, as read_body_setting)."""
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return current
+    section = data.get("gestures")
+    enabled = section.get("enabled", False) if isinstance(section, dict) else False
+    return enabled if isinstance(enabled, bool) else current
 
 
 def _prefs_value(raw: str) -> Any:
@@ -321,6 +340,8 @@ class TrayCore:
             await self.set_body_mode(str(value))
         elif action == "router_rollback":
             await self.roll_back_router()
+        elif action == "gestures":
+            await self.set_gestures(not self.state.gestures)
         elif action == "settings_file":
             await self.open_settings_file()
         elif action == "voices_folder":
@@ -380,6 +401,25 @@ class TrayCore:
             if self.children.restart_child(name):
                 log.info("message bodies: restarting %s", name)
 
+    async def set_gestures(self, enabled: bool) -> None:
+        """Hand gestures (camera) on or off (WIRING.md §25): `[gestures] enabled` into config.toml through
+        configedit (comments kept, validated, backed up), then the daemon re-reads [gestures] (POST /command
+        reload_gestures). The camera doorway follows the file on its own within a second: it opens the camera
+        when this turns on, releases it when it turns off. No restart."""
+        from .config import ConfigError
+
+        path = self.config_file()
+        try:
+            saved = await asyncio.to_thread(configedit.set_value, path, "gestures.enabled", enabled)
+        except (ConfigError, OSError) as exc:
+            log.warning("gestures: not turned %s (%s)", "on" if enabled else "off", exc)
+            return
+        self.state.gestures = enabled
+        self.config_seen = None
+        log.info("gestures: %s (written%s)", "on" if enabled else "off", ", backup kept" if saved else "")
+        if not await self.command("reload_gestures"):
+            log.warning("gestures: the daemon is not answering; it reads the setting when it starts")
+
     async def roll_back_router(self) -> None:
         """Router: roll back to previous (learning.py): `current` goes back one switch. The daemon
         follows it within a few seconds; nothing restarts. Logs versions only."""
@@ -411,6 +451,7 @@ class TrayCore:
             return                         # mid-edit or broken: keep what the menu shows, try again later
         self.config_seen = seen
         self.state.body_mode, self.state.body_overrides = setting
+        self.state.gestures = read_gestures_setting(path, self.state.gestures)
 
     async def open_settings_file(self) -> None:
         """The same as her menu's Settings file…: write the commented template first if it is

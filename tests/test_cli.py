@@ -114,9 +114,10 @@ def test_status_without_anything_running_says_so(monkeypatch, capsys):
     assert out[:2] == ["tray: down", "strawberryd: down"]
     assert out[2:] == [f"{name}: down" for name in cli.doorways()]
     if sys.platform.startswith("linux"):
-        assert cli.doorways() == ("mpris_watch", "notify_watch", "beat_watch")
+        assert cli.doorways() == ("mpris_watch", "notify_watch", "beat_watch", "gesture_watch")
     elif sys.platform == "win32":
-        assert cli.doorways() == ("smtc_watch", "toast_watch", "beat_watch")    # media, notifications, the beat
+        # media, notifications, the beat, gestures
+        assert cli.doorways() == ("smtc_watch", "toast_watch", "beat_watch", "gesture_watch")
 
 
 def test_the_cli_and_the_doorways_package_agree():

@@ -81,6 +81,18 @@ def no_real_loopback_capture(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_camera(monkeypatch):
+    """Nor the webcam: the gesture doorway would open the user's own camera. tests/test_gestures.py hands it
+    fake cameras and synthetic hands; the one real-model test reads a blank frame made in memory."""
+    from strawberry_crab.doorways import gesture_watch
+
+    def refuse(spec, fps):
+        raise AssertionError("the camera is out of bounds in tests")
+
+    monkeypatch.setattr(gesture_watch, "open_camera", refuse)
+
+
+@pytest.fixture(autouse=True)
 def no_real_notification_area(monkeypatch):
     """Nor the taskbar: no test may put an icon in the user's notification area. The Windows
     tray's tests build and read back its menu and icon, which shows nothing, and drive the rest

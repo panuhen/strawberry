@@ -5,6 +5,7 @@
     strawberry-doorway beat_watch       the player's audio -> tempo (PipeWire; Windows: process loopback)
     strawberry-doorway smtc_watch       media players (System Media Transport Controls)   Windows
     strawberry-doorway toast_watch      other apps' toasts (UserNotificationListener)     Windows
+    strawberry-doorway gesture_watch    hand gestures from the webcam (MediaPipe; opt-in, idle while off)  both
 
 `python -m strawberry_crab.doorways.<name>` is the same thing; the tray uses that form so every
 child runs on its own interpreter. The D-Bus watchers speak jeepney (pure Python), the Windows
@@ -20,14 +21,14 @@ import sys
 from .. import osguard
 
 # In the order the tray starts them.
-DOORWAYS = ("mpris_watch", "notify_watch", "beat_watch")
+DOORWAYS = ("mpris_watch", "notify_watch", "beat_watch", "gesture_watch")
 # The Windows port so far (WINDOWS.md): media, notifications and the beat (beat_watch picks its
-# capture by system).
-WINDOWS_DOORWAYS = ("smtc_watch", "toast_watch", "beat_watch")
+# capture by system). The gesture doorway runs on both and sleeps until [gestures] is on (WIRING.md §25).
+WINDOWS_DOORWAYS = ("smtc_watch", "toast_watch", "beat_watch", "gesture_watch")
 
 
 def for_system(platform: str | None = None) -> tuple[str, ...]:
-    """The doorways this system has: the Linux three, the Windows ones, or none elsewhere."""
+    """The doorways this system has: the Linux four, the Windows ones, or none elsewhere."""
     platform = platform or sys.platform
     if platform.startswith("linux"):
         return DOORWAYS
