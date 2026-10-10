@@ -179,9 +179,32 @@ package and the widget binary.
   working; it is told `input.refused` (`no_secret`, `bad_secret`) when it tries more. Another user
   on the computer or a sandboxed app can no longer make her act, answer her questions or open the
   Brain UI. PROTOCOL.md §1.4, WIRING.md §2.
+- A trust model for her tools. Each server is `private` (its results are yours), `foreign` (they
+  carry text others wrote) and `egress` (a call sends something off the computer), from its add-on
+  or, for a server without one, from `flags` in its table; a server nobody described is all three.
+  Web search is foreign and egress; Spotify private and egress, and a Spotify result with free text
+  (a playlist description) or a name worded like an instruction counts as foreign. Once foreign text
+  is in a conversation, your private context leaves it, private and egress tools are refused, and
+  anything else that would change something waits for your yes, asked in her own fixed words. WIRING.md §20.
+- `offer = "always" | "topic" | "asked"` per server: when she gets its tools. `[thinker] tool_tokens`
+  (4000): a budget for the tool descriptions in the big model's prompt beside `max_tools`; past
+  either the least likely are left out, and the log says which.
 
 ### Changed
 
+- **What the log keeps of a tool call.** For Spotify, the web, and any server you have not described,
+  only the tool's name, its arguments' names, counts and sizes: never the query or what came back,
+  even with `log_sentences` on. `/health`'s last thinker and reflex calls show the same. An add-on
+  for a server that holds nothing of yours can opt back in (`log_detail`).
+- A whole-server `[approvals] risk` entry (`"notes" = "read"`) no longer lowers a tool the server
+  marks destructive or its add-on marks `sends`; a per-tool entry still can.
+- A reflex whose tool needs your yes (you raised its tier, or it is on a confirm list) is no longer
+  run: the big model takes the sentence and asks.
+- The tools go into the big model's prompt in one order whatever you said (topic, server, the
+  server's own order), so the prompt cache holds; Spotify's results reach it as one short line per
+  hit with the names quoted and descriptions left out, and its tools lose `device_id` where it is not
+  needed. Control characters are stripped from every tool result.
+- `num_ctx` stays 8192: measured with today's tools, the longest prompt was 6386 tokens (WIRING.md §20).
 - **Clients of the daemon need the bus secret.** A script that posted with `curl` adds
   `-H "X-Strawberry-Secret: $(cat ~/.local/state/strawberry/bus-secret)"`; a widget built before
   this version still shows everything, but cannot type to her or answer a card until it is

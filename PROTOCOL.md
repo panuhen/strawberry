@@ -569,8 +569,10 @@ once at connect and then every 5 s, and keeps the offset of the quickest of its 
 ## 13b. Approvals (brain ⇄ body)
 
 Some calls wait for the user's yes before they are made (`approvals.py`, WIRING §19): the tools on
-a server's `confirm` list (Spotify's two removals), and every call of the `sends` or `destructive`
-tier. The run that reached the call says her question as a performance, as in v1 ("Remove
+a server's `confirm` list (Spotify's two removals), every call of the `sends` or `destructive`
+tier, and, once text from strangers is in the conversation (a web result; WIRING §20), every call
+that is not a read. The prompt of such a request is the brain's own wording, naming the tool and
+nothing from the call's arguments ("Shall I go ahead with lamp on?"). The run that reached the call says her question as a performance, as in v1 ("Remove
 'Teardrop' from Gym? Say yes."), then opens an approval and waits. A body that declared
 `capabilities.approvals` (§9b) gets the request and can show it as a card; one that also declared
 `sends.approval` may answer it. The user can answer by voice or by typing as well, or in the Brain

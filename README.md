@@ -154,6 +154,8 @@ The settings you are most likely to change:
 | `[speech]` | `enabled`, `voice`, `quiet_hours` | her voice (off by default; the bubble always shows) |
 | `[brain]`, `[thinker]` | `reaction_model`, `action_model` | which Ollama models she uses |
 | `[tools.servers.*]` | | MCP servers; see [ADAPTERS.md](ADAPTERS.md) and [Web search](#web-search-optional) |
+| `[tools.servers.*]` | `flags`, `offer` | what a server without an add-on is (`private`, `foreign`, `egress`; unset: all three, the safe default) and when she gets its tools (`always`, `topic`, `asked`); see [ADAPTERS.md](ADAPTERS.md) |
+| `[thinker]` | `max_tools`, `tool_tokens` | at most this many tool descriptions (30), and this many tokens of them (4000), in the big model's prompt; past either the least likely are left out |
 | `[daemon]` | `log_sentences` | write what you say or type to the log (off: only its length); see [Privacy](#privacy) |
 | `[learning]` | `log_outcomes` | keep what you say and how it was routed, locally, so she can learn from it (off); see [Learning](#learning) |
 | `[learning]` | `auto_switch`, `weekly_line` | put a better router in use without asking (off); say once a week what she learned (off) |
@@ -187,13 +189,17 @@ search query she writes from what you said goes to your SearXNG, which passes it
 search engines it is set up to ask, and a page she reads is fetched from its site. It is on
 whenever the server is configured; remove the `[tools.servers.web]` table to turn it off. Only
 your own spoken or typed sentences can lead to a search: notifications, media, git events and
-her reactions never reach the search tools. The log says that a search ran, how long the query
-was, how many results came back and how long it took, never the query (unless
-`log_sentences` is on, like any tool argument) and never a result; her answer from web results
+her reactions never reach the search tools. The log says that a search ran, how many results came
+back and how long it took, never the query and never a result; her answer from web results
 is logged as its length, and her short-term memory keeps a placeholder instead of it. Text
 from the web is treated as untrusted: while it is in her conversation, your recent exchanges
-and what is playing are taken out of it, your other tools (Spotify) are refused, a page can only
-be read from the results of that same search, and nothing a page says can send her elsewhere.
+and what is playing are taken out of it, your other tools (Spotify) are refused, anything else
+that would change something waits for your yes, a page can only be read from the results of that
+same search, and nothing a page says can send her elsewhere.
+
+**What the log keeps of a tool.** For Spotify, the web, and any server you have not described (see
+[ADAPTERS.md](ADAPTERS.md)), only the tool's name, the names of its arguments, how many results and
+how long they were: never what you asked for or what came back, even with `log_sentences` on.
 
 What she reads:
 
