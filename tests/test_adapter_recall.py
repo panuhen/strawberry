@@ -11,8 +11,11 @@ import json
 import logging
 import os
 import stat
+from urllib.parse import urlsplit
 
 import aiohttp
+import httpcore2
+import httpx2
 import pytest
 
 from strawberry_crab import remote
@@ -111,22 +114,93 @@ async def test_metadata_that_points_off_the_server_to_a_private_address_is_never
     assert "169.254.169.254: a private address" in said[-1] and fake.registrations == 0
 
 
-async def test_the_guard_on_every_request(monkeypatch):
-    from strawberry_crab.adapters import web
+class Recorder(httpcore2.AsyncMockBackend):
+    """The network under PinnedBackend: records where each connection went, the TLS name and the bytes sent."""
 
-    async def lookup(host, port):
-        return {"evil.example": ["127.0.0.1"], "auth.example": ["93.184.216.34"]}[host]
+    def __init__(self) -> None:
+        super().__init__([b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"])
+        self.connected: list[tuple[str, int]] = []
+        self.sni: list[str | None] = []
+        self.sent = bytearray()
 
-    monkeypatch.setattr(web, "lookup", lookup)
-    guard = remote.GuardedTransport("https://notes.example.com/mcp")
-    assert await guard.problem("https", "notes.example.com", None, b"") is None          # the server itself
-    assert await guard.problem("https", "auth.example", None, b"") is None               # a public host
-    assert await guard.problem("https", "evil.example", None, b"") == "it points to a private address"
-    assert await guard.problem("https", "10.0.0.5", None, b"") == "a private address"
-    assert await guard.problem("https", "127.0.0.1", 8770, b"") == "an address on this machine"
-    assert await guard.problem("http", "auth.example", None, b"") == "plain http off this machine"
-    assert await guard.problem("https", "auth.example", None, b"user:pw") == "a login part in the address"
-    await guard.aclose()
+    async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        self.connected.append((host, port))
+        recorder = self
+
+        class Stream(httpcore2.AsyncMockStream):
+            async def write(self, buffer, timeout=None):
+                recorder.sent += buffer
+
+            async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
+                recorder.sni.append(server_hostname)
+                return self
+
+        return Stream(list(self._buffer))
+
+
+def answers(*rounds: list[str]):
+    """A resolver stub: each lookup gives the next answer (a rebinding name)."""
+    queue = list(rounds)
+    looked: list[str] = []
+
+    async def resolve(host, port):
+        looked.append(host)
+        return queue.pop(0) if queue else []
+
+    return resolve, looked
+
+
+async def fetch(url: str, home: str, recorder: Recorder) -> httpx2.Response:
+    transport = remote.GuardedTransport(home, backend=remote.PinnedBackend(urlsplit(home).hostname, inner=recorder))
+    async with httpx2.AsyncClient(transport=transport) as client:
+        return await client.get(url)
+
+
+async def test_a_rebinding_name_is_connected_to_the_address_that_was_checked(monkeypatch):
+    resolve, looked = answers(["93.184.216.34"], ["127.0.0.1"])
+    monkeypatch.setattr(remote, "resolve", resolve)
+    recorder = Recorder()
+    response = await fetch("https://notes.example.com/mcp", "https://notes.example.com/mcp", recorder)
+    assert response.status_code == 200 and looked == ["notes.example.com"]       # one lookup per connection
+    assert recorder.connected == [("93.184.216.34", 443)]                         # the checked address
+    assert recorder.sni == ["notes.example.com"] and b"Host: notes.example.com\r\n" in bytes(recorder.sent)
+    # The next connection looks again, gets 127.0.0.1, and goes nowhere.
+    with pytest.raises(remote.BlockedAddress, match="a private address"):
+        await fetch("https://notes.example.com/mcp", "https://notes.example.com/mcp", recorder)
+    assert recorder.connected == [("93.184.216.34", 443)]
+
+
+async def test_a_name_with_one_private_address_among_public_ones_is_refused(monkeypatch):
+    resolve, _ = answers(["93.184.216.34", "10.0.0.5"])
+    monkeypatch.setattr(remote, "resolve", resolve)
+    recorder = Recorder()
+    with pytest.raises(remote.BlockedAddress, match="points to a private address"):
+        await fetch("https://auth.example/token", "https://notes.example.com/mcp", recorder)
+    assert recorder.connected == []
+
+
+async def test_only_a_server_on_this_machine_reaches_this_machine_and_only_it(monkeypatch):
+    resolve, _ = answers(["127.0.0.1"], ["93.184.216.34"])
+    monkeypatch.setattr(remote, "resolve", resolve)
+    recorder = Recorder()
+    for blocked in ("https://127.0.0.1:8770/", "https://169.254.169.254/latest", "https://[::1]/",
+                    "https://localhost/"):
+        with pytest.raises(remote.BlockedAddress):
+            await fetch(blocked, "https://notes.example.com/mcp", recorder)
+    assert recorder.connected == []
+    # A local server: loopback is its own, and a public authorization server stays reachable.
+    assert (await fetch("http://127.0.0.1:9/mcp", "http://127.0.0.1:9/mcp", recorder)).status_code == 200
+    assert (await fetch("https://auth.example/x", "http://127.0.0.1:9/mcp", recorder)).status_code == 200
+    assert recorder.connected == [("127.0.0.1", 9), ("93.184.216.34", 443)]
+
+
+async def test_the_request_rules_hold_on_every_hop():
+    recorder = Recorder()
+    for url, why in (("http://auth.example/token", "plain http off this machine"),
+                     ("https://user:pw@auth.example/", "a login part")):
+        with pytest.raises(remote.BlockedAddress, match=why):
+            await fetch(url, "https://notes.example.com/mcp", recorder)
+    assert recorder.connected == []
     assert remote.url_problem("http://notes.example.com/mcp")
     assert remote.url_problem("https://user@notes.example.com/mcp")
     assert remote.url_problem("http://127.0.0.1:9/mcp") is None and remote.url_problem("https://a.example/mcp") is None

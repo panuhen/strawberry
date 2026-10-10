@@ -23,12 +23,15 @@ Tokens are never logged or printed, and never reach /health, /config or the Brai
 file and in this process's memory. The redirect listener has no access log (its query is the code).
 
 Addresses. The server's own URL is https, or http on this machine only (`url_problem`). Every request
-the client makes goes through `GuardedTransport`: the server's own host, or any other host (the
-authorization server, the token endpoint, the registration endpoint its metadata names) on https only
-and only when every address it resolves to is public (adapters/web.py `resolves_public`, the page
-reader's check), so metadata cannot point her at 127.0.0.1, the LAN or a cloud metadata address. The SDK
-follows a redirect only within one origin. The sign-in page itself is opened in the user's browser, not
-fetched here, and must be https too (or http on this machine).
+the client makes (the MCP session, discovery, registration, the token exchange and every refresh) goes
+through `GuardedTransport` (https, or http on this machine; no login part; checked on every redirect
+hop, and the SDK follows a redirect only within one origin), and every connection through
+`PinnedBackend`, which resolves the name once, refuses it unless every address is public (loopback only,
+and only loopback, for a server whose own url is on this machine), and connects to an address it
+checked: a name that answers differently a moment later (DNS rebinding) is never looked up again. So the
+server's metadata cannot point her at 127.0.0.1, the LAN or a cloud metadata address. A server on the LAN
+is not reachable this way. The sign-in page itself is opened in the user's browser, not fetched here, and
+must be https too (or http on this machine).
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote, urljoin, urlsplit
 
+import httpcore2  # httpx2's connections: PinnedBackend makes them
 import httpx2   # the MCP SDK's HTTP client (a dependency of `mcp`)
 
 from . import paths
@@ -59,7 +63,6 @@ logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
 
 LOGIN_TIMEOUT_S = 300.0     # how long `strawberry tools login` waits for the browser
 REFRESH_EARLY_S = 60.0      # refresh this long before the access token expires
-PUBLIC_FOR_S = 300.0        # how long a host's public-address check holds
 CONNECT_S = 5.0             # the HTTP connect timeout (Server's connect_timeout_s bounds the whole connect)
 SERVER_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
@@ -166,53 +169,128 @@ def _tokens(data: dict[str, Any] | None) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------------- the addresses
 
 
-class GuardedTransport(httpx2.AsyncBaseTransport):
-    """Every request of one server's HTTP client: its own host; another host only over https and only when
-    every address the name resolves to is public. Raises BlockedAddress (naming the host, never the path or
-    the query) for anything else."""
+class BlockedConnect(BlockedAddress, OSError):
+    """BlockedAddress raised inside a connection (PinnedBackend): an OSError too, so httpcore2 wraps it as a
+    ConnectError like any refused connection, and the message still names the host and why."""
+
+
+async def resolve(host: str, port: int) -> list[str]:
+    """The addresses a name resolves to, from the event loop's resolver (a thread), within CONNECT_S. Tests
+    replace it."""
+    loop = asyncio.get_running_loop()
+    infos = await asyncio.wait_for(loop.getaddrinfo(host, port, type=socket.SOCK_STREAM), CONNECT_S)
+    return [str(info[4][0]) for info in infos]
+
+
+class PinnedBackend(httpcore2.AsyncNetworkBackend):
+    """The one place a connection is made: the name is resolved here, once, every address checked, and the
+    TCP connection goes to one of the checked addresses. The request keeps the name, so TLS still sends it
+    as SNI and checks the certificate against it, and Host still carries it: only the connect is pinned. An
+    answer that changes after the check (DNS rebinding) is never used, because nothing resolves the name
+    again. Allowed: public addresses only; loopback ones only for a server whose own url is on this machine
+    (a local server, or the tests'), and then only loopback."""
 
     def __init__(self, home: str, inner: Any = None) -> None:
+        self.home = (home or "").strip("[]").lower()
+        self.inner = inner or httpcore2.AnyIOBackend()
+
+    async def vetted(self, host: str, port: int) -> list[str]:
+        from .adapters.web import public_address   # local: the adapters import the core
+
+        host = (host or "").strip("[]").lower()
+        try:
+            addresses = [str(ipaddress.ip_address(host))]
+        except ValueError:
+            try:
+                addresses = await resolve(host, port)
+            except (OSError, asyncio.TimeoutError, UnicodeError, ValueError):
+                raise BlockedConnect(f"{host}: its name could not be looked up") from None
+        addresses = list(dict.fromkeys(a.split("%", 1)[0] for a in addresses))
+        if not addresses:
+            raise BlockedConnect(f"{host}: its name could not be looked up")
+        local = is_loopback(self.home) and (is_loopback(host) or host == self.home)
+        if local:
+            if not all(is_loopback(a) for a in addresses):
+                raise BlockedConnect(f"{host}: an address off this machine for a server on it")
+        elif not all(public_address(a) for a in addresses):
+            raise BlockedConnect(f"{host}: {'a private address' if len(addresses) == 1 else 'it points to a private address'}")
+        return addresses
+
+    async def connect_tcp(self, host: str, port: int, timeout: float | None = None, local_address: str | None = None,
+                          socket_options: Any = None) -> Any:
+        failure: Exception | None = None
+        for address in await self.vetted(host, port):
+            try:
+                return await self.inner.connect_tcp(address, port, timeout=timeout, local_address=local_address,
+                                                    socket_options=socket_options)
+            except (httpcore2.ConnectError, OSError) as exc:
+                failure = exc
+        raise failure if failure is not None else BlockedConnect(f"{host}: no address")
+
+    async def connect_unix_socket(self, path: str, timeout: float | None = None, socket_options: Any = None) -> Any:
+        raise BlockedConnect("a unix socket: never used here")
+
+    async def sleep(self, seconds: float) -> None:
+        await self.inner.sleep(seconds)
+
+
+class GuardedTransport(httpx2.AsyncBaseTransport):
+    """Every request of one server's HTTP client: http(s) only, plain http only on this machine, no login part
+    in the address (checked here, per request and per redirect hop), and every connection made by
+    PinnedBackend (checked there, on the address actually connected to). No proxy from the environment: the
+    connection goes where it was checked. Raises BlockedAddress naming the host, never the path or query."""
+
+    def __init__(self, home: str, backend: Any = None) -> None:
         self.home = (urlsplit(home).hostname or "").lower()
-        self.inner = inner or httpx2.AsyncHTTPTransport()
-        self.public: dict[str, float] = {}     # host -> when its check runs out
+        self.backend = backend or PinnedBackend(self.home)
+        self.inner = httpx2.AsyncHTTPTransport(trust_env=False)
+        # The transport's own pool, rebuilt on the pinned backend (httpx2 takes no backend argument).
+        self.inner._pool = httpcore2.AsyncConnectionPool(
+            ssl_context=httpx2_ssl_context(), max_connections=20, max_keepalive_connections=10, keepalive_expiry=5.0,
+            http1=True, http2=False, network_backend=self.backend)
 
-    async def problem(self, scheme: str, host: str, port: int | None, userinfo: bytes | str) -> str | None:
-        from .adapters.web import public_address, resolves_public   # local: the adapters import the core
-
-        host = (host or "").lower()
+    @staticmethod
+    def problem(scheme: str, host: str, userinfo: bytes | str) -> str | None:
         if userinfo:
             return "a login part in the address"
         if scheme not in ("http", "https"):
             return "not http(s)"
         if scheme == "http" and not is_loopback(host):
             return "plain http off this machine"
-        if host == self.home:
-            return None
-        if is_loopback(host):
-            return None if is_loopback(self.home) else "an address on this machine"
-        try:
-            literal = ipaddress.ip_address(host.strip("[]"))
-        except ValueError:
-            literal = None
-        if literal is not None:
-            return None if public_address(str(literal)) else "a private address"
-        if self.public.get(host, 0.0) > time.monotonic():
-            return None
-        why = await resolves_public(f"https://{host}:{port or 443}/")
-        if why:
-            return why
-        self.public[host] = time.monotonic() + PUBLIC_FOR_S
         return None
 
     async def handle_async_request(self, request: Any) -> Any:
         url = request.url
-        why = await self.problem(url.scheme, url.host, url.port, url.userinfo)
+        why = self.problem(url.scheme, url.host, url.userinfo)
         if why:
             raise BlockedAddress(f"{url.host}: {why}")
-        return await self.inner.handle_async_request(request)
+        try:
+            return await self.inner.handle_async_request(request)
+        except httpx2.ConnectError as exc:
+            blocked = _blocked_cause(exc)
+            if blocked is not None:
+                raise BlockedAddress(str(blocked)) from None
+            raise
 
     async def aclose(self) -> None:
         await self.inner.aclose()
+
+
+def _blocked_cause(exc: BaseException) -> BaseException | None:
+    seen = 0
+    while exc is not None and seen < 8:
+        if isinstance(exc, BlockedAddress):
+            return exc
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
+    return None
+
+
+def httpx2_ssl_context() -> Any:
+    """The system's trust store, as httpx2 makes it, without the environment's certificate overrides."""
+    from httpx2._config import create_ssl_context
+
+    return create_ssl_context(verify=True, trust_env=False)
 
 
 def http_client(url: str, auth: Any) -> httpx2.AsyncClient:
