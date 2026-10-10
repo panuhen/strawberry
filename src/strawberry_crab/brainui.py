@@ -769,7 +769,7 @@ async def api_approval(request: web.Request, ui: BrainUI, session: Session) -> w
     reason = ui.daemon.approvals.answer(approval_id, answer, "ui")
     if reason is not None:
         why = {"resolved": "that question has been answered already",
-               "not_here": "this one takes a yes on her card or out loud, not from this page (No works here)",
+               "not_here": "this one takes a held Yes on her card, not a yes from this page (No works here)",
                }.get(reason, "she is not waiting on that question")
         return web.json_response({"error": why, "reason": reason}, status=409)
     log.info("ui: approval %s answered %s by hand", approval_id, answer)

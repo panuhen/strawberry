@@ -7,7 +7,7 @@
                                  (configform.lowering) and what needs a restart
     POST /ui/api/config/save     a draft that checks out, against the hash the page loaded: written at once (backed up,
                                  one step) when it loosens nothing; else she asks on her card first, and it is written
-                                 only after the user's yes there or out loud (202, and GET config says how it went)
+                                 only after a held Yes there (202, and GET config says how it went)
     GET  /ui/api/tools           the tool servers (configured and built in) and each tool's tier, flags, whether the
                                  thinker is offered it; a url server's login command; the servers as the file says
 
@@ -235,45 +235,49 @@ def apply_live(ui: BrainUI, changed: list[str]) -> list[str]:
 
 
 CARD_MAX = 160                         # what her card shows of a line (runs.MAX_PROSE)
+ITEM_MAX = 40                          # one command line or address on it, at most
 CATEGORY_WORDS = {"runs": "runs", "egress": "reaches", "approvals": "fewer approvals", "privacy": "less privacy",
                   "gestures": "looser gestures"}
 
 
-def _card_line(findings: list[configform.Finding]) -> str:
-    """Her card's line for a settings change: every kind of loosening there is, most severe first, and for what runs or
-    connects the command line or the address itself (scrubbed already), cut to fit. "Settings: runs notes-mcp
-    --verbose; fewer approvals; less privacy." One line, no control characters, at most CARD_MAX."""
+def _quoted(text: str, cap: int = ITEM_MAX) -> str:
+    """Text from the draft (a command line, an address) as her card may show it: one line, no control characters, no
+    double quotes or semicolons of its own (so it cannot close the quote or start a part of the line), cut to `cap`,
+    in double quotes."""
     from .trust import CONTROL
 
-    def plain(text: str) -> str:
-        return " ".join(CONTROL.sub(" ", text).split())
+    plain = " ".join(CONTROL.sub(" ", text).split()).replace('"', "'").replace(";", ",")
+    if len(plain) > cap:
+        plain = plain[:max(cap - 1, 1)].rstrip() + "…"
+    return f'"{plain}"'
 
+
+def _card_line(findings: list[configform.Finding]) -> str:
+    """Her card's line for a settings change, in wording the draft cannot forge: the fixed words first, every kind of
+    loosening there is, most severe first. What runs or connects is shown by its command line or address, each one
+    quoted and cut to ITEM_MAX (at most two, then how many more); every other kind by how many settings it is, never by
+    a name from the file. "Settings change: runs "notes-mcp --verbose"; approvals ×2; privacy ×1." At most CARD_MAX."""
     kinds = [c for c in configform.CATEGORIES if any(f.category == c for f in findings)]
-    # What runs or connects by its command line or address; the rest by the settings' names.
-    details = {c: list(dict.fromkeys(plain(f.detail) if c in ("runs", "egress") and f.detail else plain(f.key)
-                                     for f in findings if f.category == c)) for c in kinds}
 
-    full = {c: ", ".join(details[c]) for c in kinds}
-    room = {c: len(full[c]) for c in kinds}
-
-    def line() -> str:
+    def line(cap: int) -> str:
         parts = []
-        for c in kinds:
-            shown = full[c] if len(full[c]) <= room[c] else full[c][:max(room[c] - 1, 0)].rstrip() + "…"
-            if c in ("runs", "egress"):
-                parts.append(f"{CATEGORY_WORDS[c]} {shown}")
+        for kind in kinds:
+            mine = [f for f in findings if f.category == kind]
+            details = list(dict.fromkeys(f.detail for f in mine if f.detail)) if kind in ("runs", "egress") else []
+            if details:
+                shown = ", ".join(_quoted(d, cap) for d in details[:2])
+                parts.append(f"{CATEGORY_WORDS[kind]} {shown}" + (f" (+{len(details) - 2} more)" if len(details) > 2 else ""))
             else:
-                parts.append(f"{CATEGORY_WORDS[c]} ({shown})" if room[c] >= 4 else CATEGORY_WORDS[c])
-        return "Settings: " + "; ".join(parts) + "."
+                parts.append(f"{CATEGORY_WORDS[kind]} ×{len(mine)}")
+        return "Settings change: " + "; ".join(parts) + "."
 
-    # Too long: the least severe kind's names give way first, then the next; a command line keeps 24 characters.
-    text = line()
-    for c in reversed(kinds):
-        floor = 24 if c in ("runs", "egress") else 0
-        while len(text) > CARD_MAX and room[c] > floor:
-            room[c] = max(floor, room[c] - (len(text) - CARD_MAX) - 1)
-            text = line()
-    return text if len(text) <= CARD_MAX else text[:CARD_MAX - 1].rstrip() + "…"
+    # The fixed words always fit (every kind, its count): the quoted items shrink until the whole line does.
+    cap = ITEM_MAX
+    text = line(cap)
+    while len(text) > CARD_MAX and cap > 4:
+        cap -= 1
+        text = line(cap)
+    return text
 
 
 async def _wait(ui: BrainUI, desk: ConfigDesk, pending: Pending, run: runs.Run) -> None:
@@ -333,8 +337,8 @@ async def _wait(ui: BrainUI, desk: ConfigDesk, pending: Pending, run: runs.Run) 
 def ask(ui: BrainUI, desk: ConfigDesk, real: str, base_tag: str, findings: list[configform.Finding],
         changed: list[str], file: str = "config.toml", write: Callable[[str, str], Path | None] | None = None,
         apply: Callable[[], list[str]] | None = None) -> Pending:
-    """Her card asks about the change (approvals.py, a `settings` run): a hold for a yes on the card, or the user's
-    own yes; this page cannot say yes to it. Only `real`, the text checked here, is ever written after the yes."""
+    """Her card asks about the change (approvals.py, a `settings` run): a held Yes on the card and nothing else (not
+    this page, a thumb, or a yes said or typed, which may have been meant for another question). Only `real`, the text checked here, is ever written after the yes."""
     d = ui.daemon
     run = d.runs.start("settings", foreground=False)
     prompt = _card_line(findings)

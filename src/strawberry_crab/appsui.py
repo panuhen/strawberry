@@ -84,21 +84,26 @@ async def api_apps_save(request: web.Request, ui: BrainUI, session: Session) -> 
                              | await asyncio.to_thread(apps_view, ui))
 
 
-def apps_lowering(old: list[applist.App], new: list[applist.App]) -> list[Any]:
+def apps_lowering(old: list[applist.App], new: list[applist.App], installed: dict[str, Any] | None = None) -> list[Any]:
     """What a new list loosens (configform.Finding): an app she may now open (it starts a program) or close (unsaved
-    work can go), or close without asking first. Tightening and neutral edits are none."""
+    work can go), or close without asking first. Tightening and neutral edits are none. An app is named by its desktop
+    id (apps.ID: letters, digits and ._+- only) and the installed entry's own Name, never the name or aliases the page
+    sent; her card shows the id alone (configui._card_line quotes and cuts it)."""
     from .configform import Finding, merged
 
+    installed = installed or {}
     before = {app.id: app for app in old}
     found = []
     for app in new:
         was = before.get(app.id)
+        entry = installed.get(app.id)
+        called = f"{entry.name} ({app.id})" if entry is not None else app.id
         if app.open and not (was is not None and was.open):
-            found.append(Finding(f"apps.{app.id}.open", f"she could open {app.name}", "runs", f"open {app.name}"))
+            found.append(Finding(f"apps.{app.id}.open", f"she could open {called}", "runs", f"open {app.id}"))
         if app.close and not (was is not None and was.close):
-            found.append(Finding(f"apps.{app.id}.close", f"she could close {app.name}", "approvals"))
+            found.append(Finding(f"apps.{app.id}.close", f"she could close {called}", "approvals"))
         if app.close and not app.close_asks and (was is None or not was.close or was.close_asks):
-            found.append(Finding(f"apps.{app.id}.close_asks", f"she would close {app.name} without asking first",
+            found.append(Finding(f"apps.{app.id}.close_asks", f"she would close {called} without asking first",
                                  "approvals"))
     return merged(found)
 
@@ -109,7 +114,7 @@ def _apps_asks(request: web.Request, ui: BrainUI, text: str) -> web.Response | N
     from . import configform, configui   # local: configui builds on brainui, as this module does
 
     store = ui.daemon.apps
-    findings = apps_lowering(store.apps(), applist.parse(text))
+    findings = apps_lowering(store.apps(), applist.parse(text), store.installed())
     if not findings:
         return None
     desk = request.app[configui.DESK]

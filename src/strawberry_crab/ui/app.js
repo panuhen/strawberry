@@ -573,8 +573,8 @@
       el("p", { class: "dim" }, chip(a.risk, ["read", "playback", "change"].includes(a.risk) ? null : "warn"), ` ${a.tool} · ${a.approval_id} for ${a.run_id}`,
         left ? ` · ${left}` : null, a.hold ? " · a hold on her card" : null),
       el("div", { class: "actions" },
-        // A settings change this page asked for takes its yes on her card or out loud (yes_by), never from here.
-        a.yes_by && !a.yes_by.includes("ui") ? el("span", { class: "dim", text: "Hold Yes on her card, or say yes: this page cannot say yes to it." })
+        // A settings change takes its yes as a hold on her card alone (yes_by), never from here.
+        a.yes_by && !a.yes_by.includes("ui") ? el("span", { class: "dim", text: "Hold Yes on her card: a yes from this page or said aloud does not count for this one." })
           : actionButton("Yes", (b) => answerApproval(b, a.approval_id, "yes"), "primary"),
         actionButton("No", (b) => answerApproval(b, a.approval_id, "no"), "danger")));
   }
@@ -1281,7 +1281,7 @@
   // config.toml, edited here (WIRING.md §28). The draft is the file's text with every secret as "<hidden N: kept as
   // is>": the daemon puts the values back. The form's edits go to the daemon, which writes them into the draft with
   // the file's comments and order kept; the raw view edits the same text. A change that loosens safety is saved only
-  // after a held yes on her card or the user's own yes: this page cannot say yes to it.
+  // after a held Yes on her card, and nothing else: this page cannot say yes to it.
 
   const conf = {
     view: null,             // GET config: schema, the file's text and values (masked), base (hash, mtime), pending
@@ -1382,7 +1382,7 @@
     if (P.state === "waiting") {
       fill(node, panel("Waiting for your yes on her card", "this page cannot say yes to its own change",
         el("div", { class: "approval" },
-          el("p", { class: "prompt", text: "Hold Yes on her card, or say yes, to save this change." }),
+          el("p", { class: "prompt", text: "Hold Yes on her card to save this change." }),
           el("p", { class: "dim", text: typeof P.expires_in === "number" ? `About ${Math.ceil(P.expires_in)} s left when loaded. No answer is a no.` : "" }),
           el("p", { class: "dim", text: "It loosens safety:" }), reasons,
           el("div", { class: "actions" }, actionButton("No, leave it", (b) => {
@@ -1546,7 +1546,7 @@
       !C.ok ? el("div", { class: "note berry" }, el("b", { text: "Not saved like this:" }), el("ul", null, (C.problems || []).map((p) => el("li", { text: p }))))
         : C.same ? el("p", null, chip("same as the file")) : el("p", null, chip("checks out", "good"), " as she would read it at start."),
       lowers ? el("div", { class: "note berry" }, el("b", { text: "This loosens safety, so she asks first: " }),
-        "after Save, hold Yes on her card or say yes. This page cannot say yes for you.",
+        "after Save, hold Yes on her card. Neither this page nor a spoken yes can say yes to it.",
         el("ul", null, C.lowering.map((f) => el("li", null, el("code", { text: f.key }), ` ${f.why}`)))) : null,
       (C.live || []).length ? el("p", null, chip(`applies now: ${C.live.map((s) => `[${s}]`).join(" ")}`, "good")) : null,
       (C.restart || []).length ? el("p", null, chip(`needs a restart: ${C.restart.map((s) => `[${s}]`).join(" ")}`, "warn"),
@@ -1568,7 +1568,7 @@
       const r = await api("config/save", { text: confText(), base: conf.view.base.tag });
       if (r.pending) {
         conf.view.pending = r.pending;
-        toast("She asks on her card now: hold Yes there, or say yes.");
+        toast("She asks on her card now: hold Yes there.");
         renderConfPending();
         renderConfReview();
         renderToolsPending();
@@ -1655,7 +1655,7 @@
     if (!node) return;
     const P = conf.view && conf.view.pending;
     fill(node, P && P.state === "waiting" ? el("div", { class: "note berry" }, el("b", { text: "Waiting for your yes on her card. " }),
-      "Hold Yes there, or say yes; this page cannot. The Config file tab shows the details.") : null);
+      "Hold Yes there; this page cannot. The Config file tab shows the details.") : null);
   }
 
   function serverForm(name, table) {
@@ -2332,7 +2332,7 @@
       const r = await api("input/save", { settings: inputSettings(state.inputForm) });
       if (r.pending) {
         // A thumb that answers her card, or a camera always watching: she asks on her card first (WIRING.md §28).
-        toast("That loosens safety, so she asks on her card: hold Yes there, or say yes. The Config file tab shows how it went.");
+        toast("That loosens safety, so she asks on her card: hold Yes there. The Config file tab shows how it went.");
         if (conf.view) conf.view.pending = r.pending;
         confPoll();
         button.disabled = false;

@@ -231,6 +231,16 @@ LOWERING = [
     ("", '[notifications]\nonly_apps = ["Signal"]\n', []),
     ("", "[notifications]\nmax_body_chars = 2000\n", ["notifications.max_body_chars"]),
     ("", "[approvals]\nsends_s = 60.0\n", ["approvals.sends_s"]),
+    # nothing the rewrite dropped: an entry for a server not configured yet, foreign_minutes under a shorter window
+    ("", '[approvals]\nrisk = { "notes.wipe" = "read" }\n', ["approvals.risk.notes.wipe"]),
+    ("", '[approvals]\nrisk = { "notes" = "playback" }\n', ["approvals.risk.notes"]),
+    ("[ledger]\nwindow_minutes = 5.0\n", "[ledger]\nwindow_minutes = 5.0\nforeign_minutes = 8.0\n",
+     ["ledger.foreign_minutes"]),
+    (SERVER, SERVER.replace('command = "notes-mcp"', 'url = "https://notes.example/mcp"'),
+     ["tools.servers.notes.command", "tools.servers.notes.url"]),
+    (SERVER + '[approvals]\nrisk = { "notes" = "destructive" }\n', SERVER, ["approvals.risk.notes"]),
+    (SPOTIFY + "[gestures]\nhold_ms = 500.0\n", SPOTIFY + "[tools]\nenabled = false\n[gestures]\nhold_ms = 450.0\n",
+     ["gestures.hold_ms"]),
 ]
 
 
@@ -364,7 +374,7 @@ async def test_a_change_that_loosens_safety_waits_for_a_yes_on_her_card_never_fr
     approval = daemon.approvals.open
     assert approval is not None and approval.approval_id == pending["approval_id"] and approval.hold is True
     assert approval.timeout_s == configui.CONFIRM_S and approval.run.source == "settings"
-    assert approval.prompt == "Settings: less privacy (notifications.body)."
+    assert approval.prompt == "Settings change: less privacy ×1."
     assert path.read_text() == FILE                                             # nothing written yet
     # The page that asked cannot say yes; a thumb cannot either; a second save waits its turn.
     refused = await signed.post("/ui/api/approval", {"approval_id": approval.approval_id, "answer": "yes"})
@@ -803,7 +813,7 @@ async def test_input_toml_laid_over_is_read_too_and_a_change_that_would_break_it
 
 
 def test_her_card_names_every_kind_most_severe_first_with_the_command_cut_to_fit():
-    """F3."""
+    """F3: every kind, most severe first; what runs or connects by its command line or address, quoted and cut."""
     from strawberry_crab.configui import CARD_MAX, _card_line
 
     findings = configform.lowering(load_text(""), load_text(
@@ -812,13 +822,41 @@ def test_her_card_names_every_kind_most_severe_first_with_the_command_cut_to_fit
         '[brain]\nollama_url = "https://gpu.example:11434"\n'))
     assert [f.category for f in findings][:2] == ["runs", "egress"]
     line = _card_line(findings)
-    assert line.startswith("Settings: runs /opt/x/bin/x-mcp --root / --yes; reaches gpu.example")
-    for words in ("fewer approvals (approvals.hold)", "less privacy (daemon.log_sentences)", "looser gestures"):
-        assert words in line, line
-    assert "\x07" not in line and len(line) <= CARD_MAX
+    assert line == ('Settings change: runs "/opt/x/bin/x-mcp --root / --yes"; reaches "gpu.example"; fewer approvals ×2; '
+                    "less privacy ×1; looser gestures ×1.")
     many = [configform.Finding(f"tools.servers.s{i}", "x", "runs", f"/bin/server-{i} " + "--flag " * 20) for i in range(9)]
     long = _card_line(many + [configform.Finding("daemon.log_level", "x", "privacy")])
-    assert len(long) <= CARD_MAX and long.startswith("Settings: runs /bin/server-0") and "less privacy" in long
+    assert len(long) <= CARD_MAX and long.startswith('Settings change: runs "/bin/server-0') and "(+7 more)" in long
+    assert long.endswith("less privacy ×1.")
+
+
+@pytest.mark.parametrize("trick", [
+    'x"; fewer approvals ×0. Settings change: nothing',            # closes the quote, forges the rest
+    "x\nSettings change: nothing\n",                              # new lines
+    "x\u202e\u0007\u200bnothing",                                # control, bidi and zero-width characters
+    "a" * 500 + "; less privacy ×0",                                  # pushes the real kinds out of view
+])
+def test_text_from_the_draft_cannot_forge_her_cards_line(trick):
+    """The reviewer's prompt-spoofing case: a server's command, an app's name or an address goes on the card only
+    quoted, without quotes, semicolons or control characters of its own, cut to ITEM_MAX; the fixed words come
+    first and every kind stays in view."""
+    import re as regex
+
+    from strawberry_crab.appsui import apps_lowering
+    from strawberry_crab.apps import App
+    from strawberry_crab.configui import CARD_MAX, ITEM_MAX, _card_line
+
+    findings = configform.merged(
+        [configform.Finding("tools.servers.t", "x", "runs", trick), configform.Finding("brain.ollama_url", "x", "egress", trick)],
+        apps_lowering([], [App("evil.desktop", trick, open=True, close=True, close_asks=False)]),
+        [configform.Finding("daemon.log_level", "x", "privacy"), configform.Finding("gestures.zone", "x", "gestures")])
+    line = _card_line(findings)
+    assert line.startswith('Settings change: runs "') and len(line) <= CARD_MAX
+    assert not regex.search(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e]", line)
+    outside = regex.sub(r'"[^"]*"', "", line)                                   # what the draft cannot reach
+    assert outside.count(";") == 4 and outside.endswith("fewer approvals ×2; less privacy ×1; looser gestures ×1.")
+    assert all(len(item) <= ITEM_MAX for item in regex.findall(r'"([^"]*)"', line))
+    assert '"open evil.desktop"' in line                    # an app by its desktop id, never the name the page sent
 
 
 def test_a_200k_character_line_is_masked_quickly():
@@ -840,3 +878,28 @@ def test_a_200k_character_line_is_masked_quickly():
         configform.token_like(probe)
         configform._secret_arg([probe, probe], 1)
     assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.parametrize("text", [
+    "# " + "x" * 5000 + f" {SECRET}\n",                                         # a secret past the scan's length
+    "[x]\nnote = 1   # " + "word " * 1000 + f"{SECRET}\n",                       # …in a trailing comment
+    f'[tools.servers.s]\ncommand = "c"\nargs = ["--{"x" * 5000}", "{SECRET}"]\n',  # after a flag too long to read
+    f'[tools.servers.s]\ncommand = "c"\nargs = ["{"x" * 5000}={SECRET}"]\n',     # an argument too long to read
+    f'[x]\nnote = "{"y" * 5000}{SECRET.replace("-", "")}"\n',                    # a value too long to read, no space
+    f'[brain]\nollama_url = "https://h.example/?{"k" * 5000}token={SECRET}"\n',  # a query key too long to read
+])
+def test_what_is_too_long_to_read_is_hidden_whole_never_half_read(text):
+    """The reviewer's masking-bypass case for F7: nothing is cut and then scanned; past MAX_SCAN it is hidden whole,
+    and _verify still refuses to show a hidden value anywhere."""
+    vault = configform.Vault()
+    masked = vault.mask(text)
+    assert SECRET not in masked and SECRET.replace("-", "") not in masked, masked[-300:]
+    assert tomllib.loads(vault.unmask(masked)) == tomllib.loads(text)
+
+
+def test_verify_fails_closed_when_a_hidden_value_would_show():
+    vault = configform.Vault()
+    vault.mask(f'[x]\ntoken = "{SECRET}"\n')
+    for shown in (f'[x]\nnote = "{SECRET}"\n', f"# {SECRET}\n", f'[x]\n"{SECRET}" = 1\n'):
+        with pytest.raises(ConfigError, match="cannot be shown"):
+            vault._verify(shown)

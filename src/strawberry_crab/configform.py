@@ -189,7 +189,7 @@ def _secret_url(url: str) -> bool:
         return True
     if any(token_like(segment, whole=True) for segment in parts.path.split("/") if segment):
         return True              # a token in the path (a webhook's address)
-    return any(SECRET_NAME.search(k[:MAX_SCAN]) or token_like(v, whole=True)
+    return any(len(k) > MAX_SCAN or SECRET_NAME.search(k) or token_like(v, whole=True)
                for k, v in parse_qsl(parts.query, keep_blank_values=True))
 
 
@@ -202,8 +202,11 @@ def _secret_arg(args: list[Any], i: int) -> bool:
     if SECRET_NAME.search(item) and re.search(r"[=:]\s*\S", item):
         return True              # --api-key=sk-…, Authorization: Bearer …
     before = args[i - 1] if i > 0 else None
-    return (isinstance(before, str) and len(before) <= MAX_SCAN and SECRET_FLAG.match(before) is not None
-            and not item.startswith("-"))
+    if not isinstance(before, str) or item.startswith("-"):
+        return False
+    if len(before) > MAX_SCAN:
+        return before.startswith("-")   # a flag too long to read: the word after it is hidden, never half-read
+    return SECRET_FLAG.match(before) is not None
 
 
 def secret_paths(data: dict[str, Any]) -> list[tuple]:
@@ -943,7 +946,10 @@ def lowering(old: cfg.Config, new: cfg.Config, known: dict[str, Any] | None = No
     # --- approvals
     if new.tools.enabled and not old.tools.enabled:
         add("approvals", "tools.enabled", "the tool servers would be switched on")
-    for server in sorted(set(old.tools.servers) & set(new.tools.servers)):
+    # Every server either config names, in a table or in an `[approvals] risk` key: an entry for a server not
+    # configured yet lowers its tools for when it is.
+    named = {key.partition(".")[0] for config in (old, new) for key in config.approvals.risk}
+    for server in sorted(set(old.tools.servers) | set(new.tools.servers) | named):
         destructive = frozenset((known.get(server) or {}).get("destructive", ()))
         for tool in sorted(_tools_of(old, new, server, known)):
             before, after = tier(old, server, tool, destructive), tier(new, server, tool, destructive)
@@ -959,7 +965,7 @@ def lowering(old: cfg.Config, new: cfg.Config, known: dict[str, Any] | None = No
                 f"{getattr(old.approvals, key):g} -> {getattr(new.approvals, key):g} s)")
     was = min(old.ledger.window_minutes, old.ledger.foreign_minutes)
     now = min(new.ledger.window_minutes, new.ledger.foreign_minutes)
-    if now < was:
+    if now < was or new.ledger.foreign_minutes < old.ledger.foreign_minutes:
         add("approvals", "ledger.foreign_minutes", f"strangers' text would make changes ask for {now:g} min instead "
             f"of {was:g}")
     if old.ledger.notices > 0 and new.ledger.notices == 0:
