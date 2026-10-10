@@ -597,8 +597,13 @@ class Thinker:
         if any(c.ok and getattr(self.toolbox.adapters.get(c.server), "own_words_only", False) is True
                for c in outcome.calls):
             logtext.about_profile()  # she says back what she saved of the user's words: its length only
+        # From the user's messages (a private and foreign server: inbox.py): her line in no log and not in /health.
+        inbox = any(self.toolbox.private(c.server) and self.toolbox.foreign(c.server) for c in outcome.calls)
+        if inbox:
+            logtext.from_private()
         self.last = {
-            "asked": text, "did": outcome.did, "said": outcome.fact, "emotion": outcome.emotion, "ok": outcome.ok,
+            "asked": text, "did": outcome.did, "said": f"<{len(outcome.fact)} chars>" if inbox else outcome.fact,
+            "emotion": outcome.emotion, "ok": outcome.ok,
             "s": round(self.last_s, 2), "held": outcome.held.key if outcome.held is not None else None,
             "calls": [self.toolbox.shown(c) for c in outcome.calls],
         }

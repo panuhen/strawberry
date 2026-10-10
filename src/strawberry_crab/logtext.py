@@ -29,6 +29,9 @@ _from_web: ContextVar[bool] = ContextVar("from_web", default=False)
 # Set once her answer says back a change to the user's profile (Thinker.run, profile.py): her line is then
 # logged as its length only, as the user's sentence is.
 _about_profile: ContextVar[bool] = ContextVar("about_profile", default=False)
+# Set once her answer comes from a server that is both private and foreign (her inbox, inbox.py: the user's
+# messages, written by others): her line is then logged as its length only, whatever log_sentences says.
+_from_private: ContextVar[bool] = ContextVar("from_private", default=False)
 
 
 # Sentences that stay out of the journal whatever log_sentences says, and whose answer does too: one asking her
@@ -83,9 +86,11 @@ def hearing(text: str) -> Iterator[None]:
     token = _hearing.set(text)
     web = _from_web.set(False)
     about = _about_profile.set(private(text))   # a sentence for the profile: her answer is withheld too
+    inbox = _from_private.set(False)
     try:
         yield
     finally:
+        _from_private.reset(inbox)
         _about_profile.reset(about)
         _from_web.reset(web)
         _hearing.reset(token)
@@ -106,12 +111,20 @@ def about_profile() -> None:
     _about_profile.set(True)
 
 
+def from_private() -> None:
+    """Her line for the sentence being answered was written from a private and foreign server's results (the
+    user's messages): see line()."""
+    _from_private.set(True)
+
+
 def line(text: str) -> str:
     """Her line for a log line: as it is, with the sentence she is answering replaced by its
     placeholder when log_sentences is off."""
     heard = _hearing.get()
     if not LOG_SENTENCES and text and _from_web.get():
         return f"<her line from web results, {len(text)} chars>"
+    if text and _from_private.get():
+        return f"<her line from the user's messages, {len(text)} chars>"   # whatever log_sentences says
     if text and _about_profile.get():
         return f"<her line about the profile, {len(text)} chars>"   # whatever log_sentences says
     if LOG_SENTENCES or not heard or not text:

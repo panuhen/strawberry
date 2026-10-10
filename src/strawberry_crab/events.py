@@ -16,6 +16,7 @@ SOURCES = ("notification", "git", "voice", "media", "manual", "action")
 URGENCIES = ("low", "normal", "critical")
 MAX_BODY = 2000
 MAX_LINE = 140
+MAX_ITEMS = 20       # a burst's notifications, one by one (`items`), at most this many
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,9 @@ class Event:
     urgency: str = "normal"
     category: str = ""   # freedesktop notification category, e.g. im.received
     icon: str = ""       # path to the app's icon, resolved by the doorway
+    # A burst's notifications one by one, as (app, title, body): the watcher sends them beside the summary
+    # so her inbox (inbox.py) keeps each; the body only for an app whose body mode is not off.
+    items: tuple[tuple[str, str, str], ...] = ()
     # Set by the daemon, never read from HTTP: what she has already said about this event (a
     # notification's gist, WIRING.md §4). The reactor then adds a short quip after it.
     said: str = ""
@@ -58,7 +62,28 @@ class Event:
         if urgency not in URGENCIES:
             urgency = "normal"
         return cls(source=source, app=text("app"), title=text("title"), body=text("body"), urgency=urgency,
-                   category=text("category"), icon=text("icon"))
+                   category=text("category"), icon=text("icon"),
+                   items=_items(data.get("items")) if source == "notification" else ())
+
+
+def _items(value: Any) -> tuple[tuple[str, str, str], ...]:
+    """A burst's `items`: a list of {app, title, body} objects, the first MAX_ITEMS of them."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ContractError("items must be a list of {app, title, body}")
+    out = []
+    for entry in value[:MAX_ITEMS]:
+        if not isinstance(entry, dict):
+            raise ContractError("items must be a list of {app, title, body}")
+        fields = []
+        for key in ("app", "title", "body"):
+            field_value = entry.get(key) or ""
+            if not isinstance(field_value, str):
+                raise ContractError(f"items[].{key} must be a string")
+            fields.append(field_value.strip()[:MAX_BODY])
+        out.append((fields[0], fields[1], fields[2]))
+    return tuple(out)
 
 
 class Reactor(Protocol):

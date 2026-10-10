@@ -247,6 +247,17 @@ class LedgerConfig:
 
 
 @dataclass
+class MessagesConfig:
+    """Her inbox (inbox.py, WIRING.md §24): the notifications she got, for "any new messages?", in memory
+    only. A body is kept only as far as `[notifications] body` lets it reach a model; off, she knows who
+    wrote and where."""
+
+    enabled: bool = True           # keep an inbox and give the big model its read-only tools
+    keep: int = 100                # at most this many notifications…
+    max_age_hours: float = 24.0    # …none older than this
+
+
+@dataclass
 class LearningConfig:
     """The router's learning loop (WIRING.md §8c, §8d): what came of each routed sentence, and the
     labels, the candidate heads and the switch built on it. Off by default: on, the sentences you
@@ -320,6 +331,7 @@ class Config:
     actions: ActionsConfig = field(default_factory=ActionsConfig)
     thinker: ThinkerConfig = field(default_factory=ThinkerConfig)
     ledger: LedgerConfig = field(default_factory=LedgerConfig)
+    messages: MessagesConfig = field(default_factory=MessagesConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
     runs: RunsConfig = field(default_factory=RunsConfig)
     approvals: ApprovalsConfig = field(default_factory=ApprovalsConfig)
@@ -339,6 +351,7 @@ class Config:
             "actions": asdict(self.actions),
             "thinker": asdict(self.thinker),
             "ledger": asdict(self.ledger),
+            "messages": asdict(self.messages),
             "learning": asdict(self.learning),
             "runs": asdict(self.runs),
             "approvals": asdict(self.approvals),
@@ -360,6 +373,7 @@ _SECTIONS = {
     "actions": ActionsConfig,
     "thinker": ThinkerConfig,
     "ledger": LedgerConfig,
+    "messages": MessagesConfig,
     "learning": LearningConfig,
     "runs": RunsConfig,
     "approvals": ApprovalsConfig,
@@ -485,6 +499,8 @@ def _validate(config: Config) -> None:
     if ledger.turns < 1 or ledger.notices < 0 or ledger.window_minutes <= 0 or ledger.foreign_minutes < 0:
         raise ConfigError("ledger.turns >= 1, ledger.notices >= 0, ledger.window_minutes > 0 and "
                           "ledger.foreign_minutes >= 0 are required")
+    if config.messages.keep < 1 or config.messages.max_age_hours <= 0:
+        raise ConfigError("messages.keep >= 1 and messages.max_age_hours > 0 are required")
     approvals = config.approvals
     if min(approvals.change_s, approvals.sends_s, approvals.destructive_s) <= 0:
         raise ConfigError("approvals.change_s, sends_s and destructive_s must be positive (how long she waits for a yes)")
@@ -790,6 +806,13 @@ def default_toml() -> str:
         f"notices = {LedgerConfig().notices}                    # and this many things she reacted to (0: none)",
         f"window_minutes = {LedgerConfig().window_minutes}         # none older than this",
         f"foreign_minutes = {LedgerConfig().foreign_minutes}        # a sender's or a track's name makes changes ask first for this long",
+        "",
+        "[messages]",
+        "# Her inbox, in memory only: the notifications she got, so you can ask \"any new messages?\" or \"what",
+        "# did Alex say?\". Read-only. A message's text only as [notifications] body allows (off: who and where).",
+        f"enabled = {str(MessagesConfig().enabled).lower()}",
+        f"keep = {MessagesConfig().keep}                     # at most this many",
+        f"max_age_hours = {MessagesConfig().max_age_hours}         # none older than this",
         "",
         "[learning]",
         "# The router's learning loop, data only for now: each sentence you say or type, how the gate read",

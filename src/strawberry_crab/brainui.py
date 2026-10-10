@@ -519,7 +519,8 @@ async def api_runs(request: web.Request, ui: BrainUI, session: Session) -> web.R
     book = ui.daemon.runs
     return web.json_response({"events": ui.daemon.config.runs.events,
                               "runs": [run.view() for run in book.recent(ui.daemon.config.runs.keep)],
-                              "approvals": ui.daemon.approvals.views(), "timeline": timeline_view(ui)})
+                              "approvals": ui.daemon.approvals.views(), "timeline": timeline_view(ui),
+                              "messages": ui.daemon.inbox.stats() if ui.daemon.inbox is not None else None})
 
 
 @checked("get")

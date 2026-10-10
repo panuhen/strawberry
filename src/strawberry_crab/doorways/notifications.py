@@ -23,6 +23,7 @@ from typing import Any
 
 from ..client import DaemonClient
 from ..config import NotificationsConfig
+from ..events import MAX_ITEMS
 
 URGENCY_RANK = {"low": 0, "normal": 1, "critical": 2}
 TAG_RE = re.compile(r"<[^>]+>")
@@ -118,15 +119,18 @@ def summarise(batch: list[dict[str, Any]], cfg: NotificationsConfig) -> dict[str
             items.append(piece)
     if len(batch) > 5:
         items.append(f"and {len(batch) - 5} more")
+    # Each one as well, for her inbox (inbox.py): the app, the sender and, as for a single notification,
+    # the body only for an app whose body mode is not off.
+    each = [{k: v for k, v in to_event(n, cfg).items() if k in ("app", "title", "body")} for n in batch[:MAX_ITEMS]]
     if len(distinct) == 1:
         event = {"source": "notification", "app": distinct[0], "title": f"{len(batch)} notifications from {distinct[0]}",
-                 "body": " · ".join(items), "urgency": urgency}
+                 "body": " · ".join(items), "urgency": urgency, "items": each}
         icon = next((n.get("icon") for n in batch if n.get("icon")), None)
         if icon:
             event["icon"] = icon
         return event
     return {"source": "notification", "app": "several apps", "title": f"{len(batch)} notifications",
-            "body": " · ".join(items), "urgency": urgency}
+            "body": " · ".join(items), "urgency": urgency, "items": each}
 
 
 class Forwarder:

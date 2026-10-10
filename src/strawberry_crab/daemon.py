@@ -26,6 +26,7 @@ from .logtext import sentence
 from . import logtext, media, privacy
 from . import persona as personas
 from . import profile as profiles
+from .inbox import Inbox, MessagesAdapter, MessagesSession
 from .outcomes import OutcomeLog
 from .pokes import Pokes
 from .reactions import decorate, is_burst
@@ -41,7 +42,9 @@ from . import wake
 
 log = logging.getLogger("strawberryd")
 
-PERSISTENT_STATES = ("idle", "dancing")  # mirrors widget.gd PERSISTENT (WIRING.md §1)
+PERSISTENT_STATES = ("idle", "dancing")
+# Her answer after reading a message when it would have given the message away (Daemon.message_said).
+MESSAGE_WITHHELD = "{who} wrote in {app}. I can't repeat it word for word with your privacy setting."  # mirrors widget.gd PERSISTENT (WIRING.md §1)
 
 
 class Daemon:
@@ -83,6 +86,21 @@ class Daemon:
             self.toolbox.add_builtin("profile", "other", open_profile, adapter=self.profile_adapter)
         elif self.config.thinker.enabled:
             log.warning("tools: a configured server is called profile; her own profile tools are not added")
+        # Her inbox (inbox.py, §24): the notifications she got, in memory only, and a read-only builtin server over
+        # it for the thinker, private and foreign (the user's messages, written by others).
+        messages = self.config.messages
+        self.inbox = Inbox(messages.keep, messages.max_age_hours * 3600.0) if messages.enabled else None
+        self.messages_session: MessagesSession | None = None
+        if self.inbox is not None and self.config.thinker.enabled and "messages" not in self.toolbox.servers:
+            self.messages_session = MessagesSession(self.inbox, lambda app: self.config.notifications.mode_for(app))
+            inbox_session = self.messages_session
+
+            async def open_messages() -> MessagesSession:
+                return inbox_session
+
+            self.toolbox.add_builtin("messages", "other", open_messages, adapter=MessagesAdapter())
+        elif self.inbox is not None and self.config.thinker.enabled:
+            log.warning("tools: a configured server is called messages; her own inbox tools are not added")
         self.rng = random.Random()
         # Her persona (persona.md, read again when it changes, else the shipped one): her fixed lines here.
         self.persona = personas.store()
@@ -473,6 +491,9 @@ class Daemon:
 
         fresh = load(self.config.path or default_path()).notifications
         self.config.notifications = fresh
+        if self.inbox is not None:
+            # A body kept under a mode that is off now goes at once (inbox.py).
+            self.inbox.drop_bodies(lambda app: fresh.mode_for(app) != "off")
         return fresh.body
 
     GLANCE_QUIP_WORDS = 8
@@ -515,6 +536,8 @@ class Daemon:
             log.info("notification %r: body dropped, mode off (%d chars)", event.app, len(event.body))
             event = replace(event, body="")
         verdict = await privacy.check(self.gate, event.title, event.body, ask_gate=bool(event.body) and not burst)
+        if self.inbox is not None:
+            self.to_inbox(event, verdict, burst)
         if verdict.sensitive:
             log.info("notification %r: private, %s; body_len=%d dropped", event.app, verdict.summary, len(event.body))
             quiet = replace(event, body="", title="")
@@ -535,6 +558,31 @@ class Daemon:
             log.info("notification %r: her line gave away %s; canned line instead", event.app, why)
             performance = decorate(event, await CannedReactor().react(replace(event, body="")))
         return performance, await self.perform(performance)
+
+    def to_inbox(self, event: Event, verdict: privacy.Verdict, burst: bool) -> None:
+        """A notification into her inbox (inbox.py) as far as the speaking path let it through: private, the app
+        alone; otherwise the app and the sender, and the body when it reached this far (its mode is not off).
+        A burst's items are checked one by one in the background, each as a single notification is."""
+        assert self.inbox is not None
+        if burst and event.items:
+            self.background(self._burst_to_inbox(event.items), "inbox")
+        elif burst:
+            self.inbox.add(event.app, event.title, None, "private" if verdict.sensitive else "summary")
+        elif verdict.sensitive:
+            self.inbox.add(event.app, "", None, "private")
+        else:
+            off = self.config.notifications.mode_for(event.app) == "off"
+            self.inbox.add(event.app, event.title, event.body or None, "off" if off else "empty")
+
+    async def _burst_to_inbox(self, items: tuple[tuple[str, str, str], ...]) -> None:
+        for app, title, body in items:
+            if body and self.config.notifications.mode_for(app) == "off":
+                body = ""
+            verdict = await privacy.check(self.gate, title, body, ask_gate=bool(body))
+            off = self.config.notifications.mode_for(app) == "off"
+            if self.inbox is not None:
+                self.inbox.add(app, title, body or None, "private" if verdict.sensitive else "off" if off else "empty")
+        log.info("inbox: %d items from a burst (%d kept)", len(items), len(self.inbox.items()) if self.inbox else 0)
 
     async def glance(self, event: Event) -> Performance | None:
         """Step one, a neutral gist of the message (no persona, no numbers or links); step two, her
@@ -764,6 +812,8 @@ class Daemon:
             # She says back what changed in the profile (profile.py); when her reply does not, code adds it.
             extra = profiles.Profile.readback(fact, self.profile_session.changes[changed:])
             fact = f"{fact} {extra}".strip() if extra else fact
+        if self.inbox is not None and outcome.calls:
+            fact = self.message_said(fact, outcome)
         performance = decorate(event, Performance(state="talking", text=prefaced(preface, fact),
                                                   emotion=outcome.emotion or "neutral"))
         sent = await self.perform(performance)
@@ -781,6 +831,24 @@ class Daemon:
             not getattr(self.toolbox.adapters.get(c.server), "own_words_only", False) for c in outcome.calls))
         self.ledger.record(text, said, did=outcome.did, foreign=named)
         return performance, sent
+
+    def message_said(self, fact: str, outcome: Outcome) -> str:
+        """Her answer after she read a message (inbox.py) follows its app's body mode as her reaction does: when
+        it gives the message away (a link or an address, a number from it, four of its words in a row; any
+        digit for `glance`: privacy.leaks), she says who wrote and where instead."""
+        assert self.inbox is not None
+        for call in outcome.calls:
+            if call.server != "messages" or call.name != "read" or not call.ok:
+                continue
+            item = self.inbox.get(str(call.arguments.get("item_id", "")).strip())
+            if item is None or item.body is None:
+                continue
+            mode = self.config.notifications.mode_for(item.app)
+            why = privacy.leaks(fact, item.body, strict=mode == "glance")
+            if why:
+                log.info("messages: her answer gave away %s; who and where instead", why)
+                return MESSAGE_WITHHELD.format(who=item.sender or "Someone", app=item.app)
+        return fact
 
     @staticmethod
     def _routing(run: Run | None, route: Route | None):
