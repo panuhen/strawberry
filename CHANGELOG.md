@@ -9,6 +9,22 @@ package and the widget binary.
 
 ### Added
 
+- **Edit config.toml in the Brain UI.** A new **Config file** tab (under Settings) shows every setting as
+  a form, built from the code's own settings with their defaults and descriptions, or as raw TOML. Your
+  comments and the file's order are kept (tomlkit, a new dependency). Each change is checked as at start,
+  with the changes against the file and what needs a restart; `[notifications]`, `[gestures]` and `[touch]`
+  apply at once. A change that loosens safety (a new or changed tool server, a lower tier, a confirm list
+  shortened, more of a message read, sentences logged, the daemon or the models off this machine, a thumb
+  answering her card, and so on) is saved only after a held **Yes** on her card or your own spoken or typed
+  yes; the page that asked cannot say yes. The camera is still switched only by its own switches. Secrets
+  in the file never reach the page, the diff, her card or the log. A file changed under the page is never
+  overwritten, and every save keeps a backup. WIRING §28.
+- **A Tools tab in the Brain UI.** Every tool server with each tool's approval tier, trust flags and whether
+  the big model is offered it; a url server's login command to copy; add or edit a server, recall's
+  workspaces included, through the same check and her card. WIRING §28.
+- **The second hand in the Input tab's live view,** greyer and marked L or R, with the distance and angle
+  between the two, and a *Hands* (one or two) setting in the tuning. WIRING §26, §28.
+
 - **A camera switch in the Brain UI's Input tab.** At the top of the tab: it turns hand gestures on and off
   exactly as the tray's *Hand gestures (camera)* row does (`[gestures] enabled` in `config.toml`, comments
   kept, a backup first), and beside it whether the camera is actually open now, as the watcher last said

@@ -372,15 +372,33 @@ problem, a new router head waiting).
 - **Data and scores**: what a head is trained and tested on, and each head's test score over time.
 - **Settings and privacy**: what is kept and logged, and the line in `config.toml` that changes
   it, what applies at once and what needs a restart, **Apply** for the notification settings, the
-  whole effective `config.toml` (read-only: the page does not edit it), and Forget.
+  whole effective `config.toml` (read-only here), and Forget.
+- **Config file** (under Settings): `config.toml` itself, as a form (a section per table, each key
+  with its default and what it does) or as raw TOML. Your comments and the order of the file are kept.
+  Each change is checked as she checks the file at start, and you see the changes against the file
+  and which sections apply at once and which need `strawberry restart`. A change that loosens
+  safety (a new or changed tool server, a lower approval tier, message bodies read more, sentences
+  kept in a log, the daemon or the models reached from another machine, and the like) is saved only
+  after you hold **Yes** on her card or say yes: the page cannot say yes to it. Turning the camera on
+  stays the camera switch's. Tokens and keys in the file show as `<hidden N: kept as is>` and stay as
+  they are. If the file changed since the page loaded it (another editor, the tray), the save is
+  refused and the page offers to reload. Every save keeps the old file beside it
+  (`config.toml.bak-<time>`).
+- **Tools** (under Settings): the tool servers, configured and built in, and each tool's approval
+  tier, whether it counts as private, foreign or egress, and whether the big model is offered it;
+  for a server at an address, whether you are signed in and the `strawberry tools login <name>`
+  command to copy. Add or edit a server (a command, or an https address; recall's workspaces as a
+  list) through the same check and her card.
 - **Input** (under Settings): hand gestures and touch. A **camera switch** at the top turns gestures on
   and off as the tray's *Hand gestures (camera)* row does (it writes `[gestures] enabled` in `config.toml`,
   and nothing else there), with whether the camera is actually open now beside it. The watcher's frame
   rate and CPU, what is missing; the bodies and what they let you touch; your hand drawn live as a stick
   figure from the few numbers the watcher sends (never a picture: frames never leave the watcher), with
   the zone line, what it recognises now, whether you face the screen, and the hold ring filling (or the
-  pinch slider's level); the gesture and touch mappings (only actions that need no yes are offered); the
-  tuning (hold time, zone, smallest hand, frame rates, the camera, facing, shh's minutes); **Calibrate**,
+  pinch slider's level), and with two hands up the other one too, greyer, each marked L or R, with
+  the distance and angle between them; the gesture and touch mappings (only actions that need no yes are offered); the
+  tuning (hold time, zone, smallest hand, frame rates, the camera, one hand or two, facing, shh's
+  minutes; a thumb that answers her card, or a camera watching all the time, asks on her card first); **Calibrate**,
   which records your own hand (each finger's curl and the thumb-index gap, as numbers) and sets where a
   finger counts as straight or curled; the last twenty gestures and touches with what each did or why it
   did nothing; and **Practice mode**, under which gestures and touches are shown and do nothing (not
