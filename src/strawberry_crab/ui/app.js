@@ -1212,6 +1212,7 @@
       "aria-label": "The hand as the watcher reports it: wrist, fingertips, the zone and the hold ring" });
     fill(root,
       panel("Input", "hand gestures through the camera, and touch from the bodies",
+        cameraSwitch(),
         el("div", { id: "input-head" }),
         el("div", { class: "actions" },
           el("label", { class: "check", for: "input-practice" }, practice,
@@ -1231,6 +1232,7 @@
       panel("input.toml", "saved here, never in config.toml; she reads it again within a second",
         el("div", { id: "input-file" })),
       panel("Recent", "the last gestures and touch actions, and what came of each", el("div", { id: "input-recent" })));
+    renderInputCamera();
     renderInputHead();
     renderInputStatus();
     renderInputBodies();
@@ -1255,12 +1257,11 @@
         "She keeps the settings she has until it checks out:", el("ul", null, el("li", { text: f.error }))));
     }
     fill(node, el("div", { class: "actions" },
-      chip(`gestures ${onOff(S.enabled)}`, S.enabled ? "good" : null, "The tray's Hand gestures (camera) row, or strawberry gestures on|off"),
       chip(f.in_use ? (f.error ? "settings: the last input.toml that checked out" : "settings from input.toml")
         : f.exists ? "settings from config.toml" : "settings from config.toml (no input.toml yet)",
         f.in_use && !f.error ? "good" : f.error ? "warn" : null, f.path || ""),
       S.practice ? chip("practice mode: nothing is done", "warn") : null,
-      el("span", { class: "faint", text: S.enabled ? "The camera is the watcher's alone; turn it off in the tray." : "Turn the camera on with the tray's Hand gestures (camera) row." })),
+      el("span", { class: "faint", text: "The camera is the watcher's alone. The switch above, the tray's Hand gestures (camera) row and strawberry gestures on|off set the same thing." })),
       notes);
   }
 
@@ -1271,7 +1272,7 @@
     const w = S.watcher || {};
     const watcher = !S.enabled ? "waits (gestures are off: it only reads the config file)"
       : w.heard ? `running, heard ${num(w.age_s, 1)} s ago` : "not heard from (is the tray running it?)";
-    const camera = !S.enabled ? "closed" : w.heard ? (w.camera ? "open" : "closed") : "unknown";
+    const camera = (S.camera || {}).state || (!S.enabled ? "closed" : w.heard ? (w.camera ? "open" : "closed") : "unknown");
     const armed = S.armed_s > 0 ? `armed, ${Math.ceil(S.armed_s)} s left`
       : S.arming || S.watch === "armed" ? "idle (not armed)" : "not needed (arming is off)";
     const g = S.gestures || {};
@@ -1671,6 +1672,51 @@
       .finally(() => { box.disabled = false; });
   }
 
+  // The camera switch: `[gestures] enabled` in config.toml, written as the tray's Hand gestures (camera) row writes
+  // it (POST input/camera). Only this, that row and `strawberry gestures on|off` turn the camera on; saving the
+  // settings never does. Beside it, what the watcher last said of the camera, which is not the same as the switch.
+
+  const CAMERA_STATE = {
+    open: ["camera open", "berry", "The watcher has the camera; its light is on."],
+    closed: ["camera closed", null, "The camera is not in use."],
+    closing: ["camera closing", "warn", "Switched off: the watcher lets go of the camera within a second."],
+    unknown: ["camera: no word from the watcher", "warn",
+      "Switched on, but the watcher has not reported for five seconds (is the tray running it?)."],
+  };
+
+  function cameraSwitch() {
+    const box = el("input", { type: "checkbox", id: "input-camera", role: "switch",
+      on: { change: (ev) => setCamera(ev.target) } });
+    return el("div", { class: "actions" },
+      el("label", { class: "check", for: "input-camera" }, box, el("b", { text: "Camera (hand gestures)" })),
+      el("span", { id: "input-camera-state", class: "actions" }));
+  }
+
+  function renderInputCamera() {
+    const box = document.getElementById("input-camera");
+    const node = document.getElementById("input-camera-state");
+    if (!box || !node || !state.input) return;
+    const S = Object.assign({}, state.input.status, state.inputStatus || {});
+    const cam = S.camera || { enabled: S.enabled, state: "unknown" };
+    if (!box.disabled) box.checked = Boolean(cam.enabled);
+    const [text, kind, why] = CAMERA_STATE[cam.state] || CAMERA_STATE.unknown;
+    fill(node, chip(text, kind, why), el("span", { class: "dim", text: cam.enabled
+      ? "On: the watcher may open the camera (Watch mode says when). This switch, the tray's row or strawberry gestures off turn it off."
+      : "Off: the camera stays closed. Saving the settings below never turns it on." }));
+  }
+
+  function setCamera(box) {
+    box.disabled = true;
+    api("input/camera", { on: box.checked })
+      .then((r) => {
+        if (state.input) state.input.status = Object.assign({}, state.input.status, r.status);
+        if (state.inputStatus) state.inputStatus = Object.assign({}, state.inputStatus, r.status);
+        toast(r.enabled ? "Camera on: the watcher opens it within a second." : "Camera off: the watcher lets go of it within a second.");
+      })
+      .catch((e) => { box.checked = !box.checked; toast(e.message, true); })
+      .finally(() => { box.disabled = false; renderInputCamera(); renderInputHead(); renderInputStatus(); });
+  }
+
   const OUTCOME_KIND = { did: "good", practice: "warn", ignored: null, failed: "berry", running: "berry" };
 
   function renderInputRecent() {
@@ -1743,6 +1789,7 @@
       if (box && !box.disabled) box.checked = Boolean(data.practice);
       renderInputStatus();
       renderInputHead();
+      renderInputCamera();
       if (state.hand && now - state.handAt > 2000) { state.hand = null; requestDraw(); }
     } else if (name === "recent" && state.input) {
       const list = (state.input.recent || []).filter((r) => r.id !== data.id);
@@ -1910,6 +1957,7 @@
       state.inputPractice = state.input.status.practice;
     } catch (e) { if (!state.ended) toast(e.message, true); }
     if (!state.inputEdited) { state.inputForm = null; state.inputCheck = null; rerender("input"); return; }
+    renderInputCamera();
     renderInputHead();
     renderInputStatus();
     renderInputBodies();

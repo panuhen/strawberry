@@ -14,7 +14,7 @@ nothing here decides anything.
                               `status` (inputs.Live; a hand's few numbers, never a frame)
     POST /ui/api/accept | reject | rollback | use | review | train | forget | cancel | approval | apply
     POST /ui/api/persona/check | persona/save | persona/try | profile/save | profile/revert
-    POST /ui/api/input/check | input/save | input/practice
+    POST /ui/api/input/check | input/save | input/practice | input/camera
 
 Everything else on the port refuses a request with an Origin header, so no web page can reach
 it. The routes under /ui are the one place a browser is let in, and only this way:
@@ -237,6 +237,7 @@ def setup(app: web.Application, daemon) -> BrainUI:
         web.post("/ui/api/input/check", api_input_check),
         web.post("/ui/api/input/save", api_input_save),
         web.post("/ui/api/input/practice", api_input_practice),
+        web.post("/ui/api/input/camera", api_input_camera),
     ])
     return ui
 
@@ -979,6 +980,7 @@ def input_status(ui: BrainUI) -> dict[str, Any]:
     return {"enabled": g.enabled, "watch": g.watch, "arming": g.arming,
             "armed_s": d.gestures.state()["armed_s"], "watcher": d.input.watcher_view(),
             "hand_age_s": stats["hand_age_s"], "practice": d.input.practice, "quiet_s": stats["quiet_s"],
+            "camera": d.input.camera_view(g.enabled),
             "gestures": {k: stats[k] for k in ("received", "acted", "answered", "refused")},
             "touch": dict(d.touch_stats), "targets": d.targets.stats()}
 
@@ -1106,3 +1108,31 @@ async def api_input_practice(request: web.Request, ui: BrainUI, session: Session
     ui.daemon.input.practice = on
     log.info("ui: practice mode %s", "on" if on else "off")
     return web.json_response({"practice": on})
+
+
+@checked("post")
+async def api_input_camera(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    """The Input tab's camera switch, as the tray's Hand gestures (camera) row does it (traymenu.set_gestures):
+    `[gestures] enabled` into config.toml through configedit (comments kept, validated, backed up), then [gestures]
+    read again (the `reload_gestures` command's GestureDesk.reload). The watcher follows the file within a second:
+    it opens the camera or lets it go. The one Input tab write that touches config.toml, and only that key; a
+    settings save cannot (input.toml has no `enabled`)."""
+    from . import configedit
+    from .config import default_path
+
+    on = (await _payload(request)).get("on")
+    if not isinstance(on, bool):
+        raise web.HTTPBadRequest(text='the camera needs {"on": true} or {"on": false}')
+    d = ui.daemon
+    path = d.config.path or default_path()
+    try:
+        await asyncio.to_thread(configedit.set_value, path, "gestures.enabled", on)
+    except (ConfigError, OSError) as exc:
+        log.warning("ui: gestures not turned %s (%s)", "on" if on else "off", type(exc).__name__)
+        return web.json_response({"error": f"config.toml not written: {exc}"}, status=409)
+    try:
+        enabled = d.gestures.reload()
+    except ConfigError as exc:
+        return web.json_response({"error": f"config.toml written, but it does not load: {exc}"}, status=409)
+    log.info("ui: gestures %s (the Input tab's camera switch)", "on" if enabled else "off")
+    return web.json_response({"enabled": enabled, "status": input_status(ui)})
