@@ -9,7 +9,11 @@ model runs on your own computer through [Ollama](https://ollama.com); nothing is
 
 - **Notifications.** She sees each desktop notification (on Windows, each toast in the
   notification centre) and reacts to it in a line of her own. By default she knows only the
-  app and the sender, never the message (see [Privacy](#privacy)).
+  app and the sender, never the message (see [Privacy](#privacy)). Ask her "any new messages?"
+  ("Three: two in Signal from Alex, one in Slack from the build bot.") or "what did Alex say?":
+  she answers from the notifications of the last day, with the message itself only as far as your
+  message-body setting lets her (otherwise she says she only sees who wrote and where). She can
+  only look: she never sends, replies or marks anything as read.
 - **Music.** Skip, previous, pause, resume, volume and "what song is this" work for any desktop
   player (Spotify, VLC, Rhythmbox, mpv, a browser tab) over MPRIS, with no account and no setup.
   On Windows the same works for any player in Windows' media controls, except volume. She dances
@@ -167,6 +171,7 @@ The settings you are most likely to change:
 | `[approvals]` | `change_s`, `sends_s`, `destructive_s`, `grace_s`, `hold`, `risk` | the calls that wait for your yes: how long she waits per tier (10, 30, 30 s) and at most how much longer while you are still answering (10 s), which tiers need a press-and-hold on her card, and a tool's (or a server's) tier: `read`, `playback`, `change`, `sends`, `destructive` |
 | `[thinker]` | `stream` | read the big model's reply as it is written, for the tokens-per-second gauge (on) |
 | `[ledger]` | `turns`, `notices`, `window_minutes`, `foreign_minutes` | her short memory: your last exchanges (8) and what she reacted to on her own (8), none older than 60 minutes; for 10 minutes after a sender's or a track's name, a change asks first |
+| `[messages]` | `enabled`, `keep`, `max_age_hours` | her inbox for "any new messages?": on, at most 100 notifications, none older than 24 hours, in memory only; message text only as `[notifications] body` allows |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
 Her persona is a file of its own: copy the shipped `persona.md` (in the package's `data/` folder,
@@ -234,6 +239,16 @@ What she reads:
   In every mode a sensitive filter drops one-time codes, sign-in and password-reset messages and
   bank or card alerts before any model sees them; she says only "Slack sent something private."
   The filter fails closed: if its model check is unavailable, every body counts as private.
+
+  So you can ask about them later, she keeps the notifications of the last 24 hours (at most 100)
+  **in memory only**: lost when she restarts, never written to disk or logged. Each keeps what the
+  setting above let her have: with `"off"` the app, the sender and the time; with `"react"` or
+  `"glance"` the message too (its first 300 characters); a private one only the app. Asked what a
+  message said, she answers as that setting allows: with `"react"` in her own words, with `"glance"`
+  the gist she gave when it came, and never a link, an address, a number from it or a run of its
+  words. While a message is part of what she is answering, your other tools that reach the network
+  (web search, Spotify) are refused and anything that would change something waits for your yes.
+  `[messages] enabled = false` turns the inbox off; `keep` and `max_age_hours` bound it.
 - **Media.** The title, artist and album the player publishes over MPRIS (on Windows, to the
   media controls).
 - **Audio.** Only the playing media player's own output stream (on Windows, the player's own

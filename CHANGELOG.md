@@ -65,6 +65,16 @@ package and the widget binary.
   before you save. Profile: the editor, her changes and yours, and revert. Runs shows the timeline.
   Settings shows what applies when, **Apply** for the notification settings and the effective
   `config.toml` read-only. WIRING.md §17.
+- **"Any new messages?"** She keeps the notifications of the last day in memory (never on disk,
+  never in a log) and answers "Three: two in Signal from Alex, one in Slack from the build bot." or
+  "what did Alex say?". The message itself only as far as your message-body setting lets her have it:
+  with bodies off (the default) she says she only sees who wrote and where; with `glance` she gives
+  the gist she said when it came; with `react`, its meaning in her own words; never a link, a number
+  from it or a run of its words. A private one (a code, a sign-in, a bank alert) keeps only the app.
+  Read-only: she never sends, replies or marks anything as read. While a message is in what she is
+  answering, web search and Spotify are refused and any other change asks first. New `[messages]
+  enabled` (true), `keep` (100), `max_age_hours` (24); `/health` and the Brain UI show counts only. A
+  burst of notifications now also carries each one (`items` in the `/event` body). WIRING.md §24.
 
 - She turns. A slow, small sway while idle; a glance toward a notification as it arrives, toward
   the middle of the screen now and then, and toward the cursor when it comes to rest near her;
@@ -345,6 +355,8 @@ package and the widget binary.
 
 ### Fixed
 
+- WIRING.md §18-§23 (runs, approvals, the trust model, persona.md, profile.md, the shared timeline)
+  are back: the Brain UI facelift had cut them off.
 - Dance styles: for the beat before each new tempo estimate's `next_beat` the beat's parity came
   out as −1, so the rave's arms pumped together and the groove's right claw skipped its pump.
 - She can read a page from her web search again. With web-mcp the adapter took each result's

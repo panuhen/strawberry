@@ -239,6 +239,16 @@ def test_burst_from_one_app_becomes_one_event():
     assert event["title"] == "7 notifications from Slack"
     assert event["body"] == "#chan0 · #chan1 · #chan2 · #chan3 · #chan4 · and 2 more"
     assert event["icon"] == "/tmp/slack.png"
+    # each one too, for her inbox: app and sender; bodies off here, so none of them
+    assert event["items"] == [{"app": "Slack", "title": f"#chan{i}"} for i in range(7)]
+
+
+def test_a_bursts_items_carry_bodies_only_for_apps_whose_mode_is_not_off():
+    cfg = NotificationsConfig(body_apps={"Signal": "glance"})
+    batch = [parse_notify(notify(app="Signal", summary="Alex", body="lunch?")),
+             parse_notify(notify(app="Slack", summary="build bot", body="build 41 failed"))]
+    assert summarise(batch, cfg)["items"] == [{"app": "Signal", "title": "Alex", "body": "lunch?"},
+                                              {"app": "Slack", "title": "build bot"}]
 
 
 def test_burst_across_apps_keeps_the_highest_urgency():

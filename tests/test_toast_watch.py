@@ -212,7 +212,8 @@ async def test_toasts_inside_the_window_coalesce_into_one_event():
     await settle()
     assert watcher.daemon.calls == [("/event", {"source": "notification", "app": "Slack",
                                                 "title": "3 notifications from Slack",
-                                                "body": "#chan0 · #chan1 · #chan2", "urgency": "normal"})]
+                                                "body": "#chan0 · #chan1 · #chan2", "urgency": "normal",
+                                                "items": [{"app": "Slack", "title": f"#chan{i}"} for i in range(3)]})]
 
 
 async def test_no_body_in_any_log_line_and_off_bodies_never_posted(caplog):

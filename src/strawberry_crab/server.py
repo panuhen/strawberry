@@ -236,6 +236,8 @@ async def health(request: web.Request) -> web.Response:
             "thinker": daemon.thinker.stats(),
             "learning": daemon.outcomes.stats() | daemon.trainer.health(),
             "ledger": daemon.ledger.to_list(notices=True),
+            # her inbox (inbox.py): counts only, never an app, a sender or a text
+            "messages": daemon.inbox.stats() if daemon.inbox is not None else {"enabled": False},
             "state": daemon.current_state(),
             "rest_state": daemon.rest_state,
             "tempo": daemon.fresh_tempo(),

@@ -92,10 +92,14 @@ the adapter says holds.
 | web | foreign, egress |
 | recall | private, foreign, egress: the notes are the user's own, they quote web pages and other people, and a query goes to the server. Its two tools are `read`, so reading notes after a search needs no yes; anything else above `playback` after a note does |
 | Spotify | private, egress, and every result with a name in it foreign (`view`): names are written by others, and trust is not decided by what they say. What they can steer is bounded by the tiers: its play, pause, skip, volume, queue and like-the-playing-track tools are `playback` and go ahead; saving chosen tracks and a playlist change ask. Its situation line names the playing track, so while one plays the sentence starts foreign |
+| messages (her inbox, built in: `inbox.py`, WIRING §24) | private, foreign: the user's messages, written by others; read-only, offered only when asked |
 | no adapter, no `flags` | private, foreign, egress |
 
 The flags also decide the journal: a private, foreign or unknown server's calls are logged as the
 arguments' names, a count and a size, never a result or an argument, whatever `log_sentences` says.
+Her answer from a server that is both private and foreign (her inbox) is logged as its length too,
+and a server named `messages` (or `profile`) in the config keeps the name: her own tools are then
+not added.
 
 **When the brain is offered its tools: `offer`.** `always` (the default) offers them with every
 sentence, which keeps the prompt the same from sentence to sentence (Ollama's cache, below);

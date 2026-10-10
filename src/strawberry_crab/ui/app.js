@@ -22,6 +22,7 @@
     profile: null,          // GET profile: the text, its status, what she reads, the history
     profileDraft: null,
     timeline: [],
+    messages: null,
     learning: null,
     routes: [],
     runs: [],
@@ -624,8 +625,12 @@
         td(ago, "nowrap"), td(chip(e.kind === "turn" ? "you" : e.source, e.kind === "turn" ? null : "berry")),
         el("td", { class: "sentence" }, what), td([trust, el("span", { class: "sub", text: e.in_prompt ? "in her next prompt" : "left out" })]));
     });
+    // Her inbox (inbox.py): counts only, never who wrote or what.
+    const m = state.messages;
+    const inbox = m ? el("p", { class: "note", text: `Messages inbox: ${m.items} kept (${m.new} not told yet), ${m.with_text} with text, ${m.private} private; in memory only, at most ${m.keep} and ${m.max_age_hours} h.` }) : null;
     return panel("Timeline", "what the big model is told happened lately, oldest last; in memory only",
       state.logging ? null : el("p", { class: "note", text: "Your sentences and her replies are hidden while outcome logging is off. What she reacted to on her own shows." }),
+      inbox,
       table(["When", "Kind", "What", "Trust"], rows, { empty: "Nothing yet: her memory starts empty with each start." }));
   }
 
@@ -1119,6 +1124,7 @@
       state.runs = r.runs.slice(0, MAX_RUNS);
       state.approvals = r.approvals || { open: null, history: [] };
       state.timeline = r.timeline || [];
+      state.messages = r.messages || null;
     } catch (e) { /* the stream will say */ }
     renderAttention();
     rerender("runs");
