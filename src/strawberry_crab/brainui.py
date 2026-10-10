@@ -545,8 +545,16 @@ async def api_data(request: web.Request, ui: BrainUI, session: Session) -> web.R
 
 @checked("get")
 async def api_settings(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    from .configform import secret_paths   # local: configform brings tomlkit
+
     config = ui.daemon.config
     shown = redacted(config.to_dict())
+    # And what the editor hides too: a token in a server's arguments or in an address (configform.secret_paths).
+    for path in secret_paths(shown):
+        node: Any = shown
+        for part in path[:-1]:
+            node = node[part]
+        node[path[-1]] = "(set)"
     return web.json_response({"path": str(config.path) if config.path else None, "config": shown,
                               "toml": as_toml(shown), "live": LIVE, "persona_path": str(paths.persona_file()),
                               "profile_path": str(paths.profile_file())})

@@ -166,6 +166,7 @@ SECRET_FLAG = re.compile(r"^-{1,2}[\w.-]*(?:token|secret|passw|api[_-]?key|auth|
                          re.IGNORECASE)
 HIDDEN = re.compile(r"<hidden (\d{1,6}): kept as is>")
 HIDDEN_LINE = re.compile(r"^(\s*)# <hidden comment (\d{1,6}): kept as is>\s*$", re.MULTILINE)
+HIDDEN_NOTE = re.compile(r"# <hidden note (\d{1,6}): kept as is>")
 
 
 def _server_key(path: tuple) -> str | None:
@@ -224,9 +225,56 @@ def secret_paths(data: dict[str, Any]) -> list[tuple]:
     return found
 
 
-def _secret_comment(line: str) -> bool:
-    stripped = line.strip()
-    return stripped.startswith("#") and bool(SECRET_NAME.search(stripped)) and bool(re.search(r"[=:]\s*\S", stripped))
+# A key named like a secret given a value (`api_key = "…"`, `"NOTES_TOKEN": …`, `Authorization: Bearer …`), and a flag
+# named like one followed by a value (`--api-key sk-…`).
+SECRET_ASSIGNED = re.compile(r"(?:token|secret|passw|api[_-]?key|auth|credential|bearer|cookie|private[_-]?key)"
+                             r"[\w.-]*[\"']?\s*[=:]\s*\S", re.IGNORECASE)
+SECRET_ARG = re.compile(r"--?[\w.-]*(?:token|secret|passw|api[_-]?key|auth|credential|bearer|cookie)[\w.-]*[\"']?"
+                        r"(?:\s*,)?\s+[\"']?[^\s\"',\]-]", re.IGNORECASE)
+# A word that looks like a key or a token: 20 or more letters, digits and _ with both letters and digits in it.
+# Or one of 12 or more with dashes in it and at least three of each (sk-proj-…, ghp_…).
+TOKEN_LIKE = re.compile(r"(?=[A-Za-z0-9_]*[0-9])(?=[A-Za-z0-9_]*[A-Za-z])[A-Za-z0-9_]{20,}"
+                        r"|(?=(?:[A-Za-z_-]*[0-9]){3})(?=(?:[0-9_-]*[A-Za-z]){3})[A-Za-z0-9_-]{12,}")
+
+
+def _secret_text(comment: str) -> bool:
+    """Does a comment look like it holds a secret: a key named like one with a value (`# api_key = "…"`,
+    `# Authorization: Bearer …`), an `env` table (whose values are all hidden when not commented out), an address
+    with a login part or a token, or a word that looks like a token?"""
+    if SECRET_ASSIGNED.search(comment) or SECRET_ARG.search(comment):
+        return True
+    if re.search(r"\benv\s*=\s*\{\s*[^}\s]", comment) or TOKEN_LIKE.search(comment):
+        return True
+    return any(_secret_url(url) for url in re.findall(r"[a-z][a-z0-9+.-]*://[^\s\"']+", comment, re.IGNORECASE))
+
+
+def _comment_at(line: str) -> int:
+    """Where the comment on a line of TOML starts: the first # outside a string (-1 when there is none)."""
+    quote = None
+    i = 0
+    while i < len(line):
+        c = line[i]
+        if quote is None:
+            if c == "#":
+                return i
+            if c in "\"'":
+                quote = c
+        elif c == "\\" and quote == '"':
+            i += 1
+        elif c == quote:
+            quote = None
+        i += 1
+    return -1
+
+
+_SHIPPED: frozenset[str] | None = None
+
+
+def _shipped_lines() -> frozenset[str]:
+    global _SHIPPED
+    if _SHIPPED is None:
+        _SHIPPED = frozenset(line.strip() for line in cfg.default_toml().splitlines() if line.strip())
+    return _SHIPPED
 
 
 class Vault:
@@ -295,13 +343,25 @@ class Vault:
             by_value(doc)
         known = self._known()
         lines = tomlkit.dumps(doc).split("\n")
+        shipped = _shipped_lines()    # the commented template's own lines are no secret
         for i, line in enumerate(lines):
-            if HIDDEN_LINE.match(line):
+            if HIDDEN_LINE.match(line) or HIDDEN_NOTE.search(line):
                 continue
-            # A comment that names a secret, and any line a known secret is still in (a trailing comment, a key's
-            # name): hidden whole, and put back as it was.
-            if _secret_comment(line) or any(secret in line for secret in known):
-                indent = line[: len(line) - len(line.lstrip())]
+            stripped = line.lstrip()
+            at = 0 if stripped.startswith("#") else _comment_at(line)
+            comment = stripped[1:] if stripped.startswith("#") else line[at + 1:] if at >= 0 else ""
+            secret = (bool(comment.strip()) and stripped not in shipped
+                      and (_secret_text(comment) or any(s in comment for s in known)))
+            if stripped.startswith("#") and secret:
+                # A comment line that looks like it holds a secret (a commented-out token): hidden whole.
+                indent = line[: len(line) - len(stripped)]
+                lines[i] = f"{indent}# <hidden comment {self._number(line, self.lines, self.line_numbers)}: kept as is>"
+            elif secret:
+                # A trailing comment that does: the comment hidden, the key and its value left to edit.
+                lines[i] = line[:at] + f"# <hidden note {self._number(line[at:], self.lines, self.line_numbers)}: kept as is>"
+            elif any(s in line for s in known):
+                # A known secret still in the line, outside a value (a key's name): the line hidden whole.
+                indent = line[: len(line) - len(stripped)]
                 lines[i] = f"{indent}# <hidden comment {self._number(line, self.lines, self.line_numbers)}: kept as is>"
         return "\n".join(lines)
 
@@ -327,6 +387,11 @@ class Vault:
                 if n not in self.lines:
                     raise ConfigError("a hidden comment line is not one this page showed; delete that line")
                 lines[i] = self.lines[n]
+                continue
+            for note in HIDDEN_NOTE.finditer(line):
+                if int(note.group(1)) not in self.lines:
+                    raise ConfigError("a hidden comment is not one this page showed; delete it")
+            lines[i] = HIDDEN_NOTE.sub(lambda m: self.lines[int(m.group(1))], line)
         text = "\n".join(lines)
         if not HIDDEN.search(text):
             return text
@@ -726,7 +791,7 @@ def write(path: Path, text: str, base_sha: str) -> Path | None:
     it (config.toml.bak-<time>, as configedit does), then the new one written in one step, as private as the old one
     was. Returns the backup (None for a new file). Raises Stale when the file changed, ConfigError when `text` does
     not load."""
-    if HIDDEN.search(text) or HIDDEN_LINE.search(text.replace("\r\n", "\n")):
+    if HIDDEN.search(text) or HIDDEN_NOTE.search(text) or HIDDEN_LINE.search(text.replace("\r\n", "\n")):
         raise ConfigError("the text still has a hidden placeholder in it; nothing written")
     load_text(text)
     now = base_of(path)

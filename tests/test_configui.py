@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -417,6 +418,17 @@ async def test_the_tools_page_lists_each_server_its_tools_tiers_flags_and_logins
     await daemon.close()
 
 
+def test_the_page_has_config_and_tools_tabs_under_settings_and_puts_text_in_as_text():
+    page = (brainui.UI_DIR / "index.html").read_text(encoding="utf-8")
+    for name in ("config", "tools"):
+        assert f'data-section="{name}"' in page and f'<section id="{name}"' in page
+    assert page.index('data-section="settings"') < page.index('data-section="config"') < page.index('data-section="system"')
+    script = (brainui.UI_DIR / "app.js").read_text(encoding="utf-8")
+    assert "config/check" in script and "config/save" in script and '"tools"' in script
+    assert "innerHTML" not in script and "insertAdjacentHTML" not in script and "eval(" not in script
+    assert 'a.yes_by && !a.yes_by.includes("ui")' in script          # no Yes button for a change the page asked for
+
+
 # ----------------------------------------------------------------------------- the security review's cases
 
 
@@ -450,6 +462,49 @@ def test_a_secret_in_a_trailing_comment_or_a_plain_value_is_hidden_and_put_back(
     masked = vault.mask(text)
     assert SECRET not in masked and vault.unmask(masked) == text
     assert vault.scrub(f"voice.x = {SECRET!r} is wrong") == "voice.x = '<hidden 1: kept as is>' is wrong"
+
+
+@pytest.mark.parametrize("text", [
+    f'# api_key = "{SECRET}"\n',                                                # a commented-out key
+    f'# args = ["--api-key", "{SECRET}"]\n',                                     # a commented-out flag and value
+    f'# env = {{ NOTES = "{SECRET}" }}\n',                                       # a commented-out env table
+    '# Authorization: Bearer sk-kestrel-0429\n',
+    f'[voice]\nlanguage = "en"   # the old key was {SECRET}\n',                  # a trailing comment
+    f'[voice]\nlanguage = "en"   # ghp_{"a1" * 12}\n',                           # a token-like word
+    f'[brain]\nollama_url = "http://127.0.0.1:11434"   # was https://u:{SECRET}@ollama.example\n',
+    f'[tools.servers.x]\ncommand = "x"\nenv = {{ A = """\n{SECRET}\n""" }}\n',   # a multi-line string in an inline table
+    f'[tools.servers.x]\ncommand = "x"\nargs = [\n  "--token",\n  "{SECRET}",\n]\n',                # a multi-line array
+    f'[gate.examples]\n"kind.request" = ["a"]\n[[gate.secrets]]\npassword = "{SECRET}"\n',          # an array of tables
+])
+def test_secrets_in_comments_inline_tables_arrays_and_long_strings_are_hidden_and_come_back(text):
+    vault = configform.Vault()
+    masked = vault.mask(text)
+    secret = SECRET if SECRET in text else "a1" * 12
+    assert secret not in masked, masked
+    back = vault.unmask(masked)
+    assert tomllib.loads(back) == tomllib.loads(text)                           # the same values (a long string may be
+    assert back == text or '"""' in text                                      # written as a plain one)
+
+
+def test_a_hidden_trailing_comment_leaves_its_key_editable_and_the_template_shows_whole():
+    vault = configform.Vault()
+    text = f'[voice]\nlanguage = "en"   # was {SECRET}\n'
+    masked = vault.mask(text)
+    assert masked.startswith('[voice]\nlanguage = "en"   # <hidden note')
+    edited = vault.unmask(masked.replace('"en"', '"fi"'))
+    assert edited == text.replace('"en"', '"fi"')
+    template = default_toml()
+    assert "<hidden" not in configform.Vault().mask(template)                   # its examples are no secrets
+
+
+async def test_the_settings_tab_hides_a_token_in_arguments_or_an_address_too(aiohttp_client):
+    config = quiet_config()
+    config.tools.servers = {"notes": {"command": "notes-mcp", "args": ["--api-key", SECRET],
+                                      "url_note": f"https://u:{SECRET}@x.example"}}
+    client = await aiohttp_client(create_app(Daemon(reactor=CannedReactor(), config=config)))
+    signed = await sign_in(client)
+    settings = await (await signed.get("/ui/api/settings")).text()
+    assert SECRET not in settings and "notes-mcp" in settings
 
 
 def test_a_placeholder_is_never_written(tmp_path):
