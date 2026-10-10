@@ -208,6 +208,21 @@ def no_real_microphone(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_whisper(monkeypatch):
+    """Nor the real whisper: a daemon built with the default config has voice on, and its listener would
+    load faster-whisper, downloading the model first into the test run's empty Hugging Face cache. The load
+    runs in a daemon thread that outlives the test, and an interpreter exit during the download or the
+    native load hangs or aborts the run ("terminate called without an active exception"). Here the load
+    fails at once and voice reports why; tests/test_voice.py hands the listener fake transcribers."""
+    from strawberry_crab import voice
+
+    def refuse(config):
+        raise AssertionError("the real whisper model is out of bounds in tests")
+
+    monkeypatch.setattr(voice, "whisper_transcriber", refuse)
+
+
+@pytest.fixture(autouse=True)
 def no_real_hotkey(monkeypatch):
     """Nor a key the user presses: the Windows tray's hotkey tests register Ctrl+Alt+Shift+F24,
     which no keyboard has, and anything else is refused (tests/test_wintray.py)."""
