@@ -132,6 +132,10 @@ class SpeechConfig:
     voices_dir: str = ""                                    # default ~/.local/share/strawberry/voices
     speed: float = 1.0                                      # 1.25 = a quarter faster
     volume: float = 1.0
+    # How lively the voice is (Piper's own variation; 0 = the voice's default, 0.667 and 0.8 for most).
+    # Higher noise_scale varies pitch and tone more, higher noise_w the rhythm; past ~1.0 / ~1.3 it slurs.
+    noise_scale: float = 0.0
+    noise_w: float = 0.0
     quiet_hours: str = ""                                   # e.g. "22:00-08:00": bubble only, no sound
     max_chars: int = 400                                    # longer lines are cut before synthesis
     keep_files: int = 3                                     # recent wavs kept so a playing one is not deleted
@@ -419,6 +423,9 @@ def _validate(config: Config) -> None:
         raise ConfigError("speech.speed must be between 0.25 and 4")
     if config.speech.volume < 0:
         raise ConfigError("speech.volume must be >= 0")
+    for knob in ("noise_scale", "noise_w"):
+        if not (0.0 <= getattr(config.speech, knob) <= 2.0):
+            raise ConfigError(f"speech.{knob} must be between 0 (the voice's own) and 2")
     if config.speech.keep_files < 1:
         raise ConfigError("speech.keep_files must be >= 1")
     if config.voice.max_seconds <= 0 or config.voice.silence_s <= 0:
@@ -697,6 +704,8 @@ def default_toml() -> str:
         "# Install a voice:  strawberry voices en_US-amy-medium    (list at rhasspy.github.io/piper-samples)",
         f"speed = {s.speed}                 # 1.25 = a quarter faster",
         f"volume = {s.volume}",
+        f"noise_scale = {s.noise_scale}           # liveliness of pitch and tone: 0 = the voice's own (0.667); try 0.8-0.9",
+        f"noise_w = {s.noise_w}               # liveliness of rhythm: 0 = the voice's own (0.8); try 1.0-1.15",
         f'quiet_hours = "{s.quiet_hours}"           # e.g. "22:00-08:00": bubble only, no sound',
         f"max_chars = {s.max_chars}",
         "",

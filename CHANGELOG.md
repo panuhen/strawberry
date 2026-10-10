@@ -9,6 +9,9 @@ package and the widget binary.
 
 ### Added
 
+- A livelier voice without changing it. `[speech] noise_scale` and `noise_w` set Piper's own variation of
+  pitch and tone and of rhythm; 0 (the default) keeps the voice's own. Around 0.85 and 1.1 she sounds
+  less flat; much higher and the voice starts to slur.
 - The beat comes with the bar and the section, for bodies that pulse on the predicted beat. Each
   tempo estimate now also says how many beats a bar has (four, or three for a waltz), where the
   next beat sits in it and when the next downbeat is, with a confidence; and whether the track is

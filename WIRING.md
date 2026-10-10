@@ -800,6 +800,8 @@ enabled = false                  # true: Piper reads every line aloud (CPU)
 voice = "en_GB-alba-medium"      # a name in voices_dir, or a path to an .onnx
 speed = 1.0                      # 1.25 = a quarter faster
 volume = 1.0
+noise_scale = 0.0                # liveliness of pitch and tone: 0 = the voice's own (0.667); 0.8-0.9 livelier
+noise_w = 0.0                    # liveliness of rhythm: 0 = the voice's own (0.8); 1.0-1.15 livelier
 quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 
 [learning]

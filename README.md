@@ -151,7 +151,7 @@ The settings you are most likely to change:
 | `[media]` | `only`, `ignore` | which media players she follows |
 | `[beat]` | `enabled` | `false` stops her listening to the player's audio for the beat |
 | `[voice]` | `enabled`, `model`, `device` | speech recognition: whisper size, `cpu` or `cuda` |
-| `[speech]` | `enabled`, `voice`, `quiet_hours` | her voice (off by default; the bubble always shows) |
+| `[speech]` | `enabled`, `voice`, `quiet_hours`, `noise_scale`, `noise_w` | her voice (off by default; the bubble always shows); the two noise settings make it livelier |
 | `[brain]`, `[thinker]` | `reaction_model`, `action_model` | which Ollama models she uses |
 | `[tools.servers.*]` | | MCP servers; see [ADAPTERS.md](ADAPTERS.md) and [Web search](#web-search-optional) |
 | `[tools.servers.*]` | `flags`, `offer` | what a server without an add-on is (`private`, `foreign`, `egress`; unset: all three, the safe default) and when she gets its tools (`always`, `topic`, `asked`); see [ADAPTERS.md](ADAPTERS.md) |

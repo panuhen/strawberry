@@ -145,6 +145,38 @@ def test_config_section_and_validation(tmp_path: Path):
     path.write_text("[speech]\nspeed = 9\n")
     with pytest.raises(ConfigError, match="speech.speed"):
         load(path, env={})
+    path.write_text("[speech]\nnoise_scale = 0.85\nnoise_w = 1.1\n")
+    lively = load(path, env={}).speech
+    assert (lively.noise_scale, lively.noise_w) == (pytest.approx(0.85), pytest.approx(1.1))
+    path.write_text("[speech]\nnoise_w = 3\n")
+    with pytest.raises(ConfigError, match="speech.noise_w"):
+        load(path, env={})
+
+
+def test_liveliness_reaches_piper(monkeypatch, tmp_path: Path):
+    """0 keeps the voice's own variation (None to Piper); a set value goes through as is."""
+    import sys
+    import types
+
+    seen = []
+
+    class FakeVoice:
+        @staticmethod
+        def load(path):
+            return FakeVoice()
+
+    def config(**kwargs):
+        seen.append(kwargs)
+        return kwargs
+
+    monkeypatch.setitem(sys.modules, "piper", types.SimpleNamespace(PiperVoice=FakeVoice, SynthesisConfig=config))
+    from strawberry_crab.speech import Speaker, piper_synth
+
+    piper_synth(tmp_path / "v.onnx", 1.0, 1.0)
+    assert seen[-1]["noise_scale"] is None and seen[-1]["noise_w_scale"] is None
+    speaker = Speaker(SpeechConfig(noise_scale=0.85, noise_w=1.1))
+    speaker.synth_factory(tmp_path / "v.onnx", 1.25, 0.5)
+    assert seen[-1] == {"length_scale": 0.8, "volume": 0.5, "noise_scale": 0.85, "noise_w_scale": 1.1}
 
 
 async def test_daemon_voices_lines_but_keeps_given_audio(voice: SpeechConfig, tmp_path: Path):

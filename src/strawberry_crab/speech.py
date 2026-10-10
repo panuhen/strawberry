@@ -12,6 +12,7 @@ are kept so a widget that is still playing one is not cut off.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import re
 import tempfile
@@ -85,13 +86,16 @@ def wav_seconds(path: Path) -> float:
         return w.getnframes() / float(w.getframerate() or 1)
 
 
-def piper_synth(model_path: Path, speed: float, volume: float) -> Synth:
+def piper_synth(model_path: Path, speed: float, volume: float, noise_scale: float = 0.0,
+                noise_w: float = 0.0) -> Synth:
     """Load a Piper voice and return a synth callable. Import is local: tests never need Piper."""
     from piper import PiperVoice, SynthesisConfig
 
     voice = PiperVoice.load(model_path)
-    # length_scale stretches phonemes: 2.0 is half speed, so speed 1.25 -> 0.8.
-    syn = SynthesisConfig(length_scale=1.0 / max(speed, 0.25), volume=volume)
+    # length_scale stretches phonemes: 2.0 is half speed, so speed 1.25 -> 0.8. The noise scales are the
+    # voice's variation (pitch and tone, rhythm); None keeps the voice's own from its .onnx.json.
+    syn = SynthesisConfig(length_scale=1.0 / max(speed, 0.25), volume=volume,
+                          noise_scale=noise_scale or None, noise_w_scale=noise_w or None)
 
     def synth(text: str, wav: wave.Wave_write) -> None:
         voice.synthesize_wav(text, wav, syn_config=syn)
@@ -107,7 +111,8 @@ class Speaker:
         clock: Callable[[], dtime] | None = None,
     ) -> None:
         self.config = config
-        self.synth_factory = synth_factory or piper_synth
+        self.synth_factory = synth_factory or functools.partial(
+            piper_synth, noise_scale=config.noise_scale, noise_w=config.noise_w)
         self.clock = clock or (lambda: datetime.now().time())
         self.quiet = parse_quiet_hours(config.quiet_hours)
         self.voices_dir = Path(config.voices_dir).expanduser() if config.voices_dir else default_voices_dir()
