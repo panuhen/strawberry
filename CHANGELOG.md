@@ -169,7 +169,24 @@ package and the widget binary.
   `~/.local/share/strawberry/gate/heads/` with a `current` pointer. `scripts/gate_heldout_check.py`
   prints the same comparison from a checkout.
 
+- A key for talking to her. On its first start the daemon makes a random secret,
+  `~/.local/state/strawberry/bus-secret` (0600; on Windows in `%LOCALAPPDATA%\strawberry\state\`),
+  and from then on every POST to it (`/event`, `/perform`, `/tempo`, `/command`, `/listen`, `/probe`,
+  `/ui-token`) needs it in the `X-Strawberry-Secret` header, and a body's hello needs it as `secret`
+  before she takes its typing, pokes, ✕ or approval answers, or shows it an approval card. Her
+  widget, tray, doorways, git hooks and the `strawberry` command present it. A body without it
+  still gets her performances and, on protocol 2, the run phases, so a purely visual body keeps
+  working; it is told `input.refused` (`no_secret`, `bad_secret`) when it tries more. Another user
+  on the computer or a sandboxed app can no longer make her act, answer her questions or open the
+  Brain UI. PROTOCOL.md §1.4, WIRING.md §2.
+
 ### Changed
+
+- **Clients of the daemon need the bus secret.** A script that posted with `curl` adds
+  `-H "X-Strawberry-Secret: $(cat ~/.local/state/strawberry/bus-secret)"`; a widget built before
+  this version still shows everything, but cannot type to her or answer a card until it is
+  updated (`strawberry widget --fetch`). A body from elsewhere reads the same file and sends it in
+  its hello.
 
 - Her moves are eased. The baked clips use Bézier keys, `alert_snap` snaps her claws a little past
   the mark and settles, and the end of `notify_perk` lands softly. In the widget the wave's claw

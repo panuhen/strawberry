@@ -164,13 +164,20 @@ The settings you are most likely to change:
 
 Files she keeps: settings in `~/.config/strawberry/`, the widget binary and voices in
 `~/.local/share/strawberry/`, logs and state in `~/.local/state/strawberry/`. The XDG variables
-are respected. On Windows: settings in `%APPDATA%\strawberry\`, the widget, voices and cache in
+are respected. Her key for talking to the daemon is `bus-secret` in the state folder (see
+[Privacy](#privacy)); delete it and restart her for a new one. On Windows: settings in `%APPDATA%\strawberry\`, the widget, voices and cache in
 `%LOCALAPPDATA%\strawberry\`, logs and state in `%LOCALAPPDATA%\strawberry\state\`.
 
 ## Privacy
 
 Everything runs on your machine. The models run in your local Ollama, speech recognition and
-her voice run locally, and the daemon listens only on `127.0.0.1`. Strawberry makes no network
+her voice run locally, and the daemon listens only on `127.0.0.1`. On its first start it makes a
+random key, `~/.local/state/strawberry/bus-secret` (on Windows
+`%LOCALAPPDATA%\strawberry\state\bus-secret`), readable only by you; her widget, her tray, the
+`strawberry` command and the watchers present it, and the daemon takes nothing that would make her
+act or speak without it. Another user on the computer, or a sandboxed app, can watch what she
+does but cannot type to her, answer her questions or open the Brain UI. Programs you run yourself
+can read the key, as her widget does. Strawberry makes no network
 requests of its own except to download what you ask for: the widget binary from this project's
 GitHub releases, and models and voices from Ollama and Hugging Face during setup. An MCP server
 you add is its own program and may use the network (the Spotify one talks to Spotify).
@@ -295,8 +302,8 @@ The link works once, within a minute; the page then runs on a cookie that ends a
 without use or when she restarts. Everything stays on this machine and the page loads nothing
 from the internet. Sentences show only while the learning log is on. No other web page can
 reach her: every other address refuses browsers, and this one takes only its own page, signed
-in. Programs you run yourself could always talk to her; the sign-in keeps web pages out, not
-other programs on your computer. No browser opening (a remote shell, say)?
+in. The sign-in link needs her key (see [Privacy](#privacy)), so other users on the computer cannot
+get one; programs you run yourself can. No browser opening (a remote shell, say)?
 `strawberry ui --no-browser` prints the link.
 
 ## Spotify (optional)
