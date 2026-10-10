@@ -9,8 +9,9 @@ without one, from its config (`[tools.servers.<name>] flags = [...]`):
               address, a name others may see
 
     web        foreign + egress        (adapters/web.py)
-    spotify    private + egress, and foreign per result (adapters/spotify.py: names reach the thinker only
-               as short quoted fields; a result with free text or instruction-like wording is foreign)
+    spotify    private + egress, and every result with a name in it foreign (adapters/spotify.py `view`):
+               trust is not decided by what a name says; what it can steer is bounded by the tiers
+               (play, skip, volume, the queue are `playback` and go ahead; a like or a save asks)
     messages   private + foreign       (brain step 6, stage 6)
     recall     private + foreign + egress   (stage 4)
     a server with no adapter and no `flags`: all three, the safe default
@@ -27,7 +28,7 @@ What the thinker does with them (Thinker._run) cannot be switched off:
         are taken out of the conversation, and at most three rounds remain;
       a call to a private or egress server whose results are not in it is refused;
       a call to an egress server that carries a phrase of the private context is refused;
-      every call that is not `read` waits for the user's yes, with a question code writes
+      every call above `playback` waits for the user's yes, with a question code writes
         (approvals.needed(..., foreign=True); confirm.hold without the adapter's wording);
       her answer is kept in the ledger as a placeholder and logged as its length.
     always: control characters are taken out of every result (`clean`), and a private, foreign or

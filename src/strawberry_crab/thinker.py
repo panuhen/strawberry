@@ -712,7 +712,10 @@ class Thinker:
                     log.info("thinker: %s.%s not called: more than %d calls in one reply", spec.server, spec.name,
                              MAX_CALLS_A_ROUND)
                     refusal = TOO_MANY
-                elif tainted and self.toolbox.egress(spec.server) and carries_private(arguments, phrases):
+                elif (tainted and self.toolbox.egress(spec.server) and self.toolbox.risk(spec.server, spec.name) != "playback"
+                      and carries_private(arguments, phrases)):
+                    # A playback call (play a playlist by its name) steers the user's own player and nothing
+                    # anyone else reads: the user's library names may go into it.
                     log.info("thinker: %s.%s not called: it carried a part of the private context", spec.server,
                              spec.name)
                     refusal = PRIVATE_IN_CALL
@@ -734,8 +737,8 @@ class Thinker:
                          duration=0.0, ok=False, error="refused")
                     messages.append({"role": "tool", "tool_name": name, "content": refusal})
                     continue
-                # Once strangers' text is in the conversation every call that is not a read waits for a
-                # yes (approvals.needed `foreign`), whatever its tier and confirm list.
+                # Once strangers' text is in the conversation every call above `playback` waits for a
+                # yes (approvals.needed `foreign`), whatever its confirm list.
                 if spec is not None and self.toolbox.needs_approval(spec.server, spec.name, foreign=tainted):
                     # A tool she asks about first (confirm.py, approvals.py): not made, and the thinking
                     # ends here with her question, written by code (after foreign text, the core's own

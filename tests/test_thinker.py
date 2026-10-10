@@ -338,7 +338,7 @@ async def test_an_argument_request_goes_to_qwen_with_cover(aiohttp_client):
     # The situation she was given: the date, the player, then the sentence.
     first_user = thinker.chat.payloads[0]["messages"][1]["content"]
     assert first_user.startswith("Situation: Today is ")
-    assert "Now playing on Spotify: Feeling Good by Nina Simone (album: I Put a Spell on You)." in first_user
+    assert 'Now playing on Spotify: "Feeling Good" by "Nina Simone" (album: "I Put a Spell on You").' in first_user
     assert first_user.endswith("The user says: put on some jazz")
     daemon.vocabulary = ["Daft Punk", "New Order"]
     await client.post("/event", json={"source": "voice", "title": "put on some jazz"})

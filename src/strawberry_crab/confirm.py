@@ -145,12 +145,13 @@ async def hold(toolbox: Toolbox, adapter: Any, server: str, name: str, arguments
 
     `foreign`: strangers' text is in the conversation (trust.py), so the arguments may be theirs. The
     line is then the core's own, naming the tool and nothing from the arguments, and the adapter is not
-    asked: its wording could carry an argument onto her card, the bus and into her spoken question.
+    asked: its wording could carry an argument onto her card, the bus and into her spoken question; unless
+    the adapter says its wording never does (`asks_after_foreign`: Spotify's removals).
 
     `run` is the run that asks (runs.py). The daemon opens the approval for it once she has said the
     question (`Daemon.hold`: `approval.request`, and the run waits in `awaiting_approval`)."""
     question, kept = generic_question(name), dict(arguments)
-    if foreign:
+    if foreign and not getattr(adapter, "asks_after_foreign", False):
         adapter = None
     ask = getattr(adapter, "ask", None) if adapter is not None else None
     if ask is not None:

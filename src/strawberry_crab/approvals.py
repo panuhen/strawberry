@@ -7,8 +7,8 @@ the one open question and who may answer it. A call waits for a yes when
     its tier is `sends` or `destructive`           (Toolbox.risk: [approvals] risk, the adapter, MCP's
                                                     destructiveHint, which only ever raises a tier)
 
-and, since stage 3 of brain step 6, every call that is not `read` once text from strangers (a foreign
-server's result, trust.py) is in the conversation (`needed(..., foreign=True)`, from Thinker._run). The
+and, since stage 3 of brain step 6, every call above `playback` (play, pause, skip, volume, the queue) once
+text from strangers (a foreign server's result, trust.py) is in the conversation (`needed(..., foreign=True)`, from Thinker._run). The
 question is then the core's own, naming only the tool (confirm.hold `foreign`).
 
     approval = book.request(run, held)      # approval.request on the run: awaiting_approval
@@ -58,6 +58,10 @@ from .runs import Run, emit
 log = logging.getLogger("strawberryd.approvals")
 
 ALWAYS = frozenset({"sends", "destructive"})       # these wait for a yes whatever the confirm lists say
+# What may still go ahead without a yes once strangers' text is in the conversation: reads, and changes to what
+# plays that the user undoes in a second. Trust is not decided by what the text says; what it can do is bounded
+# by the tier (WIRING §20).
+UNDER_FOREIGN = frozenset({"read", "playback"})
 OUTCOMES = ("yes", "no", "timeout", "cancelled", "superseded")
 BY = ("voice", "typed", "body", "ui")
 HISTORY = 50
@@ -66,9 +70,9 @@ TICK_S = 0.25          # how often a wait past its expiry looks again while the 
 
 def needed(listed: bool, risk: str, foreign: bool = False) -> bool:
     """Does a call wait for a yes? On its server's `confirm` list, or of the `sends` or `destructive`
-    tier, or, with `foreign` (WIRING §20: text from strangers is in the conversation), any that is not
-    `read`."""
-    return listed or risk in ALWAYS or (foreign and risk != "read")
+    tier, or, with `foreign` (WIRING §20: text from strangers is in the conversation), any above `playback`:
+    `change` (saving, liking, adding to a playlist, any other server's change), `sends`, `destructive`."""
+    return listed or risk in ALWAYS or (foreign and risk not in UNDER_FOREIGN)
 
 
 @dataclass(eq=False)

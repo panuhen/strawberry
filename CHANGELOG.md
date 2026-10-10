@@ -182,10 +182,11 @@ package and the widget binary.
 - A trust model for her tools. Each server is `private` (its results are yours), `foreign` (they
   carry text others wrote) and `egress` (a call sends something off the computer), from its add-on
   or, for a server without one, from `flags` in its table; a server nobody described is all three.
-  Web search is foreign and egress; Spotify private and egress, and a Spotify result with free text
-  (a playlist description) or a name worded like an instruction counts as foreign. Once foreign text
-  is in a conversation, your private context leaves it, private and egress tools are refused, and
-  anything else that would change something waits for your yes, asked in her own fixed words. WIRING.md §20.
+  Web search is foreign and egress; Spotify private and egress, and every Spotify result with a name
+  in it is foreign: names are written by others, and no text is trusted or distrusted by what it says.
+  Once foreign text is in a conversation, your private context leaves it, private and egress tools are
+  refused, and anything above the new `playback` tier (play, pause, skip, volume, the queue) waits for
+  your yes, asked in her own fixed words: a like, a save, a playlist change. WIRING.md §20.
 - `offer = "always" | "topic" | "asked"` per server: when she gets its tools. `[thinker] tool_tokens`
   (4000): a budget for the tool descriptions in the big model's prompt beside `max_tools`; past
   either the least likely are left out, and the log says which.

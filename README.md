@@ -160,7 +160,7 @@ The settings you are most likely to change:
 | `[learning]` | `log_outcomes` | keep what you say and how it was routed, locally, so she can learn from it (off); see [Learning](#learning) |
 | `[learning]` | `auto_switch`, `weekly_line` | put a better router in use without asking (off); say once a week what she learned (off) |
 | `[runs]` | `events`, `supersede`, `keep` | the chip under her bubble and the Brain UI's Runs (`events`); whether a new sentence stops the one she is on (`supersede`, on) or waits; how many finished runs the Brain UI keeps |
-| `[approvals]` | `change_s`, `sends_s`, `destructive_s`, `grace_s`, `hold`, `risk` | the calls that wait for your yes: how long she waits per tier (10, 30, 30 s) and at most how much longer while you are still answering (10 s), which tiers need a press-and-hold on her card, and a tool's (or a server's) tier: `read`, `change`, `sends`, `destructive` |
+| `[approvals]` | `change_s`, `sends_s`, `destructive_s`, `grace_s`, `hold`, `risk` | the calls that wait for your yes: how long she waits per tier (10, 30, 30 s) and at most how much longer while you are still answering (10 s), which tiers need a press-and-hold on her card, and a tool's (or a server's) tier: `read`, `playback`, `change`, `sends`, `destructive` |
 | `[thinker]` | `stream` | read the big model's reply as it is written, for the tokens-per-second gauge (on) |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 

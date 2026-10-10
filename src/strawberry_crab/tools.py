@@ -342,7 +342,7 @@ class Server:
             return True
 
     def risk(self, name: str, overrides: dict[str, str] | None = None) -> str:
-        """The approval tier of one of this server's tools (approvals.py): read | change | sends |
+        """The approval tier of one of this server's tools (approvals.py): read | playback | change | sends |
         destructive. An `[approvals] risk` entry for the tool ("server.tool") decides, taken as written:
         the one way to lower a tool below what its adapter or its server says. Otherwise the adapter's own
         tier (`Adapter.risk`), else `change`; a tool the server marks destructiveHint is raised to

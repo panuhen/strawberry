@@ -570,8 +570,8 @@ once at connect and then every 5 s, and keeps the offset of the quickest of its 
 
 Some calls wait for the user's yes before they are made (`approvals.py`, WIRING §19): the tools on
 a server's `confirm` list (Spotify's two removals), every call of the `sends` or `destructive`
-tier, and, once text from strangers is in the conversation (a web result; WIRING §20), every call
-that is not a read. The prompt of such a request is the brain's own wording, naming the tool and
+tier, and, once text from strangers is in the conversation (a web result, a Spotify name; WIRING §20),
+every call above `playback`. The prompt of such a request is the brain's own wording, naming the tool and
 nothing from the call's arguments ("Shall I go ahead with lamp on?"). The run that reached the call says her question as a performance, as in v1 ("Remove
 'Teardrop' from Gym? Say yes."), then opens an approval and waits. A body that declared
 `capabilities.approvals` (§9b) gets the request and can show it as a card; one that also declared
@@ -589,7 +589,7 @@ UI; whichever answer comes first decides.
 |---|---|---|
 | `approval_id` | string, `a-<boot>-<n>` | what an answer names: `<boot>` is 6 hex digits drawn at each daemon start, `<n>` counts from 1, so a card left over from before a restart never matches a new question |
 | `run_id`, `seq`, `t` | | as for every run event (§11b); the request is a step of the run |
-| `risk` | `read` \| `change` \| `sends` \| `destructive` | the call's tier. `change`: it changes something that can be put back (a track off a playlist). `sends`: something reaches other people or leaves for someone (a message, an email). `destructive`: it deletes, or cannot be undone. `read` is possible for a tool on a `confirm` list |
+| `risk` | `read` \| `playback` \| `change` \| `sends` \| `destructive` | the call's tier. `playback`: what plays and how (possible only for a tool on a `confirm` list). `change`: it changes something that can be put back (a track off a playlist). `sends`: something reaches other people or leaves for someone (a message, an email). `destructive`: it deletes, or cannot be undone. `read` is possible for a tool on a `confirm` list |
 | `prompt` | string, one line, at most 160 characters | what the card shows: the adapter's `describe` line, by default her question without "Say yes.". Written by code for display; it says nothing her spoken question does not already say, and never carries the call's arguments as they came |
 | `timeout_s` | number | how long she waits: 10 s for `change` (and `read`), 30 s for `sends` and `destructive` (`[approvals] change_s`, `sends_s`, `destructive_s`) |
 | `expires_t` | number | brain monotonic time when it runs out (`t` + `timeout_s`); map it to the body's clock with §12.1 for a countdown |

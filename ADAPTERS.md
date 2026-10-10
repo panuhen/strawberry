@@ -50,7 +50,8 @@ list (`confirm` on the adapter; the Spotify one asks about its two removals) or 
 asks about nothing. A tool can be on both lists, on one, or on neither. `/health.confirm` shows what
 she is waiting for.
 
-Every tool also has an approval tier: `read`, `change`, `sends` (something reaches other people, or
+Every tool also has an approval tier: `read`, `playback` (what plays and how, undone in a second: play,
+pause, skip, volume, the queue), `change`, `sends` (something reaches other people, or
 leaves the machine for someone: a message, an email) or `destructive` (deletes, or cannot be
 undone). A `sends` or `destructive` call is always asked about, confirm list or not, and waits 30 s
 (`sends_s`, `destructive_s`); on her card its yes is a press-and-hold. The tier comes from
@@ -60,7 +61,7 @@ it is `change`. A server that marks a tool `destructiveHint` raises it to `destr
 annotation never lowers a tier, so `readOnlyHint` does not make a tool `read` here. A whole-server
 entry (`"notes" = "read"`) then sets the server's ordinary tools, but never lowers a tool below its
 adapter's tier or its `destructiveHint`: only the tool's own entry can. Once text from strangers is in
-a conversation, every call that is not `read` is asked about too (WIRING §20). The card shows one line, the adapter's `describe` (by default her question without "Say
+a conversation, every call above `playback` is asked about too (WIRING §20). The card shows one line, the adapter's `describe` (by default her question without "Say
 yes."), cut to 160 characters, and goes on the bus to every body that shows approvals. **Rule for
 `sends` and `destructive` tools:** neither `describe` nor the question `ask` writes may carry free
 text from the arguments: no message body, no note text, nothing being sent. Naming the target is
@@ -73,7 +74,7 @@ server:
 | flag | means | what follows |
 |---|---|---|
 | `private` | its results are the user's own (their library, what they play, their messages or notes) | once text from strangers is in a conversation, its tools are refused there |
-| `foreign` | its results carry text written by others (a web page, a snippet, a message) | once one of its results is in a conversation, the user's private context leaves it, private and egress tools are refused, and every call that is not a read waits for a yes with a question the core writes |
+| `foreign` | its results carry text written by others (a web page, a snippet, a message) | once one of its results is in a conversation, the user's private context leaves it, private and egress tools are refused, and every call above `playback` waits for a yes with a question the core writes |
 | `egress` | a call sends what it carries off the machine to someone else (a query, an address, a name others may see) | once text from strangers is in, a call that carries a phrase of the user's private context is refused |
 
 An adapter declares its server's flags (`private`, `foreign`, `egress` on the class). A server
@@ -85,7 +86,7 @@ the adapter says holds.
 | server | flags |
 |---|---|
 | web | foreign, egress |
-| Spotify | private, egress, and foreign per result: names written by others reach the brain only as short quoted fields, and a result with a description, an over-long field or instruction-like wording counts as foreign for the sentence (`view`). Not foreign as a server: every "play X" after a search would then wait for a yes |
+| Spotify | private, egress, and every result with a name in it foreign (`view`): names are written by others, and trust is not decided by what they say. What they can steer is bounded by the tiers: its play, pause, skip, volume and queue tools are `playback` and go ahead; a like, a save or a playlist change asks |
 | no adapter, no `flags` | private, foreign, egress |
 
 The flags also decide the journal: a private, foreign or unknown server's calls are logged as the
@@ -126,7 +127,8 @@ An adapter is for a server you use every day, where the generic path is not good
 | `log_result` | what the journal says of a call: a count and a size, never a result |
 | `log_detail` | `True` to have the journal carry the arguments and a result's first 160 characters; ignored for a private or foreign server |
 | `private`, `foreign`, `egress` | the trust flags (above, WIRING §20) |
-| `view`, `reads_as_foreign` | for the brain's calls: the text it reads and whether that counts as strangers' text, decided in one pass, and the final text read once more (Spotify: listed fields only, quoted; a description, an instruction-like name or an error makes the result foreign for the rest of the sentence). An exception in either counts as foreign. `view` is `shape_result` and "not foreign" by default |
+| `view`, `reads_as_foreign` | for the brain's calls: the text it reads and whether that counts as strangers' text, decided in one pass, and the final text read once more. Decide by where text comes from, never by what it says (Spotify: every result with a name is foreign; listed fields only, quoted, cut). An exception in either counts as foreign. `view` is `shape_result` and "not foreign" by default |
+| `asks_after_foreign` | `True` when `ask` and `describe` never put an argument as it came into her question or card: they are then still used after strangers' text |
 | `offer` | when the brain is offered this server's tools: `always`, `topic`, `asked` (above); the config's `offer` decides over it |
 | `reflex_tools` | which of the server's tools each reflex calls: a reflex whose tools would wait for a yes is not run and the brain asks instead |
 | `guide`, `guide_for`, `unavailable` | a paragraph for the brain's rules when its tools are offered (`guide_for`: only for a server that lists the tools it names), or when the server is down |
@@ -207,8 +209,8 @@ Rules the core relies on:
   Say per-sentence things in a `nudge`, which goes under the sentence.
 - **A `foreign` server's results are never trusted.** Once one is in a conversation, the
   thinker takes the ledger, the situation (but the date) and the other servers' results out of
-  it, refuses every private or egress server's tool, asks before any call that is not a read (in its
-  own words: an adapter's `ask` and `describe` are not used then), and leaves three rounds; the
+  it, refuses every private or egress server's tool, asks before any call above `playback` (in its
+  own words: an adapter's `ask` and `describe` are not used then, unless it sets `asks_after_foreign`), and leaves three rounds; the
   adapter's `guard` decides each further call, `forward` sends it in the form that was checked, and
   `screen` may still refuse it on a check that waits on the network (a DNS lookup). Say which flags
   your server has: an adapter that sets none says its server is none of them.
@@ -224,8 +226,9 @@ adapter wants the same pair.
 
 The worked example, `strawberry/adapters/spotify.py` (private and egress: why, in the table above).
 Its results reach the brain one line per hit, names quoted and cut to 80 characters, descriptions
-dropped (`tracks: 5`, then `1. "Blue Monday" – "New Order" ("Substance") · uri=spotify:track:…`), a
-result with free text or instruction-like wording counts as foreign (WIRING §20), its schemas keep `device_id` only where playback starts
+dropped (`tracks: 5`, then `1. "Blue Monday" – "New Order" ("Substance") · uri=spotify:track:…`), every
+result with a name counts as strangers' text, and its playback tools are `playback` so they still go
+ahead after one (WIRING §20), its schemas keep `device_id` only where playback starts
 (`play`, `play_liked`), and the journal gets counts ("5 tracks, 812 chars"), never a name. Its server is a separate MCP wrapper around
 the Spotify Web API, not shipped with her: you install it, register a Spotify app and authorise it
 once. The one this adapter was written against is

@@ -265,7 +265,10 @@ class RunsConfig:
     keep: int = 50                 # finished runs kept in memory for the Brain UI
 
 
-RISKS = ("read", "change", "sends", "destructive")
+# The approval tiers, lowest first (approvals.py, WIRING §19, §20). `playback` is a change to what plays and
+# how, local to the user's player and undone in a second (play, pause, skip, volume, the queue): unlike
+# `change`, it does not wait for a yes once strangers' text is in the conversation.
+RISKS = ("read", "playback", "change", "sends", "destructive")
 TRUST_FLAGS = ("private", "foreign", "egress")     # = trust.FLAGS
 OFFERS = ("always", "topic", "asked")
 
@@ -283,7 +286,7 @@ class ApprovalsConfig:
     grace_s: float = 10.0          # …for at most this much longer past the wait (a stuck mic cannot hold it open)
     hold: list[str] = field(default_factory=lambda: ["sends", "destructive"])
                                    # tiers whose yes on a body's card must be a press-and-hold
-    # A tool's tier, by "server.tool" or a whole "server": read | change | sends | destructive, taken as
+    # A tool's tier, by "server.tool" or a whole "server": read | playback | change | sends | destructive, taken as
     # written. Without one: the adapter's own tier, else `change`, raised to `destructive` when the server
     # marks the tool destructiveHint (an annotation only ever raises a tier).
     risk: dict[str, str] = field(default_factory=dict)
@@ -765,7 +768,7 @@ def default_toml() -> str:
         f"grace_s = {ap.grace_s}                # while you are still answering, at most this much longer",
         f"hold = {json.dumps(ap.hold)}   # on her card, a yes to these tiers is a press-and-hold",
         '# risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }',
-        "#                              # a tool's (or a whole server's) tier: read | change | sends | destructive;",
+        "#                              # a tool's (or a whole server's) tier: read | playback | change | sends | destructive;",
         "#                              # a whole server's never lowers a tool its adapter or server marks higher",
         "",
         "# Example exchanges she imitates. Uncomment and edit to change her register.",

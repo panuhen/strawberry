@@ -64,7 +64,7 @@ GAUGES: dict[str, frozenset[str]] = {
 CODES: dict[tuple[str, str], frozenset[str]] = {
     ("routing", "path"): frozenset({"reflex", "escalate", "fixed", "chat"}),
     ("tool.completed", "error"): frozenset({"timeout", "refused", "failed", "unavailable"}),
-    ("approval.request", "risk"): frozenset({"read", "change", "sends", "destructive"}),
+    ("approval.request", "risk"): frozenset({"read", "playback", "change", "sends", "destructive"}),
     ("approval.resolved", "answer"): frozenset({"yes", "no", "timeout", "cancelled", "superseded"}),
     ("approval.resolved", "by"): frozenset({"voice", "typed", "body", "ui"}),
     ("run.completed", "outcome"): frozenset({"spoken", "silent", "nothing"}),

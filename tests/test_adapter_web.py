@@ -480,7 +480,8 @@ async def test_a_page_is_read_only_from_the_search_results_even_first():
 
 async def test_the_other_servers_results_are_withheld_once_a_web_result_is_in():
     box, _ = web_box(spotify=True)
-    qwen = SnapshotQwen([[("get_current_track", {})], [("searxng_web_search", {"query": "new order tour"})],
+    # A Spotify result with no name in it (a volume): not strangers' text, so it is withheld, not tainting.
+    qwen = SnapshotQwen([[("set_volume", {"volume": 50})], [("searxng_web_search", {"query": "new order tour"})],
                      "[neutral] They're touring, it says."])
     thinker = Thinker(ThinkerConfig(), box, "qwen-test", chat=qwen)
     await thinker.run("is this band touring")

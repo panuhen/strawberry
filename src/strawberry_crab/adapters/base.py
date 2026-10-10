@@ -85,7 +85,7 @@ class Adapter:
     #: what they play, their messages). `foreign`: its results carry text written by others (web pages,
     #: snippets, messages): once one is in a conversation, the thinker takes the user's private context
     #: out of it, refuses every private or egress server's tools but this one's, asks before anything
-    #: that is not a read (Thinker._run), and `guard` checks each further call. `egress`: a call sends
+    #: above `playback` (Thinker._run), and `guard` checks each further call. `egress`: a call sends
     #: what it carries off the machine to someone else (a query, an address, a name others may see):
     #: once foreign text is in, a call that carries a phrase of the user's private context is refused.
     #: An adapter that sets none says its server is none of them; a server with no adapter is all three
@@ -98,6 +98,10 @@ class Adapter:
     #: server's topic, or one `wanted` says asks for it) or "asked" (only one `wanted` says asks for it,
     #: or that names the server). The config's `offer` decides over it
     offer: str = "always"
+    #: True when `ask` and `describe` never put an argument as it came into her question or card (only names the
+    #: server returned, cut, and plain words): they are then still used after strangers' text (confirm.hold);
+    #: otherwise the core's own question, naming the tool, is
+    asks_after_foreign: bool = False
     #: True: the journal may say what this server's calls carry (the first 160 characters of a result,
     #: the arguments); only for a server that is neither private nor foreign. Off: counts and sizes
     log_detail: bool = False
