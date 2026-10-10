@@ -287,7 +287,7 @@ class Watcher:
                  face_factory: Callable[[Path], Any] | None = None) -> None:
         self.config_path = config_path
         self.open_camera = camera_opener or (lambda spec, fps: open_camera(spec, fps))
-        self.make_recognizer = recognizer_factory or (lambda model: Recognizer(model, self.settings.hands))
+        self.make_recognizer = recognizer_factory or (lambda model: Recognizer(model, self.recognizer_hands))
         self.make_face = face_factory or FaceReader
         self.face: Any = None              # the face model (FaceReader), or None: missing, or it did not load
         self.face_state = ""               # on | missing | failed; "" until the camera first opened
@@ -301,6 +301,7 @@ class Watcher:
         self.tracker = Tracker()
         self.camera: Any = None
         self.recognizer: Any = None
+        self.recognizer_hands = 1          # the hands the recogniser was made for (hands_wanted)
         self.camera_failed_at = -1e9
         self.last_frame_at = 0.0
         self.state: dict[str, Any] = {"enabled": False, "armed_s": 0.0, "approval": None,
@@ -356,9 +357,6 @@ class Watcher:
                      fresh.camera or "the first")
         if was is not None and (was.camera != fresh.camera or was.fps != fresh.fps):
             self.release("the camera setting changed")
-        if was is not None and was.hands != fresh.hands and self.recognizer is not None:
-            self.release(f"following {fresh.hands} hand(s) now")
-            self.drop_recognizer()
 
     def once(self, key: str, level: int, message: str) -> None:
         if key not in self.said:
@@ -407,6 +405,7 @@ class Watcher:
                 self.release("not armed")
                 return 0.5
             self.tracker.arm(self.open_until)   # opened for commands: they count while it is open
+        self.follow_hands(started)
         if not self.ensure_camera(started):
             return 1.0
         self.frame(started)
@@ -435,6 +434,7 @@ class Watcher:
             return False
         try:
             if self.recognizer is None:
+                self.recognizer_hands = self.hands_wanted()
                 self.recognizer = self.make_recognizer(gestures.model_file())
             self.load_face()
             self.camera = self.open_camera(self.settings.camera, self.settings.fps)
@@ -481,8 +481,31 @@ class Watcher:
             self.send_hand({"present": False})
         self.tracker = Tracker(self.tracker.settings)
 
+    def hands_wanted(self) -> int:
+        """How many hands to follow now: `[gestures] hands` (2) while a body asks for the hand (the orbs, the Input
+        tab's live view: the second hand is for them), else one. The second costs about as much again as the first
+        while a hand is up (WIRING §26, measured), and nothing while none is."""
+        return self.settings.hands if self.state.get("wanted", {}).get("hand") else 1
+
+    def follow_hands(self, now: float) -> None:
+        """A change in the hands wanted makes the recogniser again (about 25 ms), the camera staying open."""
+        want = self.hands_wanted()
+        if self.recognizer is None or want == self.recognizer_hands:
+            return
+        log.info("following %s now", "two hands" if want == 2 else "one hand")
+        self.drop_recognizer()
+        if self.camera is None:
+            return
+        try:
+            self.recognizer_hands = want
+            self.recognizer = self.make_recognizer(gestures.model_file())
+        except Exception as exc:   # noqa: BLE001 - a broken model: let the camera go, try again later
+            self.release("the recogniser did not load")
+            self.camera_failed_at = now
+            self.once(f"recognizer:{exc}", logging.WARNING, f"the recogniser did not load: {exc}")
+
     def drop_recognizer(self) -> None:
-        """Let the model go (a new number of hands): the next camera opening makes it again."""
+        """Let the model go: the next camera opening (or follow_hands) makes it again."""
         recognizer, self.recognizer = self.recognizer, None
         close = getattr(recognizer, "close", None)
         if close is not None:

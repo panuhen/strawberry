@@ -388,7 +388,7 @@ def test_hands_is_one_or_two_in_the_config_and_in_input_toml(tmp_path):
     assert "hands = 2" in inputs.render(Config().gestures, Config().touch)
 
 
-def test_the_watcher_asks_the_model_for_the_hands_the_setting_says(tmp_path, monkeypatch):
+def test_the_watcher_follows_two_hands_only_while_a_body_wants_the_hand(tmp_path, monkeypatch):
     made: list[int] = []
 
     class FakeRecognizer:
@@ -409,11 +409,21 @@ def test_the_watcher_asks_the_model_for_the_hands_the_setting_says(tmp_path, mon
     from tests.test_gestures import Clock, FakeCamera, FakeDaemon
 
     clock = Clock()
+    daemon = FakeDaemon()                                     # a body wants the hand
     watcher = gesture_watch.Watcher("http://127.0.0.1:1", path, camera_opener=lambda spec, fps: FakeCamera(),
-                                    poster=FakeDaemon(), clock=clock)
+                                    poster=daemon, clock=clock)
     spin(watcher, clock, 1.0)
     assert made == [1] and watcher.camera is not None
+    # hands = 2 in the file: the model is made again for two, the camera staying open.
+    camera = watcher.camera
     path.write_text("[gestures]\nenabled = true\nhands = 2\n")
     os.utime(path, (clock.now + 5, clock.now + 5))
     spin(watcher, clock, 2.0)
-    assert made == [1, -1, 2] and watcher.camera is not None
+    assert made == [1, -1, 2] and watcher.camera is camera
+    # No body wants the hand any more: one is enough (the second costs as much again); wanted again: two.
+    daemon.state["wanted"] = {"gesture": True, "hand": False}
+    spin(watcher, clock, 2.0)
+    assert made == [1, -1, 2, -1, 1] and watcher.camera is camera
+    daemon.state["wanted"] = {"gesture": True, "hand": True}
+    spin(watcher, clock, 2.0)
+    assert made == [1, -1, 2, -1, 1, -1, 2]
