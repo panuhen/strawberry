@@ -190,6 +190,8 @@ class ToolsConfig:
     # server is for the trust model (private, foreign, egress; trust.py): a server with no adapter and no
     # flags is all three, and flags only add to an adapter's; offer is when the thinker gets its tools:
     # always (the default), topic (a sentence of its topic) or asked (a sentence that asks for it).
+    # A server reached over streamable HTTP has a `url` (https, or http on this machine) instead of a command,
+    # and logs in with `strawberry tools login <name>` (remote.py); recall's adapter reads `workspaces`.
     # Empty by default: no server ships configured, and music control works over MPRIS without one.
     servers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -453,8 +455,22 @@ def _validate(config: Config) -> None:
         if key.split(".")[0] not in ("kind", "topic"):
             raise ConfigError(f"gate.examples key {key!r} must start with kind. or topic.")
     for name, server in config.tools.servers.items():
-        if not isinstance(server, dict) or not isinstance(server.get("command"), str) or not server["command"]:
+        if not isinstance(server, dict):
+            raise ConfigError(f"tools.servers.{name} must be a table")
+        command, url = server.get("command"), server.get("url")
+        if (command is None) == (url is None):
+            raise ConfigError(f"tools.servers.{name} needs a command or a url (one of them)")
+        if command is not None and not (isinstance(command, str) and command):
             raise ConfigError(f"tools.servers.{name} needs a command")
+        if url is not None:
+            from .remote import url_problem   # local: it brings the SDK's HTTP client
+
+            why = url_problem(url)
+            if why:
+                raise ConfigError(f"tools.servers.{name}.url: {why}")
+        workspaces = server.get("workspaces", [])
+        if not isinstance(workspaces, list) or not all(isinstance(w, str) for w in workspaces):
+            raise ConfigError(f"tools.servers.{name}.workspaces must be a list of workspace names or ids")
         if not isinstance(server.get("topic", "other"), str):
             raise ConfigError(f"tools.servers.{name}.topic must be a string")
         if not all(isinstance(a, str) for a in server.get("args", [])):
@@ -473,8 +489,8 @@ def _validate(config: Config) -> None:
             raise ConfigError(f"tools.servers.{name}.flags must list some of {', '.join(TRUST_FLAGS)} (trust.py)")
         if server.get("offer", "always") not in OFFERS:
             raise ConfigError(f"tools.servers.{name}.offer must be one of {', '.join(OFFERS)}")
-        unknown = set(server) - {"topic", "command", "args", "env", "cwd", "careful", "confirm", "adapter", "flags",
-                                 "offer"}
+        unknown = set(server) - {"topic", "command", "url", "args", "env", "cwd", "careful", "confirm", "adapter",
+                                 "flags", "offer", "workspaces"}
         if unknown:
             raise ConfigError(f"tools.servers.{name}: unknown keys {sorted(unknown)}")
     if config.tools.result_chars < 100:
@@ -768,6 +784,11 @@ def default_toml() -> str:
         '# command = "/full/path/to/npx"',
         '# args = ["-y", "mcp-searxng@2.5.1"]',
         '# env = { SEARXNG_URL = "http://127.0.0.1:8888", NODE_OPTIONS = "--dns-result-order=ipv4first" }',
+        "#",
+        "# [tools.servers.recall]                 # your recall notes, read-only (README: Your notes);",
+        "# topic = \"notes\"                        # then run: strawberry tools login recall",
+        '# url = "https://recall.example.com/mcp" # a remote MCP server: https (or http on this machine)',
+        '# workspaces = ["My project"]            # the only workspaces she may read, by name or id; [] is none',
         "",
         "[actions]",
         "enabled = true                 # the reflexes: skip, pause, what's playing… (needs [gate])",
