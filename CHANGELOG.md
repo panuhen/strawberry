@@ -9,6 +9,18 @@ package and the widget binary.
 
 ### Added
 
+- **Hand gestures through the webcam (opt-in).** Hold a thumbs up to like the playing track, swipe for the
+  next or previous one, hold an open palm to pause, point to talk to her; a held thumbs up or down also
+  answers the question on her card (a yes only for one a tap answers). A ring beside her fills while you hold.
+  Off by default: `uv sync --inexact --group gpu --group gestures` (or the `gestures` extra), `strawberry
+  gestures fetch` for the model, then `strawberry gestures on` or the tray's *Hand gestures (camera)* row.
+  One watcher process owns the camera and runs MediaPipe on the CPU (about 5 % of a core while it looks for a
+  hand, 18 % while one is up); frames are never stored, logged or sent, and only gesture names and a few
+  numbers about the hand reach the daemon. `[gestures] watch = "armed"` keeps the camera off until
+  `strawberry gestures arm`. `[gestures.map]` may name only reflexes that change what plays and how; anything
+  else stops her from starting, with the reason. A raised hand must be in the zone and held still, a swipe
+  must start from a hand that was already up, and a shape fires once per hold. Bodies can ask for `gesture`
+  and `hand` (PROTOCOL Part 1c). README *Hand gestures*, WIRING §25.
 - A livelier voice without changing it. `[speech] noise_scale` and `noise_w` set Piper's own variation of
   pitch and tone and of rhythm; 0 (the default) keeps the voice's own. Around 0.85 and 1.1 she sounds
   less flat; much higher and the voice starts to slur.

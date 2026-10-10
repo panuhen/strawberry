@@ -47,6 +47,13 @@ Optional extra `strawberry-crab[gpu]`: `nvidia-cublas-cu12` and `nvidia-cudnn-cu
 NVIDIA proprietary licence shipped in those wheels. They are only needed for whisper on CUDA. On
 Windows only cuBLAS is used; CTranslate2's Windows wheel carries its own cuDNN entry DLL.
 
+Optional extra `strawberry-crab[gestures]` (the `gestures` group in a checkout), for hand gestures:
+[mediapipe](https://github.com/google-ai-edge/mediapipe) (Apache-2.0), which pulls in
+[opencv-contrib-python](https://github.com/opencv/opencv-python) (OpenCV is Apache-2.0; its wheels
+bundle FFmpeg and, on Linux, Qt, under the LGPL), matplotlib (the Matplotlib licence, PSF-based),
+absl-py and flatbuffers (Apache-2.0) and sounddevice (MIT). Nothing in Strawberry imports them unless
+`[gestures] enabled = true`.
+
 Development only (the `dev` group, not installed for users): pytest (MIT), pytest-aiohttp
 (Apache-2.0), pillow (MIT-CMU, for `scripts/render_icons.py`), jeepney (MIT, so the D-Bus tests
 run on every system).
@@ -66,6 +73,7 @@ Setup names the licence of each model before it pulls it.
 | The brain (tools, questions) | `qwen3.8:27b` | Ollama library | Apache-2.0 is expected for the Qwen3 family; check the model card on Ollama or Hugging Face before you pull it |
 | Speech recognition weights | whisper `small` (config `[voice] model`) | Hugging Face (the CTranslate2 conversions faster-whisper uses) | MIT (OpenAI Whisper weights) |
 | Her voice | Piper `en_GB-alba-medium` | Hugging Face, [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) | the voice is trained on the Edinburgh "Alba" dataset, licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); see the voice's `MODEL_CARD` |
+| The hand gesture recogniser (only with `[gestures]` on) | `gesture_recognizer.task`, float16 version 1 (`strawberry gestures fetch`, sha256 checked) | Google's MediaPipe model storage (`storage.googleapis.com/mediapipe-models/…`) | Apache-2.0 (MediaPipe's model card) |
 
 Any other model or voice you choose in the config comes with its own licence; the model card on
 Ollama or Hugging Face says which.
