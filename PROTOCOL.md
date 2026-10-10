@@ -38,7 +38,7 @@ doorways, tray, curl ──HTTP POST──▶  strawberryd  ◀──websocket /
 
 | Route | Body | Answer | Who calls it | Code |
 |---|---|---|---|---|
-| `POST /event` | `{source, app, title, body, urgency, category, icon}` | `{"sent": n, "performance": {…}}` | the doorways, git hooks | `server.py:340-347`, `events.py:35-58` |
+| `POST /event` | `{source, app, title, body, urgency, category, icon}`; a notification burst also `items`: `[{app, title, body}]`, each one of it (at most 20, the body only for an app whose body mode is not `off`) for her inbox (WIRING §24) | `{"sent": n, "performance": {…}}` | the doorways, git hooks | `server.py:340-347`, `events.py:35-58` |
 | `POST /perform` | a performance (§3) | `{"sent": n, "performance": {…}}` | the media doorways, `strawberry say`, curl, tests | `server.py:184-191` |
 | `POST /tempo` | a beat estimate (§4) | `{"sent": n}` | `doorways/beat_watch.py` | `server.py:330-337` |
 | `POST /command` | `{command, value}` (§5) | `{"sent": n, "command": {…}}` | the tray | `server.py:287-304` |

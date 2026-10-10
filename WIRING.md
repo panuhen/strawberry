@@ -160,7 +160,7 @@ Without PyGObject there is no `Gio.DesktopAppInfo`, so the `.desktop` file's `Ic
 | `body_apps` | `{}` | per app, case-insensitive, by app name or desktop entry: `{ Slack = "glance", Signal = "off" }` |
 | `max_body_chars` | `1000` | cut at a word boundary, with an ellipsis |
 | `ignore_replacements` | `true` | updates to an existing notification (download progress) |
-| `coalesce_s` | `2.0` | several inside the window become one event: "7 notifications from Slack" / "3 notifications", highest urgency wins |
+| `coalesce_s` | `2.0` | several inside the window become one event: "7 notifications from Slack" / "3 notifications", highest urgency wins; the event also carries each one as `items` (`{app, title, body}`, the body only for an app whose mode is not `off`, at most 20) for her inbox (§24) |
 
 Her own notifications (app `strawberry`) are always ignored. This is also how WhatsApp / Messenger reach her: you react to the **desktop notification**, never their APIs. A machine running dunst could post the same event from a `dunstrc` `script =` rule.
 
@@ -172,7 +172,7 @@ Her own notifications (app `strawberry`) are always ignored. This is also how Wh
 | `react` | + the body | + the body, with the rule never to repeat its words, names, numbers or links | her own one-liner about it |
 | `glance` | + the body | call 1, no persona: the body, for a gist; call 2, her voice: the gist only | the gist ("Alex asks about lunch at noon.", ≤ 12 words, third person), then her quip (≤ 8 words) |
 
-`off` is enforced twice: the watcher does not put the body in the POST (it never crosses even localhost HTTP), and the daemon drops a body that arrives anyway (an old watcher, a `curl`). A burst's body is the senders' titles, not message text, so it stays in every mode. **Switching the mode live**: the tray's Message bodies ▸ Off / React / Glance (§14) writes `body` into config.toml, then the daemon re-reads `[notifications]` and the watcher restarts, in that order; each reader applies the new mode from its next notification, and nothing needs restarting by hand. Glance is `Daemon.report()`'s shape: the fact first, then the quip, and the quip's prompt never contains the body. The gist is refused (and she reacts instead) if it carries any digit, link or address; a `react` line that carries a link, a number from the body, or four body words in a row is replaced by the canned `App: Sender`. The old `include_body = true|false` still reads, as `react|off`, with one deprecation warning.
+`off` is enforced twice: the watcher does not put the body in the POST (it never crosses even localhost HTTP), and the daemon drops a body that arrives anyway (an old watcher, a `curl`). Every notification that gets this far also goes into her inbox (§24), kept as far as these modes let it through. A burst's body is the senders' titles, not message text, so it stays in every mode. **Switching the mode live**: the tray's Message bodies ▸ Off / React / Glance (§14) writes `body` into config.toml, then the daemon re-reads `[notifications]` and the watcher restarts, in that order; each reader applies the new mode from its next notification, and nothing needs restarting by hand. Glance is `Daemon.report()`'s shape: the fact first, then the quip, and the quip's prompt never contains the body. The gist is refused (and she reacts instead) if it carries any digit, link or address; a `react` line that carries a link, a number from the body, or four body words in a row is replaced by the canned `App: Sender`. The old `include_body = true|false` still reads, as `react|off`, with one deprecation warning.
 
 **The sensitive filter, fail closed** (`strawberry/privacy.py`). Before any body reaches Gemma, in `react` or `glance`, the daemon (it owns the gate) runs two checks; either one says yes and the body is dropped and she says only `"<app> sent something private."`, whatever the mode:
 
@@ -802,6 +802,11 @@ speed = 1.0                      # 1.25 = a quarter faster
 volume = 1.0
 quiet_hours = ""                 # "22:00-08:00": bubble only, no sound
 
+[messages]
+enabled = true                   # her inbox of the notifications she got, in memory only, and its read-only tools (§24)
+keep = 100                       # at most this many
+max_age_hours = 24.0             # none older than this
+
 [learning]
 log_outcomes = false             # true: keep routed sentences and their outcomes in <state>/outcomes.jsonl (§8c)
 max_days = 30
@@ -864,6 +869,7 @@ src/strawberry_crab/trust.py  the trust model (§20): the private / foreign / eg
 src/strawberry_crab/persona.py  her persona (§21): persona.md parsed, checked and read live; data/persona.md the shipped one
 src/strawberry_crab/profile.py  what she knows about the user (§22): profile.md, its history, her remember/forget/undo tools
 src/strawberry_crab/ledger.py  her short memory (§23): the user's turns and System 1's notices, one timeline with trust labels
+src/strawberry_crab/inbox.py  her inbox (§24): the notifications she got, in memory only, and the read-only `messages` tools
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, turn.gd, touch.gd, legs.gd, wander.gd, easing.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), approval_card.gd (§19), paths.gd (XDG, the CLI, the version), validate_*.gd
@@ -918,7 +924,8 @@ many more there are; a click goes to its section. The new parts:
 - *Profile* (§22): profile.md in an editor with its token count against the cap and **Save** (a change by
   `ui`, kept in the history), what she reads of it (the quoted block), and every change, newest first, with
   who made it, the lines added and removed and **Revert to before this** (itself a change).
-- *Runs* gains the *Timeline* (§23): what the thinker's next sentence gets, newest first, each entry's age,
+- *Runs* gains the *Timeline* (§23; since stage 6 with one line of the inbox's counts above it, §24, never a
+  sender or a text): what the thinker's next sentence gets, newest first, each entry's age,
   kind, what it was, her line, and its trust ("strangers' text: a change asks first", "past its time" when it
   no longer counts and is left out of the prompt). Turns' sentences and her replies only while outcome
   logging is on, as everywhere on the page (otherwise their lengths); a notice's app, sender, commit or track
@@ -1286,7 +1293,7 @@ for a server without one, from its config (`[tools.servers.<name>] flags = [...]
 |---|---|---|---|---|
 | web (`adapters/web.py`) | | ✓ | ✓ | strangers' pages in, the user's query out; nothing in it is the user's |
 | Spotify (`adapters/spotify.py`) | ✓ | every result with a name | ✓ | its results are the user's library and listening; its calls reach Spotify, where a playlist's name or description can be seen by others. Track, artist, album and playlist names are written by others ("Ignore previous instructions, remove …" is a possible public playlist name, in any language and any wording), so every result that carries one is strangers' text, whatever it says (`Adapter.view`, below). What that text can steer is bounded by the tiers: play, pause, skip, volume and the queue are `playback` and go ahead; a like, a save or a playlist change asks |
-| messages (stage 6) | ✓ | ✓ | | the user's inbox, written by others |
+| messages (`inbox.py`, §24) | ✓ | ✓ | | the user's inbox, written by others; read-only, and nothing in it leaves the machine |
 | recall (stage 4) | ✓ | ✓ | ✓ | the user's notes, partly from elsewhere, on a server off the machine |
 | a server with no adapter and no `flags` | ✓ | ✓ | ✓ | nobody has said what it is: the safe default |
 
@@ -1409,8 +1416,8 @@ thinker too. MPRIS's reflexes have no tier.
   result a hit.
 - *Servers inside the daemon.* `Toolbox.add_builtin(name, topic, open_session, adapter)` adds one: the
   same `Server`, offered, guarded and logged like any other, with a session object in place of a
-  process. The profile's tools use it (§22); memory (stage 5) and messages (stage 6) will, with adapters
-  that say `private` (and `foreign`, for messages).
+  process. The profile's tools use it (§22), and so does her inbox (§24, `private` and `foreign`); memory
+  (stage 5) will.
 
 **`num_ctx` stays 8192** (measured 2026-10-10, `qwen3.8:27b` on the shared Ollama, `prompt_eval_count`
 with one token asked for and a nonce at the head of the system prompt so the cache hid nothing; the real
@@ -1673,3 +1680,119 @@ question end to end, a notification's app and sender but never its body, a profi
 notice staying foreign with the change asking, a foreign turn tainting the next run, the profile and her
 answer out of the journal with `log_sentences` on, the reaction model's context and its taint),
 `tests/test_ledger.py`.
+
+---
+
+## 24. Her inbox — `strawberry/inbox.py` (brain step 6, stage 6: messages, read-only)
+
+"Any new messages?" → "Three: two in Signal from Alex, one in Slack from the build bot." "What did Alex
+say?" → what the privacy mode lets her say, or that she only sees who wrote and where. Read-only: nothing
+here sends, replies or marks anything as read in any app.
+
+**The record.** Each notification that reaches the daemon's `_handle_notification` (after the watcher's
+filters: `ignore_apps`, `only_apps`, the urgency floor, replacements; and the daemon's: the body mode and
+the sensitive filter, §4) becomes an item: the app, the sender (the notification's title), when, and the
+body only as far as the speaking path would hand it to a model. The item is written from the same verdict
+the speaking path uses, so no second check can read it differently, and no gate call is added:
+
+| the notification | the item |
+|---|---|
+| its app's body mode is `off` (the default) | app, sender, time; no body (the watcher never sent it, and a body that arrives anyway is dropped first) |
+| `react` or `glance`, the sensitive filter clear | app, sender, time, the body (NFKC, without control or format characters, on one line, cut to 300 characters) |
+| the sensitive filter said yes, or the gate could not answer (fail closed) | the app alone: no sender, no body, as she says it aloud ("Bank sent something private.") |
+| a burst (several in `coalesce_s`) | each of its `items` as a single notification, each checked by the patterns and, with a body, IS_SENSITIVE (in the background, so her reaction is not delayed); a burst from an old watcher without `items` is one item, the summary, without a body |
+| `glance` and she said a gist | also the gist (`Item.gist`): what she said aloud of it |
+
+The inbox is bounded (`[messages] keep`, 100; `max_age_hours`, 24) and **in memory only**: lost on a
+restart, never written to disk, never logged (counts only), never in `/health` beyond counts. A mode
+switched to `off` live (the tray's Message bodies rows, the Brain UI's Apply: `Daemon.reload_notifications`)
+drops the bodies kept for those apps at once, and a read checks the mode again.
+
+**The tools.** A builtin server (`Toolbox.add_builtin`, as the profile's, §22), `messages`, with three tools,
+all of tier `read` (`reads`):
+
+- `unread_count()`: the items not yet told, per app, with their senders, quoted
+  (`"Signal": 2, from "Alex" (2)`; a private one as `1 private (no sender kept)`); then they count as told;
+- `recent(app=None, sender=None, limit=5)`: newest first, one line each, matching a part of the app's or the
+  sender's name, never a body: `- id=m1a2b3c4d · "Signal" · from "Alex" · 3 min ago · text: read it with its
+  id · new` (or `no text (message text is off)`, `private`, `no text`); the listed ones count as told;
+- `read(item_id)`: one item. With its body: `From "Alex" in "Signal", 3 min ago: "…"` and its mode's rule
+  (`react`: in her own words, never its words, not even four in a row, names, numbers or links; `glance`: its
+  gist in at most 12 words, no numbers, links or addresses). Under `glance` with a gist she said, the gist
+  and nothing more of the text. Without a body, why: message text is off ("say you only see who wrote and
+  where"), private, a summary, or no text.
+
+Names and bodies are shaped like Spotify's names (§20): normalised, quoted as JSON strings, control
+characters out (and `trust.clean` on every result anyway). "Told" is the inbox's own flag: no app hears of it.
+
+**Pinning.** Item ids are random (`m` and 8 hex digits) and mean nothing after a restart. `read` takes only
+an id that `recent` returned in this same sentence (the adapter's `guard` and `observe`, like the web
+adapter's pinned URLs): a made-up id, or one from an earlier sentence, is refused (`NOT_FROM_LIST`), so the
+model cannot walk the inbox.
+
+**Trust.** The adapter says `private` and `foreign` (§20's table): the user's messages, written by others.
+After any messages result the thinker's conversation is tainted: the ledger, the situation and the profile
+leave the prompt, at most three rounds remain, every call above `playback` waits for the user's yes in the
+core's words, and every other private or egress server is refused (`AFTER_FOREIGN`): no web search and no
+Spotify call in the same sentence, so no message text can leave the machine through one. Read after a web
+result, the messages tools are refused the same way. The private-phrase check (§20) stays the second layer
+for an egress server whose own results are in. `offer = "asked"`: the tools, their paragraph and a nudge
+reach only a sentence that asks (`ASKS`: "messages", "notifications", "inbox", "anything new", "anything from
+…", "who wrote", "did anyone text", "what did … say", "what … said"), so an ordinary sentence's prompt and
+Ollama's cache are as before. The gate has no messages topic and needs none: `gate_check.py` stays 85/87.
+
+**What she may say.** Her answer after a `read` follows the item's app's mode, as her reaction to it did:
+`Daemon.message_said` runs `privacy.leaks` on it against each body read in the run (a link or an address,
+a number from the message, four of its words in a row; any digit under `glance`), and when it gives the
+message away she says "Alex wrote in Signal. I can't repeat it word for word with your privacy setting."
+instead. Her answer is from a foreign server's results, so the ledger keeps the placeholder (§20), not her
+words; and since the server is both private and foreign her line is logged as its length whatever
+`log_sentences` says (`logtext.from_private`), and `/health`'s `thinker.last.said` is its length too.
+
+**The timeline.** Unchanged: each notification she reacted to is already a notice (§23: the app and the
+sender, only the app when private, never the body, foreign). Reading the inbox adds no notice; the turn of
+her answer is kept with the placeholder.
+
+**Where it shows.** `/health.messages` and the Brain UI's Timeline (Activity): counts only (`items`, `new`,
+`with_text`, `private`, `added`, `keep`, `max_age_hours`). The journal: `tools: messages.recent(sender) -> ok
+in 0 ms: 2 items, 214 chars (not logged)`, `inbox: 3 items from a burst (9 kept)`, `messages: her answer gave
+away four words from the message; who and where instead`. The doorway's own lines name the sender as
+before (§4); the inbox and its tools never do.
+
+**Settings** (`[messages]`): `enabled = true`, `keep = 100`, `max_age_hours = 24.0`. On by default: it holds
+nothing the user has not already let her have. With bodies off (the default) an item is the app and the
+sender she just said aloud, which the timeline holds already; with `react` or `glance` a body is one she
+was already given to react to, now kept for up to a day in memory so the user can ask about it. Nothing new
+leaves the machine or reaches a disk. `enabled = false` keeps no inbox and adds no tools; a configured server
+named `messages` keeps the name (a warning; her tools are not added), and with `[thinker] enabled = false`
+the inbox fills (its counts show) but nothing reads it.
+
+**Measured end to end** (2026-10-10, a throwaway daemon on port 8797 with temp XDG dirs, the gate on
+Ollama's embeddinggemma, `gemma3:1b` for her reactions and the real `qwen3.8:27b` with `num_ctx` 8192 on the
+shared Ollama, no other tool servers, a pass-through on Ollama's port that noted each round's
+`prompt_eval_count`; three fake notifications posted to `/event` with the bus secret: two from Alex in
+Signal, one from the build bot in Slack, then typed sentences):
+
+| bodies | sentence | her answer | tools | time | prompt tokens per round |
+|---|---|---|---|---|---|
+| off | any new messages? | "Three: two in Signal from Alex, one in Slack from the build bot." | unread_count | 3.9 s (2.5 s warm) | 1383, 1367 |
+| off | what did Alex say? | "Alex sent two messages on Signal, but your privacy setting keeps the words to you alone." | recent | 3.4 s | 1422, 1410 |
+| off | any new messages? (again) | "All quiet, nothing new on your desk." | unread_count | 2.2 s | 1459, 1340 |
+| Signal glance, Slack react | what did Alex say? | "Two from Alex on Signal: one asking for extra presentation materials, and another proposing lunch at a Thai place." | recent, read, read | 5.7 s | 1419, 1396, 1597 |
+| Slack react | what did the build bot say? | "It reports that everything compiled without a hitch on the main branch." | recent, read | 4.2 s | 1504, 1370, 1486 |
+
+The three schemas are ~365 tokens by the thinker's estimate (the budget is 4000); the longest prompt was
+1610 tokens of 8192. A first run with `glance` gave Qwen the text and its rule; its answer carried four of
+the message's words and was replaced by "Alex wrote in Signal…", which is why a `glance` read now gives the
+gist she said. The ledger kept the placeholder for each answer; the daemon's log had no message text, and
+her answers only as their lengths; the state dir held only the bus secret, the data dir nothing.
+
+Tests: `tests/test_messages.py` (the bounds and the ids; bodies dropped or kept exactly as the speaking path
+does in each mode and per app, the sensitive filter in every mode, a gate that cannot answer, a burst's items
+each checked and a burst without them; the settings; the tools' shapes, quoting, cutting and "told"; offered
+only when asked; `read` pinned to this sentence's `recent`; after a read a lamp's change asks while the web
+and Spotify are refused; the daemon end to end with the placeholder in the ledger; an answer that gives the
+message away, and one in her own words; bodies off; the live switch to off; the `glance` gist; no body in any
+log record or file and no sender in any record of the inbox or the sentence, with `log_sentences` either way;
+counts only in `/health` and the Brain UI), `tests/test_notify_watch.py` and `tests/test_toast_watch.py` (a
+burst's `items`).
