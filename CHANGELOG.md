@@ -9,6 +9,21 @@ package and the widget binary.
 
 ### Added
 
+- **Open and close your apps, the computer's volume, and the screen lock (Linux).** "Open Spotify" and
+  "close Firefox" work for the apps you allow in the Brain UI's new **Apps** tab (under Settings: every
+  installed app with a search box, ticks for may open, may close and ask before closing, and aliases),
+  saved to `~/.config/strawberry/apps.toml` (a diff first, a `.bak`, read again within a second). With no
+  apps.toml, Spotify may be opened. An app is named by its desktop entry and launched with `gtk-launch`,
+  never a command line; closing is polite only (a media player's Quit, or the window's close request
+  through `wmctrl` or xdotool's `windowquit`), never a kill. Closing asks on her card first unless you
+  untick it; opening asks only when text from others is in her run. A play that finds no Spotify device
+  opens Spotify when it is allowed ("Opening Spotify…"), waits up to 15 s for it and plays there. "Set the
+  computer volume to 30", "system volume down" and "mute the computer" set the default output's volume
+  (wpctl or pactl, 0–100, never a boost). "Lock the screen" or "lock my computer" locks at once
+  (`loginctl lock-session`, else GNOME's screensaver), and a gesture you map to the new `lock` action does
+  the same: the one gesture action above playback, never mapped by default. The whole sentences are done
+  without a model; anything else goes to the thinker, which is offered these tools only when you ask for
+  them and never the lock. README *What she does*, WIRING §27 (and §17, §26).
 - **Hand gestures, version 2.** New gestures: point to your left or right (previous, skip), pinch and
   slide your hand up or down to set the volume (a slider the bodies draw; at most four volume calls a
   second, the last level when you let go), wave to have her wave back, a finger to your lips to keep her

@@ -892,6 +892,8 @@ src/strawberry_crab/ledger.py  her short memory (§23): the user's turns and Sys
 src/strawberry_crab/inbox.py  her inbox (§24): the notifications she got, in memory only, and the read-only `messages` tools
 src/strawberry_crab/gestures.py  hand gestures (§26): the map and its tiers, /gesture and /hand, the runs; gesturecmd.py `strawberry gestures`
 src/strawberry_crab/inputs.py    input.toml (§26) laid over [gestures] and [touch], read live; the Input tab's recent list, live view and practice mode (§17)
+src/strawberry_crab/apps.py      the apps she may open or close (§27): the installed desktop entries, apps.toml read live; appsui.py the Apps tab's routes
+src/strawberry_crab/desktop.py   the desktop's own controls (§27): the `desktop` builtin server (open, close, the computer's volume, the lock), its said reflexes, Spotify opened for a play
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
 widget/                  Godot 4.7 desktop widget: widget.gd, ws_client.gd, bubble.gd, speech_player.gd, reactions.gd, dance_style.gd, turn.gd, touch.gd, legs.gd, wander.gd, easing.gd, gaze.gd, menu.gd, type_box.gd, step_chip.gd (§18), approval_card.gd (§19), gesture_ring.gd (§26), paths.gd (XDG, the CLI, the version), validate_*.gd
@@ -927,9 +929,9 @@ Or press play in any media player: the MPRIS watcher (§4b) does the rest.
 
 A local web page, served by the daemon, that shows what the router decides and what the learning loop learns (§8a–8d), and lets the user act on it. `strawberry ui` opens it. It calls `learning.py` and reads the daemon's parts; it decides nothing itself.
 
-**The layout (since the persona stage).** Nine sections in five groups, in the side bar: **Her** (Persona,
+**The layout (since the persona stage).** Ten sections in five groups, in the side bar: **Her** (Persona,
 Profile), **Activity** (Runs with its approvals and the shared timeline, Router live), **Learning** (Learning,
-Data and scores), **Settings** (Settings and privacy, Input) and **System**. The page opens on Persona. The header has
+Data and scores), **Settings** (Settings and privacy, Input, Apps) and **System**. The page opens on Persona. The header has
 the 🍓 mark (the page title too) and one "needs your attention" spot: the most urgent of an open approval
 ("She is waiting for your yes"), a persona.md that does not check out, and a candidate head waiting, with how
 many more there are; a click goes to its section. The new parts:
@@ -997,6 +999,13 @@ many more there are; a click goes to its section. The new parts:
   - *Practice mode* (`POST /ui/api/input/practice {on}`; `InputDesk.practice`, runtime only, off at every
     start): a gesture's `done` and a mapped touch are shown (to the page, to the bodies) and do nothing: no
     reflex, no approval answered, no arming; the recent row says what it would have done.
+- *Apps* (`appsui.py`, §27): which apps she may open or close. The installed apps (NoDisplay and Hidden ones left
+  out) in a table with a search box, the listed ones first, each with ticks for *may open*, *may close* and *ask
+  before closing* and a field for aliases; an app listed but no longer installed says so. The list is checked on
+  the server 0.4 s after an edit (`POST /ui/api/apps/check`: `apps.from_view`, then the file's text parsed back)
+  with the diff against the file; **Save** (a second click) writes `apps.toml` (`POST /ui/api/apps/save`: atomic,
+  the old file kept as `apps.toml.bak`, then `AppStore.check` so she uses it at once). Only an installed desktop
+  id can be added; a row with nothing ticked is left out. Never config.toml.
 
 **What it shows**, in six sections (the original ones):
 
@@ -1024,6 +1033,7 @@ many more there are; a click goes to its section. The new parts:
 | `GET /ui/api/profile`; `POST /ui/api/profile/save` (`{text}`), `profile/revert` (`{id}`) | the text, its status, what she reads, the history; a change's refusal (over the cap, nothing changed, a version not kept) is a 409 with the reason | the page |
 | `POST /ui/api/apply` | `[notifications]` read again from config.toml (`{"applied": "notifications", "body": …}`), else 409 | the page |
 | `GET /ui/api/input`; `GET /ui/api/input/live` (events); `POST /ui/api/input/check`, `input/save` (`{settings}`), `input/practice` (`{on}`) | the Input tab: status, settings in use, the dropdowns' choices, bodies, the file and its status, recent; the live view; a draft checked (`ok`, `problems`, `text`, `diff`); saved as input.toml (400 when it does not check out); practice mode | the page |
+| `GET /ui/api/apps`; `POST /ui/api/apps/check`, `apps/save` (`{apps: [{id, name, aliases, open, close, close_asks}]}`) | the Apps tab (§27): the list in use, the installed apps, the file and its status; a list checked (`ok`, `problems`, `text`, `diff`); saved as apps.toml (400 when it does not check out or names an id that is not installed) | the page |
 | `GET /ui/api/runs` | also carries `timeline` (above) | the page |
 
 **The security model.** Every other route refuses any request with an `Origin` header (§2), so no web page the user visits can make her talk, read `/health` or open `/ws`. `/ui` is the one place a browser is let in, on these terms (`brainui.checked`, one decorator on every UI handler; `server.local_only` lets a handler through only when it carries the decorator's mark, so a new route cannot open itself by accident, and an unmatched path such as `/ui/../health` still meets the Origin rule):
@@ -2087,14 +2097,22 @@ may answer, two turns of the pitch by 8° within 1.6 s (the yaw quieter) is a `n
 recognised gesture is already typed. `[gestures.map]` names one of the reflexes voice has, by the gate's tool
 names and the adapters' said reflexes (`gestures.ACTIONS`): `now_playing`, `pause`, `resume`, `skip`,
 `previous`, `volume_up`, `volume_down`, `like`, `play_liked`, `listen` (the hotkey's push to talk:
-`Daemon.listen`), `wave_back`, `quiet` and `volume` (the slider's, `pinch_slide` only, and it only that). The
+`Daemon.listen`), `wave_back`, `quiet`, `volume` (the slider's, `pinch_slide` only, and it only that) and `lock`
+(the screen, below). The
 shipped map: `thumb_up = "like"`, `swipe_left = "previous"`, `swipe_right = "skip"`, `point_left = "previous"`,
 `point_right = "skip"`, `palm_hold = "pause"`, `point_hold = "listen"`, `pinch_slide = "volume"`, `wave =
 "wave_back"`, `shh = "quiet"`; a `[gestures.map]` table replaces it. Counts map to nothing until the user maps
 them. Every action is of the
 `read` or `playback` tier (§20: what plays and how, undone in a second); anything else in the map (a tool, a
 save, a playlist, a message) is refused when the config loads, with the list (`gestures.check_map`,
-`config._validate_gestures`), so she does not start. At run time `Actor.named` finds the reflex as `act` would
+`config._validate_gestures`), so she does not start. **One deliberate exception: `lock`** (since 2026-10-11,
+§27), which locks the screen (`desktop.lock_screen`, of the `change` tier). It is a security feature the user
+wants within reach of a hand, a password undoes it, and it never asks; it is in `gestures.EXCEPTIONS`, the only
+entry there, is never mapped by default (the user maps it in the Input tab), and its run is checked against its
+own tier only (`GestureDesk._run`: `TIERS` plus `change` for `lock` alone; an `[approvals] risk` that raises
+`desktop.lock_screen` still stops it). `Actor.named` reaches the desktop server's said reflexes only through
+its `gesture_reflexes`, which is the lock alone: a gesture can never open or close an app or change the
+computer's volume. At run time `Actor.named` finds the reflex as `act` would
 (a configured music server's adapter, else MPRIS) and `Actor.act_named` makes it the same way (shielded,
 `Guarded`), after `Actor.above` has checked each call its adapter lists (`reflex_tools`) against the tiers:
 an `[approvals] risk` that raises one above `playback`, or a confirm list naming it, and the gesture does
@@ -2253,3 +2271,140 @@ adapter; `/health`; the watcher with gestures off (no camera, no request), on (n
 frame, released when turned off), the hand only when wanted, `watch = "armed"`, MediaPipe or the model missing;
 the core without MediaPipe; the model's digest; and, given `STRAWBERRY_TEST_GESTURE_MODEL`, the real recogniser
 finding no hand in a blank frame), `tests/conftest.py` (`no_real_camera`), `widget/validate_widget.gd` §26.
+
+
+---
+
+## 27. The desktop's own controls — `strawberry/desktop.py`, `apps.py`, `appsui.py`
+
+The minimum on the computer itself, and nothing more: open and close the apps the user lists, the computer's own
+volume, and the screen lock. No GPU, no brightness, no screens, no other system controls, no actions inside an app.
+
+```
+"open spotify" ─gate─▶ Actor.act ─said reflex (any topic)─▶ desktop.open_app ──gtk-launch <desktop id>
+"close firefox"        (whole sentences, no model)          desktop.close_app ──MPRIS Quit | wmctrl -c | xdotool windowquit
+"set the computer                                            desktop.system_volume ── wpctl | pactl, the default sink
+ volume to 30"                                               desktop.lock_screen ── loginctl lock-session | ScreenSaver.Lock
+"lock the screen"      anything else ─▶ the thinker, offered open_app, close_app, system_volume when the sentence asks
+a gesture mapped to `lock` (§26) ─▶ GestureDesk ─▶ Actor.named ─▶ the lock reflex
+```
+
+**The list: `apps.toml`** (`apps.py`), beside config.toml (`~/.config/strawberry/apps.toml`). One table per app,
+keyed by its **desktop id**, the file name of an installed `.desktop` entry:
+
+```toml
+[apps."spotify_spotify.desktop"]
+name = "Spotify"          # what she calls it, and a name the user may say
+aliases = ["music app"]   # other names the user may say
+open = true
+close = false
+close_asks = true         # a close asks on her card first (left out: true)
+```
+
+- *Installed apps* are read from the XDG application dirs (`apps.application_dirs`: `$XDG_DATA_HOME/applications`,
+  each `$XDG_DATA_DIRS/applications`, and snapd's `/var/lib/snapd/desktop/applications`), the earlier dir winning
+  for an id, a Hidden one included (`apps.scan`, at most every 30 s). Only `Type=Application`; the unlocalised
+  `Name`; NoDisplay and Hidden entries are kept (an allowlisted one still works) but not offered in the picker. The
+  names an app's windows and media player may go by (`Entry.classes`: StartupWMClass, the id's stem and a snap's
+  app part, Exec's program) are compared when closing, never run.
+- *A desktop id is checked strictly* (`apps.ID`): letters, digits and `._+-`, ending `.desktop`, anchored at the
+  true end (`\Z`: a trailing newline is not an id), no path, no space, no leading dash. Ids from subdirectories
+  ("kde4-foo.desktop") and names with spaces are not offered. There is never a command line anywhere: an app is
+  launched as `gtk-launch <id>`, by argv.
+- *Names* and aliases are letters (any script), digits, spaces and `. ' & + -`, at most 60 and 40 characters, eight
+  aliases; two apps may not share a name. A sentence or a call names an app by its name or an alias (case and
+  punctuation ignored, "the", "my", "app", "window" trimmed off a spoken one), or, for a call, its desktop id. An id
+  names its own entry before any name is compared, so an alias that reads like another app's id never stands in
+  for it.
+- *With no apps.toml*, Spotify may be opened (not closed) when it is installed (`apps.SPOTIFY_IDS`: the snap's
+  `spotify_spotify.desktop`, `spotify.desktop`, the Flatpak's). The default stands only while there is no file: a
+  file that does not check out at the start allows nothing, and one that breaks later keeps the list she had
+  (as input.toml does, §26), with the reason in the Apps tab and one log line. An id listed but no longer
+  installed stays on the list and is refused when used ("…is not installed any more").
+- *Live*: `AppStore` stats the file once a second (started with the daemon) and right after the page saves it.
+
+**The tools** (the `desktop` builtin server, `Toolbox.add_builtin`, topic `system`; added before the actor so its
+said reflexes are known; a configured server called `desktop` keeps the name and these are not added):
+
+| tool | does | tier |
+|---|---|---|
+| `open_app {app}` | an app on the list with `open`: `gtk-launch <id>`, inside `systemd-run --user --scope --slice=app.slice` when there, so the app is not part of her service (a restart of the service leaves it running); XDG_DATA_DIRS gains the entry's data dir so gtk-launch finds it | `change` |
+| `close_app {app}` | an app on the list with `close`, politely or not at all: its MPRIS player's `Quit` when it has one that says `CanQuit` (matched by `DesktopEntry` or the bus name), else each of its windows' close request, `wmctrl -i -c <id>` for the windows `wmctrl -l -x` lists with its class, else `xdotool windowquit` when that xdotool has it (2021 and later; its help is read once). Never `xdotool windowclose` or `windowkill`, which destroy a window or kill its client, and never a signal | `change`; asks first unless `close_asks = false` |
+| `system_volume {action, level?}` | the default sink only: `get`, `up`/`down` (by 10, or `level`), `set` (`level`), `mute`, `unmute`; `wpctl` (`@DEFAULT_AUDIO_SINK@`), else `pactl` (`@DEFAULT_SINK@`). Clamped to 0–100: never a boost past 100 (a sink boosted elsewhere is stepped from 100). Nothing else in the audio setup is read or changed | `playback` |
+| `lock_screen` | `loginctl lock-session` (the session from XDG_SESSION_ID, else the user's display session from `loginctl show-user`, checked as a plain id), else GNOME's `org.gnome.ScreenSaver.Lock` through gdbus | `change`; never offered to the thinker |
+
+Every program goes through `desktop.run_command` (argv, no shell, stdin closed, a launcher's output not captured
+so an app never holds a pipe of hers, a helper still running after its timeout stopped — the helper, never an
+app); `tests/conftest.py` refuses it outright, so no test can launch, close, lock or change the volume. The
+server's results are code's own sentences ("Opened Spotify.", "Computer volume 30.") or `Not done: <why>.`; its
+flags are none of the three (§20: its results name only the user's own list, nothing leaves the machine), and it
+is offered to the thinker only when a sentence asks (`offer = "asked"`: a verb for an app at its start, or the
+computer's volume named), with a paragraph naming the listed apps and a line under the sentence.
+
+**Whole sentences, no model** (`DesktopAdapter.said_reflex`, `any_topic`: the gate reads "open spotify" and
+"system volume down" as music, "lock the screen" as system, and `Actor.said_reflex_for` asks this adapter
+whatever the topic, never for a sentence the gate reads as `other`): "open|launch|start Spotify", "close|quit
+Firefox", "set the computer volume to 30", "system volume down", "turn up the computer volume", "mute the
+computer", "lock the screen", "lock my computer", each with the polite wrappers the Spotify reflexes take ("could
+you …, please"). Nothing else in the sentence: "lock the screen and play some jazz" or "don't lock the screen" is
+the thinker's. "Turn it down" while music plays stays the music's volume, as before. A name that is not on the
+list ("open gimp") goes to the thinker, whose call is refused ("not on the user's list; they add apps in the Brain
+UI's Apps tab"); a listed app that may not be opened or closed gets a plain line from the reflex ("I'm not allowed
+to open Steam; the Apps tab in the Brain UI can allow it."). The reflex reads its argument from what the said
+reflex parsed (a context variable set in the same task).
+
+**The tiers.** The brief asked for opening as `playback` that asks after strangers' text; `playback` never asks
+(`approvals.UNDER_FOREIGN`), so opening and closing are `change`, which behaves exactly that way: no question on
+the user's own sentence (a reflex never sees foreign text), a question once strangers' text is in the thinker's
+run (a foreign result, a foreign situation line or timeline notice: §20), in the list's own words ("Open Spotify?
+Say yes.", `asks_after_foreign`: only the list's name for the app, never an argument as it came). A close asks
+on her card as well unless the app says `close_asks = false`: `Adapter.confirm_call` decides per call
+(`Toolbox.needs_confirm` with the call's arguments, on every path: the thinker, a reflex through `Guarded`, a
+confirmed call), so the said reflex leaves an asking close to the thinker, which holds the call and opens the
+approval (§19), and a reflex that tried it anyway would be refused. After the yes the stored call is made; its
+permission is checked again then (a list changed meanwhile wins). The volume is `playback`: no question, also
+after strangers' text. The lock is `change` and is reached only by the user's own sentence or a gesture (§26):
+`lock_screen` is not in the adapter's `tools`, so the thinker is never offered it and a call to it is never made
+(the server still lists it, `Server.listed`, which the said reflex needs). An `[approvals] risk` raising any of
+them sends the reflex to the thinker, which asks, as for any reflex (§20).
+
+**Spotify, opened for a play** (`desktop.SpotifyWake`, the toolbox's `recover` hook: after a failed call,
+`Toolbox.call` asks it once for a better result). A `play` or `play_liked` on the Spotify server (its adapter's)
+that fails with `no_active_device` and names no `device_id`, with Spotify's own desktop id on the list with
+`open` and installed (by id only: an app the user merely named "Spotify" never counts, and `open = false` or no
+entry means no auto-open): when this computer's Spotify is already a device (type Computer, named as this host),
+the call is made again on it and nothing is opened; otherwise she launches it as `open_app` would, says "Opening
+Spotify…" (her thinking pose with the line), polls `get_devices` once a second for up to 15 s for a Computer
+device that was not there before, and makes the same call once more with its `device_id`. One that never shows is
+a plain failure, `{"code": "device_timeout"}`, which the Spotify reflexes say as "I tried to resume, but Spotify
+did not show up as a device within 15 seconds of opening it." This launch does not ask after strangers' text: it
+follows a play (`playback`), and what it opens is fixed, never chosen by any text. Reflexes, the thinker's calls
+and a confirmed call all go through `Toolbox.call`, so all of them get it; the reflex timeout (25 s) covers it.
+
+**The Brain UI's Apps tab** (§17, `appsui.py`): the installed apps with a search box and the three ticks and the
+aliases, saved to apps.toml after a check and a diff, as the Input tab saves input.toml. Only an installed id can
+be added. The page says that the volume and the lock need no list.
+
+**What was checked after a security review** (2026-10-11; each with a test): a close with `close_asks` true or
+left out asks on every path; an app not listed, or listed without `open`/`close`, is refused through the reflex,
+the thinker's guard and the session itself; an alias never stands in for another app's desktop id; a broken
+apps.toml never falls back to the default; the Spotify auto-open goes by Spotify's own desktop id and respects
+`open = false`; the lock and the volume are not reachable by a gesture beyond the lock, and the lock not by any
+model; a desktop id with a trailing newline is not an id.
+
+**On this machine, not measured live.** Nothing here was run against the real desktop (the rules forbid launching,
+closing, locking or changing the volume from a test): everything is on fakes. Closing a window needs `wmctrl` or
+an xdotool from 2021 or later; with neither, only an app with an MPRIS player that can quit (Spotify) closes, and
+the others say "closing a window politely needs wmctrl (or a newer xdotool) here". On Wayland the window tools see
+only XWayland windows. On Windows all four say they work on a Linux desktop only for now.
+
+Tests: `tests/test_desktop.py` (open as a reflex with the exact argv and no model; not allowed, not listed, by
+hand; open asking only after a foreign notice, then made after the yes; close asking on the card unless
+`close_asks = false`, the per-call confirm on the reflex path and after strangers' text; politeness: windowquit
+and never windowclose or windowkill, MPRIS Quit, nothing open; the volume sentences, the clamp, the default sink
+only, pactl; the lock as a whole sentence only, never the thinker's, its fallbacks; a gesture mapped to lock, and
+nothing else of the desktop; Spotify opened for a play, the timeout's line, not opened when the list does not allow
+it, an idle device here played on), `tests/test_apps.py` (desktop ids, the scan and its precedence, the default,
+the file's round trip and refusals, the tab's rules, the live store and a broken file, names and ids; the Apps tab
+behind the session, the CSRF header and the Origin, check and save with a backup, never config.toml),
+`tests/conftest.py` (`no_real_desktop_commands`).
