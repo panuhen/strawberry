@@ -486,11 +486,86 @@ def test_secrets_in_comments_inline_tables_arrays_and_long_strings_are_hidden_an
     assert back == text or '"""' in text                                      # written as a plain one)
 
 
+# TOML's forms where a secret can sit (the parser-differential review): each must be hidden as the parser reads it.
+FORMS = [
+    '"token" = "{s}"\n',                                            # a quoted key
+    'a.token = "{s}"\n',                                            # a dotted key
+    '"tok\\u0065n" = "{s}"\n',                                      # a key spelled with an escape
+    "[x]\npassword = '{s}'\n",                                      # a literal string
+    '[x]\npassword = """\n{s}\n"""\n',                              # a multi-line basic string
+    "[x]\npassword = '''\n{s}'''\n",                                # a multi-line literal string
+    '[x]\nsecrets = {{ token = "{s}", other = 1 }}\n',               # an inline table
+    '[[x.creds]]\nauth = "{s}"\n[[x.creds]]\nauth = "{s}2"\n',       # an array of tables
+    '[tools.servers.x]\ncommand = "c"\nargs = [\n  "--token", # the token is next\n  "{s}",\n]\n',  # on the next line
+    '[x]\nnote = """ # not a comment\n"""   # api_key = "{s}"\n',    # a comment after a multi-line string
+    '[x]\nnote = "a # b"   # token: {s}\n',                          # a # inside a string, then a comment
+    '[x]\nnote = "say \\" # still a string"  # was {s}-0a9b8c7d\n',  # an escaped quote before a #
+    '[x]\r\npassword = "{s}"\r\n# api_key = "{s}"\r\n',              # CRLF
+    '[x]\nlines = [\n  "a",  # the token was {s}\n  "b",\n]\n',      # a comment inside a multi-line array
+]
+
+
+@pytest.mark.parametrize("form", FORMS)
+def test_every_toml_form_of_a_secret_is_hidden_as_the_parser_reads_it_and_comes_back(form):
+    text = form.format(s=SECRET)
+    vault = configform.Vault()
+    masked = vault.mask(text)
+    assert SECRET not in masked, masked
+    for path in configform.secret_paths(tomllib.loads(masked)):
+        node = tomllib.loads(masked)
+        for part in path:
+            node = node[part]
+        assert configform.HIDDEN.fullmatch(node)
+    back = vault.unmask(masked)
+    assert tomllib.loads(back) == tomllib.loads(text)
+    assert back == text or "'" in text or '"""' in text                        # a restored string may be requoted
+
+
+def test_random_files_of_those_forms_never_show_a_secret():
+    import random
+
+    rng = random.Random(4471)
+    for _ in range(60):
+        forms = rng.sample(FORMS[3:], k=3)
+        secrets = [f"sk-{rng.randrange(10**8):08d}-{rng.choice('abcdef') * 6}" for _ in forms]
+        text = "".join(f"[t{i}]\n" + form.format(s=secret).replace("[x]", f"[t{i}.x]").replace("[[x.", f"[[t{i}.x.")
+                       .replace("[tools.servers.x]", f"[tools.servers.s{i}]") for i, (form, secret) in enumerate(zip(forms, secrets)))
+        text = text.replace("\r\n", "\n")
+        vault = configform.Vault()
+        masked = vault.mask(text)
+        assert not any(secret in masked for secret in secrets), masked
+        assert tomllib.loads(vault.unmask(masked)) == tomllib.loads(text)
+
+
+def test_numbers_under_a_secrets_name_tokens_in_paths_commands_and_plain_values_are_hidden_too():
+    text = ('[x]\npin = 482916\npassword = 7731.5\ntool_tokens = 4000\n'
+            '[brain]\nollama_url = "https://hooks.example/services/T0A1B2C3D/B0A1B2C3D/abcdEFGH1234ijkl"\n'
+            f'[tools.servers.s]\ncommand = "curl -H Authorization:Bearer {SECRET}"\ntopic = "ghp_{"a1" * 12}"\n')
+    vault = configform.Vault()
+    masked = vault.mask(text)
+    for secret in ("482916", "7731.5", "abcdEFGH1234ijkl", SECRET, "a1" * 12):
+        assert secret not in masked, secret
+    assert "tool_tokens = 4000" in masked                                       # a count, not a secret
+    back = tomllib.loads(vault.unmask(masked))
+    assert back["x"]["pin"] == 482916 and isinstance(back["x"]["pin"], int) and back == tomllib.loads(text)
+
+
+def test_a_hidden_comment_moved_into_a_value_or_a_secret_in_a_key_is_refused():
+    vault = configform.Vault()
+    masked = vault.mask(f'[voice]\nlanguage = "en"   # api_key = "{SECRET}"\n')
+    sentinel = configform.HIDDEN_COMMENT.search(masked).group(0)
+    with pytest.raises(ConfigError, match="moved out of a comment"):
+        vault.unmask(f'[voice]\nlanguage = "{sentinel}"\n')
+    vault.mask(f'[x]\ntoken = "{SECRET}"\n')
+    with pytest.raises(ConfigError, match="cannot be shown here safely"):
+        vault.mask(f'[x]\n"{SECRET}" = 1\n')                                   # a known secret as a key's name
+
+
 def test_a_hidden_trailing_comment_leaves_its_key_editable_and_the_template_shows_whole():
     vault = configform.Vault()
     text = f'[voice]\nlanguage = "en"   # was {SECRET}\n'
     masked = vault.mask(text)
-    assert masked.startswith('[voice]\nlanguage = "en"   # <hidden note')
+    assert masked.startswith('[voice]\nlanguage = "en"   # <hidden comment')
     edited = vault.unmask(masked.replace('"en"', '"fi"'))
     assert edited == text.replace('"en"', '"fi"')
     template = default_toml()

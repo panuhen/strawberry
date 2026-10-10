@@ -161,12 +161,15 @@ def section_names() -> tuple[str, ...]:
 # --------------------------------------------------------------------------------------------- secrets
 
 # A key whose value is a secret (anywhere in the file), an argument that carries one, a comment that names one.
-SECRET_NAME = re.compile(r"token|secret|passw|api[_-]?key|auth|credential|bearer|cookie|private[_-]?key", re.IGNORECASE)
+SECRET_NAME = re.compile(r"token|secret|passw|api[_-]?key|auth|credential|bearer|cookie|private[_-]?key"
+                         r"|(?:^|[_.-])key(?:$|[_.-])|\bpin\b", re.IGNORECASE)
 SECRET_FLAG = re.compile(r"^-{1,2}[\w.-]*(?:token|secret|passw|api[_-]?key|auth|credential|bearer|cookie)[\w.-]*$",
                          re.IGNORECASE)
+NUMERIC_SECRET = re.compile(r"passw|secret|\bpin\b|api[_-]?key|(?:^|[_.-])key(?:$|[_.-])", re.IGNORECASE)
+# config.py's own settings ("thinker.tool_tokens" counts tokens): never a secret by their name.
+_SETTINGS = frozenset((section, f.name) for section, cls in cfg._SECTIONS.items() for f in dataclasses.fields(cls))
 HIDDEN = re.compile(r"<hidden (\d{1,6}): kept as is>")
-HIDDEN_LINE = re.compile(r"^(\s*)# <hidden comment (\d{1,6}): kept as is>\s*$", re.MULTILINE)
-HIDDEN_NOTE = re.compile(r"# <hidden note (\d{1,6}): kept as is>")
+HIDDEN_COMMENT = re.compile(r"# <hidden comment (\d{1,6}): kept as is>")
 
 
 def _server_key(path: tuple) -> str | None:
@@ -180,7 +183,10 @@ def _secret_url(url: str) -> bool:
         return True
     if parts.username or parts.password:
         return True
-    return any(SECRET_NAME.search(k) for k, _v in parse_qsl(parts.query, keep_blank_values=True))
+    if any(TOKEN_LIKE.fullmatch(segment) for segment in parts.path.split("/") if segment):
+        return True              # a token in the path (a webhook's address)
+    return any(SECRET_NAME.search(k) or TOKEN_LIKE.fullmatch(v)
+               for k, v in parse_qsl(parts.query, keep_blank_values=True))
 
 
 def _secret_arg(args: list[Any], i: int) -> bool:
@@ -203,12 +209,16 @@ def secret_paths(data: dict[str, Any]) -> list[tuple]:
         if isinstance(node, dict):
             for key, value in node.items():
                 here = path + (key,)
-                named = secret or bool(SECRET_NAME.search(str(key)))
+                named = secret or (here not in _SETTINGS and bool(SECRET_NAME.search(str(key))))
                 env = len(here) == 5 and here[:2] == ("tools", "servers") and here[3] == "env"
                 if isinstance(value, str):
                     url = re.match(r"(?i)^[a-z][a-z0-9+.-]*://", value) is not None
-                    if value and (named or env or (url and _secret_url(value))):
+                    run = _server_key(here) in ("command", "cwd") and _secret_arg([value], 0)
+                    if value and (named or env or run or TOKEN_LIKE.fullmatch(value) or (url and _secret_url(value))):
                         found.append(here)
+                elif (isinstance(value, (int, float)) and not isinstance(value, bool) and here not in _SETTINGS
+                      and (secret or NUMERIC_SECRET.search(str(key)))):
+                    found.append(here)   # a PIN or a numeric key under a secret's name (not a count of tokens)
                 elif _server_key(here) == "args" and isinstance(value, list):
                     found.extend(here + (i,) for i in range(len(value)) if _secret_arg(value, i))
                 else:
@@ -216,8 +226,10 @@ def secret_paths(data: dict[str, Any]) -> list[tuple]:
         elif isinstance(node, list):
             for i, item in enumerate(node):
                 if isinstance(item, str):
-                    if item and secret:
+                    if item and (secret or TOKEN_LIKE.fullmatch(item)):
                         found.append(path + (i,))
+                elif secret and isinstance(item, (int, float)) and not isinstance(item, bool):
+                    found.append(path + (i,))
                 else:
                     walk(item, path + (i,), secret)
 
@@ -248,23 +260,50 @@ def _secret_text(comment: str) -> bool:
     return any(_secret_url(url) for url in re.findall(r"[a-z][a-z0-9+.-]*://[^\s\"']+", comment, re.IGNORECASE))
 
 
-def _comment_at(line: str) -> int:
-    """Where the comment on a line of TOML starts: the first # outside a string (-1 when there is none)."""
-    quote = None
-    i = 0
-    while i < len(line):
-        c = line[i]
-        if quote is None:
-            if c == "#":
-                return i
-            if c in "\"'":
-                quote = c
-        elif c == "\\" and quote == '"':
+def comment_spans(text: str) -> list[tuple[int, int]]:
+    """Where TOML `text`'s comments are, as (start, end) offsets: each # outside a string to the end of its line
+    (a line's \\r left out). A lexer of strings and comments over the whole text, as a TOML parser reads it: basic
+    and literal strings, their multi-line forms (which can hold a # and a newline), and escapes; quoted keys are
+    strings too. Nothing else in TOML can hold a #."""
+    spans: list[tuple[int, int]] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "#":
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            spans.append((i, end - 1 if end > i and text[end - 1] == "\r" else end))
+            i = end
+        elif text.startswith('"""', i) or text.startswith("'''", i):
+            quote = text[i:i + 3]
+            j = i + 3
+            while True:
+                k = text.find(quote, j)
+                if k < 0:
+                    return spans                            # unterminated: the parser refuses it anyway
+                if quote == '"""' and _escaped(text, k):
+                    j = k + 1
+                    continue
+                i = k + 3
+                while i < n and text[i] == quote[0] and i < k + 5:   # up to two quotes more belong to the string
+                    i += 1
+                break
+        elif c in "\"'":
+            j = i + 1
+            while j < n and text[j] != c and text[j] != "\n":
+                j += 2 if c == '"' and text[j] == "\\" else 1
+            i = j + 1
+        else:
             i += 1
-        elif c == quote:
-            quote = None
-        i += 1
-    return -1
+    return spans
+
+
+def _escaped(text: str, at: int) -> bool:
+    """Is the character at `at` escaped (an odd run of backslashes before it)?"""
+    run = 0
+    while at - run - 1 >= 0 and text[at - run - 1] == "\\":
+        run += 1
+    return run % 2 == 1
 
 
 _SHIPPED: frozenset[str] | None = None
@@ -286,18 +325,19 @@ class Vault:
 
     def __init__(self) -> None:
         self.lock = threading.Lock()      # the page's checks run in worker threads
-        self.values: dict[int, str] = {}
-        self.numbers: dict[str, int] = {}
+        self.values: dict[int, Any] = {}        # a hidden value as it was: a string, or a number under a secret's name
+        self.numbers: dict[Any, int] = {}
         self.lines: dict[int, str] = {}
         self.line_numbers: dict[str, int] = {}
 
-    def _number(self, value: str, values: dict[int, str], numbers: dict[str, int]) -> int:
-        if value not in numbers:
+    def _number(self, value: Any, values: dict[int, Any], numbers: dict[Any, int]) -> int:
+        key = (type(value).__name__, value)
+        if key not in numbers:
             if len(self.values) + len(self.lines) >= self.MAX:
                 raise ConfigError("too many hidden values on this page; reload it")
             n = len(self.values) + len(self.lines) + 1
-            numbers[value], values[n] = n, value
-        return numbers[value]
+            numbers[key], values[n] = n, value
+        return numbers[key]
 
     def mask(self, text: str) -> str:
         """`text` with every secret as `<hidden N: kept as is>`. Raises ConfigError when it does not parse (then
@@ -317,14 +357,19 @@ class Vault:
             doc = tomlkit.parse(text)
         except (tomllib.TOMLDecodeError, tomlkit.exceptions.TOMLKitError) as exc:
             raise ConfigError(f"config.toml does not parse: {_first_line(exc)}") from None
-        for path in secret_paths(data):
-            node: Any = doc
-            for part in path[:-1]:
-                node = node[part]
-            value = _plain(node[path[-1]])
-            if HIDDEN.fullmatch(value):
-                continue
-            node[path[-1]] = f"<hidden {self._number(value, self.values, self.numbers)}: kept as is>"
+        try:
+            # Where the secrets are comes from the parsed document (tomllib, the daemon's own reader); they are
+            # replaced in tomlkit's, which writes the text back as it was.
+            for path in secret_paths(data):
+                node: Any = doc
+                for part in path[:-1]:
+                    node = node[part]
+                value = _unwrap(node[path[-1]])
+                if isinstance(value, str) and HIDDEN.fullmatch(value):
+                    continue
+                node[path[-1]] = f"<hidden {self._number(value, self.values, self.numbers)}: kept as is>"
+        except (KeyError, IndexError, TypeError):   # the two parsers disagree on where a value is: show nothing
+            raise ConfigError("config.toml cannot be shown here safely; edit it in a text editor (strawberry config)") from None
         # A secret moved somewhere its name does not say (a hidden value put in a plain key's place: the page may
         # do that, and the daemon puts the value back there) is hidden wherever it is: any string with one in it.
         known = self._known()
@@ -341,33 +386,59 @@ class Vault:
 
         if known:
             by_value(doc)
+        out = tomlkit.dumps(doc)
+        # Comments, found as the parser finds them (comment_spans): one that looks like it holds a secret (a
+        # commented-out token, a trailing note with a key in it) or holds a known one is hidden whole; the line's
+        # key and value stay to edit. The shipped template's own lines are no secret.
         known = self._known()
-        lines = tomlkit.dumps(doc).split("\n")
-        shipped = _shipped_lines()    # the commented template's own lines are no secret
-        for i, line in enumerate(lines):
-            if HIDDEN_LINE.match(line) or HIDDEN_NOTE.search(line):
+        shipped = _shipped_lines()
+        pieces, last = [], 0
+        for start, stop in comment_spans(out):
+            comment = out[start:stop]
+            if HIDDEN_COMMENT.fullmatch(comment.strip()):
                 continue
-            stripped = line.lstrip()
-            at = 0 if stripped.startswith("#") else _comment_at(line)
-            comment = stripped[1:] if stripped.startswith("#") else line[at + 1:] if at >= 0 else ""
-            secret = (bool(comment.strip()) and stripped not in shipped
-                      and (_secret_text(comment) or any(s in comment for s in known)))
-            if stripped.startswith("#") and secret:
-                # A comment line that looks like it holds a secret (a commented-out token): hidden whole.
-                indent = line[: len(line) - len(stripped)]
-                lines[i] = f"{indent}# <hidden comment {self._number(line, self.lines, self.line_numbers)}: kept as is>"
-            elif secret:
-                # A trailing comment that does: the comment hidden, the key and its value left to edit.
-                lines[i] = line[:at] + f"# <hidden note {self._number(line[at:], self.lines, self.line_numbers)}: kept as is>"
-            elif any(s in line for s in known):
-                # A known secret still in the line, outside a value (a key's name): the line hidden whole.
-                indent = line[: len(line) - len(stripped)]
-                lines[i] = f"{indent}# <hidden comment {self._number(line, self.lines, self.line_numbers)}: kept as is>"
-        return "\n".join(lines)
+            line_start = out.rfind("\n", 0, start) + 1
+            line_end = out.find("\n", stop)
+            line = out[line_start:line_end if line_end >= 0 else len(out)].strip()
+            if line in shipped or not (_secret_text(comment[1:]) or any(k in comment for k in known)):
+                continue
+            pieces += [out[last:start], f"# <hidden comment {self._number(comment, self.lines, self.line_numbers)}: kept as is>"]
+            last = stop
+        masked = "".join(pieces) + out[last:]
+        self._verify(masked)
+        return masked
+
+    def _verify(self, masked: str) -> None:
+        """The last word before anything is shown: the masked text parses, every place secret_paths names holds a
+        placeholder, and no value or comment this page has hidden is anywhere in it (a key's name, a string the
+        parsers read differently). Else nothing of it is shown."""
+        why = ""
+        try:
+            data = tomllib.loads(masked)
+        except tomllib.TOMLDecodeError:
+            why = "it does not parse once its secrets are hidden"
+        else:
+            for path in secret_paths(data):
+                node: Any = data
+                for part in path:
+                    node = node[part]
+                if not HIDDEN.fullmatch(str(node)):
+                    why = "a secret could not be hidden where it is"
+            shipped = _shipped_lines()
+            hidden = self._known() + [c for c in self.lines.values() if len(c) >= MIN_SECRET
+                                      and not any(c.strip() in line for line in shipped)]
+            if any(h in masked for h in hidden):
+                why = "a secret is in a place it cannot be hidden in (a key's name)"
+        if why:
+            raise ConfigError(f"config.toml cannot be shown here safely: {why}; edit it in a text editor "
+                              "(strawberry config)")
 
     def _known(self) -> list[str]:
-        """The secrets this page has hidden that are long enough to look for inside other text."""
-        return sorted((v for v in self.values.values() if len(v) >= MIN_SECRET), key=len, reverse=True)
+        """The secrets this page has hidden that are long enough to look for inside other text (a number as written)."""
+        texts = {v for v in self.values.values() if isinstance(v, str) and len(v) >= MIN_SECRET}
+        texts |= {str(v) for v in self.values.values() if isinstance(v, (int, float)) and not isinstance(v, bool)
+                  and len(str(v)) >= MIN_NUMBER}
+        return sorted(texts, key=len, reverse=True)
 
     def scrub(self, text: str) -> str:
         """`text` (a message for the page or her card: a problem, a reason) with every secret this page has hidden
@@ -375,24 +446,31 @@ class Vault:
         with self.lock:
             for secret in self._known():
                 if secret in text:
-                    text = text.replace(secret, f"<hidden {self.numbers[secret]}: kept as is>")
+                    n = next(n for n, v in self.values.items() if str(v) == secret)
+                    text = text.replace(secret, f"<hidden {n}: kept as is>")
             return text
 
     def _unmask(self, text: str) -> str:
-        lines = text.split("\n")
-        for i, line in enumerate(lines):
-            match = HIDDEN_LINE.match(line)
-            if match:
-                n = int(match.group(2))
-                if n not in self.lines:
-                    raise ConfigError("a hidden comment line is not one this page showed; delete that line")
-                lines[i] = self.lines[n]
+        # Hidden comments come back only where they are comments (as the parser finds them): one moved into a
+        # string or a key is refused, so a comment's text never turns into a value shown elsewhere.
+        pieces, last = [], 0
+        spans = comment_spans(text)
+        for start, stop in spans:
+            match = HIDDEN_COMMENT.fullmatch(text[start:stop].rstrip())
+            if match is None:
                 continue
-            for note in HIDDEN_NOTE.finditer(line):
-                if int(note.group(1)) not in self.lines:
-                    raise ConfigError("a hidden comment is not one this page showed; delete it")
-            lines[i] = HIDDEN_NOTE.sub(lambda m: self.lines[int(m.group(1))], line)
-        text = "\n".join(lines)
+            n = int(match.group(1))
+            if n not in self.lines:
+                raise ConfigError("a hidden comment is not one this page showed; delete it")
+            pieces += [text[last:start], self.lines[n]]
+            last = stop
+        rest = "".join(pieces) + text[last:]
+        outside = text
+        for start, stop in reversed(spans):
+            outside = outside[:start] + outside[stop:]
+        if HIDDEN_COMMENT.search(outside):
+            raise ConfigError("a hidden comment was moved out of a comment; put it back or delete it")
+        text = rest
         if not HIDDEN.search(text):
             return text
         try:
@@ -424,6 +502,7 @@ class Vault:
 
 
 MIN_SECRET = 4      # shorter hidden values are not looked for inside other text (too many false matches)
+MIN_NUMBER = 6      # …and shorter hidden numbers (a port could be one)
 
 
 def _keys(node: Any) -> Any:
@@ -791,7 +870,7 @@ def write(path: Path, text: str, base_sha: str) -> Path | None:
     it (config.toml.bak-<time>, as configedit does), then the new one written in one step, as private as the old one
     was. Returns the backup (None for a new file). Raises Stale when the file changed, ConfigError when `text` does
     not load."""
-    if HIDDEN.search(text) or HIDDEN_NOTE.search(text) or HIDDEN_LINE.search(text.replace("\r\n", "\n")):
+    if HIDDEN.search(text) or HIDDEN_COMMENT.search(text):
         raise ConfigError("the text still has a hidden placeholder in it; nothing written")
     load_text(text)
     now = base_of(path)

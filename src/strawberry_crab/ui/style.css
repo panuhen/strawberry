@@ -384,7 +384,8 @@ details.conf-section[open] > summary { margin-bottom: 8px; }
 .conf-field .k .set { color: var(--berry-ink); }
 .conf-field .s { color: var(--ink-faint); font-size: 0.78rem; overflow-wrap: anywhere; }
 .conf-field .s.bad, .field .s.bad { color: var(--berry-ink); }
-.conf-input { display: flex; gap: 6px; align-items: flex-start; }
+.conf-input { display: flex; gap: 6px; align-items: flex-start; min-width: 0; }
+.conf-input > .dim { overflow-wrap: anywhere; min-width: 0; }
 .conf-input input[type="text"], .conf-input select { flex: 1; min-width: 0; }
 textarea.small {
   width: 100%; min-height: 54px; resize: vertical; padding: 6px 8px; font: inherit; font-size: 0.86rem;

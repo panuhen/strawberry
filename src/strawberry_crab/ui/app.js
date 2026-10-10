@@ -1468,7 +1468,8 @@
     const fail = (why) => { bad.textContent = why; bad.classList.remove("hidden"); };
     let input;
     if (f.elsewhere) {
-      input = el("div", { class: "dim" }, `${shown(value)} · edited on ${f.elsewhere.where} `,
+      const said = shown(value);
+      input = el("div", { class: "dim" }, `${said.length > 80 ? `${said.slice(0, 79)}…` : said} · edited on ${f.elsewhere.where} `,
         actionButton("Go there", () => show(ELSEWHERE_TAB[f.elsewhere.tab] || "config"), "ghost small"));
     } else if (f.kind === "bool") {
       input = el("input", { type: "checkbox", id, checked: Boolean(value), on: { change: (ev) => send(ev.target.checked) } });
@@ -2554,7 +2555,7 @@
     const list = Array.isArray(H.hands) ? H.hands : [];
     const primary = list.find((h) => h.primary) || null;
     const others = list.filter((h) => !h.primary);
-    const soft = cssVar("--cream");
+    const soft = cssVar("--ink-dim");
     for (const o of others) drawOtherHand(ctx, o, X, Y, height, soft);
     if (H.pair && others.length) {
       const o = others[0];
@@ -2656,7 +2657,7 @@
     const pts = hand.points || {};
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
-    ctx.globalAlpha = hand.engaged ? 0.75 : 0.45;
+    ctx.globalAlpha = hand.engaged ? 1 : 0.6;
     ctx.lineWidth = 2;
     ctx.lineCap = "round";
     if (pts.wrist) {
