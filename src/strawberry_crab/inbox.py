@@ -308,7 +308,8 @@ class MessagesSession:
         if item.body is not None and mode == "off":
             # The user turned message text off since: the body goes now (Daemon.reload_notifications does the rest).
             item.body, item.why = None, OFF
-        head = f"{item.who().capitalize()} in {quoted(item.app)}, {when}"
+        who = item.who()
+        head = f"{who[:1].upper()}{who[1:]} in {quoted(item.app)}, {when}"
         if item.body is None:
             return f"{head}. {NO_TEXT.get(item.why, NO_TEXT[OFF])}"
         return f"{head}: {quoted(item.body)}\n{RULES.get(mode, RULES['glance'])}"
