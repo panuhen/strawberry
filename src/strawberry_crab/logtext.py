@@ -121,10 +121,10 @@ def line(text: str) -> str:
     """Her line for a log line: as it is, with the sentence she is answering replaced by its
     placeholder when log_sentences is off."""
     heard = _hearing.get()
-    if not LOG_SENTENCES and text and _from_web.get():
-        return f"<her line from web results, {len(text)} chars>"
     if text and _from_private.get():
         return f"<her line from the user's messages, {len(text)} chars>"   # whatever log_sentences says
+    if not LOG_SENTENCES and text and _from_web.get():
+        return f"<her line from web results, {len(text)} chars>"
     if text and _about_profile.get():
         return f"<her line about the profile, {len(text)} chars>"   # whatever log_sentences says
     if LOG_SENTENCES or not heard or not text:

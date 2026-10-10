@@ -23,8 +23,9 @@ refused for the rest of that sentence: no message text can go out in a web searc
 
 What she may say of a body follows its mode, as when she reacts on her own: `react`, in her own words,
 never its words, names, numbers or links; `glance`, its gist in a few words, no numbers, links or
-addresses. The read's result says so, and the daemon checks her answer with `privacy.leaks` afterwards
-(`Daemon._handle_voice`), as for her reaction. A mode switched to `off` later drops the bodies kept for
+addresses. Under `glance` the read gives the gist she said when the message came (it passed the same
+checks), not the text; without one, and under `react`, the text with its mode's rule. The daemon checks
+her answer with `privacy.leaks` afterwards (`Daemon.message_said`), as for her reaction. A mode switched to `off` later drops the bodies kept for
 that app (`Inbox.drop_bodies`, on the tray's Message bodies rows).
 
 Item ids are opaque and random per item, so an id from before a restart means nothing; `read` takes only
@@ -93,8 +94,9 @@ class Item:
     app: str
     sender: str             # "" for a private one: the app alone
     body: str | None        # None: not kept (Item.why says why)
-    why: str = ""           # off | private | summary, when there is no body
+    why: str = ""           # off | private | summary | empty, when there is no body
     seen: bool = False
+    gist: str | None = None  # the glance gist she said aloud when it came (Daemon.glance), if any
 
     def who(self) -> str:
         if self.why == PRIVATE:
@@ -187,11 +189,15 @@ class Inbox:
 
 # What she may do with a body, by its app's body mode (WIRING.md §4): the same as when she reacts on her own.
 RULES = {
-    "react": ("Tell the user what it is about in your own words, in one short sentence. Never repeat its words, "
-              "names, numbers or links: the user's privacy setting for message text is 'react'."),
-    "glance": ("Give its gist in at most 12 words, third person (\"Alex asks about lunch.\"), with no numbers, links "
-               "or addresses: the user's privacy setting for message text is 'glance'."),
+    "react": ("Tell the user what it is about in your own words, in one short sentence. Never repeat its words "
+              "(not even four in a row), names, numbers or links: the user's privacy setting for message text is "
+              "'react'."),
+    "glance": ("Give its gist in at most 12 words, third person (\"Alex asks about lunch.\"), in your own words (not "
+               "even four of its words in a row), with no numbers, links or addresses: the user's privacy setting for "
+               "message text is 'glance'."),
 }
+GIST_RULE = ("That is the gist you gave when it came; the user's privacy setting ('glance') shares no more of it. Say "
+             "it in your own voice.")
 NO_TEXT = {
     OFF: ("Its text is not shared with you: message text is off in the user's privacy settings. Tell the user you "
           "only see who wrote and where."),
@@ -312,6 +318,9 @@ class MessagesSession:
         head = f"{who[:1].upper()}{who[1:]} in {quoted(item.app)}, {when}"
         if item.body is None:
             return f"{head}. {NO_TEXT.get(item.why, NO_TEXT[OFF])}"
+        if mode == "glance" and item.gist:
+            # What she was allowed to say aloud of it: the gist, never the text again.
+            return f"{head}, in short: {quoted(item.gist)}\n{GIST_RULE}"
         return f"{head}: {quoted(item.body)}\n{RULES.get(mode, RULES['glance'])}"
 
 
@@ -329,6 +338,7 @@ ASKS = re.compile(
     r"(?:did|has|have)\s+(?:any|some)(?:one|body)\s+(?:write|written|text|texted|message|messaged|ping|pinged|"
     r"send|sent|reply|replied|answer|answered)|"
     r"what\s+(?:did|does|do)\s+(?!you\b|i\b)[\w' .-]{1,40}?\s+(?:say|write|send|want|ask)|"
+    r"what\s+(?!you\b|i\b)[\w' .-]{1,40}?\s+(?:said|wrote|sent|asked)\b|"
     r"what\s+(?:was|is)\s+(?:that|the)\s+(?:notification|message|ping))", re.IGNORECASE)
 
 

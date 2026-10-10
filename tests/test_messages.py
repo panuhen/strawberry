@@ -302,9 +302,11 @@ def with_messages(toolbox: Toolbox, box: Inbox, modes=lambda app: "react") -> Me
 async def test_offered_only_to_a_sentence_about_messages():
     adapter = MessagesAdapter()
     for said in ("any new messages?", "what did Alex say?", "who wrote to me", "anything from Slack?",
-                 "did anyone text me", "read my notifications", "what did the build bot say"):
+                 "did anyone text me", "read my notifications", "what did the build bot say",
+                 "tell me what Alex said"):
         assert adapter.wanted(said, None) is True, said
-    for said in ("play some jazz", "what did you say?", "how are you", "what time is it", "what did I say"):
+    for said in ("play some jazz", "what did you say?", "how are you", "what time is it", "what did I say",
+                 "what you said was funny"):
         assert adapter.wanted(said, None) is None, said
     toolbox = Toolbox(ToolsConfig(servers={}, preconnect=False))
     with_messages(toolbox, Inbox())
@@ -498,3 +500,23 @@ async def test_brain_ui_gets_counts_only(aiohttp_client):
                                 "max_age_hours": 24.0}
     assert CANARY not in json.dumps(view)
     assert "Messages inbox:" in (brainui.UI_DIR / "app.js").read_text(encoding="utf-8")
+
+
+async def test_under_glance_a_read_gives_the_gist_she_said_not_the_text():
+    from tests.test_privacy import Brain
+
+    config = Config()
+    config.brain.enabled = config.speech.enabled = config.voice.enabled = False
+    config.actions.mpris = False
+    config.notifications = NotificationsConfig(body_apps={"Signal": "glance"})
+    daemon = Daemon(reactor=Brain(gist="Alex asks about lunch."), config=config, gate=Gate(),
+                    toolbox=Toolbox(ToolsConfig(servers={}, preconnect=False)))
+    performance, _ = await daemon.handle_event(Event(source="notification", app="Signal", title="Alex",
+                                                     body=f"lunch at 12? {CANARY}"))
+    assert performance.text.startswith("Alex asks about lunch.")
+    item = daemon.inbox.items()[0]
+    assert item.gist == "Alex asks about lunch." and item.body == f"lunch at 12? {CANARY}"
+    text = daemon.messages_session.read(item.id)
+    assert CANARY not in text and '"Alex asks about lunch."' in text and text.endswith(inboxes.GIST_RULE)
+    daemon.config.notifications = NotificationsConfig(body_apps={"Signal": "react"})   # react: the text, its rule
+    assert CANARY in daemon.messages_session.read(item.id)

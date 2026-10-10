@@ -536,8 +536,7 @@ class Daemon:
             log.info("notification %r: body dropped, mode off (%d chars)", event.app, len(event.body))
             event = replace(event, body="")
         verdict = await privacy.check(self.gate, event.title, event.body, ask_gate=bool(event.body) and not burst)
-        if self.inbox is not None:
-            self.to_inbox(event, verdict, burst)
+        item = self.to_inbox(event, verdict, burst) if self.inbox is not None else None
         if verdict.sensitive:
             log.info("notification %r: private, %s; body_len=%d dropped", event.app, verdict.summary, len(event.body))
             quiet = replace(event, body="", title="")
@@ -548,7 +547,7 @@ class Daemon:
             log.info("notification %r: body read, mode %s, %s; body_len=%d", event.app, mode, verdict.summary,
                      len(event.body))
         if event.body and not burst and mode == "glance":
-            glanced = await self.glance(event)
+            glanced = await self.glance(event, item)
             if glanced is not None:
                 return glanced, await self.perform(glanced)
         performance = decorate(event, await self.reactor.react(event))
@@ -559,20 +558,20 @@ class Daemon:
             performance = decorate(event, await CannedReactor().react(replace(event, body="")))
         return performance, await self.perform(performance)
 
-    def to_inbox(self, event: Event, verdict: privacy.Verdict, burst: bool) -> None:
+    def to_inbox(self, event: Event, verdict: privacy.Verdict, burst: bool) -> Any:
         """A notification into her inbox (inbox.py) as far as the speaking path let it through: private, the app
         alone; otherwise the app and the sender, and the body when it reached this far (its mode is not off).
         A burst's items are checked one by one in the background, each as a single notification is."""
         assert self.inbox is not None
         if burst and event.items:
             self.background(self._burst_to_inbox(event.items), "inbox")
-        elif burst:
-            self.inbox.add(event.app, event.title, None, "private" if verdict.sensitive else "summary")
-        elif verdict.sensitive:
-            self.inbox.add(event.app, "", None, "private")
-        else:
-            off = self.config.notifications.mode_for(event.app) == "off"
-            self.inbox.add(event.app, event.title, event.body or None, "off" if off else "empty")
+            return None
+        if burst:
+            return self.inbox.add(event.app, event.title, None, "private" if verdict.sensitive else "summary")
+        if verdict.sensitive:
+            return self.inbox.add(event.app, "", None, "private")
+        off = self.config.notifications.mode_for(event.app) == "off"
+        return self.inbox.add(event.app, event.title, event.body or None, "off" if off else "empty")
 
     async def _burst_to_inbox(self, items: tuple[tuple[str, str, str], ...]) -> None:
         for app, title, body in items:
@@ -584,9 +583,10 @@ class Daemon:
                 self.inbox.add(app, title, body or None, "private" if verdict.sensitive else "off" if off else "empty")
         log.info("inbox: %d items from a burst (%d kept)", len(items), len(self.inbox.items()) if self.inbox else 0)
 
-    async def glance(self, event: Event) -> Performance | None:
+    async def glance(self, event: Event, item: Any = None) -> Performance | None:
         """Step one, a neutral gist of the message (no persona, no numbers or links); step two, her
-        quip after it, written from the gist alone. None when there is no usable gist."""
+        quip after it, written from the gist alone. None when there is no usable gist. A gist she says
+        is kept on the message's inbox `item`: what she may say of it when asked later (inbox.py)."""
         gist_of = getattr(self.reactor, "gist", None)
         gist = await gist_of(event) if gist_of else None
         why = privacy.leaks(gist, event.body, strict=True) if gist else None
@@ -595,6 +595,8 @@ class Daemon:
             gist = None
         if not gist:
             return None
+        if item is not None:
+            item.gist = gist
         said = replace(event, body="", said=gist)
         quip_performance = await self.reactor.react(said)
         quip = short_quip(quip_performance.text or "", self.GLANCE_QUIP_WORDS)
