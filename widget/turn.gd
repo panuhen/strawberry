@@ -10,6 +10,9 @@ extends Node
 ##             and then, the cursor coming to rest near her), held, then back to face the user.
 ##   layers    the reaction recipes (peek and wave turn and come back), the dance styles (yaw on
 ##             the beat) and touch each set a yaw of their own every frame.
+##   sleep     while she goes to sleep, sleeps and wakes, sleep_tuck.gd turns her (the spin, the
+##             coin wobble, the twist): the drift, glances and layers hand over to it (`asleep`,
+##             eased over HAND_OVER_S) and only the place stays.
 ##
 ## Everything is summed and clamped to MAX_YAW / MAX_PITCH: she always comes back to face the user.
 ## Model space: she faces -Z (the camera); +yaw turns her face to the viewer's right, +pitch tips
@@ -32,6 +35,7 @@ const CENTRE_EVERY_S := Vector2(25.0, 50.0)   # idle: a look toward the middle o
 const CURSOR_NEAR_PX := 420.0
 const CURSOR_REST_S := 0.4
 const CURSOR_EVERY_S := 8.0
+const HAND_OVER_S := 0.25
 
 var widget: Node3D
 var model: Node3D
@@ -49,6 +53,7 @@ var until_centre := 30.0
 var cursor_last := Vector2i(-99999, -99999)
 var cursor_still := 0.0
 var cursor_glanced_at := -100.0
+var asleep := 0.0                       # 1: sleep_tuck.gd has her turns (not awake)
 var yaw := 0.0                          # what was applied this frame
 var pitch := 0.0
 var rng := RandomNumberGenerator.new()
@@ -75,6 +80,8 @@ func advance(delta: float) -> void:
 	var awake: bool = widget.sleeper == null or widget.sleeper.phase == "awake"
 	var idle: bool = awake and widget.state == "idle" and widget.one_shot == ""
 	idle_weight = move_toward(idle_weight, 1.0 if idle else 0.0, delta / 1.5)
+	asleep = move_toward(asleep, 0.0 if awake else 1.0, delta / HAND_OVER_S)
+	var own := 1.0 - Easing.in_out(asleep)
 	drift_clock += delta
 	var drift := DRIFT_YAW * (0.6 * sin(TAU * drift_clock / 23.0) + 0.4 * sin(TAU * drift_clock / 9.7 + 1.3))
 	if idle and glance_len == 0.0:
@@ -95,8 +102,8 @@ func advance(delta: float) -> void:
 	var layered: float = widget.reactions.yaw + widget.dance.yaw
 	if widget.touch:
 		layered += widget.touch.yaw
-	yaw = clampf(place.x + drift * Easing.in_out(idle_weight) + glance + layered, -MAX_YAW, MAX_YAW)
-	pitch = clampf(place.y + glance_pitch, -MAX_PITCH, MAX_PITCH)
+	yaw = clampf(place.x + (drift * Easing.in_out(idle_weight) + glance + layered) * own, -MAX_YAW, MAX_YAW)
+	pitch = clampf(place.y + glance_pitch * own, -MAX_PITCH, MAX_PITCH)
 	apply()
 
 ## Her rotation: yaw about her own up, then the view's tilt about the screen's horizontal.
