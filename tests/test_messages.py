@@ -205,6 +205,7 @@ async def test_a_burst_without_items_is_one_summary_and_bad_items_are_refused(ai
 
 async def test_disabled_there_is_no_inbox_and_no_server(aiohttp_client):
     config = Config()
+    config.brain.enabled = config.speech.enabled = config.voice.enabled = False
     config.messages.enabled = False
     daemon = Daemon(reactor=CannedReactor(), config=config, gate=Gate(),
                     toolbox=Toolbox(ToolsConfig(servers={}, preconnect=False)))
