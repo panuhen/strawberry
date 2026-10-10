@@ -819,3 +819,24 @@ def test_her_card_names_every_kind_most_severe_first_with_the_command_cut_to_fit
     many = [configform.Finding(f"tools.servers.s{i}", "x", "runs", f"/bin/server-{i} " + "--flag " * 20) for i in range(9)]
     long = _card_line(many + [configform.Finding("daemon.log_level", "x", "privacy")])
     assert len(long) <= CARD_MAX and long.startswith("Settings: runs /bin/server-0") and "less privacy" in long
+
+
+def test_a_200k_character_line_is_masked_quickly():
+    """F7: no pattern here runs over more than MAX_SCAN characters, and the token test has no backtracking."""
+    import time
+
+    long = "token" * 40_000                                                    # 200 000 characters
+    text = (f"# {long} = x\n[x]\nnote = \"{long}\"   # {'tokentoken-1' * 16_000}\n"
+            f'[tools.servers.s]\ncommand = "c"\nargs = ["--{long}", "{"a=" * 100_000}", "{"-" * 200_000}"]\n'
+            f'[brain]\nollama_url = "https://h.example/{"a1-" * 66_000}?q={"=" * 1000}"\n')
+    started = time.perf_counter()
+    vault = configform.Vault()
+    masked = vault.mask(text)
+    assert time.perf_counter() - started < 3.0
+    assert long not in masked and vault.unmask(masked) == text
+    started = time.perf_counter()
+    for probe in ("token" * 40_000, "-" * 200_000 + "token", "a1" * 100_000, " =" * 100_000):
+        configform._secret_text(probe)
+        configform.token_like(probe)
+        configform._secret_arg([probe, probe], 1)
+    assert time.perf_counter() - started < 1.0

@@ -187,9 +187,9 @@ def _secret_url(url: str) -> bool:
         return True
     if parts.username or parts.password:
         return True
-    if any(TOKEN_LIKE.fullmatch(segment) for segment in parts.path.split("/") if segment):
+    if any(token_like(segment, whole=True) for segment in parts.path.split("/") if segment):
         return True              # a token in the path (a webhook's address)
-    return any(SECRET_NAME.search(k) or TOKEN_LIKE.fullmatch(v)
+    return any(SECRET_NAME.search(k[:MAX_SCAN]) or token_like(v, whole=True)
                for k, v in parse_qsl(parts.query, keep_blank_values=True))
 
 
@@ -197,10 +197,13 @@ def _secret_arg(args: list[Any], i: int) -> bool:
     item = args[i]
     if not isinstance(item, str) or not item:
         return False
+    if len(item) > MAX_SCAN:
+        return True              # longer than any pattern here is run over: hidden whole
     if SECRET_NAME.search(item) and re.search(r"[=:]\s*\S", item):
         return True              # --api-key=sk-…, Authorization: Bearer …
     before = args[i - 1] if i > 0 else None
-    return isinstance(before, str) and SECRET_FLAG.match(before) is not None and not item.startswith("-")
+    return (isinstance(before, str) and len(before) <= MAX_SCAN and SECRET_FLAG.match(before) is not None
+            and not item.startswith("-"))
 
 
 def secret_paths(data: dict[str, Any]) -> list[tuple]:
@@ -218,7 +221,9 @@ def secret_paths(data: dict[str, Any]) -> list[tuple]:
                 if isinstance(value, str):
                     url = re.match(r"(?i)^[a-z][a-z0-9+.-]*://", value) is not None
                     run = _server_key(here) in ("command", "cwd") and _secret_arg([value], 0)
-                    if value and (named or env or run or TOKEN_LIKE.fullmatch(value) or (url and _secret_url(value))):
+                    # config.py's own settings hold names, models and paths (a head's version looks like a token).
+                    looks = here not in _SETTINGS and token_like(value, whole=True)
+                    if value and (named or env or run or looks or (url and _secret_url(value))):
                         found.append(here)
                 elif (isinstance(value, (int, float)) and not isinstance(value, bool) and here not in _SETTINGS
                       and (secret or NUMERIC_SECRET.search(str(key)))):
@@ -230,7 +235,7 @@ def secret_paths(data: dict[str, Any]) -> list[tuple]:
         elif isinstance(node, list):
             for i, item in enumerate(node):
                 if isinstance(item, str):
-                    if item and (secret or TOKEN_LIKE.fullmatch(item)):
+                    if item and (secret or (path not in _SETTINGS and token_like(item, whole=True))):
                         found.append(path + (i,))
                 elif secret and isinstance(item, (int, float)) and not isinstance(item, bool):
                     found.append(path + (i,))
@@ -247,19 +252,44 @@ SECRET_ASSIGNED = re.compile(r"(?:token|secret|passw|api[_-]?key|auth|credential
                              r"[\w.-]*[\"']?\s*[=:]\s*\S", re.IGNORECASE)
 SECRET_ARG = re.compile(r"--?[\w.-]*(?:token|secret|passw|api[_-]?key|auth|credential|bearer|cookie)[\w.-]*[\"']?"
                         r"(?:\s*,)?\s+[\"']?[^\s\"',\]-]", re.IGNORECASE)
-# A word that looks like a key or a token: 20 or more letters, digits and _ with both letters and digits in it.
-# Or one of 12 or more with dashes in it and at least three of each (sk-proj-…, ghp_…).
-TOKEN_LIKE = re.compile(r"(?=[A-Za-z0-9_]*[0-9])(?=[A-Za-z0-9_]*[A-Za-z])[A-Za-z0-9_]{20,}"
-                        r"|(?=(?:[A-Za-z_-]*[0-9]){3})(?=(?:[0-9_-]*[A-Za-z]){3})[A-Za-z0-9_-]{12,}")
+# Every pattern here runs over at most MAX_SCAN characters: a longer comment is hidden whole, a longer argument too,
+# and a longer value counts as a token when it has no space in it. (A 200 000-character line must not stall the
+# daemon: some of these patterns backtrack.)
+MAX_SCAN = 4096
+_WORD = re.compile(r"[A-Za-z0-9_-]{12,}")
+_PART = re.compile(r"[A-Za-z0-9_]{20,}")
+_SPACE = re.compile(r"\s")
+
+
+def _token_word(word: str) -> bool:
+    """A word that looks like a key or a token: a run of 20 or more letters, digits and _ with both letters and digits
+    in it; or, dashes allowed, 12 or more with at least three of each (sk-proj-…, ghp_…)."""
+    digits = sum(c.isdigit() for c in word)
+    letters = sum(c.isalpha() for c in word)
+    if digits >= 3 and letters >= 3:
+        return True
+    return any(any(c.isdigit() for c in part) and any(c.isalpha() for c in part)
+               for part in _PART.findall(word))
+
+
+def token_like(text: str, whole: bool = False) -> bool:
+    """Is `text` (with `whole`: all of it) a token-looking word? Linear: no backtracking pattern."""
+    if len(text) > MAX_SCAN:
+        return whole and _SPACE.search(text) is None
+    if whole:
+        return _WORD.fullmatch(text) is not None and _token_word(text)
+    return any(_token_word(match.group()) for match in _WORD.finditer(text))
 
 
 def _secret_text(comment: str) -> bool:
     """Does a comment look like it holds a secret: a key named like one with a value (`# api_key = "…"`,
     `# Authorization: Bearer …`), an `env` table (whose values are all hidden when not commented out), an address
     with a login part or a token, or a word that looks like a token?"""
+    if len(comment) > MAX_SCAN:
+        return True              # too long to read here: hidden whole
     if SECRET_ASSIGNED.search(comment) or SECRET_ARG.search(comment):
         return True
-    if re.search(r"\benv\s*=\s*\{\s*[^}\s]", comment) or TOKEN_LIKE.search(comment):
+    if re.search(r"\benv\s*=\s*\{\s*[^}\s]", comment) or token_like(comment):
         return True
     return any(_secret_url(url) for url in re.findall(r"[a-z][a-z0-9+.-]*://[^\s\"']+", comment, re.IGNORECASE))
 
