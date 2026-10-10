@@ -958,7 +958,16 @@ many more there are; a click goes to its section. The new parts:
   settings as config.toml text, read-only (`brainui.as_toml`, with the secret-looking values shown as `(set)`
   as before). Editing config.toml from the page is a later stage.
 - *Input* (since the input stage; `inputs.py`, §25, §26): hand gestures and touch from bodies.
-  - *Status*: `[gestures] enabled` (the tray's switch), the watcher (heard from in the last 5 s or not), the
+  - *Camera switch*, at the top: `[gestures] enabled` on or off (`POST /ui/api/input/camera {on}`), written
+    exactly as the tray's *Hand gestures (camera)* row writes it: `configedit.set_value` into config.toml
+    (comments kept, validated, backed up), then `GestureDesk.reload` (what `reload_gestures` does); the watcher
+    follows the file within a second. Beside it the camera as the watcher last reported it, apart from the
+    switch (`InputDesk.camera_view`): `open`, `closed`, `closing` (switched off, and the watcher's last word was
+    open: it lets go within a second and then stops posting, so that word ages out in 5 s) or `unknown` (on, and
+    the watcher not heard from). Only this switch, the tray's row and `strawberry gestures on|off` turn the
+    camera on: a settings save cannot, because `enabled` is not one of the settings (`inputs.from_view` refuses
+    it), input.toml may not hold it (`inputs.parse` refuses the file) and `InputStore.apply` keeps the one she has.
+  - *Status*: `[gestures] enabled` (the switch above), the watcher (heard from in the last 5 s or not), the
     camera open or closed, `watch`, command mode armed (seconds left) or idle, the watcher's frames a second
     and its share of one CPU core, the last hand's age, MediaPipe and the models (`gestures.mediapipe_missing`,
     `model_ready`, `face_model_ready`, and the watcher's `face=on|missing|failed`), shh's quiet minutes left, the
@@ -989,7 +998,8 @@ many more there are; a click goes to its section. The new parts:
     `config._apply`, `_validate_touch`, `_validate_gestures`) with the problems and the diff against the file;
     **Save** (a second click) writes `input.toml` (`POST /ui/api/input/save`: atomic, the old file kept as
     `input.toml.bak`, then `InputStore.check` so she uses it at once; 400 with the problems when it does not
-    check out). The page never writes config.toml. A file that does not check out shows its reason at the top.
+    check out). Save never writes config.toml (only the camera switch does, and only `[gestures] enabled`). A
+    file that does not check out shows its reason at the top.
   - *Recent*: the last 20 gestures (`done`) and touches with when, what (a gesture's name, an entity and a touch
     kind), the outcome (`did`, `running`, `failed`, `ignored`, `practice`), the action and why
     (`not_mapped`, `cooldown`, `not_armed`, `too_soon`, `not_answerable`, `nothing_can_do_it`, …); a repeat
@@ -1023,7 +1033,7 @@ many more there are; a click goes to its section. The new parts:
 | `GET /ui/api/persona`; `POST /ui/api/persona/check`, `persona/save`, `persona/try` (`{text}`) | the persona.md in use (or the shipped one), the shipped one and the store's status; a draft checked (`ok`, `problems`, `warnings`, `sizes`, `caps`, `diff`); saved (400 with the problems when it does not check out); tried on the sample events (409 with the reaction model off or a try running). A draft is at most 41 000 characters (413) | the page |
 | `GET /ui/api/profile`; `POST /ui/api/profile/save` (`{text}`), `profile/revert` (`{id}`) | the text, its status, what she reads, the history; a change's refusal (over the cap, nothing changed, a version not kept) is a 409 with the reason | the page |
 | `POST /ui/api/apply` | `[notifications]` read again from config.toml (`{"applied": "notifications", "body": …}`), else 409 | the page |
-| `GET /ui/api/input`; `GET /ui/api/input/live` (events); `POST /ui/api/input/check`, `input/save` (`{settings}`), `input/practice` (`{on}`) | the Input tab: status, settings in use, the dropdowns' choices, bodies, the file and its status, recent; the live view; a draft checked (`ok`, `problems`, `text`, `diff`); saved as input.toml (400 when it does not check out); practice mode | the page |
+| `GET /ui/api/input`; `GET /ui/api/input/live` (events); `POST /ui/api/input/check`, `input/save` (`{settings}`), `input/practice` (`{on}`), `input/camera` (`{on}`) | the Input tab: status (with `camera: {enabled, state}`), settings in use, the dropdowns' choices, bodies, the file and its status, recent; the live view; a draft checked (`ok`, `problems`, `text`, `diff`); saved as input.toml (400 when it does not check out); practice mode; the camera switch (`{enabled, status}`; 409 when config.toml cannot be written or does not load) | the page |
 | `GET /ui/api/runs` | also carries `timeline` (above) | the page |
 
 **The security model.** Every other route refuses any request with an `Origin` header (§2), so no web page the user visits can make her talk, read `/health` or open `/ws`. `/ui` is the one place a browser is let in, on these terms (`brainui.checked`, one decorator on every UI handler; `server.local_only` lets a handler through only when it carries the decorator's mark, so a new route cannot open itself by accident, and an unmatched path such as `/ui/../health` still meets the Origin rule):
@@ -1065,7 +1075,14 @@ loader's checks; the daemon's live reload, the last good file kept, the fall bac
 in a log line; the tray's switch over input.toml; the watcher following the file and keeping its settings, its
 report header; the recent ring; practice mode for gestures and touches; every Input write behind the session,
 the CSRF header and the Origin; check, save with a backup and never config.toml; a bad file in the tab; the live
-view asking for the hand only while it is open).
+view asking for the hand only while it is open). `tests/test_input_camera.py` (the camera switch behind the same
+checks; it writes `enabled` in config.toml with the comments kept and a backup, and she follows; a settings save,
+`enabled` in the settings or in input.toml by hand never turns it on; the camera's state from the watcher's word,
+apart from the switch; the switch opening and closing a fake camera through the watcher).
+`tests/test_talk_again.py` (the whole-sentence phrases and the near misses; shh ended by a spoken or typed
+sentence with her line; a sentence with the words in it, a notification and a track title doing nothing; an
+ordinary sentence while she is not quiet; her own menu's quiet from the widget's preferences; a run going on
+neither stopped nor superseded).
 
 Seen end to end (2026-10-10, a throwaway daemon on port 8797 with temp XDG dirs, headless Chrome over the
 DevTools protocol, a fake orbs body and a fake crab over the websocket, a fake hand posted to /hand and /gesture
@@ -1120,8 +1137,10 @@ time: a new sentence waits for the run before it to end. Before it waits, it sto
 (confirm.py), which is the answer that run was after. A whole sentence of "stop", "cancel that",
 "never mind" (`runs.is_stop`, word lists like `confirm.answer`) while a run is busy stops every
 foreground run going on (`stopped`), never reaches the gate and is answered "Okay, stopped.". The
-same "stop" with nothing going on is an ordinary sentence (the pause reflex, usually). A
-notification's run is never the foreground one: a sentence does not stop it.
+same "stop" with nothing going on is an ordinary sentence (the pause reflex, usually). "You can
+talk again" while her voice is off (`runs.is_talk_again`, the same matcher, §26) neither stops nor
+supersedes: it waits its turn with her voice already back on. A notification's run is never the
+foreground one: a sentence does not stop it.
 
 **Cancel.** From the widget's ✕ (`run.cancel`, only from a v2 body that declared it, only for the
 foreground run going on), the Brain UI's Cancel, "stop", supersede, and the daemon's shutdown
@@ -2007,8 +2026,9 @@ a hand's palm position, size, pinch, openness, whether it is raised and the wris
 0..1 (x as in a mirror: the user's right is +x; y down), each digit's curl and the thumb-index gap, and, while the
 face model runs, two booleans: `facing` and `face`. With `[gestures] enabled = false` (the default) the
 process imports neither OpenCV nor MediaPipe, makes no request and only reads its config file's mtime once a
-second; turned on (the tray's *Hand gestures (camera)* row or `strawberry gestures on`, both through
-`configedit` as Message bodies is, then POST /command `reload_gestures` for the daemon), it follows the file
+second; turned on (the tray's *Hand gestures (camera)* row, the Brain UI Input tab's camera switch (§17) or
+`strawberry gestures on`, all through `configedit` as Message bodies is, then the daemon reads [gestures] again:
+POST /command `reload_gestures`, or `GestureDesk.reload` directly from the Brain UI), it follows the file
 within a second, and turned off it releases the camera within a second or two. No restart either way.
 
 **When the camera is open** (`[gestures] watch`):
@@ -2117,7 +2137,18 @@ most every 20 s, a line from persona.md's `wave` (no model, nothing changed, no 
 `quiet` (shh) sends the widget's own `quiet` command for `shh_minutes` (30), the one the crab's *Quiet* row and
 the tray's send, so her voice stops and the bubble stays, the menus show the minutes left and either turns it
 off again (a `quiet 0` through /command clears the brain's count too); she says a line of persona.md's
-`shushed` in the bubble and the timeline gets a trusted notice ("the user shushed you…"). The slider reads the
+`shushed` in the bubble and the timeline gets a trusted notice ("the user shushed you…"). The user can also
+end it by voice: a whole sentence of "you can talk again", "you can speak again", "talk to me", "unmute" (and the
+like, with the fillers "stop" allows: "okay, unmute, Strawberry"; `runs.is_talk_again`, the same matcher as
+`runs.is_stop`) while she is quiet (`Daemon.quiet_now`: shh's or the Quiet row's minutes on the brain's clock, or
+`quiet_until` in the widget's preferences on this machine, which her own menu writes) sends `quiet 0` to the
+bodies at once, clears the brain's count (`Daemon.end_quiet`) and she says a line of persona.md's `talk_again`;
+the ledger keeps the turn. It is a run of its own that stops nothing, supersedes nothing and leaves her question
+open, so a run going on finishes and is heard. Only the user's own sentence (`handle_voice`, spoken or typed)
+is matched: a notification, a track title, a timeline notice or the situation line never reaches it, and a
+sentence that only has the words ("I want to talk to me mum about it") is an ordinary one. While she is not
+quiet, "talk to me" is an ordinary sentence too. Her persistent *Mute* is a different switch and stays as it
+is. The slider reads the
 volume when it starts (`Actor.volume_control`: a music server's adapter with `volume_level` and
 `set_volume_level`, Spotify's through `get_devices` and `set_volume`, else MPRIS's `Volume`), then sets it as
 the hand moves, one call at a time and at most four a second, and the last level when it ends; it is a run

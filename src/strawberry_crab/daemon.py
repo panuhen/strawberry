@@ -36,7 +36,7 @@ from .pokes import Pokes
 from .reactions import decorate, is_burst
 from .routefeed import RouteFeed
 from . import runs
-from .runs import Run, RunBook, emit, is_stop
+from .runs import Run, RunBook, emit, is_stop, is_talk_again
 from .speech import Speaker
 from .systemone import Gate, Route
 from .thinker import WEB_REPLY, Thinker, error_code
@@ -657,8 +657,13 @@ class Daemon:
         try:
             answer = self.answers_question(event.title)
             stop = previous is not None and not answer and is_stop(event.title)
+            # "You can talk again" while her voice is off: it neither stops nor supersedes anything, nor drops her
+            # question; her voice comes back at once, so what the run before it says is heard.
+            talk = not answer and not stop and is_talk_again(event.title) and self.quiet_now()
+            if talk:
+                await self.end_quiet()
             preface = ""
-            if pending is not None and self.approvals.resolve(pending, "superseded"):
+            if pending is not None and not talk and self.approvals.resolve(pending, "superseded"):
                 if pending.run is not None:
                     self.runs.cancel(pending.run.run_id, "superseded")
                 preface = confirm.LEFT_OTHER   # said ahead of whatever this sentence gets: one line, not two
@@ -666,13 +671,14 @@ class Daemon:
             if previous is not None:
                 if stop:
                     self.runs.cancel_all("stopped", but=run)
-                elif self.config.runs.supersede and not answer:
+                elif self.config.runs.supersede and not answer and not talk:
                     self.runs.cancel(previous.run_id, "superseded")
                 await previous.finished.wait()
             if self.unmade_line:   # a yes this sentence overtook before its call started (_await_answer)
                 preface, self.unmade_line = f"{self.unmade_line} {preface}".strip(), ""
             with logtext.hearing(event.title):   # her lines in the log leave it out (log_sentences)
-                work = self._stopped(event, previous) if stop else self._handle_voice(event, live, run, preface)
+                work = self._stopped(event, previous) if stop else self._talk_again(event, preface) if talk \
+                    else self._handle_voice(event, live, run, preface)
                 return await self._in_run(run, work)
         except asyncio.CancelledError:
             run.cancel_reason = run.cancel_reason or "shutdown"
@@ -769,6 +775,37 @@ class Daemon:
         performance = decorate(event, Performance(state="talking", text=line, emotion="neutral"))
         sent = await self.perform(performance)
         self.ledger.record(event.title, performance.text or "", did="stopped what she was doing")
+        return performance, sent
+
+    TALK_AGAIN = "Ah, my voice is back."    # the shipped persona.md's first `talk_again`; hers comes from persona.md
+
+    def quiet_now(self) -> bool:
+        """Is her voice off for a while (the widget's quiet)? The brain's own clock for shh and the tray's Quiet row
+        (POST /command quiet); her own menu's quiet only from the widget's preferences on this machine."""
+        if self.gestures.quiet_left() > 0:
+            return True
+        from .traymenu import read_widget_prefs
+
+        try:
+            return float(read_widget_prefs().get("quiet_until", 0.0)) > time.time()
+        except (TypeError, ValueError):
+            return False
+
+    async def end_quiet(self) -> int:
+        """Her voice back on: `quiet` 0 to the bodies, as the tray's Quiet row sends it, and shh's minutes end."""
+        sent = await self.hub.send({"command": "quiet", "value": 0})
+        self.gestures.quiet_set(0)
+        log.info("voice: quiet ended by the user's own sentence (%d body/bodies told)", sent)
+        return sent
+
+    async def _talk_again(self, event: Event, preface: str = "") -> tuple[Performance, int]:
+        """"You can talk again" while she was quiet: her voice is back on already (end_quiet); she says so, briefly.
+        Only the user's own sentence comes here (handle_voice), matched whole (runs.is_talk_again): never a
+        notification, a timeline notice or the situation line."""
+        line = self.persona.line("talk_again", self.rng) or self.TALK_AGAIN
+        performance = decorate(event, Performance(state="talking", text=f"{preface} {line}".strip(), emotion="happy"))
+        sent = await self.perform(performance)
+        self.ledger.record(event.title, performance.text or "", did="her voice back on (quiet ended)")
         return performance, sent
 
     async def _handle_voice(self, event: Event, live: dict[str, Any], run: Run | None = None,

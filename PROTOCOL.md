@@ -388,7 +388,7 @@ first (`widget.gd:650-652`).
 | `mute` | boolean | mute her voice |
 | `on_top` | boolean | always on top |
 | `hat` | boolean | the top hat |
-| `quiet` | number ≥ 0 | seconds of "quiet for a while" from now; 0 clears |
+| `quiet` | number ≥ 0 | seconds of "quiet for a while" from now; 0 clears. The brain sends it too: shh for `[gestures] shh_minutes`, and 0 when the user says "you can talk again" (or "unmute", "talk to me") as a whole sentence while she is quiet |
 | `volume` | number 0–1 | voice volume |
 | `sleep_after` | number ≥ 0 | minutes of quiet before sleep; 0 = never |
 

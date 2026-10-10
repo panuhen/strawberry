@@ -363,7 +363,9 @@ problem, a new router head waiting).
 - **Settings and privacy**: what is kept and logged, and the line in `config.toml` that changes
   it, what applies at once and what needs a restart, **Apply** for the notification settings, the
   whole effective `config.toml` (read-only: the page does not edit it), and Forget.
-- **Input** (under Settings): hand gestures and touch. Whether the camera is open, the watcher's frame
+- **Input** (under Settings): hand gestures and touch. A **camera switch** at the top turns gestures on
+  and off as the tray's *Hand gestures (camera)* row does (it writes `[gestures] enabled` in `config.toml`,
+  and nothing else there), with whether the camera is actually open now beside it. The watcher's frame
   rate and CPU, what is missing; the bodies and what they let you touch; your hand drawn live as a stick
   figure from the few numbers the watcher sends (never a picture: frames never leave the watcher), with
   the zone line, what it recognises now, whether you face the screen, and the hold ring filling (or the
@@ -490,7 +492,7 @@ a shake of your head, answers the question on her card. Off by default. To try i
 ```bash
 uv sync --inexact --group gpu --group gestures    # in a checkout; installed: uv tool install --force 'strawberry-crab[gestures]'
 strawberry gestures fetch                         # the hand model (~8 MB) and the face model (~4 MB), sha256 checked
-strawberry gestures on                            # or the tray's "Hand gestures (camera)" row
+strawberry gestures on                            # or the tray's "Hand gestures (camera)" row, or the Input tab's switch
 strawberry gestures status                        # what is on, what is missing
 ```
 
@@ -560,7 +562,9 @@ what leaves the watcher is a yes or no for "facing" and for "a face is there", n
 face model gestures work as before (the status says so), and shh, nod and shake are off.
 
 **shh** turns her voice off the way the crab's *Quiet* menu row does (the bubble stays), for
-`shh_minutes`; that row, or the tray's *Quiet*, turns it back on. The timeline notes that you shushed her.
+`shh_minutes`; that row, or the tray's *Quiet*, turns it back on, and so does saying "you can talk
+again" (or "you can speak again", "talk to me", "unmute") as a whole sentence. The timeline notes that
+you shushed her.
 
 **Calibration.** Hands differ. The *Input* tab's **Calibrate** asks for a relaxed hand, an open hand, a
 fist, pointing up and a pinch, about three seconds each, and keeps the averages of each finger's curl
@@ -571,8 +575,8 @@ thresholds sit between your open hand and your fist. **Reset to defaults** empti
 `~/.config/strawberry/input.toml`, beside `config.toml`, and she reads it again within a second. It
 has the same `[gestures]` and `[touch]` sections as `config.toml`, and a section there replaces the
 one in `config.toml` whole (keys it leaves out take their defaults). The one exception is `[gestures]
-enabled`: it stays in `config.toml`, where the tray's *Hand gestures (camera)* row and `strawberry
-gestures on|off` write it, so input.toml never turns the camera on. An input.toml that does not check
+enabled`: it stays in `config.toml`, where the tray's *Hand gestures (camera)* row, the *Input* tab's
+camera switch and `strawberry gestures on|off` write it, so input.toml never turns the camera on. An input.toml that does not check
 out is not used: she keeps the settings she had, and the *Input* tab and `strawberry gestures status`
 say why. Delete it to go back to `config.toml`'s sections.
 

@@ -250,3 +250,8 @@ The user waved at her through the camera (hand gestures); she waves back.
 The user put a finger to their lips (hand gestures): her voice goes off for a while, the bubble stays.
 - Okay, bubbles only.
 - Shh. I'll keep it down.
+
+### talk_again
+The user said she can talk again ("you can talk again", "unmute") while her voice was off: it is back on.
+- Ah, my voice is back.
+- Right, where was I?

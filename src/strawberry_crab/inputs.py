@@ -4,7 +4,8 @@ live view and practice mode.
     ~/.config/strawberry/input.toml   [gestures] and [touch], written by the Brain UI's Input tab (or by hand)
        │
        ├─ config.load ─ overlay(): its sections replace config.toml's, whole; `[gestures] enabled` stays in
-       │                config.toml (the tray's Hand gestures row, `strawberry gestures on|off`)
+       │                config.toml (the tray's Hand gestures row, the Input tab's camera switch, `strawberry
+       │                gestures on|off`)
        └─ InputStore (the daemon) ─ stat once a second, parsed again when it changed; a file that does not check
                                     out keeps the settings she has, is logged once and shown in the Input tab
 
@@ -438,3 +439,17 @@ class InputDesk:
         if self.watcher is None or age > 5.0:
             return {"heard": False, "age_s": None if self.watcher is None else round(age, 1)}
         return {"heard": True, "age_s": round(age, 1)} | self.watcher
+
+    def camera_view(self, enabled: bool) -> dict[str, Any]:
+        """The Input tab's camera switch: `enabled` is `[gestures] enabled` (what the switch, the tray's row and
+        `strawberry gestures on|off` set), `state` what the watcher last said of the camera. `open`; `closed`;
+        `closing` (switched off, and its last word was open: it lets go within a second and then stops posting,
+        so that word ages out); `unknown` (on, and the watcher not heard from in five seconds)."""
+        w = self.watcher_view()
+        if not w["heard"]:
+            state = "unknown" if enabled else "closed"
+        elif w["camera"]:
+            state = "open" if enabled else "closing"
+        else:
+            state = "closed"
+        return {"enabled": enabled, "state": state}

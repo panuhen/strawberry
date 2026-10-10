@@ -9,10 +9,20 @@ package and the widget binary.
 
 ### Added
 
+- **A camera switch in the Brain UI's Input tab.** At the top of the tab: it turns hand gestures on and off
+  exactly as the tray's *Hand gestures (camera)* row does (`[gestures] enabled` in `config.toml`, comments
+  kept, a backup first), and beside it whether the camera is actually open now, as the watcher last said
+  (open, closed, closing, or no word from the watcher). Saving the tab's settings still never turns the
+  camera on. README *Brain UI*, WIRING §17, §26.
+- **"You can talk again."** While her voice is off (shh, the *Quiet* row in the tray or her menu), saying
+  "you can talk again", "you can speak again", "talk to me" or "unmute" as a whole sentence turns it back on,
+  and she says so. A sentence that only contains the words is an ordinary one, and only your own sentence
+  counts: never a notification or a song title. A run she is on carries on. WIRING §18, §26.
 - **Hand gestures, version 2.** New gestures: point to your left or right (previous, skip), pinch and
   slide your hand up or down to set the volume (a slider the bodies draw; at most four volume calls a
   second, the last level when you let go), wave to have her wave back, a finger to your lips to keep her
-  quiet for `shh_minutes` (30; the bubble stays, the crab's or the tray's *Quiet* row turns it off), finger
+  quiet for `shh_minutes` (30; the bubble stays, the crab's or the tray's *Quiet* row, or "you can talk
+  again", turns it off), finger
   counts `count_1`..`count_5` (unmapped by default), and a nod or a shake for yes or no on her card (with
   the thumb's tier rules). Gestures count only while you face the screen: MediaPipe's face landmarker runs
   in the watcher only while a hand is up or her card is open, and only `facing` and `face` booleans leave
@@ -51,8 +61,9 @@ package and the widget binary.
   with what each did or why it did nothing. **Practice mode** (not saved) shows gestures and touches and
   does nothing. Its settings are saved to `~/.config/strawberry/input.toml` (atomic, a `.bak`, the diff
   first), which replaces `[gestures]` and `[touch]` of `config.toml` whole, except `[gestures] enabled`,
-  which stays the tray's switch; she reads it again within a second, and one that does not check out
-  keeps the settings she has. The page never writes `config.toml`. A `hand` now names the shape seen
+  which stays the camera switch's (the tray's row, or the switch at the top of the tab); she reads it
+  again within a second, and one that does not check out keeps the settings she has. Saving the settings
+  never writes `config.toml`. A `hand` now names the shape seen
   (`shape`, PROTOCOL Part 1d). README *Brain UI*, WIRING §17, §26.
 - A livelier voice without changing it. `[speech] noise_scale` and `noise_w` set Piper's own variation of
   pitch and tone and of rhythm; 0 (the default) keeps the voice's own. Around 0.85 and 1.1 she sounds

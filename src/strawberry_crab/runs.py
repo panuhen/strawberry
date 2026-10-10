@@ -334,18 +334,38 @@ STOP_FILLER = ("please", "strawberry", "oh", "just", "ok", "okay", "no", "wait",
 _STOP_PHRASES = sorted({(p, True) for p in STOP} | {(p, False) for p in STOP_FILLER}, key=lambda i: -len(i[0].split()))
 
 
-def is_stop(text: str) -> bool:
-    """"stop", "cancel that", "never mind, Strawberry": the whole sentence asks her to stop."""
+# A whole sentence that lets her talk again after shh or the Quiet row (Daemon._talk_again), read the same way, with
+# the same fillers: "you can talk again", "okay, unmute", "talk to me, Strawberry". Never a sentence that only has
+# the words in it ("I want to talk to me mum about it").
+TALK_AGAIN = ("you can talk again", "you can speak again", "you can talk", "you can speak", "you may talk again",
+              "you may speak again", "talk again", "speak again", "talk to me", "talk to me again", "speak to me",
+              "unmute", "unmute yourself", "voice back on")
+_TALK_PHRASES = sorted({(p, True) for p in TALK_AGAIN} | {(p, False) for p in STOP_FILLER},
+                       key=lambda i: -len(i[0].split()))
+
+
+def _whole(text: str, phrases: list[tuple[str, bool]]) -> bool:
+    """Is the whole sentence these phrases and fillers, with at least one phrase?"""
     words = re.sub(r"[^\w']+", " ", (text or "").lower().replace("’", "'")).split()
     found = False
     at = 0
     while at < len(words):
-        for phrase, stops in _STOP_PHRASES:
+        for phrase, counts in phrases:
             size = len(phrase.split())
             if words[at:at + size] == phrase.split():
-                found = found or stops
+                found = found or counts
                 at += size
                 break
         else:
             return False
     return found
+
+
+def is_stop(text: str) -> bool:
+    """"stop", "cancel that", "never mind, Strawberry": the whole sentence asks her to stop."""
+    return _whole(text, _STOP_PHRASES)
+
+
+def is_talk_again(text: str) -> bool:
+    """"you can talk again", "unmute", "okay, talk to me": the whole sentence lets her voice back on."""
+    return _whole(text, _TALK_PHRASES)
