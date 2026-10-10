@@ -85,7 +85,7 @@ class ToolResult:
     arguments: dict[str, Any] = field(default_factory=dict)
     urls: tuple[str, ...] = ()          # the result's own URLs (Adapter.result_urls), read before the cut
     foreign: bool = False               # strangers' text: a foreign server's, or one its adapter says so of
-                                        # (Adapter.foreign_result); it taints the thinker's conversation
+                                        # (Adapter.view, reads_as_foreign); it taints the thinker's conversation
 
     def to_dict(self) -> dict[str, Any]:
         return {"server": self.server, "name": self.name, "ok": self.ok, "text": self.text, "ms": round(self.ms, 1),
@@ -313,6 +313,34 @@ class Server:
             log.warning("tools: %s: %s.%s failed (%s)", self.name, getattr(self.adapter, "name", "?"), method, exc)
             return default
 
+    def _view(self, name: str, text: str, ok: bool) -> tuple[str, bool]:
+        """The adapter's `view` (its `shape_result` by default), failing closed: an exception, or an answer that
+        is not (text, flag), gives the server's text, marked foreign."""
+        if self.adapter is None:
+            return text, False
+        try:
+            shaped, judged = self.adapter.view(name, text, ok)
+            if isinstance(shaped, str) and isinstance(judged, bool):
+                return shaped, judged
+            log.warning("tools: %s: %s.view answered %s; the result counts as foreign", self.name,
+                        getattr(self.adapter, "name", "?"), type(shaped).__name__)
+        except Exception as exc:   # an adapter must never cost a call its answer, nor clear a taint by failing
+            log.warning("tools: %s: %s.view failed (%s); the result counts as foreign", self.name,
+                        getattr(self.adapter, "name", "?"), type(exc).__name__)
+        return text, True
+
+    def _reads_as_foreign(self, text: str) -> bool:
+        """The adapter's last reading of the very text the model gets; an exception counts as foreign."""
+        hook = getattr(self.adapter, "reads_as_foreign", None)
+        if hook is None:
+            return False
+        try:
+            return hook(text) is not False
+        except Exception as exc:
+            log.warning("tools: %s: %s.reads_as_foreign failed (%s); the result counts as foreign", self.name,
+                        getattr(self.adapter, "name", "?"), type(exc).__name__)
+            return True
+
     def risk(self, name: str, overrides: dict[str, str] | None = None) -> str:
         """The approval tier of one of this server's tools (approvals.py): read | change | sends |
         destructive. An `[approvals] risk` entry for the tool ("server.tool") decides, taken as written:
@@ -384,7 +412,12 @@ class Server:
                 log.warning("tools: %s.%s failed (%s; not logged)", self.name, name, type(exc).__name__)
             else:
                 log.warning("tools: %s", exc)
-            return ToolResult(self.name, name, False, trust.clean(str(exc)), ms, arguments=arguments)
+            text, judged = trust.clean(str(exc)), False
+            if shape:
+                # An error can carry the server's own words: its adapter judges it as it would any result.
+                _shaped, judged = self._view(name, text, False)
+            return ToolResult(self.name, name, False, text, ms, arguments=arguments,
+                              foreign="foreign" in self.flags or judged)
         ms = (time.perf_counter() - started) * 1000
         self.last_ms = ms
         is_error = flagged_error(raw)
@@ -392,14 +425,11 @@ class Server:
         ok = not is_error and not looks_like_error(text)
         urls = self._adapted("result_urls", [], name, text, ok)
         urls = tuple(u for u in urls if isinstance(u, str)) if isinstance(urls, (list, tuple)) else ()
-        foreign = "foreign" in self.flags or self._adapted("foreign_result", False, name, text, ok) is True
-        if foreign and "foreign" not in self.flags:
-            log.info("tools: %s.%s's result carries text from outside; it counts as foreign for this sentence",
-                     self.name, name)
+        # What the thinker reads and whether it counts as strangers' text: decided together by the adapter's
+        # `view` (one pass) and read again on the final text below; anything that fails counts as foreign.
+        judged = False
         if shape:
-            text = self._adapted("shape_result", text, name, text, ok)
-            if not isinstance(text, str):
-                text = result_text(raw)
+            text, judged = self._view(name, text, ok)
         text = trust.clean(text)
         # The adapter may keep a result out of the journal (a web search's results, which can
         # quote the query) and say what it was instead: the count, the size, of the whole result.
@@ -407,6 +437,11 @@ class Server:
         truncated = len(text) > result_chars
         if truncated:
             text = text[:result_chars] + f"\n… [{len(text) - result_chars} more characters cut]"
+        if shape and not judged and self.adapter is not None:
+            judged = self._reads_as_foreign(text)
+        foreign = "foreign" in self.flags or judged
+        if judged and "foreign" not in self.flags:
+            log.info("tools: %s.%s's result counts as text from outside for this sentence", self.name, name)
         if not ok:
             self.failures += 1
         detail = self.logs_detail()

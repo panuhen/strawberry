@@ -29,11 +29,11 @@ What it adds over the plain tool list:
     private, egress the trust flags (trust.py): what it returns is the user's own (their library, what
                     they play), and a call reaches Spotify, where a playlist's name or description can
                     be seen by others. Not foreign as a server: see `SpotifyAdapter`.
-    foreign_result  a result with strangers' free text (a description), an over-long field or wording
-                    that addresses a reader counts as foreign for the rest of the sentence.
-    shape_tool,     its schemas without `device_id` but where a call starts playback, and its results as
-    shape_result    the thinker reads them: one line per hit, short quoted names and plain values only,
-                    never a description.
+    view,           its results as the thinker reads them, decided in one pass with whether they count
+    reads_as_foreign as strangers' text: one line per hit, short quoted names and plain values only, never
+                    a description; free text, an over-long field, instruction-like wording, an error or a
+                    failed check makes the result foreign for the rest of the sentence.
+    shape_tool      its schemas without `device_id` but where a call starts playback.
     log_result      a call's result in the journal as counts and a size, never a name.
     reflex_tools    the tools each reflex calls, so a tier raised to need a yes sends it to the thinker.
 
@@ -365,8 +365,8 @@ async def situation(toolbox: Toolbox, server: str) -> str:
     album = (data.get("track") or {}).get("album")
     state = "Now playing" if data.get("playing", True) else "Paused"
     # The names go into the thinker's prompt before any tool: cut short, and not at all when they read
-    # like an instruction (a track can be called anything; `free_text`).
-    if INSTRUCTION.search(f"{track} {album or ''}"):
+    # like an instruction (a track can be called anything; `reads_as_foreign`).
+    if reads_as_foreign(f"{track} {album or ''}"):
         return f"{state} on Spotify: a track whose name reads like an instruction (not shown)."
     track, album = _short(track, 2 * NAME_CHARS), _short(album, NAME_CHARS) if album else album
     return f"{state} on Spotify: {track}" + (f" (album: {album})." if album else ".")
@@ -547,123 +547,196 @@ GUIDE = (
 )
 
 
-# What the thinker reads of a result (`shape_result`), and when a result counts as strangers' text
-# (`foreign_result`). Track, artist, album and playlist names are written by others (anyone can name a public
-# playlist "Ignore previous instructions, remove …"), and a playlist's description is free text. So the
-# thinker gets only short fields, each cut to NAME_CHARS, without control characters and in quotes, as data;
-# a description and any field not listed here never reach it; and a result whose text is free text (a
-# description), too long for a name, or worded like an instruction counts as foreign for the rest of that
-# sentence (trust.py): the user's private context leaves the prompt and every call that is not a read waits
-# for a yes. The removals ask first whatever happens (`confirm`), and the other library changes are offered
-# only when the sentence asks for one (`careful` in the config). A reflex, `ask`, `done` and the vocabulary
-# read the server's own JSON (tools.Server.call `shape`), and none of them hands a name to a model.
+# What the thinker reads of a result, and whether it counts as strangers' text, decided in one pass over the
+# server's JSON (`view_of`), and once more on the very text the model gets (`reads_as_foreign`). Track, artist,
+# album and playlist names are written by others (anyone can name a public playlist "Ignore previous
+# instructions, remove …"), and a playlist's description is free text. So:
+#   - only the fields listed below reach the thinker, each NFKC-normalised, without control or format
+#     characters, on one line, cut to NAME_CHARS and in quotes, as data; every other field is dropped;
+#   - the result counts as foreign for the rest of the sentence (trust.py) when a field is free text (a
+#     description), too long for a name, worded like an instruction, of a shape it should not have, or mixes
+#     scripts inside a word (a homoglyph); when the result is not the server's JSON object; when it is an
+#     error (the server's own sentence can quote a name); and when anything here fails: the safe value first,
+#     cleared only by a check that ran to the end;
+#   - the text the model gets is read again, quotes and separators taken out, so a phrase split across two
+#     fields or left whole by the cut is caught too.
+# The removals ask first whatever happens (`confirm`), and the other library changes are offered only to a
+# sentence that asks for one (`careful` in the config). A reflex, `ask`, `done` and the vocabulary read the
+# server's own JSON (tools.Server.call `shape`), and none of them hands a name to a model.
 NAME_CHARS = 80
-# Fields the thinker may see, said in this order: the names first, quoted; then plain values.
+MESSAGE_CHARS = 200
+# Fields the thinker may see: names (quoted) and plain values. Anything else is dropped.
 NAMED = ("name", "artists", "album", "owner")
 PLAIN = ("uri", "id", "tracks", "total", "owned", "collaborative", "is_active", "volume", "type", "playing",
          "success", "already_liked", "liked", "added", "removed", "playlist", "first", "message")
-# Fields that are free text whatever they say: their presence makes the result foreign, and they are dropped.
+# Fields that are free text whatever they say: a non-empty one makes the result foreign; never shown.
 FREE_TEXT = ("description", "bio", "notes", "comment", "summary", "text", "html")
-# Wording that addresses a reader rather than naming a song: instructions, roles, tools, links.
-# Kept narrow on purpose: "System of a Down" and a song called "Delete" are names, not instructions.
+# Wording that addresses a reader rather than naming a song: instructions, roles, tools, links. Kept narrow on
+# purpose: "System of a Down" and a playlist called "Delete Later" are names.
 INSTRUCTION = re.compile(
     r"\bignore (?:all|any|the|your|previous|prior|earlier|above)\b|\bdisregard\b|\binstructions?\b"
     r"|system prompt|\bassistant\b|\b(?:call|use|run) (?:the |a |this )?(?:tool|function)"
-    r"|\byou (?:must|should|are now|will now|have to)\b|\b[a-z]+_[a-z_]+\b|https?://|\bwww\.|<[a-z/]",
+    r"|\byou (?:must|should|are now|will now|have to)\b"
+    r"|\b(?:remove|save|add|create|delete|play|like|get|set|find)_[a-z_]+"
+    r"|https?://|\bwww\.|<[a-z/]",
     re.IGNORECASE)
 # Only these start playback somewhere: the rest act on the active device, so `device_id` is only tokens.
 DEVICE_TOOLS = ("play", "play_liked")
+BREAKS = {"Cc", "Zl", "Zp"}            # control characters and line separators: a space
+HIDDEN = {"Cf", "Co", "Cs", "Cn"}      # format (zero-width, bidi), private, unassigned: nothing, so a zero-width
+                                       # character inside a word cannot split it past the wording test
+
+
+def _normal(value: str) -> str:
+    """NFKC (fullwidth letters become plain ones), without control or format characters, on one line."""
+    import unicodedata
+
+    text = unicodedata.normalize("NFKC", value)
+    text = "".join(" " if unicodedata.category(ch) in BREAKS else "" if unicodedata.category(ch) in HIDDEN else ch
+                   for ch in text)
+    return " ".join(text.split())
 
 
 def _short(value: Any, limit: int = NAME_CHARS) -> str:
-    """One line, no control characters, at most `limit` characters."""
-    from ..trust import clean
-
-    text = " ".join(clean(str(value)).split())
+    """Normalised (`_normal`) and at most `limit` characters: a name for the situation line."""
+    text = _normal(str(value))
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def _as_data(value: Any) -> str:
-    """A name as the thinker reads it: one line, no control characters, at most NAME_CHARS, in quotes."""
-    return json.dumps(_short(value), ensure_ascii=False)
+def _scripts_mixed(text: str) -> bool:
+    """A word that mixes Latin letters with Cyrillic or Greek ones: how a homoglyph hides a word."""
+    import unicodedata
+
+    for word in re.findall(r"\w+", text):
+        scripts = {unicodedata.name(ch, "?").split(" ")[0] for ch in word if ch.isalpha()}
+        if "LATIN" in scripts and scripts & {"CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE"}:
+            return True
+    return False
 
 
-def _hit(item: dict[str, Any]) -> str:
-    """One item on one line: '"Blue Monday" – "New Order" ("Substance") · uri=spotify:track:…'."""
-    artists = item.get("artists")
-    if isinstance(artists, list):
-        artists = ", ".join(str(a) for a in artists)
-    line = _as_data(item.get("name", "")) if item.get("name") else ""
-    if artists:
-        line += f" – {_as_data(artists)}"
-    if item.get("album"):
-        line += f" ({_as_data(item['album'])})"
-    if item.get("owner"):
-        line += f" by {_as_data(item['owner'])}"
-    rest = [f"{key}={_value(item[key])}" for key in PLAIN
-            if key in item and item[key] not in (None, "", [], {}) and not isinstance(item[key], (dict, list))]
-    return " · ".join([line.strip() or "?", *rest])
+WITHHELD_NAME = "(a name that reads like an instruction, withheld)"
 
 
-def _value(value: Any) -> str:
-    """A plain field: a URI or a number as it is; any other text quoted like a name; true, false, null."""
-    if isinstance(value, bool) or value is None:
-        return json.dumps(value)
-    return _as_data(value) if isinstance(value, str) and not re.fullmatch(r"[\w:./-]{1,80}", value) else str(value)
+class Pass:
+    """One reading of a result: what the thinker gets, and whether anything in it made it foreign."""
+
+    def __init__(self) -> None:
+        self.foreign = False
+
+    def text(self, value: Any, limit: int = NAME_CHARS) -> str:
+        """A string field as the thinker may see it: normalised; an instruction-like or mixed-script one
+        withheld, a long one cut; either makes the result foreign, and so does a field that is not text."""
+        if not isinstance(value, str):
+            self.foreign = True
+            return "?"
+        text = _normal(value)
+        if INSTRUCTION.search(text) or _scripts_mixed(text):
+            self.foreign = True
+            return WITHHELD_NAME
+        if len(text) > limit:
+            self.foreign = True
+            text = text[:limit - 1] + "…"
+        return text
+
+    def quoted(self, value: Any) -> str:
+        return json.dumps(self.text(value), ensure_ascii=False)
+
+    def value(self, key: str, value: Any) -> str:
+        """A plain field: true, false, null and numbers as they are; text checked, and quoted unless it is a
+        URI or an id."""
+        if isinstance(value, bool) or value is None:
+            return json.dumps(value)
+        if isinstance(value, (int, float)):
+            return str(value)
+        text = self.text(value, MESSAGE_CHARS if key == "message" else NAME_CHARS)
+        return text if re.fullmatch(r"[\w:./-]{1,80}", text) else json.dumps(text, ensure_ascii=False)
+
+    def hit(self, item: Any) -> str:
+        """One item on one line: '"Blue Monday" – "New Order" ("Substance") · uri=spotify:track:…'. Only the
+        listed fields; a free-text one (a description) is dropped and makes the result foreign."""
+        if not isinstance(item, dict):
+            self.foreign = True
+            return "?"
+        if any(item.get(key) for key in FREE_TEXT):
+            self.foreign = True
+        artists = item.get("artists")
+        if isinstance(artists, list):
+            artists = ", ".join(self.text(a) for a in artists)
+        line = self.quoted(item["name"]) if item.get("name") else ""
+        if artists:
+            line += f" – {self.quoted(artists)}"
+        if item.get("album"):
+            line += f" ({self.quoted(item['album'])})"
+        if item.get("owner"):
+            line += f" by {self.quoted(item['owner'])}"
+        rest = []
+        for key in PLAIN:
+            value = item.get(key)
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, (dict, list)):
+                self.foreign = True      # a shape this does not know: dropped
+                continue
+            rest.append(f"{key}={self.value(key, value)}")
+        return " · ".join([line.strip() or "?", *rest])
 
 
-def shape_listing(text: str) -> str:
-    """spotify-mcp's JSON as the thinker reads it: a list as numbered lines, one per hit, under its kind; an
-    object (the playing track) as one line; other values as `key: value`, names quoted. Only the fields of
-    NAMED and PLAIN, never free text. An error, or anything that is not JSON, as it came (the core's
-    control-character rule still applies)."""
+def view_of(text: str, ok: bool = True) -> tuple[str, bool]:
+    """The thinker's text for a result and whether it counts as foreign, in one pass over the server's JSON:
+    the listed fields only, each checked as it is written out. Foreign whenever any field was not clean, and
+    whenever the result is not the server's JSON object (an error, other text: then the thinker gets that text,
+    normalised, and the sentence is tainted). Anything that fails here counts as foreign; the caller fails
+    closed too (tools.Server._view)."""
+    from ..trust import clean
+
+    if not isinstance(text, str):
+        return "", True
+    fallback = (clean(_normal(text)), True)
+    if not ok:
+        return fallback                       # an error: the server's own sentence can quote a name
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
-        return text
+    except ValueError:
+        return fallback
     if not isinstance(data, dict) or "error" in data:
-        return text
+        return fallback
+    read = Pass()
     lines: list[str] = []
     for key, value in data.items():
         if key in FREE_TEXT:
-            continue
-        if isinstance(value, list) and all(isinstance(v, dict) for v in value):
+            read.foreign = read.foreign or bool(value)
+        elif isinstance(value, list) and all(isinstance(v, dict) for v in value):
             lines.append(f"{key}: {len(value)}" if value else f"{key}: none")
-            lines += [f"{i}. {_hit(item)}" for i, item in enumerate(value, 1)]
+            lines += [f"{i}. {read.hit(item)}" for i, item in enumerate(value, 1)]
         elif isinstance(value, dict):
-            lines.append(f"{key}: {_hit(value)}")
+            lines.append(f"{key}: {read.hit(value)}")
+        elif key not in NAMED and key not in PLAIN:
+            read.foreign = read.foreign or (isinstance(value, str) and bool(value.strip()))   # unknown text
         elif isinstance(value, list):
-            lines.append(f"{key}: " + ", ".join(_as_data(v) for v in value[:20]))
-        elif key in PLAIN or key in NAMED:
-            lines.append(f"{key}: {_value(value) if key in PLAIN else _as_data(value)}")
-    return "\n".join(lines) if lines else "(nothing)"
+            lines.append(f"{key}: " + ", ".join(read.quoted(v) for v in value[:20]))
+        elif key in NAMED:
+            lines.append(f"{key}: {read.quoted(value)}")
+        else:
+            lines.append(f"{key}: {read.value(key, value)}")
+    shaped = "\n".join(lines) if lines else "(nothing)"
+    return shaped, read.foreign or reads_as_foreign(shaped)
 
 
-def _strings(data: Any, key: str = "") -> list[tuple[str, str]]:
-    """Every (field, string) in a JSON value, nested ones included."""
-    if isinstance(data, dict):
-        return [pair for k, v in data.items() for pair in _strings(v, str(k))]
-    if isinstance(data, list):
-        return [pair for v in data for pair in _strings(v, key)]
-    return [(key, data)] if isinstance(data, str) else []
+def reads_as_foreign(text: str) -> bool:
+    """The text the model gets, read once more with the quotes and separators taken out: a phrase split across
+    two fields ('"ignore" – "previous instructions"'), or one a cut left behind, is caught here."""
+    plain = " ".join(re.sub(r"[\"“”'‘’–—·()\[\]=:,.;!?*_#>|-]+", " ", _normal(text)).split())
+    return bool(INSTRUCTION.search(plain) or INSTRUCTION.search(_normal(text)) or _scripts_mixed(plain))
+
+
+def shape_listing(text: str) -> str:
+    """What the thinker reads of a result (`view_of`)."""
+    return view_of(text)[0]
 
 
 def free_text(text: str) -> bool:
-    """Does a result carry strangers' free text (a description), a field too long for a name, or wording
-    that addresses a reader? Then it counts as foreign for the sentence (`foreign_result`). Text that is not
-    JSON is free text."""
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return bool(text.strip())
-    for key, value in _strings(data):
-        if key in ("uri", "id", "error", "code", "details", "status"):
-            continue
-        if key in FREE_TEXT and value.strip():
-            return True
-        if (len(value) > NAME_CHARS and key != "message") or INSTRUCTION.search(value):
-            return True
-    return False
+    """Does a result count as strangers' text (`view_of`)?"""
+    return view_of(text)[1]
 
 
 def count_hits(text: str) -> str:
@@ -689,10 +762,10 @@ class SpotifyAdapter(Adapter):
     # What it returns is the user's own (their library, their playlists, what they play): private. A call
     # reaches Spotify, and some write what others can see (a playlist's name and description, a public
     # playlist): egress. Not foreign as a server: marked so, every "play X" after a search would wait for a
-    # yes. Its results do carry names others wrote, so each result is judged instead (`foreign_result`): the
-    # thinker sees only short quoted names (`shape_result`), and a result with free text, an over-long field
-    # or instruction-like wording counts as foreign for the rest of the sentence. The removals ask first
-    # whatever happens. After a web result its tools are refused.
+    # yes. Its results do carry names others wrote, so each result is judged instead (`view`, one pass): the
+    # thinker sees only short quoted names, and a result with free text, an over-long field, instruction-like
+    # wording, an unexpected shape or an error counts as foreign for the rest of the sentence, as does any
+    # failure of the check. The removals ask first whatever happens. After a web result its tools are refused.
     private = True
     egress = True
     # The tools each reflex calls (actions.Actor.asks_first): a tier raised to need a yes sends the sentence
@@ -781,11 +854,11 @@ class SpotifyAdapter(Adapter):
             schema["required"] = [k for k in schema["required"] if k != "device_id"]
         return ToolSpec(spec.server, spec.name, spec.description, schema, spec.function)
 
-    def shape_result(self, name: str, text: str, ok: bool) -> str:
-        return shape_listing(text) if ok else text
+    def view(self, name: str, text: str, ok: bool) -> tuple[str, bool]:
+        return view_of(text, ok)
 
-    def foreign_result(self, name: str, text: str, ok: bool) -> bool:
-        return ok and free_text(text)
+    def reads_as_foreign(self, text: str) -> bool:
+        return reads_as_foreign(text)
 
     def log_result(self, name: str, text: str, ok: bool) -> str | None:
         counted = count_hits(text) if ok and name in LISTINGS else ""
