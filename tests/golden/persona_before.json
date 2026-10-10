@@ -160,6 +160,10 @@
   "shushed": [
    "Okay, bubbles only.",
    "Shh. I'll keep it down."
+  ],
+  "talk_again": [
+   "Ah, my voice is back.",
+   "Right, where was I?"
   ]
  }
 }

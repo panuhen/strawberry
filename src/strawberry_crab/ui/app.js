@@ -1121,7 +1121,7 @@
     ["fps", "Frames a second, hand up", "swipes need 10 or more", 1, 60, 1],
     ["hand_hz", "Hand updates a second", "to the bodies and this view", 1, 30, 1],
     ["face_fps", "Face reads a second", "only while a hand is up or her card is open", 1, 15, 1],
-    ["shh_minutes", "Quiet after shh", "minutes her voice is off (the bubble stays)", 1, 720, 1],
+    ["shh_minutes", "Quiet after shh", "minutes her voice is off (the bubble stays); \"you can talk again\" ends it sooner", 1, 720, 1],
   ];
   const TOUCH_TUNING = [
     ["target_s", "A target holds", "s after the body last reported it", 0.5, 60, 0.5],
@@ -1292,7 +1292,7 @@
         ["Model", S.model ? "present" : "missing: strawberry gestures fetch"],
         ["Face model", !S.face_model ? "missing: strawberry gestures fetch (until then facing is not checked, and shh, nod and shake are off)"
           : w.face === "failed" ? "did not load: facing is not checked" : w.face === "on" ? "on: gestures count while you face the screen" : "present"],
-        ["Quiet (shh)", S.quiet_s > 0 ? `her voice is off, ${Math.ceil(S.quiet_s / 60)} min left` : "off"],
+        ["Quiet (shh)", S.quiet_s > 0 ? `her voice is off, ${Math.ceil(S.quiet_s / 60)} min left; say "you can talk again" to end it` : "off"],
         ["Gestures", `${g.received ?? 0} received, ${g.acted ?? 0} acted, ${g.answered ?? 0} answered, ${g.refused ?? 0} refused`],
         ["Touch actions", `${t.acted ?? 0} done, ${t.failed ?? 0} failed, ${t.refused ?? 0} refused, ${t.cooldown ?? 0} too soon`]]));
   }
