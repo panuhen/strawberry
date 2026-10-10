@@ -79,6 +79,8 @@ if [ -n "$WIDGET" ]; then
   "$WIDGET" --headless -- --acceptance=res://validate_approval.gd || STATUS=$?
   echo "== widget legs and pincers"
   "$WIDGET" --headless -- --acceptance=res://validate_legs.gd || STATUS=$?
+  echo "== widget dance beat clock"
+  "$WIDGET" --headless -- --acceptance=res://validate_dance.gd || STATUS=$?
 else
   REPORT="$ROOT/widget/widget_checks.json"
   echo "== widget end-to-end (headless)"
@@ -94,6 +96,8 @@ else
   "$GODOT" --headless --path "$(native "$ROOT/widget")" --script res://validate_approval.gd || STATUS=$?
   echo "== widget legs and pincers"
   "$GODOT" --headless --path "$(native "$ROOT/widget")" --script res://validate_legs.gd || STATUS=$?
+  echo "== widget dance beat clock"
+  "$GODOT" --headless --path "$(native "$ROOT/widget")" --script res://validate_dance.gd || STATUS=$?
 fi
 
 cat "$REPORT"
