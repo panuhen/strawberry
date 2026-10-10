@@ -121,7 +121,7 @@ def test_default_template_round_trips(tmp_path):
     assert config.brain.reaction_model == "gemma3:1b"
     assert config.brain.keep_alive == -1
     assert config.thinker.keep_alive == "30m"   # she is rarely cold; a cold load is 7-17 s
-    assert config.actions.ledger_turns == 6
+    assert config.ledger.turns == 8 and config.ledger.window_minutes == 60.0 and config.ledger.foreign_minutes == 10.0
     assert config.actions.mpris is True and config.thinker.max_tools == 30
     # No MCP server ships configured; the template shows how to add one (ADAPTERS.md).
     assert config.tools.servers == {}

@@ -112,8 +112,11 @@ class Daemon:
         self.vocabulary_foreign = False     # any of them from a server (refresh_vocabulary): named by others
         self.vocabulary_task: asyncio.Task | None = None
         self.vocabulary_at = 0.0
-        # Her memory across turns (§8b): the last few exchanges, given to whoever answers.
-        self.ledger = Ledger(self.config.actions.ledger_turns, self.config.actions.ledger_age_s)
+        # Her memory across turns (§8b, §23): the user's last exchanges and what she reacted to on her own,
+        # one timeline, given to the thinker with each entry's age.
+        ledger = self.config.ledger
+        self.ledger = Ledger(ledger.turns, ledger.window_minutes * 60.0, foreign_age_s=ledger.foreign_minutes * 60.0,
+                             max_notices=ledger.notices)
         # The router's learning loop, data only (§8c): each routed sentence and what came of it,
         # in a local file, when [learning] log_outcomes is on. Off, every call is a no-op.
         self.outcomes = OutcomeLog(self.config.learning)
@@ -433,14 +436,31 @@ class Daemon:
             return Performance(state=self.rest_state), 0
         if event.source == "action":
             # Posted by hand (or by a future doorway that did something): body is the fact.
-            return await self.report(event, event.category != "failed")
+            performance, sent = await self.report(event, event.category != "failed")
+            self.ledger.notice("reflex", f"you {event.app}" if event.app else "an action", performance.text or "",
+                               foreign=False)
+            return performance, sent
         if event.source == "voice" and event.title:
             return await self.handle_voice(event)
         if event.source == "notification":
             return await self.handle_notification(event)
         performance = decorate(event, await self.reactor.react(event))
         sent = await self.perform(performance)
+        self.noticed(event, performance)
         return performance, sent
+
+    def noticed(self, event: Event, performance: Performance) -> None:
+        """A commit or a track she reacted to, into the timeline (ledger.py) with her line: a commit from the
+        user's own repos is theirs; a track's name and a player's are strangers' text (WIRING §20)."""
+        if not performance.text:
+            return
+        if event.source == "git":
+            what = "a commit" if event.app == "post-commit" else "a push" if event.app == "pre-push" else "git"
+            about = f"{what} in {event.title or 'a repo'}" + (f': "{event.body}"' if event.body else "")
+            self.ledger.notice("git", about, performance.text, foreign=False)
+        elif event.source == "media":
+            about = f'{event.app or "a player"} started "{event.title}"' if event.title else (event.app or "music")
+            self.ledger.notice("music", about, performance.text, foreign=True)
 
     def reload_notifications(self) -> str:
         """Read [notifications] from the config file again and use it from the next event on
@@ -460,7 +480,13 @@ class Daemon:
         run = self.runs.start("notification")
         token = runs.active.set(run)
         try:
-            return await self._handle_notification(event)
+            performance, sent = await self._handle_notification(event)
+            if performance.text:
+                # The app and the sender (only the app when it was private), never the body; her line.
+                private = performance.text == privacy.private_line(event.app)
+                about = (event.app or "an app") + (f", from {event.title}" if event.title and not private else "")
+                self.ledger.notice("notification", about, performance.text, foreign=True)
+            return performance, sent
         except asyncio.CancelledError:
             run.cancel_reason = run.cancel_reason or "shutdown"
             raise
@@ -968,14 +994,20 @@ class Daemon:
             careful = route is not None and route.library_change >= 0.5
             today = self.today()
             context, foreign = await self.situation_trust(today)
-            if self.profile_adapter is not None and self.profile_adapter.wanted(text, route):
-                # A sentence about the profile gets only the trusted part of the situation (the date): her
-                # profile tools refuse in a run with strangers' text in it (a track's name), and "this song"
-                # is not hers to write into the user's profile.
-                context, foreign = today, False
-            extra = {"foreign_context": True} if foreign else {}
+            # The timeline (§23): her recent exchanges and what she reacted to on her own. A notice with
+            # strangers' text in it (a sender, a track) starts the run foreign, as the situation line does.
+            about_profile = self.profile_adapter is not None and self.profile_adapter.wanted(text, route)
+            recent, noticed = self.ledger.timeline(trusted_only=about_profile)
+            if about_profile:
+                # A sentence about the profile gets only the trusted part of the situation (the date) and no
+                # foreign notice: her profile tools refuse in a run with strangers' text in it (a track's name),
+                # and "this song" is not hers to write into the user's profile.
+                context, foreign, noticed = today, False, False
+            extra = {"foreign_context": True} if foreign or noticed else {}
+            if noticed and not foreign:
+                log.info("thinker: a recent notice carries names others wrote; every call above playback asks")
             return await self.thinker.run(text, context, careful=careful,
-                                          topic=route.topic if route is not None else "", recent=self.ledger.lines(),
+                                          topic=route.topic if route is not None else "", recent=recent,
                                           route=route, public_context=today, run=run, **extra)
         finally:
             reminder.cancel()

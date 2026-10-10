@@ -207,8 +207,7 @@ class ActionsConfig:
     timeout_s: float = 25.0        # the whole action, tools included; then she says it failed
                                    # (how long she waits for a yes is [approvals] change_s now; an old
                                    # `confirm_s` here is read as it, _migrate_actions)
-    ledger_turns: int = 6          # her memory: this many recent exchanges…
-    ledger_age_s: float = 600.0    # …no older than this, given to both models
+    # (ledger_turns and ledger_age_s are [ledger] turns and window_minutes now; read as them, _migrate_ledger)
 
 
 @dataclass
@@ -233,6 +232,18 @@ class ThinkerConfig:
     still_on_it_s: float = 8.0     # she says so once if it takes longer than this
     # Deprecated: the cover lines are persona.md's `cover.ack` now. Set here, they still replace them.
     acks: list[str] = field(default_factory=list)
+
+
+@dataclass
+class LedgerConfig:
+    """Her short memory (ledger.py, WIRING.md §23): one timeline of the user's turns and what she reacted to
+    on her own (a commit, a notification, a track), given to the thinker with each entry's age."""
+
+    turns: int = 8                 # the user's last this many exchanges…
+    notices: int = 8               # …and this many of the things she reacted to on her own (0: none)…
+    window_minutes: float = 60.0   # …none older than this
+    foreign_minutes: float = 10.0  # a notice with strangers' text (a sender, a track) makes a run ask before
+                                   # changes for this long, and is then left out of the thinker's lines
 
 
 @dataclass
@@ -308,6 +319,7 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     actions: ActionsConfig = field(default_factory=ActionsConfig)
     thinker: ThinkerConfig = field(default_factory=ThinkerConfig)
+    ledger: LedgerConfig = field(default_factory=LedgerConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
     runs: RunsConfig = field(default_factory=RunsConfig)
     approvals: ApprovalsConfig = field(default_factory=ApprovalsConfig)
@@ -326,6 +338,7 @@ class Config:
             "tools": asdict(self.tools),
             "actions": asdict(self.actions),
             "thinker": asdict(self.thinker),
+            "ledger": asdict(self.ledger),
             "learning": asdict(self.learning),
             "runs": asdict(self.runs),
             "approvals": asdict(self.approvals),
@@ -346,6 +359,7 @@ _SECTIONS = {
     "tools": ToolsConfig,
     "actions": ActionsConfig,
     "thinker": ThinkerConfig,
+    "ledger": LedgerConfig,
     "learning": LearningConfig,
     "runs": RunsConfig,
     "approvals": ApprovalsConfig,
@@ -467,8 +481,10 @@ def _validate(config: Config) -> None:
         raise ConfigError("tools.result_chars must be >= 100")
     if not (0.0 <= config.actions.reflex <= 1.0 and 0.0 <= config.actions.argument <= 1.0):
         raise ConfigError("actions.reflex and actions.argument must be between 0 and 1")
-    if config.actions.ledger_turns < 1 or config.actions.ledger_age_s <= 0:
-        raise ConfigError("actions.ledger_turns >= 1 and actions.ledger_age_s > 0 are required")
+    ledger = config.ledger
+    if ledger.turns < 1 or ledger.notices < 0 or ledger.window_minutes <= 0 or ledger.foreign_minutes < 0:
+        raise ConfigError("ledger.turns >= 1, ledger.notices >= 0, ledger.window_minutes > 0 and "
+                          "ledger.foreign_minutes >= 0 are required")
     approvals = config.approvals
     if min(approvals.change_s, approvals.sends_s, approvals.destructive_s) <= 0:
         raise ConfigError("approvals.change_s, sends_s and destructive_s must be positive (how long she waits for a yes)")
@@ -564,6 +580,30 @@ def _deprecated_persona(config: Config) -> None:
                         "WIRING.md §21) and delete it here", key, paths.persona_file())
 
 
+def _migrate_ledger(data: dict[str, Any]) -> dict[str, Any]:
+    """`[actions] ledger_turns` and `ledger_age_s` (until the persona stage) read as `[ledger] turns` and
+    `window_minutes`, with a warning; a value [ledger] sets itself wins."""
+    actions = data.get("actions")
+    if not isinstance(actions, dict) or not ({"ledger_turns", "ledger_age_s"} & set(actions)):
+        return data
+    data, actions = dict(data), dict(actions)
+    ledger = dict(data["ledger"]) if isinstance(data.get("ledger"), dict) else {}
+    for old, new, convert in (("ledger_turns", "turns", lambda v: v),
+                              ("ledger_age_s", "window_minutes", lambda v: v / 60.0 if isinstance(v, (int, float))
+                               and not isinstance(v, bool) else v)):
+        if old not in actions:
+            continue
+        value = actions.pop(old)
+        if new in ledger:
+            log.warning("config: actions.%s is deprecated and ignored; ledger.%s = %r is set", old, new, ledger[new])
+        else:
+            ledger[new] = convert(value)
+            log.warning("config: actions.%s is deprecated; read as ledger.%s = %r (WIRING.md §23)", old, new,
+                        ledger[new])
+    data["actions"], data["ledger"] = actions, ledger
+    return data
+
+
 def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     path = path or default_path()
@@ -574,6 +614,7 @@ def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
         except tomllib.TOMLDecodeError as exc:
             raise ConfigError(f"{path}: {exc}") from exc
         data = _migrate_actions(data)
+        data = _migrate_ledger(data)
         for section_name, values in data.items():
             if section_name not in _SECTIONS:
                 log.warning("config: unknown section [%s] ignored", section_name)
@@ -732,7 +773,6 @@ def default_toml() -> str:
         "enabled = true                 # the reflexes: skip, pause, what's playing… (needs [gate])",
         "mpris = true                   # do the bare music commands over MPRIS (SMTC on Windows) when no server covers them",
         "reflex = 0.6                   # how sure the gate must be to fire a plain command straight away",
-        "ledger_turns = 6               # her memory: this many recent exchanges, given to whoever answers",
         "",
         "[thinker]",
         "enabled = true                 # the big model with the tools; she answers you herself through it",
@@ -742,6 +782,14 @@ def default_toml() -> str:
         "stream = true                  # read the reply as it is written (tokens per second for the widget)",
         "max_tools = 30                 # more tool schemas than this and the least likely are cut (§8b)",
         f"tool_tokens = {th.tool_tokens}             # …and at most this many prompt tokens of them; 0 = no budget",
+        "",
+        "[ledger]",
+        "# Her short memory, in memory only: your last exchanges and what she reacted to on her own (a commit,",
+        "# a notification's app and sender, a track; never a message's text), given to the big model with ages.",
+        f"turns = {LedgerConfig().turns}                      # your last this many exchanges",
+        f"notices = {LedgerConfig().notices}                    # and this many things she reacted to (0: none)",
+        f"window_minutes = {LedgerConfig().window_minutes}         # none older than this",
+        f"foreign_minutes = {LedgerConfig().foreign_minutes}        # a sender's or a track's name makes changes ask first for this long",
         "",
         "[learning]",
         "# The router's learning loop, data only for now: each sentence you say or type, how the gate read",
