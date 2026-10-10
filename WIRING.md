@@ -2004,8 +2004,9 @@ detector, the 21 landmarks and a seven-category classifier in one file) on the C
 it is never written, logged or sent, and no frame or image field exists in any message (`parse_gesture` and
 `parse_hand` refuse unknown fields). What goes to the daemon is a gesture's name, its phase and progress, and
 a hand's palm position, size, pinch, openness, whether it is raised and the wrist and fingertips, as numbers in
-0..1 (x as in a mirror: the user's right is +x; y down), each digit's curl and the thumb-index gap, and, while the
-face model runs, two booleans: `facing` and `face`. With `[gestures] enabled = false` (the default) the
+0..1 (x as in a mirror: the user's right is +x; y down), each digit's curl and the thumb-index gap (for each
+hand, two at most, with the pair's distance and angle: *Two hands* below), and, while the face model runs, two
+booleans: `facing` and `face`. With `[gestures] enabled = false` (the default) the
 process imports neither OpenCV nor MediaPipe, makes no request and only reads its config file's mtime once a
 second; turned on (the tray's *Hand gestures (camera)* row or `strawberry gestures on`, both through
 `configedit` as Message bodies is, then POST /command `reload_gestures` for the daemon), it follows the file
@@ -2078,6 +2079,40 @@ within 1.6 s, mostly sideways: a trembling hand or a hand moving one way is none
 `pinch_slide`: a pinch held still for 0.3 s goes out as `started` (0.5), then the palm's height moves it (0.3 of
 the frame's height is the whole range; up is more) as `progress`, and opening the pinch (or lowering or losing
 the hand) ends it with `done` at its last position. A pinch that drifts while it engages does not engage.
+
+**Two hands** (`Tracker.step_hands`, since 2026-10-11). The recogniser is asked for up to `[gestures] hands`
+(2) hands, but only while a body wants `hand` (the orbs, the Input tab's live view): the second hand is for
+them, and it doubles the recogniser's work while a hand is up (measured, below). Otherwise, and always with
+`hands = 1`, it follows one, as before. A change makes the recogniser again (about 25 ms), the camera staying
+open (`Watcher.follow_hands`). The tracker follows the hands as **slots**: a frame's hands are matched to them
+by the least distance between palms (plus 0.15 where a hand says it is the other one), every pairing of the
+two by two tried; a slot unseen for `lost_s` (0.3 s) is gone, and a hand left over takes a new slot with a
+new id. Each slot has its own smoothing and its own shape reading (`Shaper`, with its hysteresis), so each
+hand is smoothed once. Two palms within a quarter of the smaller hand's size are one hand found twice.
+
+One hand is the **primary**, and only it goes through the guards above and makes gestures: the raised one
+(in the zone and near enough), else the higher. The other takes over only once it has been clearly better
+(raised while the primary is not, or 0.08 of the frame higher) for 0.3 s on end, never while a ring shows
+(a hold told) or a slide goes on, and at once when the primary is gone. Hands at about the same height do not
+flip-flop. A change of primary (`_switch`) ends what the old one was doing as if it had left the zone (a hold
+cancelled, a slide done, the swipe track and the wave forgotten), so the jump from one palm to the other is
+no swipe and the new primary must settle for `settle_s` before its own; the latch carries over (the shape
+that fired, or one that fired in the last 3 s), so two thumbs up fire once, even when the hand that fired is
+lowered and the other, still a thumb, takes over. The other hand's shape is read and sent, never acted on.
+
+**Handedness.** MediaPipe's label is read on the camera's own frame, before x is mirrored, and there it names
+the hand itself: its test picture of two right hands (`right_hands.jpg`, a plain photo) reads "Right" with the
+recogniser this uses, and the same picture flipped reads "Left" (so do `pointing_up.jpg` and `thumb_up.jpg`,
+"Right" as they are). So the label goes on as it is, lowercased: `right` is
+the user's own right hand, which in the mirrored x is usually on the right. A slot's handedness is the most
+common of its last seven labels (a tie: the latest), so one blinking frame does not swap the hands; a camera
+that mirrors its own picture (a driver setting) would swap both x and the labels, as x alone is swapped
+today.
+
+The hand message keeps its top-level fields for the primary and gains `hands` (each hand seen now: its id,
+handedness, whether it is the primary and whether it pinches, and the same fields as the top level, left to
+right) and, with two, `pair` (the palms' distance in x and y's units, the angle of the line between them on the
+picture, whether both pinch); PROTOCOL Part 1d. `parse_hand` checks both (`_hand_entry`, `_pair`).
 
 **The head** (`Tracker.look`). The face model's yaw and pitch keep `facing`; while a question is open that it
 may answer, two turns of the pitch by 8° within 1.6 s (the yaw quieter) is a `nod`, two of the yaw by 10° a
@@ -2228,11 +2263,37 @@ frames, the face model ~7.5 a second): ~185 ms per second. One hand read is ~9 m
 on a frame with no face in it (the detector stops there; with a face the mesh adds a few ms, not measured: no
 real face is used in tests). No VRAM.
 
-**Not built yet.** Tuning on a real camera (the thresholds and the nod and wave swings come from synthetic hands
-and heads; Calibrate is the user's way to fit them); the orbs rendering `hand` and a slider; trying it on Windows
-(OpenCV's default backend there); a target API to fill `target()`.
+**Measured, two hands** (2026-10-11, never the camera: MediaPipe's own public test pictures of hands,
+`pointing_up.jpg` and `right_hands.jpg`, pasted on a plain 640×480 canvas made in memory before the run, a
+few pixels' sway between frames; the real watcher loop, both real models, a poster that wants the hand; CPU
+time over 8 s of wall time). The recogniser alone, per frame: no hand 8.8 ms with one or two; one hand 7.8 ms
+with `num_hands` 1 and 16.6 ms with 2 (with fewer hands found than asked for, MediaPipe runs its palm
+detector on every frame instead of tracking); two hands 15.5 ms. The whole watcher:
 
-Tests: `tests/test_gestures_v2.py` (pointing left, right and up with the mirror, a diagonal in the dead zone and
+| | `hands` 1 | `hands` 2 (a body wants the hand) |
+|---|---|---|
+| no hand (4 frames a second) | 41 ms of CPU a second | 43 ms |
+| one hand up (15 a second, the face model 5) | 159 ms | 299 ms |
+| two hands up | 149 ms (sees one) | 268 ms |
+
+So the second hand costs about as much again as the first while a hand is up, and nothing while none is: hence
+two only while a body asks for the hand. The hand message is about 0.9 KB with one hand and 1.3 KB with two,
+15 a second.
+
+**Not built yet.** Tuning on a real camera (the thresholds and the nod and wave swings come from synthetic hands
+and heads; Calibrate is the user's way to fit them); the orbs rendering `hand` (both hands, `pair`) and a
+slider; two hands on a real camera (the primary's margin and dwell, handedness with the user's webcam); a
+setting for the Input tab's page (`hands` round-trips through it, unshown); trying it on Windows (OpenCV's
+default backend there); a target API to fill `target()`.
+
+Tests: `tests/test_gestures_hands.py` (two hands: the higher one primary with the top level exactly one hand's,
+one hand as before with a `hands` of one, the margin and the dwell, no flip-flop at about the same height, a
+raised hand over a higher one that is not, ids kept and a new one for a hand that comes back, a hand found
+twice; the pair's distance, angle (and the aspect) and both pinches; the other hand making no gesture, two
+thumbs up firing once when the hand that fired is lowered, no swipe and no `present: false` when a hand comes
+or goes, a hold and a slide not taken over; handedness from a faked MediaPipe result, its vote and a blinking
+label; `parse_hand`'s new fields and refusals, a body getting both hands; the watcher posting both, and
+following two only while a body wants the hand), `tests/test_gestures_v2.py` (pointing left, right and up with the mirror, a diagonal in the dead zone and
 the angle's hysteresis; counts and the pairs; a half-curled hand; the slider engaged, moved and let go, a pinch
 that drifts, a lowered hand; a wave, a wave too small, a hand moving one way, a fist shaken; shh across the lips
 and the near misses (beside the mouth, a fist, a finger across, no face model); hands talking along while the

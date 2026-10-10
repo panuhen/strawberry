@@ -1018,7 +1018,7 @@ something else (Part 2 §14's proposal for touch-screen gestures): this one goes
 
 | Field | Meaning |
 |---|---|
-| `present` | `false` once when the hand is gone (nothing else comes with it) |
+| `present` | `false` once when the hand is gone (with two, when both are; nothing else comes with it) |
 | `x`, `y` | the palm's centre, 0..1 of the camera's view, x as in a mirror (the user's right is 1), y down |
 | `size` | the hand's extent, 0..1 of the view: nearer is bigger |
 | `pinch` | 0 apart … 1 the thumb's and index's tips together |
@@ -1029,6 +1029,48 @@ something else (Part 2 §14's proposal for touch-screen gestures): this one goes
 | `curl` | each digit's curl, `thumb` `index` `middle` `ring` `pinky`, 0 straight … 1 curled: what the shapes are read from, and what the Brain UI's calibration records (since 2026-10-10) |
 | `gap` | the thumb's and index's tips apart, over the palm's length, at most 1 (since 2026-10-10) |
 | `facing`, `face` | only while the watcher's face model runs: whether the user faces the screen (gestures count only then, with `[gestures] require_facing`) and whether a face was seen in the last second. Two booleans: nothing else of the face (no angle, no landmark, no picture) leaves the watcher (since 2026-10-10) |
+| `hands` | each hand seen in this frame, one or two, ordered left to right on the screen (by `x`); below (since 2026-10-11) |
+| `pair` | only with two hands in `hands`: the two together; below (since 2026-10-11) |
+
+**Two hands** (since 2026-10-11). The watcher follows up to two hands (`[gestures] hands`, 2, and only while
+a body wants `hand`; else one). One of them is the **primary**: the top-level fields above are always the
+primary's, exactly as they were for the one hand, so a body that reads only those keeps working. The primary
+is the hand raised into the zone, else the higher one; the other takes over only once it has been clearly
+better (raised while the primary is not, or 0.08 of the view higher) for 0.3 s, never while a hold's ring
+shows or a slide goes on, and at once when the primary is gone. Gestures (`gesture`) come from the primary
+alone: the other hand never makes one, and a change of primary makes none (no swipe from the jump, no second
+fire of a held shape).
+
+```json
+{"type": "hand", "t": 17690.2, "present": true, "x": 0.31, "y": 0.39, "size": 0.25, "pinch": 0.95, "open": 0.25,
+ "engaged": true, "shape": "pinch_hold", "points": {"wrist": [0.3, 0.505], "…": []}, "curl": {"…": 0}, "gap": 0.1,
+ "hands": [
+   {"id": 3, "handedness": "left", "primary": true, "pinched": true, "x": 0.31, "y": 0.39, "size": 0.25,
+    "pinch": 0.95, "open": 0.25, "engaged": true, "shape": "pinch_hold", "points": {"…": []}, "curl": {"…": 0}, "gap": 0.1},
+   {"id": 4, "handedness": "right", "primary": false, "pinched": false, "x": 0.71, "y": 0.47, "size": 0.24,
+    "pinch": 0.0, "open": 1.0, "engaged": true, "shape": "palm_hold", "points": {"…": []}, "curl": {"…": 0}, "gap": 0.92}],
+ "pair": {"distance": 0.408, "angle": -8.5, "both_pinched": false}}
+```
+
+(The `…` stand for the fields as above; a 640×480 camera.) x is as in a mirror, so the user's left hand is
+usually the first; crossed hands are the other way round, which is why `handedness` is given and not read
+from `x`.
+
+| `hands[i]` field | Meaning |
+|---|---|
+| `id` | a positive integer, the same for a hand from frame to frame while it stays in view; a hand that went (0.3 s unseen) and comes back gets a new one. Track hands by it, not by their place in the list |
+| `handedness` | `left` or `right`: the user's own hand (their right hand is `right`, wherever it is). From MediaPipe's label, the most common of the last few frames, so a label that blinks for a frame does not swap it. Absent when not known |
+| `primary` | `true` for the one hand whose fields are the top level and that makes the gestures |
+| `pinched` | the thumb's and index's tips together, as the gestures read it (with hysteresis); `pinch` is the raw number |
+| `x` … `gap` | the same fields as the top level, for this hand (no `present`, `facing` or `face`) |
+
+| `pair` field | Meaning |
+|---|---|
+| `distance` | between the two palms, in the units of `x` and `y` (0 up to about 1.4) |
+| `angle` | of the line from the hand on the screen's left to the one on its right, in degrees on the picture (the camera's width over its height put back), −90..90: 0 level, positive when the right one is higher (turning a wheel to the left) |
+| `both_pinched` | both hands pinch: a two-hand grab (zoom by `distance`, turn by `angle`) |
+
+A message with one hand has `hands` with one entry and no `pair`. Two hands make a message of about 1.3 KB.
 
 At most `[gestures] hand_hz` (15) a second, and only while some body wants it: the watcher sends nothing
 for `hand` when none does. Numbers, booleans and these names only: never an image, never a frame, never
