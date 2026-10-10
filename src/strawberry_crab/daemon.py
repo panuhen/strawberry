@@ -437,8 +437,9 @@ class Daemon:
         if event.source == "action":
             # Posted by hand (or by a future doorway that did something): body is the fact.
             performance, sent = await self.report(event, event.category != "failed")
+            # Every field of a posted action is whatever the poster wrote: strangers' text.
             self.ledger.notice("reflex", f"you {event.app}" if event.app else "an action", performance.text or "",
-                               foreign=False)
+                               foreign=True)
             return performance, sent
         if event.source == "voice" and event.title:
             return await self.handle_voice(event)
@@ -455,9 +456,11 @@ class Daemon:
         if not performance.text:
             return
         if event.source == "git":
+            # A commit's subject is not reliably the user's words (an agent writes commits in their repos, and a
+            # subject can quote a page or a tool), so a git notice counts as strangers' text like any other.
             what = "a commit" if event.app == "post-commit" else "a push" if event.app == "pre-push" else "git"
             about = f"{what} in {event.title or 'a repo'}" + (f': "{event.body}"' if event.body else "")
-            self.ledger.notice("git", about, performance.text, foreign=False)
+            self.ledger.notice("git", about, performance.text, foreign=True)
         elif event.source == "media":
             about = f'{event.app or "a player"} started "{event.title}"' if event.title else (event.app or "music")
             self.ledger.notice("music", about, performance.text, foreign=True)
@@ -733,7 +736,8 @@ class Daemon:
             self.acted(record, live, "reflex", outcome.ok,
                        reflex=f"{last.get('server', '')}.{last.get('tool') or route.tool}")
             performance, sent = await self.report(outcome.event(text), outcome.ok, preface)
-            self.ledger.record(text, performance.text or "", did=outcome.did)
+            # A reflex's fact is written from what a server or the player said (a track's name): foreign.
+            self.ledger.record(text, performance.text or "", did=outcome.did, foreign=True)
             return performance, sent
         if route is not None and self.actor.needs_catalogue(route):
             routing("fixed")
@@ -747,7 +751,8 @@ class Daemon:
             return await self.chat(event, preface)
         routing("escalate")
         changed = len(self.profile_session.changes) if self.profile_session is not None else 0
-        outcome = await self.think(text, route, run)
+        with profiles.own_sentence(run, text):   # the user's own sentence, bound to this run (her profile tools)
+            outcome = await self.think(text, route, run)
         self.acted(record, live, "thinker", outcome.ok, calls=outcome.calls)
         if music and not outcome.calls:
             self.quiet_media_until = 0.0  # she only talked; a track change now is somebody else's
@@ -771,7 +776,10 @@ class Daemon:
         # Her question before a held call is not kept in her words either: with it in the ledger, Qwen
         # asked "Remove Blue Monday from your Liked Songs? Say yes." itself, with no call held (confirm.py).
         said = WEB_REPLY if web else confirm.LEDGER_HELD if outcome.held is not None else performance.text or ""
-        self.ledger.record(text, said, did=outcome.did)
+        # Her answer from a tool's result can carry its names (a playlist, a track): foreign in the timeline.
+        named = said == performance.text and (getattr(outcome, "foreign", False) or any(
+            not getattr(self.toolbox.adapters.get(c.server), "own_words_only", False) for c in outcome.calls))
+        self.ledger.record(text, said, did=outcome.did, foreign=named)
         return performance, sent
 
     @staticmethod
@@ -829,13 +837,14 @@ class Daemon:
     async def chat(self, event: Event, preface: str = "") -> tuple[Performance, int]:
         """Gemma answers, with the recent exchanges for context. The voice fallback when the
         thinker is off (and the path every desktop event takes)."""
-        context = self.ledger.context(limit=3) if event.source == "voice" else ""
+        # Her reply is foreign in the timeline when a foreign turn was in what she read (ledger.context_trust).
+        context, foreign = self.ledger.context_trust(limit=3) if event.source == "voice" else ("", False)
         performance = decorate(event, await self.reactor.react(event, context))
         if preface:
             performance = replace(performance, text=prefaced(preface, performance.text or ""))
         sent = await self.perform(performance)
         if event.source == "voice":
-            self.ledger.record(event.title, performance.text or "")
+            self.ledger.record(event.title, performance.text or "", foreign=foreign)
         return performance, sent
 
     # What the ledger says the user said when the answer was not a sentence of theirs.
@@ -957,7 +966,7 @@ class Daemon:
         if run is not None and not outcome.ok:
             run.error = "tools"
         performance, sent = await self.report(outcome.event(text), outcome.ok)
-        self.ledger.record(text, performance.text or "", did=outcome.did)
+        self.ledger.record(text, performance.text or "", did=outcome.did, foreign=True)   # the adapter's fact
         return performance, sent
 
     @staticmethod
@@ -996,13 +1005,12 @@ class Daemon:
             context, foreign = await self.situation_trust(today)
             # The timeline (§23): her recent exchanges and what she reacted to on her own. A notice with
             # strangers' text in it (a sender, a track) starts the run foreign, as the situation line does.
-            about_profile = self.profile_adapter is not None and self.profile_adapter.wanted(text, route)
-            recent, noticed = self.ledger.timeline(trusted_only=about_profile)
-            if about_profile:
-                # A sentence about the profile gets only the trusted part of the situation (the date) and no
-                # foreign notice: her profile tools refuse in a run with strangers' text in it (a track's name),
-                # and "this song" is not hers to write into the user's profile.
-                context, foreign, noticed = today, False, False
+            recent, noticed = self.ledger.timeline()
+            if self.profile_adapter is not None and self.profile_adapter.wanted(text, route):
+                # A sentence about the profile gets only the date as its situation: "this song" is not hers to
+                # write into the user's profile. The run is foreign or not by what is still in its prompt (the
+                # timeline: a foreign notice or turn keeps it foreign, and her profile tools then refuse).
+                context, foreign = today, False
             extra = {"foreign_context": True} if foreign or noticed else {}
             if noticed and not foreign:
                 log.info("thinker: a recent notice carries names others wrote; every call above playback asks")

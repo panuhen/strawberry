@@ -12,17 +12,19 @@ Her only memory across turns, and deliberately small. Two kinds of entry:
 
 The thinker (System 2) gets it as its "recent" lines, oldest first, each with its age ("40 s ago",
 "25 min ago"), within a token budget, so "what was that commit about?" half a minute after she
-announced it has an answer. Each notice carries a trust label: a commit from the user's repos and a
-reflex are the user's own; a notification's sender and a track's name are strangers' text (WIRING
-§20), so a run that sees one asks before anything above `playback`, as with a foreign situation line
-(`timeline` says so). A foreign notice stops counting after `foreign_age_s` and is then left out of
-the thinker's lines too. Everything expires by count (`max_turns`, `max_notices`) and by age
+announced it has an answer. Every entry carries a trust label, and every notice is strangers' text: a
+notification's sender, a track's name, a commit's subject (an agent writes commits in the user's repos,
+and a subject can quote a page) and the fields of a posted action. A turn is foreign when her reply was
+written in a run that was foreign, or from what a tool or the player said (a track's name). A run that
+sees a foreign entry asks before anything above `playback`, as with a foreign situation line (`timeline`
+says so), and a foreign entry stops counting after `foreign_age_s` and is then left out of both models'
+lines. Everything expires by count (`max_turns`, `max_notices`) and by age
 (`max_age_s`), and lives in memory only: a restart forgets it.
 
     ledger.record("skip this song", "Skipped. Now Blue Monday by New Order.", did="skipped to the next track")
     ledger.notice("git", 'a commit in strawberry: "Add websocket"', "Ooh, websockets.")
     ledger.timeline()  ->  (['- 12 s ago (git) a commit in strawberry: "Add websocket"; you said "Ooh, websockets."',
-                             '- 3 s ago the user said "skip this song"; you did "…" and said "…"'], False)
+                             '- 3 s ago the user said "skip this song"; you did "…" and said "…"'], True)
 """
 
 from __future__ import annotations
@@ -46,12 +48,16 @@ class Turn:
     said: str               # what the user said (the transcript)
     reply: str              # what she said back
     did: str = ""           # what she did, when she did something ("skipped to the next track")
+    # Her reply was written from what a tool or a player answered (a track's name, a playlist's): strangers'
+    # text, as a foreign notice is (Daemon: a reflex's fact, a tool's result in her answer).
+    foreign: bool = False
 
     kind = "turn"
 
     def to_dict(self, now: float, foreign_age_s: float = 0.0) -> dict[str, Any]:
         return {"kind": "turn", "ago_s": round(now - self.at, 1), "said": self.said, "reply": self.reply,
-                "did": self.did}
+                "did": self.did, "foreign": self.foreign,
+                "tainting": self.foreign and now - self.at <= foreign_age_s}
 
     def line(self, now: float) -> str:
         what = f' you did "{self.did}" and said' if self.did else " you said"
@@ -89,8 +95,9 @@ class Ledger:
         self.turns: deque[Turn] = deque(maxlen=max_turns)
         self.notices: deque[Notice] = deque(maxlen=max(1, max_notices))
 
-    def record(self, said: str, reply: str, did: str = "") -> None:
-        self.turns.append(Turn(self.clock(), said.strip(), reply.strip(), did.strip()))
+    def record(self, said: str, reply: str, did: str = "", foreign: bool = False) -> None:
+        """A turn. `foreign`: her reply carries text a tool or a player gave (a track's name)."""
+        self.turns.append(Turn(self.clock(), said.strip(), reply.strip(), did.strip(), bool(foreign)))
 
     def notice(self, source: str, about: str, line: str, foreign: bool = True) -> None:
         """Something she reacted to on her own. `about` is what the privacy mode lets through (never a
@@ -111,28 +118,27 @@ class Ledger:
         cutoff = self.clock() - self.max_age_s
         return [n for n in self.notices if n.at >= cutoff]
 
-    def entries(self, trusted_only: bool = False) -> list[Turn | Notice]:
-        """Turns and notices within the window, oldest first. A foreign notice older than `foreign_age_s` is
-        left out; with `trusted_only`, every foreign one is (a sentence about the profile, profile.py)."""
+    def entries(self) -> list[Turn | Notice]:
+        """Turns and notices within the window, oldest first. An entry with strangers' text in it (a foreign
+        notice, a turn whose reply carries a track's name) older than `foreign_age_s` is left out: past that it
+        neither taints a run nor reaches the thinker."""
         now = self.clock()
-        notices = [n for n in self.recent_notices()
-                   if not n.foreign or (not trusted_only and now - n.at <= self.foreign_age_s)]
-        return sorted([*self.recent(), *notices], key=lambda e: e.at)
+        return sorted([e for e in [*self.recent(), *self.recent_notices()]
+                       if not e.foreign or now - e.at <= self.foreign_age_s], key=lambda e: e.at)
 
-    def timeline(self, limit: int | None = None, trusted_only: bool = False,
-                 budget: int = LINES_TOKENS) -> tuple[list[str], bool]:
+    def timeline(self, limit: int | None = None, budget: int = LINES_TOKENS) -> tuple[list[str], bool]:
         """The thinker's lines, oldest first, within `budget` tokens (the oldest go first), and whether any of
-        them carries strangers' text (a notice younger than `foreign_age_s`): the run then starts foreign
+        them carries strangers' text (an entry younger than `foreign_age_s`): the run then starts foreign
         (Thinker.run `foreign_context`)."""
         now = self.clock()
-        entries = self.entries(trusted_only)
+        entries = self.entries()
         if limit is not None:
             entries = entries[-limit:] if limit > 0 else []
         lines = [e.line(now) if isinstance(e, Turn) else e.text(now) for e in entries]
         while lines and _tokens("\n".join(lines)) > budget:
             lines.pop(0)
             entries.pop(0)
-        return lines, any(isinstance(e, Notice) and e.foreign for e in entries)
+        return lines, any(e.foreign for e in entries)
 
     def lines(self, limit: int | None = None) -> list[str]:
         """The thinker's lines, oldest first (`timeline` without the flag)."""
@@ -140,19 +146,38 @@ class Ledger:
 
     def context(self, limit: int | None = None) -> str:
         """The recent turns (the user's own exchanges only) as lines for the reaction model's prompt when it
-        answers a sentence (the thinker off); '' when there is nothing fresh."""
+        answers a sentence (the thinker off); '' when there is nothing fresh. A foreign turn past foreign_age_s
+        is left out, as from the thinker's lines (`context_trust` says whether a foreign one is in)."""
+        return self.context_trust(limit)[0]
+
+    def context_trust(self, limit: int | None = None) -> tuple[str, bool]:
         now = self.clock()
-        turns = self.recent()
+        turns = [t for t in self.recent() if not t.foreign or now - t.at <= self.foreign_age_s]
         if limit is not None:
             turns = turns[-limit:]
-        return as_context([t.line(now) for t in turns])
+        return as_context([t.line(now) for t in turns]), any(t.foreign for t in turns)
 
     def to_list(self, notices: bool = False) -> list[dict[str, Any]]:
-        """The turns in the window, oldest first; with `notices` (/health, the Brain UI) the notices among them:
-        a notice's source, what it was, her line, and whether it is strangers' text still counting."""
+        """The turns in the window, oldest first (/health's `ledger`, as before). With `notices`, the notices among
+        them as their kind, age, source and trust only: what it was and her line stay out (a sender, a commit's
+        subject); the Brain UI, behind its session, gets them whole (`view`)."""
         now = self.clock()
         entries: list[Turn | Notice] = [*self.recent(), *(self.recent_notices() if notices else [])]
-        return [e.to_dict(now, self.foreign_age_s) for e in sorted(entries, key=lambda e: e.at)]
+        out = []
+        for e in sorted(entries, key=lambda e: e.at):
+            item = e.to_dict(now, self.foreign_age_s)
+            if isinstance(e, Notice):
+                item.pop("about"), item.pop("line")
+            out.append(item)
+        return out
+
+    def view(self) -> list[dict[str, Any]]:
+        """Every entry in the window, oldest first, whole, with `in_prompt` (what the thinker's next run gets,
+        `entries`): for the Brain UI, behind its session."""
+        now = self.clock()
+        shown = {id(e) for e in self.entries()}
+        return [e.to_dict(now, self.foreign_age_s) | {"in_prompt": id(e) in shown}
+                for e in sorted([*self.recent(), *self.recent_notices()], key=lambda e: e.at)]
 
 
 def as_context(lines: list[str]) -> str:

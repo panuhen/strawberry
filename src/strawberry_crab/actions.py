@@ -59,6 +59,9 @@ class Outcome:
     calls: tuple[ToolResult, ...] = ()
     emotion: str = ""   # set by the thinker (her own line, her own mood); "" = the reaction path picks
     held: Any = None    # a confirm.Held: a call the thinker stopped at, made only after a spoken yes
+    # Strangers' text was in the run that wrote it (the thinker: a foreign situation line or timeline entry, a
+    # foreign result): the timeline keeps the turn as foreign (ledger.py)
+    foreign: bool = False
 
     def event(self, asked: str) -> Event:
         """For the reaction path: it adds a quip after `fact` (brain.describe)."""

@@ -30,6 +30,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import replace
 from contextvars import ContextVar
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
@@ -585,6 +586,9 @@ class Thinker:
             metering.reset(metered)
         if run is not None and not outcome.ok:
             run.error = error or "other"
+        if foreign_context or self.used_foreign(outcome):
+            # The run's final trust state, for the timeline: her reply may carry what strangers wrote.
+            outcome = replace(outcome, foreign=True)
         self.last_s = time.perf_counter() - started
         if not outcome.ok:
             self.failures += 1
