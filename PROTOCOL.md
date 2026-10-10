@@ -8,7 +8,8 @@ language, without importing any brain code.
 **Three parts.** Part 1 is protocol v1 as the code does it; every statement there is taken from
 the code and cites it as `file:line`. Part 1b is the part of protocol v2 that is built (runs and
 their events, stopping a run, approvals and their answers, the clock in ping and pong); it cites
-functions rather than lines.
+functions rather than lines. Part 1c is the built input from bodies: the entities a body draws, and the
+`touch` and `target` it sends.
 Part 2 is the rest of v2, **PROPOSED**: designs for new message families, not code. Each of its
 sections says in its heading whether it is proposed or partly built.
 
@@ -131,14 +132,15 @@ before. Field by field:
 | `listening` | `phase`, `seconds`, `speech` | – |
 | `token_rate` | `tokens_per_s`, `tokens` | – |
 | `approval.request`, `approval.resolved` | nothing: never sent | all |
+| `touched`, `targeted` (Part 1c) | nothing: never sent | all |
 | the first-run privacy note (§2.1) | nothing: it waits for a body with the secret | all |
 
 Every run event keeps `type`, `run_id`, `seq` and `t`; a v2 body still gets only the families it asked
 for. A broadcast that reaches a socket before its hello is read goes out as the shape (the widget says
 hello at once, so this is a short window). It may send nothing but `ping` and `hello`: `heard`, `poked`,
-`run.cancel` and `approval.answer` are refused. A v2 body is told, with `{"type": "input.refused", "ref": "<the message
+`run.cancel`, `approval.answer`, `touch` and `target` (Part 1c) are refused. A v2 body is told, with `{"type": "input.refused", "ref": "<the message
 type, or the approval id>", "reason": "no_secret" | "bad_secret"}`; after `welcome` it is also told
-once, with `"ref": "hello"`, when its hello asked for `cancel`, `approvals` or `sends.approval` (or
+once, with `"ref": "hello"`, when its hello asked for `cancel`, `approvals`, `sends.approval`, `sends.touch`, `sends.target` or entities (or
 carried a wrong secret). `welcome` then has `"trusted": false`, and its `accepted` says `false` for each
 of those. A v1 body is told nothing (a v1 body never receives a typed message, §7): its input is
 dropped and the journal says so.
@@ -396,8 +398,9 @@ first (`widget.gd:650-652`).
 | `{"type":"ping"}` | – | answers `{"type":"pong"}` | `server.py:387-388` |
 | `{"type":"heard","text":"…"}` | `text`: string, the sentence the user typed | only from a socket whose hello presented the bus secret (§1.4); trimmed; empty ignored; becomes `Event(source="voice", title=text)` and runs the same funnel as a spoken sentence, in the background. It is a foreground run (Part 1b): one at a time, and it stops the one before it unless it answers her question | `server.py:390-397`, sent by `widget.gd:411-417` |
 | `{"type":"run.cancel","run_id":"…"}` | v2 only | §11c; from a v1 body it is ignored | `server.py` `_cancel_from_body` |
-| `{"type":"poked","zone":"…","level":1}` | `zone`: `shell` `belly` `eye` `claw` `near`; `level`: 1 (curious) or 2 (annoyed) | from any body whose hello presented the bus secret (§1.4). The widget sends it now and then only with its *Talk when poked* setting on (off by default; WIRING.md §13, Touch); it has already reacted itself. The brain may answer with one short line written in `pokes.py` (no model, nothing in the ledger) as an ordinary `talking` performance without `anim` or `reaction`, unless a run is going on, its state is not `idle` or `dancing`, or it said one in the last 20 s. Anything else in the fields: logged at DEBUG, ignored. Not the proposed v2 `touch` (§14), which maps to bindings and never speaks | `server.py` `_poked`, sent by `touch.gd` `maybe_talk` |
+| `{"type":"poked","zone":"…","level":1}` | `zone`: `shell` `belly` `eye` `claw` `near`; `level`: 1 (curious) or 2 (annoyed) | from any body whose hello presented the bus secret (§1.4). The widget sends it now and then only with its *Talk when poked* setting on (off by default; WIRING.md §13, Touch); it has already reacted itself. The brain may answer with one short line written in `pokes.py` (no model, nothing in the ledger) as an ordinary `talking` performance without `anim` or `reaction`, unless a run is going on, its state is not `idle` or `dancing`, or it said one in the last 20 s. Anything else in the fields: logged at DEBUG, ignored. Not the v2 `touch` (Part 1c), which never speaks; the crab sends both (§1c.6) | `server.py` `_poked`, sent by `touch.gd` `maybe_talk` |
 | `{"type":"approval.answer",…}` | v2 only | §13b; from a v1 body it is ignored | `server.py` `_answer_from_body` |
+| `{"type":"touch",…}`, `{"type":"target",…}` | v2 only | Part 1c; from a v1 body they are ignored | `server.py` `_body_input` |
 | anything else | – | logged at DEBUG, ignored | `server.py:398-399` |
 | not JSON | – | logged at DEBUG, ignored | `server.py:379-381` |
 
@@ -469,7 +472,8 @@ What stays proposed is in Part 2.
  "protocol": 2, "body": {"id": "crab", "name": "Strawberry"}, "secret": "<the bus secret, §1.4>",
  "capabilities": {"phases": ["routing", "thinking", "tool", "speaking", "run"],
                   "approvals": true, "speech": {"bubble": true},
-                  "sends": {"heard": true, "cancel": true, "approval": true}}}
+                  "entities": [{"id": "crab", "kind": "crab", "label": "Strawberry"}],
+                  "sends": {"heard": true, "cancel": true, "approval": true, "touch": ["poke"]}}}
 ```
 
 The v1 fields and the version check of §2.1 stay as they are. Of the v2 fields the brain reads
@@ -484,6 +488,7 @@ The v1 fields and the version check of §2.1 stay as they are. Of the v2 fields 
 | `capabilities.approvals` | `true`: it shows approvals, and gets `approval.request` and `approval.resolved` (§13b) |
 | `capabilities.sends.approval` | `true` (or Part 2's non-empty list of ways, e.g. `["click"]`): it may send `approval.answer` (§13b). Taken only together with `approvals: true`: the id to answer comes in a request |
 | `secret` | the bus secret (§1.4). Without it `cancel`, `approvals` and `approval` are not given, whatever the hello asks, and performances and phases come as their shape (§1.4) |
+| `capabilities.entities`, `capabilities.sends.touch`, `capabilities.sends.target` | what it draws and the input it reports: Part 1c. `touch` and `target` in `capabilities.phases` ask for `touched` and `targeted` (§1c.4), for a trusted body only |
 | `capabilities.speech.bubble` | `true`: it shows a performance's `text` (her bubble). Only the one-time privacy note (§2.1) looks at it today: it goes to a body that shows text, and a v2 body without this flag (the orbs) neither gets it nor uses it up. A v1 body counts as showing text |
 
 Every other capability of §10 is accepted and ignored for now. The brain answers a v2 hello that is
@@ -770,6 +775,186 @@ Examples, a removal answered on the card and one that ran out:
 
 ---
 
+# Part 1c — Protocol v2, as built: input from bodies (entities, `touch`, `target`)
+
+Built 2026-10-10 (`bodylink.py`, `server.py` `_body_input`, `daemon.py` `body_touch` / `body_target`). A
+body tells the brain what the user does to what it draws: touches it (a poke, a flick, a grab, a drag, a
+release, two things fused) and points at it. This part is complete for a body author: with it and §1.4,
+§2.1 and §9b a body can be written in any language. v2 only: a v1 body sends none of it, gets none of it,
+and its bytes are unchanged (`tests/test_runs.py` golden frames, `tests/test_bodylink.py`).
+
+Continuous hand data from the webcam (`hand`) and recognised gestures are a separate part, owned by the
+gesture watcher; they are not here.
+
+## 1c.1 What a body declares in its hello
+
+Three additions to the v2 hello of §9b, all optional:
+
+```json
+{"type": "hello", "client": "orbs", "version": "dev", "protocol": 2,
+ "body": {"id": "orbs", "name": "Orbs"}, "secret": "<the bus secret, §1.4>",
+ "capabilities": {"phases": ["touch", "target"],
+                  "entities": [{"id": "music", "kind": "orb", "label": "Music"},
+                               {"id": "calendar", "kind": "orb", "label": "Calendar"}],
+                  "sends": {"touch": true, "target": true}}}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `capabilities.entities` | list of objects, at most 16 | the separate things the body draws that the user can touch or point at. The crab declares one, herself: `{"id": "crab", "kind": "crab", "label": "Strawberry"}` |
+| `entities[].id` | string, `^[a-z][a-z0-9_-]{0,23}$` | unique within the body; what `touch` and `target` name, and what the user's `[touch]` config keys on (`music.flick`). Also **how the brain names it to its models**: id `music` and kind `orb` are "the music orb" (`_` and `-` read as spaces) |
+| `entities[].kind` | one of `orb` `crab` `panel` `button` `card` `light` `thing` | what sort of thing it is |
+| `entities[].label` | string, optional | a display name, for bodies and `/health` only. The brain cleans it (NFKC; letters, digits, spaces, hyphens, apostrophes; at most 40 characters, cut at a word) and **never puts it in a prompt**: a body holding the secret is not the user, and a label could be a track's title or a notification's text. Absent: "the music orb" |
+| `capabilities.sends.touch` | `true`, or a list of the kinds it sends (`["poke"]`) | it may send `touch` (§1c.2); `true` means every kind |
+| `capabilities.sends.target` | `true` | it may send `target` (§1c.3) |
+| `capabilities.phases` | add `touch` and/or `target` | it wants to hear what the **other** bodies report: `touched` and `targeted` (§1c.4) |
+
+An entry with a bad `id` or `kind`, a repeated `id`, or past the 16th is left out, and the body is told once
+after `welcome` with `{"type": "input.refused", "ref": "hello", "reason": "bad_entities"}`. The rest of its
+entities are taken.
+
+**All of it needs the bus secret** (§1.4). A hello without it, or with a wrong one, keeps no entities, may
+send neither message and gets neither event: its `welcome` says `entities: []`, `touch: false`, `target:
+false`, its `phases` lose `touch` and `target`, and it gets `input.refused` for `hello` (`no_secret` or
+`bad_secret`), as for any other input it asked for.
+
+`welcome.accepted` gains each of `entities` (the ids taken), `touch` and `target` (booleans) when the
+hello mentioned it, and only then (a body that did not ask sees the earlier shape):
+
+```json
+{"type": "welcome", "protocol": 2, "brain": "0.2.0", "t": 81234.512, "rest_state": "idle",
+ "accepted": {"phases": ["target", "touch"], "cancel": false, "entities": ["music", "calendar"],
+              "touch": true, "target": true}, "trusted": true, "body_id": "orbs"}
+```
+
+## 1c.2 `touch` (body → brain)
+
+A discrete touch on one of its own entities. The body resolves what was touched itself; coordinates are
+never sent.
+
+```json
+{"type": "touch", "entity": "music", "kind": "flick", "strength": 0.8}
+{"type": "touch", "entity": "music", "kind": "grab"}
+{"type": "touch", "entity": "music", "kind": "release"}
+{"type": "touch", "entity": "calendar", "kind": "fuse", "with": "music", "t": 81240.25}
+```
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | `"touch"` | yes | |
+| `entity` | string | yes | an id this body declared |
+| `kind` | `poke` `flick` `grab` `drag` `release` `fuse` | yes | `poke`: a tap. `flick`: a quick throw. `grab`: a press that holds it. `drag`: it moved while held (send it at most a few times a second, not every frame). `release`: let go. `fuse`: dragged onto another entity |
+| `with` | string | with `fuse` only | the other entity, an id this body declared, not `entity` itself |
+| `strength` | number 0–1 | no | how hard or fast, if the body measures it |
+| `t` | number 0–1e10 | no | when it happened, in **brain monotonic seconds** (§12.1, the ping and pong clock). A `t` up to 2 s before arrival starts the target's time there; anything else counts from arrival |
+
+No other field is allowed. What the brain does with it:
+
+1. **Holding.** A `grab` or a `drag` holds the entity until a `release` or a `flick` (or 30 s with neither);
+   while held, the thinker's situation line says "The user is holding the music orb."
+2. **Telling the others.** Every other trusted v2 body that asked for the `touch` phase gets `touched`
+   (§1c.4). The sender never gets its own back.
+3. **The action map** (`[touch]` in the user's config, WIRING §25). Empty by default: a touch is shown and
+   nothing else happens. When the user maps the touch, e.g. `music.flick = "next"`, the brain runs that
+   reflex (skip, previous, pause, resume, volume up or down, what's playing) at once, the same code a
+   spoken "skip this" runs, with no model and nothing said. Only reflexes that need no yes can be mapped
+   (a touch cannot answer a question); one action at a time, `cooldown_s` (1 s) apart; a touch inside
+   that is shown but not acted on. When it acted, her timeline gets "the user flicked the music orb, so you
+   skipped to the next track" (named by id and kind).
+
+## 1c.3 `target` (body → brain)
+
+What the user points at now, so "this" in a sentence means it and, later, a gesture means something per
+entity.
+
+```json
+{"type": "target", "entity": "music", "via": "pointer"}
+{"type": "target", "entity": "music", "via": "touch", "t": 81240.1}
+{"type": "target", "entity": null, "via": "pointer"}
+```
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | `"target"` | yes | |
+| `entity` | string or `null` | yes | an id this body declared, or `null`: the user points at nothing of this body's |
+| `via` | `pointer` `touch` `gesture` | yes | how: a mouse or a hovering hand, a finger resting on it, a recognised pointing gesture |
+| `t` | number | no | as in `touch` |
+
+The newest `target` from any body is **the** target. It lasts `[touch] target_s` (8 s) after the last
+`target` that named it, so **a body keeps sending it while the user stays on the entity** (every 2 to 4 s is
+plenty) and sends `null` when the user leaves it. `null` from a body clears the target only if that body set
+it. A body that disconnects takes its target and what it held with it. While it holds, the thinker's
+situation line says "The user is pointing at the music orb on the screen." (`touching` with `via:
+"touch"`): the user's own act, so it does not make the run foreign (WIRING §20).
+
+## 1c.4 `touched` and `targeted` (brain → other bodies)
+
+To every **trusted** v2 body that put `touch` (or `target`) in `capabilities.phases`, except the sender:
+
+```json
+{"type": "touched", "t": 81240.31, "body": "orbs", "entity": "music", "kind": "flick", "strength": 0.8, "action": "skip"}
+{"type": "touched", "t": 81241.02, "body": "orbs", "entity": "calendar", "kind": "fuse", "with": "music"}
+{"type": "targeted", "t": 81242.5, "body": "orbs", "entity": "music", "via": "pointer", "ttl_s": 8.0}
+{"type": "targeted", "t": 81250.9, "body": "orbs", "entity": null, "via": "pointer", "ttl_s": 8.0}
+```
+
+| Field | In | Meaning |
+|---|---|---|
+| `t` | both | brain monotonic time it went out |
+| `body` | both | the reporting body's `body.id` |
+| `entity` | both | the entity's id (on `targeted`, `null` when cleared) |
+| `kind`, `with`, `strength` | `touched` | as the body sent them |
+| `action` | `touched` | only when the touch runs a mapped reflex: its name (`skip`, `pause`, …) |
+| `via`, `ttl_s` | `targeted` | how, and how long the target lasts without a fresh `targeted` |
+
+Only these fields go out: whatever else a body tried to add was refused before (§1c.5). `targeted` goes out
+when the target changes, and again for the same one once half of `ttl_s` has passed, so a receiver can drop
+it `ttl_s` after the last one. Neither has `run_id` or `seq`: they belong to no run. **A body without the bus
+secret never gets either** (they have no shape in §1.4; what the user touches is theirs), and a v1 body
+never does.
+
+## 1c.5 Refusals and limits
+
+In this order, for `touch` and `target` from a v2 body:
+
+1. **Rate.** At most 20 `touch` and 10 `target` in any one second, per body. More are dropped with no
+   reply and counted (`/health` `bodies[].inputs.dropped`).
+2. **Refused**, with `{"type": "input.refused", "ref": "touch" | "target", "reason": …}` and nothing else
+   happening:
+
+| `reason` | When |
+|---|---|
+| `no_secret`, `bad_secret` | the hello did not present the bus secret, or a wrong one (§1.4) |
+| `not_declared` | the hello did not declare `sends.touch` (or `sends.target`), or this `kind` is not in its `sends.touch` list |
+| `unknown_field` | a field not in the tables above (`x`, `y`, `label`, …) |
+| `bad_value` | a missing or wrong `entity`, `kind` or `via`; `strength` outside 0–1; a `t` that is not a number in 0–1e10; `with` without `fuse` or `fuse` without `with`; a `with` naming the entity itself |
+| `unknown_entity` | `entity` or `with` names an id this body did not declare (or one refused at hello) |
+
+From a v1 body both are ignored (logged at DEBUG), with no reply.
+
+## 1c.6 `poked` and `touch`
+
+`poked {zone, level}` (§6) stays as it is: it asks her for a spoken line and only goes out with the crab's
+*Talk when poked* setting on. It is not a touch. A body that reports touches sends `touch {entity, kind:
+"poke"}` for every poke as well, as the crab does: `poked` is her line, `touch` is the user's act. A `poked`
+never runs the action map and is never passed on; a `touch` never makes her speak.
+
+## 1c.7 `/health`
+
+With the secret, `bodies[]` rows of a body that mentioned any of this add `entities` (id, kind and the
+cleaned label), `touch`, `target` and `inputs` (counts of `touch`, `target`, `refused`, `dropped`). The
+top-level `input` has `targets` (the target now by body and entity id, its age, what is held, the counts),
+`actions` (`acted`, `failed`, `refused`, `cooldown`) and `mapped` (the `[touch]` map).
+
+## 1c.8 Changes
+
+- 2026-10-10: Part 1c added: entities, `sends.touch`, `sends.target`, `touch`, `target`, `touched`,
+  `targeted`, the `touch` and `target` phase families, `input.refused` reasons `not_declared`,
+  `unknown_field`, `bad_value`, `unknown_entity`, `bad_entities`. Replaces the proposed §14 `touch` and
+  `point`.
+
+---
+
 # Part 2 — PROPOSED: protocol v2
 
 The rest of protocol v2 is a design, not code; what is built is in Part 1b, and the sections below
@@ -794,7 +979,9 @@ traffic of Part 1 and nothing else (§15).
 
 *Built:* `protocol`, `body`, `capabilities.phases`, `capabilities.sends.cancel`,
 `capabilities.approvals`, `capabilities.sends.approval` (as `true` or a non-empty list),
-`capabilities.speech.bubble` (for the privacy note only) and `welcome`, with the open approval after it (§9b, §13b). The rest of this section is proposed.
+`capabilities.speech.bubble` (for the privacy note only) and `welcome`, with the open approval after it (§9b, §13b);
+`capabilities.entities` (`id`, `kind`, `label`; no `topic`), `sends.touch` and `sends.target` (Part 1c). The rest
+of this section is proposed.
 
 A v2 body adds `protocol`, `body` and `capabilities` to the v1 hello. Old fields stay, so the
 version check of §2.1 still applies.
@@ -1110,7 +1297,10 @@ Rules:
 
 ## 14. PROPOSED (v2): input from bodies
 
-(`run.cancel` is built: §11c; `approval.answer`: §13b.)
+(`run.cancel` is built: §11c; `approval.answer`: §13b. `touch` and `point` are built differently, as Part 1c
+says: `touch` has the kinds `poke` `flick` `grab` `drag` `release` `fuse`, `point` is `target {entity, via}`, the
+map is `[touch]` with reflexes of `read` and `playback` only, and labels never reach a model. `gesture` is the
+gesture watcher's.)
 
 `heard` stays as in v1. New, each only from a body that declared it in `sends`:
 

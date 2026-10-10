@@ -9,6 +9,16 @@ package and the widget binary.
 
 ### Added
 
+- **Bodies can say what you touch and point at.** A body (the orbs on a touch screen, the crab) names
+  the things it draws in its hello and sends `touch` (poke, flick, grab, drag, release, fuse) and
+  `target` (what you point at). While you point at the music orb, "what's this?" means it: the thinker
+  is told "The user is pointing at the music orb" for 8 s after the body last said so. A touch can run a
+  music command you map in the new `[touch]` section (`music.flick = "next"`, `music.grab = "pause"`);
+  none is mapped by default, and only commands that never ask for your yes can be. Other bodies hear
+  about it (`touched`, `targeted`), so one can react to what you did on another. All of it needs the bus
+  secret, is rate-limited and checked strictly, and a body's own text never reaches a model: entities are
+  named from their id and kind. The crab declares herself and reports each poke. PROTOCOL.md Part 1c
+  (written for body authors), WIRING.md §25.
 - A livelier voice without changing it. `[speech] noise_scale` and `noise_w` set Piper's own variation of
   pitch and tone and of rhythm; 0 (the default) keeps the voice's own. Around 0.85 and 1.1 she sounds
   less flat; much higher and the voice starts to slur.
