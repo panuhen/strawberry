@@ -7,6 +7,9 @@
                                                          reload_notifications is the daemon's own
   POST /listen   the hotkey: listen once (again = stop early)   (§7)
   POST /probe    time each model slot on fixed sentences         <- strawberry doctor --talk
+  POST /gesture  a gesture's name, phase and progress            <- doorways/gesture_watch.py (§25)
+  POST /hand     where the hand is (numbers only)                <- the same, while a body wants it
+  GET  /gesture  what the camera should do now (armed, a question a thumb may answer)
   GET  /health
   GET  /config   the effective settings
   GET  /ws       the Godot widget connects here and stays connected
@@ -42,6 +45,8 @@ from .config import Config, ConfigError
 from .contract import ContractError, Performance, anim_for
 from .daemon import Daemon
 from .events import Event
+from .gestures import GestureError, parse_gesture, parse_hand
+from .hub import accepted_gestures
 from .logtext import sentence
 
 log = logging.getLogger("strawberryd.http")
@@ -74,7 +79,8 @@ def version_verdict(widget: str | None, daemon: str = __version__) -> str:
 # /tempo every interval_s, and a journal line for each buries everything else. A poll that fails
 # (4xx/5xx) is still logged. The line is aiohttp's default (request line, status, size, agent):
 # it has no request body in it, and nothing here adds one.
-QUIET_ROUTES = frozenset({("GET", "/health"), ("POST", "/tempo")})
+QUIET_ROUTES = frozenset({("GET", "/health"), ("POST", "/tempo"), ("POST", "/hand"), ("POST", "/gesture"),
+                          ("GET", "/gesture")})
 
 
 class QuietAccessLogger(AccessLogger):
@@ -109,6 +115,9 @@ def create_app(daemon: Daemon) -> web.Application:
             web.post("/command", command),
             web.post("/listen", listen),
             web.post("/probe", probe),
+            web.post("/gesture", gesture),
+            web.post("/hand", hand),
+            web.get("/gesture", gesture_state),
             web.get("/ws", websocket),
         ]
     )
@@ -233,6 +242,7 @@ async def health(request: web.Request) -> web.Response:
             "actions": daemon.actor.stats(),
             "confirm": daemon.confirm_stats(),
             "approvals": daemon.approvals.stats(),
+            "gestures": daemon.gestures.stats(),
             "thinker": daemon.thinker.stats(),
             "learning": daemon.outcomes.stats() | daemon.trainer.health(),
             "ledger": daemon.ledger.to_list(notices=True),
@@ -369,6 +379,8 @@ COMMANDS = {
 # What the daemon does itself instead of sending on (§14): the tray has changed the config file.
 DAEMON_COMMANDS = {
     "reload_notifications": None,   # re-read [notifications] (body mode, body_apps, filters)
+    "reload_gestures": None,        # re-read [gestures] (the tray's Gestures row, gestures.py)
+    "arm_gestures": None,           # command mode on for [gestures] armed_s (`strawberry gestures arm`)
 }
 
 
@@ -405,6 +417,8 @@ async def command(request: web.Request) -> web.Response:
         message = parse_command(await _body(request))
     except ContractError as exc:
         return _error(str(exc))
+    if message["command"] in ("reload_gestures", "arm_gestures"):
+        return gesture_command(daemon, message)
     if message["command"] == "reload_notifications":
         try:
             body = daemon.reload_notifications()
@@ -459,6 +473,69 @@ async def event(request: web.Request) -> web.Response:
         return _error(str(exc))
     performance, sent = await daemon.handle_event(incoming)
     return web.json_response({"sent": sent, "performance": performance.to_dict()})
+
+
+async def gesture(request: web.Request) -> web.Response:
+    """`POST /gesture {name, phase, progress}` from the camera doorway (gestures.py, WIRING.md §25): on to the bodies
+    that asked, and for `done` the mapped reflex as a run, or a thumb's answer to the open approval. 409 while
+    [gestures] is off; 429 past the rate (30 a second, one action per half second). The reply carries the state
+    the watcher steers the camera by."""
+    daemon = request.app[DAEMON]
+    try:
+        message = parse_gesture(await _body(request))
+    except GestureError as exc:
+        return _error(str(exc))
+    if not daemon.config.gestures.enabled:
+        return _error("gestures are off ([gestures] enabled = false)", 409)
+    if daemon.gestures.limited("gesture"):
+        return _error("too many gestures; at most 30 a second", 429)
+    result = await daemon.gestures.gesture(message)
+    if result.get("refused") == "too_soon":
+        return _error("one gesture action at a time; this one came too soon after the last", 429)
+    return web.json_response(result | {"state": daemon.gestures.state()})
+
+
+async def hand(request: web.Request) -> web.Response:
+    """`POST /hand` from the camera doorway: where the hand is, numbers only, to the bodies that asked for `hand`.
+    Past 30 a second it is dropped (`dropped: true`), not queued."""
+    daemon = request.app[DAEMON]
+    try:
+        message = parse_hand(await _body(request))
+    except GestureError as exc:
+        return _error(str(exc))
+    if not daemon.config.gestures.enabled:
+        return _error("gestures are off ([gestures] enabled = false)", 409)
+    if daemon.gestures.limited("hand"):
+        return web.json_response({"sent": 0, "dropped": True, "state": daemon.gestures.state()})
+    sent = await daemon.gestures.hand(message)
+    return web.json_response({"sent": sent, "state": daemon.gestures.state()})
+
+
+async def gesture_state(request: web.Request) -> web.Response:
+    """`GET /gesture`: what the camera should do now (gestures.GestureDesk.state). It says whether a question is
+    open, so it needs the bus secret, as /config does."""
+    refusal = _secret_refusal(request)
+    if refusal is not None:
+        raise web.HTTPForbidden(text=json.dumps(refusal), content_type="application/json")
+    return web.json_response(request.app[DAEMON].gestures.state())
+
+
+def gesture_command(daemon: Daemon, message: dict[str, Any]) -> web.Response:
+    """The daemon's own gesture commands: `reload_gestures` reads [gestures] again (409, keeping what she has,
+    when the file does not load); `arm_gestures` turns command mode on for armed_s."""
+    if message["command"] == "arm_gestures":
+        if not daemon.config.gestures.enabled:
+            return _error("gestures are off ([gestures] enabled = false)", 409)
+        seconds = daemon.gestures.arm()
+        log.info("command: gestures armed for %.0fs", seconds)
+        return web.json_response({"sent": 0, "command": message, "armed_s": seconds})
+    try:
+        enabled = daemon.gestures.reload()
+    except ConfigError as exc:
+        log.warning("command: [gestures] not reloaded (%s); keeping the settings she has", exc)
+        return _error(f"config not reloaded: {exc}", 409)
+    log.info("command: [gestures] reloaded, %s", "on" if enabled else "off")
+    return web.json_response({"sent": 0, "command": message, "enabled": enabled})
 
 
 async def websocket(request: web.Request) -> web.WebSocketResponse:
@@ -586,7 +663,7 @@ def welcome(daemon: Daemon, body) -> dict[str, Any]:
     message: dict[str, Any] = {"type": "welcome", "protocol": body.protocol, "brain": __version__,
                                "t": round(time.monotonic(), 6), "rest_state": daemon.rest_state,
                                "accepted": {"phases": sorted(body.phases), "cancel": body.cancel}
-                               | body.accepted_approvals(), "trusted": body.trusted}
+                               | body.accepted_approvals() | accepted_gestures(body), "trusted": body.trusted}
     if body.id:
         message["body_id"] = body.id
     return message

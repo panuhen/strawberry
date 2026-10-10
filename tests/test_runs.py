@@ -145,8 +145,10 @@ def test_a_notification_run_is_never_the_foreground_and_never_stopped():
     note = book.start("notification")
     assert book.current is typed and not note.foreground
     assert book.cancel(note.run_id, "stopped") is False
+    # A gesture's reflex (gestures.py) is not the foreground either: a sentence never stops it.
+    assert not book.start("gesture").foreground and book.current is typed
     with pytest.raises(ValueError):
-        book.start("gesture")
+        book.start("telepathy")
 
 
 @pytest.mark.parametrize("text, stop", [("stop", True), ("Stop!", True), ("cancel that", True), ("never mind", True),

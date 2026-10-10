@@ -301,6 +301,10 @@ class RunsConfig:
 # `change`, it does not wait for a yes once strangers' text is in the conversation.
 RISKS = ("read", "playback", "change", "sends", "destructive")
 TRUST_FLAGS = ("private", "foreign", "egress")     # = trust.FLAGS
+GESTURE_WATCH = ("always", "armed")
+# = gestures.DEFAULT_MAP (a test keeps the two the same): what a gesture does once [gestures] is on
+DEFAULT_GESTURE_MAP = {"thumb_up": "like", "swipe_left": "previous", "swipe_right": "skip", "palm_hold": "pause",
+                       "point_hold": "listen"}
 OFFERS = ("always", "topic", "asked")
 
 
@@ -324,6 +328,28 @@ class ApprovalsConfig:
 
 
 @dataclass
+class GesturesConfig:
+    """The camera doorway (doorways/gesture_watch.py, WIRING.md §25): hand gestures run the reflexes voice has.
+    Off by default; MediaPipe on the CPU; only gesture names and a hand's landmarks leave the watcher."""
+
+    enabled: bool = False          # opt-in: the camera is never opened while this is false
+    camera: str = ""               # "" = the first camera; an index ("1") or a device ("/dev/video2")
+    watch: str = "always"          # always: while enabled the camera is open, scanning at idle_fps for a raised
+                                   # hand and at fps while one is up; armed: closed until `strawberry gestures arm`
+                                   # (or an approval she shows), then open for armed_s after the last hand seen
+    fps: float = 15.0              # frames a second while a hand is up (swipes need 10 or more)
+    idle_fps: float = 4.0          # …and while looking for one
+    hold_ms: float = 400.0         # a shape must be held this long to count; the bodies show it filling
+    arming: bool = False           # true: a raised open palm, held, turns command mode on for armed_s first
+    armed_s: float = 8.0
+    approvals: bool = True         # a held thumbs up or down answers the approval she shows (not a hold tier)
+    zone: float = 0.8              # a hand counts only with its wrist above this line (0 top, 1 bottom)…
+    min_size: float = 0.12         # …and at least this big (of the frame's height): raised toward the screen
+    hand_hz: float = 15.0          # the hand's position to the bodies that ask for it, at most this often
+    map: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_GESTURE_MAP))
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
@@ -341,6 +367,7 @@ class Config:
     learning: LearningConfig = field(default_factory=LearningConfig)
     runs: RunsConfig = field(default_factory=RunsConfig)
     approvals: ApprovalsConfig = field(default_factory=ApprovalsConfig)
+    gestures: GesturesConfig = field(default_factory=GesturesConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -361,6 +388,7 @@ class Config:
             "learning": asdict(self.learning),
             "runs": asdict(self.runs),
             "approvals": asdict(self.approvals),
+            "gestures": asdict(self.gestures),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -383,6 +411,7 @@ _SECTIONS = {
     "learning": LearningConfig,
     "runs": RunsConfig,
     "approvals": ApprovalsConfig,
+    "gestures": GesturesConfig,
 }
 
 
@@ -566,12 +595,35 @@ def _validate(config: Config) -> None:
         raise ConfigError("learning.max_share must be above 0 and at most 1")
     if not (1 <= config.runs.keep <= 1000):
         raise ConfigError("runs.keep must be between 1 and 1000")
+    _validate_gestures(config.gestures)
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
 
     try:
         parse_quiet_hours(config.speech.quiet_hours)
     except ValueError as exc:
         raise ConfigError(f"speech.{exc}") from exc
+
+
+def _validate_gestures(gestures: GesturesConfig) -> None:
+    """[gestures] (WIRING.md §25): the map may name only read and playback actions (gestures.check_map)."""
+    from .gestures import GestureError, check_map   # local: gestures.py reads paths, and tests import it alone
+
+    if gestures.watch not in GESTURE_WATCH:
+        raise ConfigError(f"gestures.watch must be one of {', '.join(GESTURE_WATCH)}")
+    if not (1.0 <= gestures.fps <= 60.0) or not (0.5 <= gestures.idle_fps <= gestures.fps):
+        raise ConfigError("gestures.fps must be 1-60 and gestures.idle_fps 0.5 up to fps")
+    if not (100.0 <= gestures.hold_ms <= 3000.0):
+        raise ConfigError("gestures.hold_ms must be between 100 and 3000")
+    if not (1.0 <= gestures.armed_s <= 120.0):
+        raise ConfigError("gestures.armed_s must be between 1 and 120")
+    if not (0.1 <= gestures.zone <= 1.0) or not (0.0 <= gestures.min_size < 1.0):
+        raise ConfigError("gestures.zone must be 0.1-1 and gestures.min_size 0 up to 1")
+    if not (1.0 <= gestures.hand_hz <= 30.0):
+        raise ConfigError("gestures.hand_hz must be between 1 and 30")
+    try:
+        gestures.map = check_map(gestures.map)
+    except GestureError as exc:
+        raise ConfigError(str(exc)) from None
 
 
 def _migrate_notifications(values: dict[str, Any]) -> dict[str, Any]:
@@ -885,5 +937,39 @@ def default_toml() -> str:
         '# risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }',
         "#                              # a tool's (or a whole server's) tier: read | playback | change | sends | destructive;",
         "#                              # a whole server's never lowers a tool its adapter or server marks higher",
+        *_gestures_toml(),
     ]
     return "\n".join(lines) + "\n"
+
+
+def _gestures_toml() -> list[str]:
+    """[gestures] in the commented template (WIRING.md §25)."""
+    ge = GesturesConfig()
+    lines = [
+        "",
+        "[gestures]",
+        "# Hand gestures through the webcam: MediaPipe on the CPU, in a process of its own. Only gesture names",
+        "# and a hand's position leave it; frames are never stored, logged or sent. Needs the gestures extra",
+        "# (`strawberry gestures fetch` gets the model). The tray's Gestures row turns it on and off.",
+        f"enabled = {str(ge.enabled).lower()}",
+        f'camera = "{ge.camera}"                    # "" = the first camera; "1" or "/dev/video2" for another',
+        f'watch = "{ge.watch}"               # always: the camera is on while enabled (its light too), looking',
+        "#                              # for a raised hand a few times a second; armed: off until",
+        "#                              # `strawberry gestures arm` or an approval she shows, then on for armed_s",
+        f"fps = {ge.fps}                     # while a hand is up",
+        f"idle_fps = {ge.idle_fps}                 # while looking for one",
+        f"hold_ms = {ge.hold_ms}               # how long a shape is held before it counts",
+        f"arming = {str(ge.arming).lower()}                 # true: a held open palm turns command mode on first, for armed_s",
+        f"armed_s = {ge.armed_s}",
+        f"approvals = {str(ge.approvals).lower()}               # a held thumbs up/down answers her card (never a hold tier)",
+        f"zone = {ge.zone}                     # the wrist must be above this line (0 top, 1 bottom)",
+        f"min_size = {ge.min_size}               # and the hand this big: raised toward the screen, not on the desk",
+        f"hand_hz = {ge.hand_hz}                # the hand's position to the bodies that ask, at most this often",
+        "",
+        "[gestures.map]",
+        "# thumb_up thumb_down palm_hold fist_hold point_hold victory_hold pinch_hold swipe_left swipe_right",
+        "# -> now_playing pause resume skip previous volume_up volume_down like play_liked listen",
+        "# Only these: a gesture runs what plays and how, never a change that needs a yes.",
+    ]
+    lines += [f'{name} = "{action}"' for name, action in ge.map.items()]
+    return lines
