@@ -251,8 +251,11 @@ func run() -> void:
 	check(touch.pokes == before + 1 and touch.last_zone == "belly", "a finger tap should be a poke like a click")
 	await calm()
 
-	# 10. "Talk when poked": off sends nothing; on, the third in a row always asks the daemon.
-	check(widget.ws.sent.is_empty(), "talk off: nothing should go to the daemon")
+	# 10. Every poke is a `touch` on herself; "Talk when poked": off asks for no line; on, the third in a
+	# row always asks the daemon.
+	var touches: Array = widget.ws.sent.filter(func(m): return m.get("type") == "touch")
+	check(touches.size() == touch.pokes and touches.size() == widget.ws.sent.size(), "talk off: only a touch per poke should go to the daemon")
+	check(touches.all(func(m): return m == {"type": "touch", "entity": "crab", "kind": "poke"}), "a poke is a touch on the crab")
 	widget.set_touch_talk(true)
 	touch.talked_at = -100.0
 	for i in 2:

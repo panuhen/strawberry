@@ -33,6 +33,12 @@ model runs on your own computer through [Ollama](https://ollama.com); nothing is
   toward the middle of the screen when she sits near an edge. *Touch reactions*, *Talk when
   poked* (a short line now and then, off by default) and *Turn toward the screen* are in her
   right-click menu.
+- **Touch on other bodies.** A body such as the orbs on a touch screen tells her what you touch or
+  point at: poke, flick, grab, drag, let go of or fuse an orb. While you point at the music orb, "what's
+  this?" or "turn this down" means that orb. A touch does nothing else unless you map it in `[touch]`:
+  `music.flick = "next"` skips the track, `music.grab = "pause"` pauses. Only music commands that never
+  need your yes can be mapped (skip, previous, pause, resume, volume, what's playing); she says nothing,
+  and her short memory notes what you did. Each poke on the crab counts too (`crab.poke`).
 - **Tools.** You can give her MCP servers (a calendar, notes, Spotify) in the config. None is
   configured out of the box. See [ADAPTERS.md](ADAPTERS.md).
 - **Web search (optional).** With a local SearXNG and its MCP server configured, she searches
@@ -172,6 +178,7 @@ The settings you are most likely to change:
 | `[thinker]` | `stream` | read the big model's reply as it is written, for the tokens-per-second gauge (on) |
 | `[ledger]` | `turns`, `notices`, `window_minutes`, `foreign_minutes` | her short memory: your last exchanges (8) and what she reacted to on her own (8), none older than 60 minutes; for 10 minutes after a sender's or a track's name, a change asks first |
 | `[messages]` | `enabled`, `keep`, `max_age_hours` | her inbox for "any new messages?": on, at most 100 notifications, none older than 24 hours, in memory only; message text only as `[notifications] body` allows |
+| `[touch]` | `target_s`, `cooldown_s`, `<entity>.<touch>` | what you point at on a body stays meant for 8 s after the body last said so; touch actions at least 1 s apart; the action map, e.g. `music.flick = "next"` (none by default: a touch changes nothing) |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
 
 Her persona is a file of its own: copy the shipped `persona.md` (in the package's `data/` folder,

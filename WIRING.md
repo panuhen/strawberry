@@ -76,7 +76,7 @@ Long-running Python (asyncio, aiohttp). One port, default **8770**:
 - `GET /health` — `{ok, widgets, performed, uptime_s, state, rest_state, brain: {model, loaded, calls, fallbacks, last_latency_s}}`. `state` is what she is doing now (a transient older than 6 s reads as her resting state, because the widget returns to it on its own); the tray's status row is this field. `tempo` is the fresh beat estimate (§4c) and `tempo_age_s` the seconds since beat_watch last posted one (`null`: never since the daemon started); `strawberry doctor` reads it to tell a watcher that stopped from one with nothing playing. All of that needs the bus secret (below): without it `/health` answers only `{ok, version, uptime_s, widgets, state, withheld}`, enough for a liveness poll (`curl` in the check scripts), and `withheld` (`no_secret` or `bad_secret`) is what `strawberry doctor` warns about.
 - `GET /config` — the effective settings (§15). 403 without the bus secret: they name the MCP servers' commands, environment and headers, paths in the user's home and her persona.
 - `POST /probe` — `strawberry doctor --talk`: the daemon's own two scripted sentences (`Daemon.PROBE_LINES`) through the gate, the desktop voice (Gemma), the brain (Qwen, offered no tools so nothing changes), Piper and whisper (reading Piper's wav back), each timed. It takes no text, performs nothing, records nothing in the ledger, logs only the times, and answers a loopback client only.
-- `GET /ws` — the widget connects here.
+- `GET /ws` — the widget connects here. A v2 body (the crab, the orbs) also sends input back over it: what the user touches and points at on it (`touch`, `target`; §25, PROTOCOL Part 1c).
 - `POST /ui-token`, `/ui/...` — the Brain UI (§17): a one-time login token for `strawberry ui`, and the page with its own API.
 - **Core function:** `Daemon.perform(performance)` builds the blob, (Phase 4) runs TTS, and sends to Godot. Everything routes through it.
 
@@ -697,7 +697,7 @@ Eye morphs go through `blink_controller` (`extra_wide` / `extra_happy` / `extra_
 
 The sum is clamped to ±15° yaw and ±5° pitch, and every part returns to zero, so she always comes back to face the user. The pupils make up for the turn: `gaze.gd` aims them in her own frame, so a cursor straight ahead stays looked at while she turns. `--at=u,v` pins the place (captures, checks). **The click-through hull** on Linux (`hull_points`) is the meshes' boxes under every combination of ±`MAX_YAW`, 0 and ±`MAX_PITCH`, unprojected through the camera: X11's input shape is set now and then, not each frame, so it holds every turn she can take (at the widest turns her posed bones reach at most 2 px past the unpadded hull, inside the 18 px padding). On Windows `follow_pose` already takes her posed bones through the model's transform each frame. `validate_turn.gd` (in `check_phase1.sh`) checks the place at each edge and the middle, the easing during a drag, the setting off and persisted, a glance's 12° and return, the peek's turn, the drift, the dance's turn, the pupils' compensation and the hull at the four widest turns.
 
-**Touch (`widget/touch.gd`).** Purely local to the widget. `widget.gd::_unhandled_input` decides what a left press was, the same for a mouse and a finger (Godot turns a touch into the same mouse events): released within `TAP_S` (0.22 s) having moved less than `TAP_SLOP_PX` (6 px) it is a **poke**; moved further, it **drags** the window as before (the drag starts at the slop, and the window catches up the few pixels); held still past `HOLD_S` (0.5 s) it is a **hold**; a slow still press in between is nothing. Right click and the menu are unchanged. The step chip, the approval card and the open type box are Controls that take their clicks first, and `on_controls` refuses a press on them besides, so the ✕ and the card's buttons always win, and a poke never answers the card.
+**Touch (`widget/touch.gd`).** Local to the widget: her reaction never waits for the daemon. Each poke is also reported as `touch {entity: "crab", kind: "poke"}` (§25), which does nothing unless the user maps `crab.poke` in `[touch]`. `widget.gd::_unhandled_input` decides what a left press was, the same for a mouse and a finger (Godot turns a touch into the same mouse events): released within `TAP_S` (0.22 s) having moved less than `TAP_SLOP_PX` (6 px) it is a **poke**; moved further, it **drags** the window as before (the drag starts at the slop, and the window catches up the few pixels); held still past `HOLD_S` (0.5 s) it is a **hold**; a slow still press in between is nothing. Right click and the menu are unchanged. The step chip, the approval card and the open type box are Controls that take their clicks first, and `on_controls` refuses a press on them besides, so the ✕ and the card's buttons always win, and a poke never answers the card.
 
 Where she was touched is a ray from the camera through the press (`hit_test`): each mesh follows one bone rigidly (a leg two: it is tested under each), so the ray goes into that bone's rest space, is tested against the bone's box, then against the mesh's own triangles (read once); the nearest hit wins, about 2.6 ms a poke. Her left is model +X.
 
@@ -1801,3 +1801,102 @@ message away, and one in her own words; bodies off; the live switch to off; the 
 log record or file and no sender in any record of the inbox or the sentence, with `log_sentences` either way;
 counts only in `/health` and the Brain UI), `tests/test_notify_watch.py` and `tests/test_toast_watch.py` (a
 burst's `items`).
+
+---
+
+## 25. The body link: touch and target — `strawberry/bodylink.py` (input from bodies)
+
+Until this, bodies mostly listened: the crab could type (`heard`), poke for a line (`poked`), stop a run and
+answer a card. The orbs sent nothing. Gestures and touch need bodies to say what the user does to what they
+draw, so that "this" means something and a touch on the music orb can be different from one on the
+calendar. The wire format is PROTOCOL.md Part 1c; this section is how the brain uses it.
+
+```
+body hello: entities [{id, kind, label}], sends.touch, sends.target   (trusted only)
+   │
+   ├─ touch {entity, kind, with?, strength?, t?} ─▶ server._body_input ─▶ Daemon.body_touch
+   │                                                   (rate, secret,        ├─ Targets.touched (holding)
+   │                                                    capability, checks)  ├─ touched ─▶ other bodies
+   │                                                                         └─ [touch] map ─▶ Actor.fire (a reflex)
+   └─ target {entity|null, via, t?} ─▶ server._body_input ─▶ Daemon.body_target
+                                                             ├─ Targets.point (TTL 8 s)
+                                                             └─ targeted ─▶ other bodies
+Targets.situation() ─▶ Daemon.situation_trust ─▶ the thinker's situation line
+```
+
+**Who may.** Only a body whose hello presented the bus secret (§2) keeps entities or sends either message,
+and only what it declared (`sends.touch`, as `true` or a list of kinds; `sends.target`). Everything is
+checked before it does anything (`bodylink.parse_touch`, `parse_target`): the entity must be one the body
+declared, unknown fields are refused, numbers are range-checked. A body may send 20 touches and 10 targets a
+second; more are dropped and counted, with no reply, so a stuck body cannot make the brain talk back at the
+same rate. A refusal is an `input.refused` with a fixed reason. A v1 body's bytes never change: it neither
+sends nor receives any of it.
+
+**Body text never reaches a model.** Holding the bus secret means a process runs as the user; it does not
+mean every string it sends is the user's words. A body could name an entity after a track title or a
+notification. So the brain names an entity to its models by code, from its id and its kind alone
+(`Entity.name`: id `music`, kind `orb` → "the music orb"), and checks both at hello: the id is a lowercase
+token starting with a letter (at most 24), the kind one of `orb crab panel button card light thing`. An entity
+that fails is left out and the body is told (`bad_entities`). The `label` a body gives is cleaned (NFKC;
+letters, digits, spaces, hyphens, apostrophes; 40 characters) and kept for display only (`/health`); it is
+never in a prompt or the timeline. That is why the target line can count as the user's own: it is the user's
+act, reported by a trusted body, in code's words. `tests/test_bodylink.py` puts an injection string in a label
+and checks it reaches neither the thinker's context nor its timeline, and that the run is not foreign.
+
+**Targets** (`Daemon.targets`, `bodylink.Targets`). The current target is the newest `target` from any body
+and lasts `[touch] target_s` (8 s) after the last one that named it; the body repeats it while the user stays
+on the entity and sends `null` when they leave. A `grab` or `drag` holds an entity until `release` or
+`flick` (30 s at most). A body that disconnects takes both with it (`Daemon.body_gone`), and the others hear
+`targeted {entity: null}`. While a target holds, the thinker's situation line ends with "The user is pointing
+at the music orb on the screen." (or "touching", for `via: touch`), and "The user is holding the calendar
+orb." for a held one. Other parts of the brain read it through `targets.current()` (a `Target`: `body`,
+`entity`, `via`, `at`) and `targets.holding()`; the gesture watcher is meant to use these rather than keep
+its own.
+
+**The other bodies.** A trusted v2 body that puts `touch` or `target` in its `capabilities.phases` gets
+`touched` and `targeted` for what the *other* bodies report (never its own), with whitelisted fields: ids,
+the kind, `with`, `strength`, the mapped action's name, `via`, `ttl_s`. That is how the crab could glance at
+the orb that was poked. A body without the secret gets neither: what the user touches is theirs. `targeted`
+goes out on a change and again after half the TTL for the same target.
+
+**The action map** (`[touch]`, `config.TouchConfig`). Empty by default: a touch is shown to the other bodies
+and changes nothing. A mapping names one of the bare music reflexes (`actions.py`), keyed by entity id and
+touch kind:
+
+```toml
+[touch]
+target_s = 8.0        # a target holds this long after the body last reported it
+cooldown_s = 1.0      # at least this long between two touch actions
+music.flick = "next"  # skip; also: previous, pause, resume (or play), volume_up, volume_down, now_playing
+music.grab = "pause"
+```
+
+The reflex runs as a spoken "skip this" would (`Actor.reflex_named`, then `Actor.fire`: the music server's
+adapter, else MPRIS), with no model and nothing said; one at a time, `cooldown_s` apart (a drag can repeat
+fast), and the MPRIS doorway's track reaction is swallowed as after a spoken skip. **A touch cannot answer a
+question**, so only reflexes of the `read` and `playback` tiers can be mapped (approvals by gesture come
+later). The config load refuses a mapping that names no such reflex, and one whose calls the config itself
+puts above `playback`: an `[approvals] risk` entry for a tool the reflex calls on a configured server (or the
+whole server), or that tool on the server's `confirm` list (`config._validate_touch`). Before each action the
+daemon asks again (`Actor.asks_first`), since a server can mark its own tools; a call that would ask is not
+made and is counted as refused.
+
+**The timeline** (§23) gets a notice only when an action was taken, source `reflex`, not foreign: "the user
+flicked the music orb, so you skipped to the next track". The entity is named by id and kind; `did` is the
+reflex's own words, never a track's name.
+
+**`poked` stays.** It asks for her spoken line and is sent only with *Talk when poked* on. The crab now also
+sends `touch {entity: "crab", kind: "poke"}` for every poke: the line and the act are separate messages.
+
+**Where it shows.** `/health` (with the secret): each body's `entities` (with the cleaned label), `touch`,
+`target` and `inputs` counts (`touch`, `target`, `refused`, `dropped`) under `bodies`; and `input`: the target
+now, what is held, the action counts (`acted`, `failed`, `refused`, `cooldown`) and the map. The journal says
+each refusal with its reason, the action and why one was skipped; never a label.
+
+Tests: `tests/test_bodylink.py` with a fake body (`tests/fake_body.py`) that declares entities and sends
+touch and target over a real websocket: the checks field by field, the secret (missing and wrong), the
+capabilities, the rate limits, the TTL and holding, the situation line and its trust, the action map (an
+action, the cooldown, a call that would ask, nothing to do it with), the config refusals (an unknown action,
+a kind, an id, a tier raised by `[approvals] risk` or a confirm list), the broadcast to other bodies and its
+fields, nothing for an untrusted socket, a v1 body untouched, and `/health`. `widget/validate_touch.gd` checks
+the crab's `touch` per poke.

@@ -324,6 +324,19 @@ class ApprovalsConfig:
 
 
 @dataclass
+class TouchConfig:
+    """Input from bodies (WIRING.md §25, PROTOCOL Part 1c): what a touch on an entity does, and how long what
+    the user points at stays in her situation line."""
+
+    target_s: float = 8.0          # a target holds this long after the body's last `target`
+    cooldown_s: float = 1.0        # at least this long between two touch actions (a drag repeats fast)
+    # entity id -> touch kind -> a reflex (bodylink.TOUCH_ACTIONS): written `music.flick = "next"` in [touch].
+    # Empty by default: a touch is shown to the other bodies and never acted on. Only `read` and `playback`
+    # reflexes can be mapped, since a touch cannot answer a question (_validate_touch).
+    actions: dict[str, dict[str, str]] = field(default_factory=dict)
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
@@ -341,6 +354,7 @@ class Config:
     learning: LearningConfig = field(default_factory=LearningConfig)
     runs: RunsConfig = field(default_factory=RunsConfig)
     approvals: ApprovalsConfig = field(default_factory=ApprovalsConfig)
+    touch: TouchConfig = field(default_factory=TouchConfig)
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -361,6 +375,7 @@ class Config:
             "learning": asdict(self.learning),
             "runs": asdict(self.runs),
             "approvals": asdict(self.approvals),
+            "touch": asdict(self.touch),
         }
         out["path"] = str(self.path) if self.path else None
         return out
@@ -383,6 +398,7 @@ _SECTIONS = {
     "learning": LearningConfig,
     "runs": RunsConfig,
     "approvals": ApprovalsConfig,
+    "touch": TouchConfig,
 }
 
 
@@ -566,12 +582,78 @@ def _validate(config: Config) -> None:
         raise ConfigError("learning.max_share must be above 0 and at most 1")
     if not (1 <= config.runs.keep <= 1000):
         raise ConfigError("runs.keep must be between 1 and 1000")
+    _validate_touch(config)
     from .speech import parse_quiet_hours  # local: speech imports SpeechConfig from here
 
     try:
         parse_quiet_hours(config.speech.quiet_hours)
     except ValueError as exc:
         raise ConfigError(f"speech.{exc}") from exc
+
+
+def _touch_table(values: dict[str, Any]) -> dict[str, Any]:
+    """[touch] as written: its settings, and a table per entity (`music.flick = "next"` is {"music": {"flick":
+    "next"}} in TOML), which become `actions`."""
+    out = {key: value for key, value in values.items() if not isinstance(value, dict)}
+    tables = {key: value for key, value in values.items() if isinstance(value, dict)}
+    if tables:
+        out["actions"] = tables
+    return out
+
+
+def _validate_touch(config: Config) -> None:
+    """[touch]: the times, then each mapping: an entity id, a touch kind and a reflex of `read` or `playback`.
+    A touch cannot answer a question, so a mapping whose calls would wait for a yes is refused here: a reflex
+    above `playback`, or one whose server's tools `[approvals] risk` (or the server's `confirm` list) puts
+    there. The daemon checks the tiers again before each touch action (Actor.asks_first)."""
+    from .bodylink import ID, TOUCH_ACTIONS, TOUCH_KINDS, action_name   # local: bodylink is the protocol side
+
+    touch = config.touch
+    if not (0 < touch.target_s <= 60) or touch.cooldown_s < 0:
+        raise ConfigError("touch.target_s must be above 0 and at most 60, and touch.cooldown_s not negative")
+    if not touch.actions:
+        return
+    from .adapters import adapter_for   # local: the adapters import actions, which imports this module
+
+    mapped: dict[str, dict[str, str]] = {}
+    for entity, kinds in touch.actions.items():
+        if not isinstance(entity, str) or ID.fullmatch(entity) is None or not isinstance(kinds, dict):
+            raise ConfigError(f"touch.{entity}: an entity id is a lowercase word of at most 24 (a letter, then a-z, 0-9, _ and -), and "
+                              f"its touches are written {entity}.flick = \"next\"")
+        for kind, value in kinds.items():
+            key = f"touch.{entity}.{kind}"
+            if kind not in TOUCH_KINDS:
+                raise ConfigError(f"{key}: the touch kinds are {', '.join(TOUCH_KINDS)}")
+            action = action_name(value) if isinstance(value, str) else ""
+            if not action:
+                raise ConfigError(f"{key} = {value!r}: not a reflex a touch can do; one of "
+                                  f"{', '.join(sorted(TOUCH_ACTIONS))} (\"next\" is skip)")
+            tier = _touch_tier(config, action, TOUCH_ACTIONS[action], adapter_for)
+            if RISKS.index(tier) > RISKS.index("playback"):
+                raise ConfigError(f"{key} = {value!r}: {action} would be a {tier} call here, which waits for the "
+                                  "user's yes; a touch cannot answer a question, so only read and playback "
+                                  "reflexes can be mapped (approvals by gesture come later)")
+            mapped.setdefault(entity, {})[kind] = action
+    touch.actions = mapped
+
+
+def _touch_tier(config: Config, action: str, tier: str, adapter_for: Any) -> str:
+    """The highest tier `action` can reach with this config: its own, raised by an `[approvals] risk` entry for a
+    tool it calls on a configured server ("server.tool", or the whole server), and `change` for a tool on that
+    server's `confirm` list (its question needs a yes)."""
+    highest = RISKS.index(tier)
+    for name, table in config.tools.servers.items():
+        table = table if isinstance(table, dict) else {}
+        adapter = adapter_for(name, table)
+        tools = (getattr(adapter, "reflex_tools", None) or {}).get(action, ()) if adapter is not None else ()
+        for tool in tools:
+            for key in (f"{name}.{tool}", name):
+                given = config.approvals.risk.get(key)
+                if given in RISKS:
+                    highest = max(highest, RISKS.index(given))
+            if tool in (table.get("confirm") or ()):
+                highest = max(highest, RISKS.index("change"))
+    return RISKS[highest]
 
 
 def _migrate_notifications(values: dict[str, Any]) -> dict[str, Any]:
@@ -662,6 +744,8 @@ def load(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
                 raise ConfigError(f"[{section_name}] must be a table")
             if section_name == "notifications":
                 values = _migrate_notifications(values)
+            if section_name == "touch":
+                values = _touch_table(values)
             _apply(section_name, getattr(config, section_name), values)
     _deprecated_persona(config)
     if "STRAWBERRYD_HOST" in env:
@@ -885,5 +969,16 @@ def default_toml() -> str:
         '# risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }',
         "#                              # a tool's (or a whole server's) tier: read | playback | change | sends | destructive;",
         "#                              # a whole server's never lowers a tool its adapter or server marks higher",
+        "",
+        "[touch]",
+        "# Input from bodies (the orbs on a touch screen, the crab): what the user touches or points at. A target",
+        "# goes into what the thinker is told (\"the user is pointing at the music orb\"), so \"this\" means it.",
+        f"target_s = {TouchConfig().target_s}                # a target holds this long after the body last reported it",
+        f"cooldown_s = {TouchConfig().cooldown_s}              # at least this long between two touch actions",
+        "# A touch on an entity can run a music reflex: now_playing, skip (or next), previous, pause, resume (or",
+        "# play), volume_up, volume_down. A touch cannot answer a question, so nothing that would ask can be",
+        "# mapped. None by default: a touch is shown to the other bodies and does nothing else.",
+        '# music.flick = "next"',
+        '# music.grab = "pause"',
     ]
     return "\n".join(lines) + "\n"

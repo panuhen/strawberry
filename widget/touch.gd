@@ -100,6 +100,7 @@ func poke(pixel: Vector2) -> void:
 	if not widget.touch_reactions:
 		return
 	pokes += 1
+	report_touch()
 	var sleeper: Node = widget.sleeper
 	if sleeper and sleeper.phase != "awake":
 		sleeper.wake()           # gently: the wake_up clip, and nothing on top of it
@@ -187,6 +188,13 @@ func begin_hold(pixel: Vector2) -> void:
 
 func release_hold() -> void:
 	holding = false
+
+## Every poke goes to the brain as a `touch` on herself (PROTOCOL Part 1c): nothing comes of it unless the
+## user's [touch] map names `crab.poke`, and the other bodies that ask see it. The spoken line below is
+## a separate message (`poked`).
+func report_touch() -> void:
+	if widget.ws != null and widget.ws.is_open():
+		widget.ws.send({"type": "touch", "entity": "crab", "kind": "poke"})
 
 ## The optional spoken line ("Talk when poked", off by default): the daemon picks and voices it,
 ## and turns it down while she is busy or has spoken one lately (PROTOCOL.md, `poked`).

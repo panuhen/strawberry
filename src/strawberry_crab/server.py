@@ -36,7 +36,7 @@ from typing import Any
 from aiohttp import WSMsgType, web
 from aiohttp.web_log import AccessLogger
 
-from . import __version__, brainui, bussecret, firstrun, paths, pokes
+from . import __version__, bodylink, brainui, bussecret, firstrun, paths, pokes
 from .client import listen_for_stop_request, plain_signal_handler
 from .config import Config, ConfigError
 from .contract import ContractError, Performance, anim_for
@@ -220,6 +220,8 @@ async def health(request: web.Request) -> web.Response:
             "widgets": daemon.hub.count,
             "widget_versions": daemon.hub.versions,
             "bodies": daemon.hub.bodies(),
+            # what the user points at and holds on a body, and what touches did (bodylink.py): ids and counts
+            "input": daemon.body_stats(),
             "runs": daemon.runs.stats(),
             "version": __version__,
             "performed": daemon.performed,
@@ -480,7 +482,9 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
             elif msg.type == WSMsgType.ERROR:
                 log.warning("widget socket error: %s", ws.exception())
     finally:
+        gone = daemon.hub.body(ws)
         daemon.hub.discard(ws)
+        daemon.body_gone(gone)
         log.info("widget disconnected (%d open)", daemon.hub.count)
     return ws
 
@@ -509,6 +513,11 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
                     # It asked for input or approvals, or sent a secret that is not this install's: say why
                     # it got none (welcome's `accepted` says what it got).
                     await _refuse(ws, "hello", _secret_reason(body))
+                elif body.trusted and body.entities_refused:
+                    # Entities with an id or kind the brain does not take (bodylink.ID, ENTITY_KINDS): left out.
+                    log.info("body %s: %d of its entities refused (bad id or kind)", body.id or "?",
+                             body.entities_refused)
+                    await _refuse(ws, "hello", "bad_entities")
                 # A body that (re)connects while she waits for a yes gets the open approval now, so its
                 # card shows (PROTOCOL §13b): the request as it went out, with the time left.
                 pending = daemon.approvals.open
@@ -539,6 +548,8 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
     elif kind == "poked":
         if not await _untrusted_input(daemon, ws, kind):
             _poked(daemon, data)
+    elif kind in ("touch", "target"):
+        await _body_input(daemon, ws, kind, data)
     else:
         log.debug("widget message of type %r", str(kind)[:32])
 
@@ -581,12 +592,49 @@ def _poked(daemon: Daemon, data: dict[str, Any]) -> None:
     daemon.background(daemon.perform(Performance(state="talking", text=text, emotion=emotion)), "poked")
 
 
+async def _body_input(daemon: Daemon, ws: web.WebSocketResponse, kind: str, data: dict[str, Any]) -> None:
+    """`touch` or `target` (PROTOCOL Part 1c, bodylink.py). Ignored from a v1 body (its bytes never change).
+    From a v2 body, in this order: over its rate (touch 20, target 10 a second) dropped and counted, with no
+    reply; then refused (`input.refused`, ref the type) without the bus secret, without the capability in its
+    hello, or when the message does not check out (unknown_field, bad_value, unknown_entity, not_declared).
+    What passes goes to the daemon (Daemon.body_touch, body_target)."""
+    body = daemon.hub.body(ws)
+    if body.protocol < 2:
+        log.debug("%s from a v1 body; ignored", kind)
+        return
+    if not body.rates[kind].allow():
+        body.inputs["dropped"] += 1
+        if body.inputs["dropped"] in (1, 10) or body.inputs["dropped"] % 1000 == 0:
+            log.info("%s from body %s over its rate; dropped (%d so far)", kind, body.id or "?", body.inputs["dropped"])
+        return
+    reason = ""
+    if not body.trusted:
+        reason = _secret_reason(body)
+    elif not (body.touch_kinds if kind == "touch" else body.target):
+        reason = "not_declared"
+    if not reason:
+        if kind == "touch":
+            parsed, reason = bodylink.parse_touch(data, body.entity_map(), body.touch_kinds)
+        else:
+            parsed, reason = bodylink.parse_target(data, body.entity_map())
+    if reason:
+        body.inputs["refused"] += 1
+        log.info("%s from body %s refused: %s", kind, body.id or "?", reason)
+        await _refuse(ws, kind, reason)
+        return
+    body.inputs[kind] += 1
+    if kind == "touch":
+        await daemon.body_touch(body, parsed)
+    else:
+        await daemon.body_target(body, parsed)
+
+
 def welcome(daemon: Daemon, body) -> dict[str, Any]:
     """The answer to a v2 hello (PROTOCOL §10): what the brain will send this body."""
     message: dict[str, Any] = {"type": "welcome", "protocol": body.protocol, "brain": __version__,
                                "t": round(time.monotonic(), 6), "rest_state": daemon.rest_state,
                                "accepted": {"phases": sorted(body.phases), "cancel": body.cancel}
-                               | body.accepted_approvals(), "trusted": body.trusted}
+                               | body.accepted_approvals() | body.accepted_input(), "trusted": body.trusted}
     if body.id:
         message["body_id"] = body.id
     return message
