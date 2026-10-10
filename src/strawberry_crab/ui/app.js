@@ -1683,6 +1683,7 @@
     unknown: ["camera: no word from the watcher", "warn",
       "Switched on, but the watcher has not reported for five seconds (is the tray running it?)."],
   };
+  let cameraSeen = "";
 
   function cameraSwitch() {
     const box = el("input", { type: "checkbox", id: "input-camera", role: "switch",
@@ -1699,7 +1700,12 @@
     const S = Object.assign({}, state.input.status, state.inputStatus || {});
     const cam = S.camera || { enabled: S.enabled, state: "unknown" };
     if (!box.disabled) box.checked = Boolean(cam.enabled);
-    const [text, kind, why] = CAMERA_STATE[cam.state] || CAMERA_STATE.unknown;
+    const seen = `${cam.enabled} ${cam.state}`;
+    if (seen !== cameraSeen) { cameraSeen = seen; requestDraw(); }    // the live view's "no hand" line says why
+    // On, with MediaPipe or the model missing, the watcher waits for them and posts nothing: closed, and why.
+    const missing = cam.enabled && cam.state === "unknown" && (S.mediapipe || S.model === false);
+    const [text, kind, why] = missing ? ["camera closed: MediaPipe or the model is missing", "warn", "See Status below."]
+      : CAMERA_STATE[cam.state] || CAMERA_STATE.unknown;
     fill(node, chip(text, kind, why), el("span", { class: "dim", text: cam.enabled
       ? "On: the watcher may open the camera (Watch mode says when). This switch, the tray's row or strawberry gestures off turn it off."
       : "Off: the camera stays closed. Saving the settings below never turns it on." }));
@@ -1942,7 +1948,7 @@
 
   function noHandWhy() {
     const S = Object.assign({}, state.input ? state.input.status : {}, state.inputStatus || {});
-    if (!S.enabled) return "Gestures are off: the camera is closed. Turn them on with the tray's Hand gestures (camera) row.";
+    if (!S.enabled) return "Gestures are off: the camera is closed. Turn them on with the camera switch above (or the tray's Hand gestures (camera) row).";
     if (S.mediapipe) return "MediaPipe is missing, so the camera stays closed.";
     if (S.model === false) return "The model is missing (strawberry gestures fetch), so the camera stays closed.";
     const w = S.watcher || {};
