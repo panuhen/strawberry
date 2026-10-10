@@ -17,3 +17,6 @@ mpris = false     # the acceptance run must not touch whatever is playing on the
 
 [thinker]
 enabled = false   # no Qwen in the acceptance run; tests/test_thinker.py covers the loop
+
+[gestures]
+enabled = true    # the daemon takes /gesture so validate_widget.gd can fill her ring; no camera doorway runs here

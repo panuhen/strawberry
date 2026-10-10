@@ -502,7 +502,36 @@ func run() -> void:
 	check(not chip.visible, "a run that ends at once never shows the chip")
 	report["chip_shown"] = chip.shown_count
 
+	await check_gesture_ring()
 	finish()
+
+## 25. A held hand gesture (WIRING.md §25): the hello asked for `gesture`; a posted hold fills the ring beside
+##     her and she glances toward the user, a cancel fades it, a done flashes it full. The posts stand in for the
+##     camera doorway: nothing here opens a camera.
+func check_gesture_ring() -> void:
+	var health := await get_json("/health")
+	var asked := false
+	for body: Dictionary in health[2].get("bodies", []):
+		asked = asked or "gesture" in body.get("gestures", [])
+	check(asked, "the widget should ask for gesture events (§25), /health has %s" % str(health[2].get("bodies", [])))
+	var ring = widget.gesture_ring
+	var glances: int = widget.turn.glances
+	var started := await post("/gesture", {"name": "thumb_up", "phase": "started", "progress": 0.0})
+	check(started[1] == 200 and int(started[2].get("sent", 0)) == 1, "a gesture should reach the widget, got %s" % str(started))
+	await post("/gesture", {"name": "thumb_up", "phase": "progress", "progress": 0.5})
+	await wait(0.2)
+	check(ring.visible and absf(ring.progress - 0.5) < 0.01, "the ring should be half full, was %.2f" % ring.progress)
+	check(widget.turn.glances > glances, "she should glance toward the user as a hold starts")
+	await post("/gesture", {"name": "thumb_up", "phase": "cancelled", "progress": 0.5})
+	await wait(ring.FADE_S + 0.3)
+	check(not ring.visible, "a cancelled hold should fade the ring")
+	await post("/gesture", {"name": "thumb_up", "phase": "started", "progress": 0.0})
+	var fired := await post("/gesture", {"name": "thumb_up", "phase": "done", "progress": 1.0})
+	await wait(0.15)
+	check(fired[1] == 200 and ring.finished and ring.done_count == 1, "a done gesture should flash the ring, got %s" % str(fired))
+	await wait(ring.DONE_HOLD_S + ring.FADE_S + 0.3)
+	check(not ring.visible, "the ring should go after a done gesture")
+	report["gesture_ring_shown"] = ring.shown_count
 
 ## The highest point of a set of screen points (smallest y).
 static func top_of(points: PackedVector2Array) -> float:

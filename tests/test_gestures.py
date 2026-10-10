@@ -483,6 +483,26 @@ async def test_a_reflex_whose_calls_are_above_playback_is_not_run_by_a_gesture()
     assert actor.above("spotify", "previous", gestures.TIERS) != ""             # unlisted calls: not run
 
 
+async def test_spotify_likes_skips_and_pauses_by_gesture_but_a_raised_tier_stops_it():
+    """The real Spotify adapter over the fake server: its like (like_current, playback) and skip run by name; with
+    `[approvals] risk` raising the like to change, the gesture does nothing and calls nothing."""
+    from tests.fake_spotify import make
+
+    spotify, toolbox, actor = make(library=True)
+    found = await actor.named("like")
+    assert found is not None and found[0] == "spotify"
+    outcome = await actor.act_named("like", found)
+    assert outcome is not None and outcome.ok and spotify.liked
+    for action in ("skip", "pause"):
+        assert (await actor.act_named(action, await actor.named(action))).ok
+    assert spotify.log.count("like_current") == 1 and "next" in spotify.log and "pause" in spotify.log
+    toolbox.risks = {"spotify.like_current": "change"}
+    calls = len(spotify.log)
+    assert "change tier" in actor.above("spotify", "like", gestures.TIERS)
+    assert await actor.act_named("like", await actor.named("like")) is None and len(spotify.log) == calls
+    await toolbox.close()
+
+
 async def test_health_says_counts_and_names_only(aiohttp_client):
     daemon, _ = gesture_daemon()
     client = await aiohttp_client(create_app(daemon))

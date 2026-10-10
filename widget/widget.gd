@@ -21,6 +21,7 @@ const DanceStyle = preload("res://dance_style.gd")
 const TopHat = preload("res://top_hat.gd")
 const TypeBox = preload("res://type_box.gd")
 const StepChip = preload("res://step_chip.gd")
+const GestureRing = preload("res://gesture_ring.gd")
 const ApprovalCard = preload("res://approval_card.gd")
 const Turn = preload("res://turn.gd")
 const Touch = preload("res://touch.gd")
@@ -78,6 +79,7 @@ var speech: AudioStreamPlayer
 var menu: PopupMenu
 var type_box: PanelContainer
 var step_chip: PanelContainer
+var gesture_ring: Control
 var approval_card: PanelContainer
 var gaze: Node
 var dance: Node
@@ -143,6 +145,7 @@ func _ready() -> void:
 	setup_type_box()
 	setup_step_chip()
 	setup_approval_card()
+	setup_gesture_ring()
 	setup_sleep()
 	setup_ws()
 	set_state("idle")
@@ -510,6 +513,19 @@ func chip_points() -> PackedVector2Array:
 func bubble_anchor_on_screen() -> Vector2:
 	return camera.unproject_position(BUBBLE_ANCHOR)
 
+# --- a held hand gesture (§25) ---------------------------------------------------------
+
+func setup_gesture_ring() -> void:
+	gesture_ring = GestureRing.new()
+	add_child(gesture_ring)
+	gesture_ring.setup(self)
+
+## The brain's `gesture` event (PROTOCOL Part 1c): the ring beside her fills while the user holds a hand
+## up, and as a hold starts she glances toward the middle of the screen, where the user and the camera are.
+func on_gesture(data: Dictionary) -> void:
+	if gesture_ring.on_gesture(data) and turn:
+		turn.glance_at_centre(0.8)
+
 # --- the approval card (§19) ----------------------------------------------------------
 
 func setup_approval_card() -> void:
@@ -549,6 +565,8 @@ func on_typed(data: Dictionary) -> void:
 			_on_secret_refused(str(data.get("reason", "")))
 		step_chip.on_refused(data)
 		approval_card.on_refused(data)
+	elif kind == "gesture":
+		on_gesture(data)
 	elif data.has("run_id"):
 		step_chip.on_phase(data)
 		approval_card.on_event(data)
