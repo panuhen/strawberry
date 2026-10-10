@@ -13,8 +13,10 @@ voice, video calls and system sounds stay out of the analysis:
 here: the tracker driving, the posts to the daemon, and when to let a capture go and look for
 the player again (the stream ended, no data came, a player that plays gave only silence for too
 long, or another player took over). Every couple of seconds the current estimate goes to the
-daemon, which forwards it to the widget as {"tempo": {...}}; the widget picks a dance style from
-it (WIRING.md §4c).
+daemon, which forwards it to the bodies as {"tempo": {...}}; the widget picks a dance style from
+it (WIRING.md §4c). Between those heartbeats an estimate goes out at once when the section changes
+(a drop, a build, a break), and a second after one in which the tracker was about to change its
+mind (a new tempo, a moved grid), never more than four a second (MIN_GAP_S).
 
 Runs on the package's interpreter (numpy is a normal dependency): `strawberry-doorway
 beat_watch`, or `python -m strawberry_crab.doorways.beat_watch` as the tray starts it. Silence, a
@@ -50,6 +52,8 @@ SILENT_DB = -60.0
 STALE_AFTER_S = 12.0   # a running player that stays this silent has a dead capture link (seen after suspend)
 SWITCH_AFTER_S = 4.0   # silent this long: ask whether another player has taken over
 NO_DATA_S = 3.0        # the capture produced nothing: it never got linked to the target
+MIN_GAP_S = 0.25       # at most four posts a second, whatever happens
+RECHECK_S = 1.0        # a tempo or grid change the tracker is confirming: the next estimate this soon
 
 
 def backend(platform: str | None = None) -> Any:
@@ -69,6 +73,8 @@ class Watcher:
         self.posts = 0
         self.failures = 0
         self.silent_since: float | None = None
+        self.last_report = -1e9          # when the last estimate went out (the watcher's clock)
+        self.section_epoch = 0           # the tracker's section changes that have been posted
         self.stopping = threading.Event()   # set by the stop event on Windows; Linux stops by SIGTERM
 
     def run(self) -> None:
@@ -101,6 +107,7 @@ class Watcher:
         last_data = started
         next_post = started + self.interval
         self.silent_since = None
+        self.section_epoch = self.tracker.sections.epoch
         got_any = False
         try:
             while not self.stopping.is_set():
@@ -121,9 +128,9 @@ class Watcher:
                     log.warning("no audio from %s for %.0fs (capture by %s never linked); reconnecting",
                                 stream.name, time.time() - last_data, stream.how)
                     return "nolink" if not got_any else "ended"
-                if now >= next_post:
-                    next_post = now + self.interval
+                if self.due(now, next_post):
                     self.report(now)
+                    next_post = now + (RECHECK_S if self.tracker.pending() else self.interval)
                     silent_for = now - self.silent_since if self.silent_since is not None else 0.0
                     if silent_for > STALE_AFTER_S and self.capture_backend.running(player):
                         # After suspend/resume a capture can keep delivering zeros while the
@@ -137,7 +144,17 @@ class Watcher:
         finally:
             stream.close()
 
+    def due(self, now: float, next_post: float) -> bool:
+        """Time for an estimate: the heartbeat (or the recheck) is due, or the section changed since the last
+        post; either way not within MIN_GAP_S of the last one."""
+        if now - self.last_report < MIN_GAP_S:
+            return False
+        return now >= next_post or self.tracker.sections.epoch != self.section_epoch
+
     def report(self, now: float) -> None:
+        self.last_report = now
+        changed = self.tracker.sections.epoch != self.section_epoch
+        self.section_epoch = self.tracker.sections.epoch
         tempo = self.tracker.estimate(now)
         if tempo is None or tempo.loudness_db < SILENT_DB:
             if self.silent_since is None:
@@ -145,9 +162,10 @@ class Watcher:
             self.post({"silent": True})
             return
         self.silent_since = None
-        payload = tempo.to_dict()
-        payload["next_beat"] = round(tempo.next_beat, 3)
-        self.post(payload)
+        if changed:
+            # Names only: a section is about the music's shape, nothing anyone said.
+            log.info("section: %s (%.2f)", tempo.section, tempo.section_confidence or 0.0)
+        self.post(tempo.to_dict())
 
     def post(self, payload: dict) -> None:
         body = json.dumps(payload).encode()
@@ -160,10 +178,11 @@ class Watcher:
             if payload.get("silent"):
                 log.info("silent -> %s widget(s)", reply.get("sent", "?"))
             else:
-                log.info("bpm %.1f conf %.2f %s even %.2f low %.2f dens %.1f %.0f dB -> %s widget(s)",
+                log.info("bpm %.1f conf %.2f %s even %.2f low %.2f dens %.1f %.0f dB bar %s/%s (%.2f) %s -> %s widget(s)",
                          payload["bpm"], payload["confidence"], "steady" if payload.get("steady") else "unsteady",
                          payload["evenness"], payload["low_ratio"], payload["density"], payload["loudness_db"],
-                         reply.get("sent", "?"))
+                         payload.get("beat_index", "-"), payload.get("beats_per_bar", "-"),
+                         payload.get("downbeat_confidence", 0.0), payload.get("section", "-"), reply.get("sent", "?"))
         except urllib.error.HTTPError as exc:
             log.warning("/tempo rejected: %s", exc.read().decode(errors="replace")[:200])
         except (urllib.error.URLError, TimeoutError) as exc:

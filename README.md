@@ -227,7 +227,7 @@ What she reads:
   media controls).
 - **Audio.** Only the playing media player's own output stream (on Windows, the player's own
   process through WASAPI process loopback, after its volume in the mixer), and only to measure
-  the tempo.
+  the tempo, where the bar starts and whether the track is in a build, a drop or a break.
   Nothing is recorded or stored. `[beat] enabled = false` turns it off.
 - **Microphone.** Only after you press the hotkey (or run `strawberry listen`), until you stop
   speaking. The audio is transcribed locally in memory and never written to disk.

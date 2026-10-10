@@ -282,15 +282,44 @@ TEMPO_FIELDS = {
 # missing flag as the old behaviour.
 TEMPO_FLAGS = ("steady",)
 
+# Optional groups (PROTOCOL §4): each comes whole or not at all, so a body never gets half a bar.
+# A body that predates them ignores them (the widget's dance_style.gd reads only what it knows).
+TEMPO_BAR = {"beats_per_bar": (2, 12), "beat_index": (0, 11), "next_downbeat": (0.0, 1e11),
+             "downbeat_confidence": (0.0, 1.0)}
+TEMPO_SECTION = {"section": ("steady", "build", "drop", "break"), "section_confidence": (0.0, 1.0),
+                 "section_since": (0.0, 1e11)}
+TEMPO_INTS = ("beats_per_bar", "beat_index")
+
+
+def _tempo_group(data: dict[str, Any], group: dict[str, tuple], name: str) -> dict[str, Any]:
+    present = [key for key in group if key in data]
+    if not present:
+        return {}
+    if len(present) != len(group):
+        raise ContractError(f"tempo {name} fields come together: {sorted(group)}")
+    out: dict[str, Any] = {}
+    for key, allowed in group.items():
+        value = data[key]
+        if isinstance(allowed[0], str):
+            if value not in allowed:
+                raise ContractError(f"tempo.{key} must be one of {list(allowed)}")
+        elif key in TEMPO_INTS:
+            if isinstance(value, bool) or not isinstance(value, int) or not (allowed[0] <= value <= allowed[1]):
+                raise ContractError(f"tempo.{key} must be a whole number from {allowed[0]} to {allowed[1]}")
+        elif isinstance(value, bool) or not isinstance(value, (int, float)) or not (allowed[0] <= value <= allowed[1]):
+            raise ContractError(f"tempo.{key} must be a number from {allowed[0]} to {allowed[1]}")
+        out[key] = value if key in TEMPO_INTS or isinstance(value, str) else float(value)
+    return out
+
 
 def parse_tempo(data: Any) -> dict[str, Any]:
     """Either {"silent": true} or every TEMPO_FIELDS number within range, plus the optional
-    boolean TEMPO_FLAGS; nothing else."""
+    boolean TEMPO_FLAGS and the optional TEMPO_BAR and TEMPO_SECTION groups; nothing else."""
     if not isinstance(data, dict):
         raise ContractError("tempo must be an object")
     if data.get("silent") is True:
         return {"silent": True}
-    unknown = set(data) - set(TEMPO_FIELDS) - set(TEMPO_FLAGS)
+    unknown = set(data) - set(TEMPO_FIELDS) - set(TEMPO_FLAGS) - set(TEMPO_BAR) - set(TEMPO_SECTION)
     if unknown:
         raise ContractError(f"unknown tempo fields: {sorted(unknown)}")
     out: dict[str, Any] = {}
@@ -306,7 +335,15 @@ def parse_tempo(data: Any) -> dict[str, Any]:
             if not isinstance(data[key], bool):
                 raise ContractError(f"tempo.{key} must be true or false")
             out[key] = data[key]
-    return out
+    bar = _tempo_group(data, TEMPO_BAR, "bar")
+    if bar:
+        if bar["beat_index"] >= bar["beats_per_bar"]:
+            raise ContractError("tempo.beat_index must be less than beats_per_bar")
+        # The next downbeat is the beat at next_beat or one of the bar's beats after it (1 ms of rounding).
+        ahead = bar["next_downbeat"] - out["next_beat"]
+        if not (-0.002 <= ahead <= bar["beats_per_bar"] * out["period_s"] + 0.002):
+            raise ContractError("tempo.next_downbeat must be within a bar after next_beat")
+    return out | bar | _tempo_group(data, TEMPO_SECTION, "section")
 
 
 # What a widget will act on (widget.gd run_command). Anything else is refused here rather

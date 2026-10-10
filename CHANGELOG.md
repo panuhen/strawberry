@@ -9,6 +9,16 @@ package and the widget binary.
 
 ### Added
 
+- The beat comes with the bar and the section, for bodies that pulse on the predicted beat. Each
+  tempo estimate now also says how many beats a bar has (four, or three for a waltz), where the
+  next beat sits in it and when the next downbeat is, with a confidence; and whether the track is
+  `steady`, in a `build`, a `drop` or a `break`, since when, and how sure. A drop or any other
+  section change is posted at once instead of with the next two-second estimate (at most four
+  posts a second), and an estimate that is about to settle a new tempo is followed by another a
+  second later, so she re-locks sooner. Both are optional fields of the `tempo` message: the crab
+  ignores them for now. PROTOCOL.md §4 says what each field means and how a body schedules a
+  pulse: the beat time less its own output latency, which each body measures. The tracker's
+  test harness scores the downbeat too (`scripts/beat_eval.py`).
 - She turns. A slow, small sway while idle; a glance toward a notification as it arrives, toward
   the middle of the screen now and then, and toward the cursor when it comes to rest near her;
   a quick turn and back in the peek and the wave; a turn on the beat when she dances. Always a

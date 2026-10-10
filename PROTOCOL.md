@@ -283,19 +283,24 @@ From `widget.gd:661-716`:
 
 ## 4. `tempo` (brain → body)
 
-The beat watcher posts an estimate to `POST /tempo` every 2 s; the brain validates it
-(`server.py:194-234`), keeps it, and forwards it to every body wrapped in a `tempo` key
-(`daemon.py:264-268`). A body that connects while an estimate is fresh (6 s) gets it at once
-(`server.py:359-361`).
+The beat watcher posts an estimate to `POST /tempo` every 2 s (the heartbeat), and between heartbeats
+**at once** when the section changes (a build, a drop, a break), and a second after an estimate in which
+the tracker was about to change its tempo or move its grid; never more than four a second
+(`beat_watch.py` `Watcher.due`, `MIN_GAP_S`, `RECHECK_S`). The brain validates it (`server.py`
+`parse_tempo`), keeps it, and forwards it to every body wrapped in a `tempo` key (`daemon.py`
+`set_tempo`). A body that connects while an estimate is fresh (6 s) gets it at once (`server.py`
+`websocket`).
 
 ```json
 {"tempo": {"bpm": 128.4, "period_s": 0.467, "confidence": 0.71, "next_beat": 1789935826.592,
-           "evenness": 0.62, "low_ratio": 0.55, "density": 4.1, "loudness_db": -18.0, "steady": true}}
+           "evenness": 0.62, "low_ratio": 0.55, "density": 4.1, "loudness_db": -18.0, "steady": true,
+           "beats_per_bar": 4, "beat_index": 3, "next_downbeat": 1789935827.059, "downbeat_confidence": 0.64,
+           "section": "drop", "section_confidence": 0.9, "section_since": 1789935824.723}}
 ```
 
 or `{"tempo": {"silent": true}}` when nothing plays.
 
-| Field | Type | Range (`server.py:194-203`) | Meaning |
+| Field | Type | Range (`server.py` `TEMPO_FIELDS`) | Meaning |
 |---|---|---|---|
 | `bpm` | number | 30–300 | tempo |
 | `period_s` | number | 0.2–2.0 | seconds per beat |
@@ -308,10 +313,49 @@ or `{"tempo": {"silent": true}}` when nothing plays.
 | `steady` | boolean, optional | – | the tempo has held; missing means `true` (`server.py:208`, `dance_style.gd:92`) |
 | `silent` | `true` | – | alone: nothing plays; all other fields absent |
 
-The body computes the beat phase itself every frame from its own wall clock:
-`phase = fposmod((now − next_beat) / period_s, 1)` (`dance_style.gd:111-112`). It treats an
-estimate older than 6 s by its own receipt time as gone (`dance_style.gd:18`, `:60`, `:103`).
-All fields are required except `steady`; unknown fields are refused at `/tempo`.
+**The bar** (optional group, `server.py` `TEMPO_BAR`; all four or none; `doorways/beat_structure.py` `Bars`):
+
+| Field | Type | Range | Meaning |
+|---|---|---|---|
+| `beats_per_bar` | integer | 2–12 | beats in a bar. 4 unless three clearly fit better (a waltz); the watcher sends 3 or 4 |
+| `beat_index` | integer | 0 to `beats_per_bar` − 1 | where in the bar **the beat at `next_beat`** is: 0 is the downbeat (the bar's first beat) |
+| `next_downbeat` | number | `next_beat` to `next_beat + beats_per_bar × period_s` | wall-clock time of the next downbeat: `next_beat + ((beats_per_bar − beat_index) mod beats_per_bar) × period_s`, so it equals `next_beat` when `beat_index` is 0 |
+| `downbeat_confidence` | number | 0–1 | how sure the bar position is. It rises over a few estimates; it is low where nothing in the music marks the bar (a backbeat alone, a pattern that repeats every two beats, noise). Below about 0.5, treat the position as a guess: on the generated test set (`scripts/beat_eval.py`) the downbeat is right about nine times in ten at 0.5 or more (a third of the estimates), a little over half the time overall |
+
+**The section** (optional group, `server.py` `TEMPO_SECTION`; all three or none; `beat_structure.py`
+`Sections`):
+
+| Field | Type | Range | Meaning |
+|---|---|---|---|
+| `section` | string | `steady` `build` `drop` `break` | what the arrangement is doing. `break`: the low end (kick and bass, < 100 Hz) stays well under what this track usually has. `build`: onset density, loudness or brightness rising over the last six seconds while the low end is filtered away (a snare roll, a riser, a high-pass sweep). `drop`: after a build or a break, the low end comes back at once; it is held for 8 s, then `steady`. `steady`: anything else, and the first seconds of a track |
+| `section_confidence` | number | 0–1 | how clearly it is that section; 0 in the first 8 s of sound |
+| `section_since` | number | 0–1e11 | wall-clock time the section began: for a drop, the beat it landed on (to the beat grid when the tempo is sure); for a build or a break, where the rise or the dip started, give or take a beat or two. It can be in the past by more than the detection took: a drop is seen about half a second after it lands, a break after two or three seconds, a build after three or four |
+
+A watcher from before these groups sends neither; a body from before them ignores them (the widget's
+`dance_style.gd` reads only the fields above them). Unknown fields, half a group, a `beat_index` outside
+the bar or a `next_downbeat` outside the bar after `next_beat` are refused at `/tempo` with 400.
+
+**Phase.** The body computes the beat phase itself every frame from its own wall clock:
+`phase = fposmod((now − next_beat) / period_s, 1)` (`dance_style.gd:111-112`), and the bar phase the
+same way from `next_downbeat` and `beats_per_bar × period_s`. It treats an estimate older than 6 s by
+its own receipt time as gone (`dance_style.gd:18`, `:60`, `:103`). All fields of the first table are
+required except `steady`.
+
+**Scheduling a pulse on the beat.** `next_beat` (and `next_downbeat`) is when the beat is in the
+player's stream as captured, before the sound card: the watcher's own capture latency is taken off, the
+output's is not, because the brain does not know it. Beat `k` is at `next_beat + k × period_s`. A body
+schedules a pulse for it at
+
+    next_beat + k × period_s − output_latency
+
+where `output_latency` is the body's own, measured by the body: how long from issuing its pulse to it
+being seen or heard, less how late the music itself comes out of the speakers. For a sound the body plays
+on the same sink as the music the two cancel and it issues at the beat time itself; for a visual it is the
+render and display delay (a frame or two) minus the music sink's latency (wired: tens of ms; Bluetooth:
+150–250 ms, so the visual waits). Each body measures its own; nothing on the bus says it. Schedule from
+the estimate, not from its arrival: a post can come up to 2 s before the beat it names, or just after a
+section change, and the grid between posts follows from `next_beat` and `period_s`. A drop's pulse goes on
+the next downbeat after `section_since` (or at `section_since` if it is still ahead).
 
 ## 5. Commands (brain → body)
 
@@ -397,7 +441,7 @@ These are v1 as it stands; some are gaps, noted for fixing. The numbers stay whe
    the voice would be doubled.
 9. `next_beat` is wall-clock time, which steps when the system clock is corrected; the only latency
    handled is a fixed 0.05 s capture latency in the watcher (`doorways/beat_watch.py:47`). The sound
-   card's output latency is not reported.
+   card's output latency is not reported: each body measures its own and schedules by it (§4).
 10. *Fixed 2026-09-25.* Any performance without `audio` stopped the wav that was playing, so a
     `{"state": "dancing"}` from the media doorway arriving mid-line cut her voice off while the
     bubble carried on. Only a new line or `listening` stops it now (§3.2);
@@ -923,7 +967,14 @@ Examples:
 {"type": "run.completed", "run_id": "r-19", "seq": 17, "t": 81244.91, "duration": 4.8, "outcome": "spoken"}
 ```
 
-## 12. PROPOSED (v2): the beat phase stream
+## 12. PROPOSED (v2), partly built: the beat phase stream
+
+*Built since:* the bar (`beats_per_bar`, `beat_index`, `next_downbeat`, `downbeat_confidence`) and the
+section (`section`, `section_confidence`, `section_since`, the build-up and drop detector this section
+reserved) go out today as optional fields of v1's `tempo` (§4), to every body, posted at once on a
+section change. What stays proposed is the typed `beat` message below with the monotonic clock and an
+`output_latency_s` from the brain; until then each body measures its own output latency (§4,
+*Scheduling a pulse on the beat*).
 
 v1 bodies keep getting `tempo` (§4). A body with `capabilities.beat` gets `beat` instead:
 
@@ -950,8 +1001,8 @@ v1 bodies keep getting `tempo` (§4). A body with `capabilities.beat` gets `beat
 
 Sent every 2 s while music plays (the watcher's rate), and once on `welcome` if fresh.
 
-**Hook for build-ups and drops.** Reserved, not produced yet (WIRING §4c: the detector is not
-built):
+**Hook for build-ups and drops.** The detector is built (WIRING §4c) and its result rides on `tempo`
+as `section` (§4); this typed event stays reserved for the `beat` message:
 
 ```json
 {"type": "beat.event", "seq": 413, "t": 81262.1, "kind": "drop", "at_t": 81264.0, "confidence": 0.6}
