@@ -170,6 +170,40 @@ async def test_a_rebinding_name_is_connected_to_the_address_that_was_checked(mon
     assert recorder.connected == [("93.184.216.34", 443)]
 
 
+async def test_a_dead_ipv6_address_falls_back_to_ipv4_within_the_timeout(monkeypatch):
+    """An IPv6 route that goes nowhere: IPv4 is tried first, and a timeout on one address moves to the next."""
+    resolve, _ = answers(["2606:4700:3031::ac43:8f3e", "172.67.143.62"])
+    monkeypatch.setattr(remote, "resolve", resolve)
+
+    class DeadSix(Recorder):
+        async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+            if ":" in host:
+                self.connected.append((host, port))
+                raise httpcore2.ConnectTimeout("no route")
+            return await super().connect_tcp(host, port, timeout, local_address, socket_options)
+
+    recorder = DeadSix()
+    response = await fetch("https://notes.example.com/mcp", "https://notes.example.com/mcp", recorder)
+    assert response.status_code == 200 and recorder.connected == [("172.67.143.62", 443)]
+
+    # IPv4 dead instead: its timeout is caught and the IPv6 address is tried next.
+    resolve, _ = answers(["172.67.143.62", "2606:4700:3031::ac43:8f3e"])
+    monkeypatch.setattr(remote, "resolve", resolve)
+
+    class DeadFour(Recorder):
+        async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+            self.connected.append((host, port))
+            if ":" not in host:
+                raise httpcore2.ConnectTimeout("no route")
+            self.connected.pop()
+            return await super().connect_tcp(host, port, timeout, local_address, socket_options)
+
+    recorder = DeadFour()
+    response = await fetch("https://notes.example.com/mcp", "https://notes.example.com/mcp", recorder)
+    assert response.status_code == 200
+    assert recorder.connected == [("172.67.143.62", 443), ("2606:4700:3031::ac43:8f3e", 443)]
+
+
 async def test_a_name_with_one_private_address_among_public_ones_is_refused(monkeypatch):
     resolve, _ = answers(["93.184.216.34", "10.0.0.5"])
     monkeypatch.setattr(remote, "resolve", resolve)

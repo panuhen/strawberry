@@ -64,6 +64,7 @@ logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
 LOGIN_TIMEOUT_S = 300.0     # how long `strawberry tools login` waits for the browser
 REFRESH_EARLY_S = 60.0      # refresh this long before the access token expires
 CONNECT_S = 5.0             # the HTTP connect timeout (Server's connect_timeout_s bounds the whole connect)
+ADDRESS_S = 1.5             # the least one address of several gets before the next is tried
 SERVER_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
@@ -218,12 +219,17 @@ class PinnedBackend(httpcore2.AsyncNetworkBackend):
 
     async def connect_tcp(self, host: str, port: int, timeout: float | None = None, local_address: str | None = None,
                           socket_options: Any = None) -> Any:
+        """Each checked address in turn, IPv4 first: a network with an IPv6 route that goes nowhere would
+        otherwise spend the whole timeout on the first AAAA answer. Each try gets a share of the timeout, at
+        least ADDRESS_S, so a dead address cannot use it all."""
+        addresses = sorted(await self.vetted(host, port), key=lambda a: ipaddress.ip_address(a).version)
         failure: Exception | None = None
-        for address in await self.vetted(host, port):
+        for i, address in enumerate(addresses):
+            share = None if timeout is None else max(ADDRESS_S, timeout / (len(addresses) - i)) if i < len(addresses) - 1 else timeout
             try:
-                return await self.inner.connect_tcp(address, port, timeout=timeout, local_address=local_address,
+                return await self.inner.connect_tcp(address, port, timeout=share, local_address=local_address,
                                                     socket_options=socket_options)
-            except (httpcore2.ConnectError, OSError) as exc:
+            except (httpcore2.ConnectError, httpcore2.ConnectTimeout, OSError) as exc:
                 failure = exc
         raise failure if failure is not None else BlockedConnect(f"{host}: no address")
 
