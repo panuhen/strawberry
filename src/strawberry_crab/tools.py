@@ -213,6 +213,7 @@ class Server:
         self.read_only: frozenset[str] = frozenset()
         # Tools the server marks destructiveHint: their approval tier is raised to `destructive` (risk).
         self.destructive: frozenset[str] = frozenset()
+        self.listed: frozenset[str] = frozenset()   # every tool it lists, offered to the brain or not
         self.calls = 0
         self.failures = 0
         self.last_ms: float | None = None
@@ -256,6 +257,9 @@ class Server:
                 self._claim([t.name for t in listed.tools])
                 self.read_only = frozenset(t.name for t in listed.tools if _read_only(t))
                 self.destructive = frozenset(t.name for t in listed.tools if _destructive(t))
+                # Every tool the server lists, the ones its adapter keeps from the brain included (a said reflex
+                # may need one: the desktop's lock_screen, never offered to the thinker).
+                self.listed = frozenset(t.name for t in listed.tools)
                 self.tools = self._offer([
                     ToolSpec(self.name, t.name, (t.description or "").strip(), dict(getattr(t, "input_schema", None) or {}))
                     for t in listed.tools

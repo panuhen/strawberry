@@ -49,9 +49,9 @@ MAX_ENTRY_BYTES = 64_000          # a .desktop file larger than this is not read
 SCAN_S = 30.0                     # the installed entries are scanned again at most this often
 # A desktop id as she takes it: a file name in an application dir, nothing that reads as a path, an option or a
 # shell word. (Desktop ids from subdirectories, "kde4-foo.desktop", and names with spaces are not offered.)
-ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,150}\.desktop$")
+ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,150}\.desktop\Z")
 # A name or alias: letters (any script), digits, spaces and a few marks; it is said and matched, never run.
-SPOKEN = re.compile(r"^[^\W_][\w '.&+-]*$")
+SPOKEN = re.compile(r"^[^\W_][\w '.&+-]*\Z")
 KEYS = ("name", "aliases", "open", "close", "close_asks")
 SNAP_DIR = Path("/var/lib/snapd/desktop/applications")
 # Spotify's desktop ids: the snap, a distribution's package, the Flatpak. The first one installed is the default.
@@ -447,6 +447,11 @@ class AppStore:
                 log.warning("apps: %s does not check out; keeping the list she has (the Brain UI's Apps tab says "
                             "why)", FILE_NAME)
             self.error = new
+            if not self.from_file and self._apps:
+                # No list from the file yet (a broken apps.toml at the start): nothing is allowed, not the default.
+                # The default stands only while there is no apps.toml at all; it never stands in for one.
+                self._apps = []
+                return True
             return False
         self._apps, self.from_file, self.error = apps, True, ""
         log.info("apps: %s applied (%d app(s): %d may open, %d may close)", FILE_NAME, len(apps),
@@ -454,8 +459,8 @@ class AppStore:
         return True
 
     def apps(self) -> list[App]:
-        if not self.from_file and not self._apps:
-            # The default waits for the scan (a Spotify installed after the start counts).
+        if self.seen is None and not self._apps:
+            # No apps.toml: the default, which waits for the scan (a Spotify installed after the start counts).
             self._apps = default_apps(self.installed())
         return list(self._apps)
 
@@ -467,8 +472,14 @@ class AppStore:
         key = spoken(said)
         if not key:
             return None
-        for app in self.apps():
-            if said.strip() == app.id or key in (spoken(n) for n in app.names()):
+        listed = self.apps()
+        # A desktop id names its own entry and nothing else, before any name or alias is compared (an alias that
+        # reads like another app's id never stands in for that app).
+        for app in listed:
+            if said.strip() == app.id:
+                return Found(app, self.installed().get(app.id))
+        for app in listed:
+            if key in (spoken(n) for n in app.names()):
                 return Found(app, self.installed().get(app.id))
         return None
 

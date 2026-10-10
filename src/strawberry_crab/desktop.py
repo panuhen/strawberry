@@ -52,8 +52,8 @@ SINK_PACTL = "@DEFAULT_SINK@"
 VOLUME_ACTIONS = ("get", "up", "down", "set", "mute", "unmute")
 MPRIS_PREFIX = "org.mpris.MediaPlayer2."
 ROOT_IFACE = "org.mpris.MediaPlayer2"
-_SESSION = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
-_WINDOW = re.compile(r"^(?:0x[0-9a-fA-F]{1,16}|\d{1,20})$")
+_SESSION = re.compile(r"^[A-Za-z0-9_-]{1,32}\Z")
+_WINDOW = re.compile(r"^(?:0x[0-9a-fA-F]{1,16}|\d{1,20})\Z")
 
 
 class DesktopError(RuntimeError):
@@ -562,6 +562,8 @@ class DesktopAdapter(Adapter):
     risks = {"open_app": "change", "close_app": "change", "system_volume": "playback", "lock_screen": "change"}
     reflex_tools = {"open": ("open_app",), "close": ("close_app",), "system_volume": ("system_volume",),
                     "lock": ("lock_screen",)}
+    # The one said reflex a gesture may run (Actor.named; gestures.EXCEPTIONS): the lock.
+    gesture_reflexes = ("lock",)
     said_reflexes = {"open": ("open_app", open_reflex), "close": ("close_app", close_reflex),
                      "system_volume": ("system_volume", volume_reflex), "lock": ("lock_screen", lock_reflex)}
     labels = {"open_app": "opening an app…", "close_app": "closing an app…", "system_volume": "computer volume…",
@@ -701,12 +703,12 @@ class SpotifyWake:
         self.opened = 0
 
     def spotify(self) -> Found | None:
+        """Spotify's own entry on the list, by its desktop id only (never an app the user merely named "Spotify"),
+        when it may be opened and is installed. `open = false` (or no entry) means no auto-open."""
+        installed = self.store.installed()
         for app in self.store.apps():
-            if app.id in SPOTIFY_IDS or app.name.lower() == "spotify":
-                if not app.open:
-                    return None
-                found = self.store.find(app.id)
-                return found if found is not None and found.entry is not None else None
+            if app.id in SPOTIFY_IDS and app.open and installed.get(app.id) is not None:
+                return Found(app, installed[app.id])
         return None
 
     async def __call__(self, toolbox: Any, server: str, name: str, arguments: dict[str, Any], result: ToolResult,
