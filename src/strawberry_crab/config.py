@@ -360,6 +360,8 @@ class GesturesConfig:
     zone: float = 0.8              # a hand counts only with its wrist above this line (0 top, 1 bottom)…
     min_size: float = 0.12         # …and at least this big (of the frame's height): raised toward the screen
     hand_hz: float = 15.0          # the hand's position to the bodies that ask for it, at most this often
+    hands: int = 2                 # hands followed: 2 (the higher one makes the gestures; the bodies get both) or
+                                   # 1 (about half the CPU while a hand is up)
     require_facing: bool = True    # a gesture counts only while the user faces the screen (needs the face model;
                                    # without it the check is skipped)
     face_fps: float = 5.0          # the face model's reads a second, only while a hand is up or her card is open
@@ -715,6 +717,8 @@ def _validate_gestures(gestures: GesturesConfig) -> None:
         raise ConfigError("gestures.zone must be 0.1-1 and gestures.min_size 0 up to 1")
     if not (1.0 <= gestures.hand_hz <= 30.0):
         raise ConfigError("gestures.hand_hz must be between 1 and 30")
+    if gestures.hands not in (1, 2):
+        raise ConfigError("gestures.hands must be 1 or 2")
     if not (1.0 <= gestures.face_fps <= 15.0):
         raise ConfigError("gestures.face_fps must be between 1 and 15")
     if not (1.0 <= gestures.shh_minutes <= 720.0):
@@ -1084,6 +1088,7 @@ def _gestures_toml() -> list[str]:
         f"zone = {ge.zone}                     # the wrist must be above this line (0 top, 1 bottom)",
         f"min_size = {ge.min_size}               # and the hand this big: raised toward the screen, not on the desk",
         f"hand_hz = {ge.hand_hz}                # the hand's position to the bodies that ask, at most this often",
+        f"hands = {ge.hands}                    # 2: both hands to the bodies (the higher makes the gestures); 1: less CPU",
         f"require_facing = {str(ge.require_facing).lower()}         # a gesture counts only while you face the screen (the face model)",
         f"face_fps = {ge.face_fps}                 # the face model's reads a second, only while a hand is up or her card is open",
         f"shh_minutes = {ge.shh_minutes}            # a finger to the lips: her voice off this long, the bubble stays",

@@ -97,6 +97,12 @@ HAND_NUMBERS = ("x", "y", "size", "pinch", "open")
 HAND_FLAGS = ("present", "engaged")
 # Only while the watcher's face model runs: whether the user faces the screen, and whether a face is there.
 FACE_FLAGS = ("facing", "face")
+# Two hands (since 2026-10-11): `hands`, each hand seen now (the fields above but `present` and the face's, and
+# these), and with two of them `pair`.
+HAND_ENTRY = ("id", "handedness", "primary", "pinched")
+HANDEDNESS = ("left", "right")
+PAIR_FIELDS = ("distance", "angle", "both_pinched")
+MAX_HANDS = 2
 
 _TARGET = re.compile(r"^[a-z0-9_-]{1,32}$")
 
@@ -336,7 +342,9 @@ def parse_hand(data: Any) -> dict[str, Any]:
     """A POST /hand body: {"present": false}, or where the hand is (x, y: its palm, 0-1 as in a mirror, y
     down), how big (size, 0-1 of the frame), how pinched and how open (0-1), whether it is raised into the
     zone (engaged), the shape the recogniser sees now (`shape`, one of SHAPES; absent for none) and the wrist and
-    fingertips as [x, y] pairs. Numbers and fixed names only."""
+    fingertips as [x, y] pairs: the primary hand. `hands` is each hand seen now with the same fields and its id,
+    handedness, whether it is the primary and whether it pinches; `pair` the two hands' distance and angle.
+    Numbers and fixed names only."""
     if not isinstance(data, dict):
         raise GestureError("a hand must be an object")
     present = data.get("present")
@@ -346,48 +354,102 @@ def parse_hand(data: Any) -> dict[str, Any]:
         if set(data) - {"present"}:
             raise GestureError("a hand that is not present carries nothing else")
         return {"present": False}
-    unknown = set(data) - set(HAND_NUMBERS) - set(HAND_FLAGS) - set(FACE_FLAGS) - {"points", "shape", "curl", "gap"}
+    unknown = set(data) - set(HAND_NUMBERS) - set(HAND_FLAGS) - set(FACE_FLAGS) - {"points", "shape", "curl", "gap",
+                                                                                  "hands", "pair"}
     if unknown:
         raise GestureError(f"unknown hand fields: {sorted(unknown)}")
-    out: dict[str, Any] = {"present": True}
-    for key in HAND_NUMBERS:
-        if key not in data:
-            raise GestureError(f"hand.{key} is missing")
-        out[key] = _unit(data[key], f"hand.{key}")
-    engaged = data.get("engaged", False)
-    if not isinstance(engaged, bool):
-        raise GestureError("hand.engaged must be true or false")
-    out["engaged"] = engaged
+    out: dict[str, Any] = {"present": True} | _one_hand(data, "hand")
     for key in FACE_FLAGS:
         if key in data:
-            if not isinstance(data[key], bool):
-                raise GestureError(f"hand.{key} must be true or false")
-            out[key] = data[key]
+            out[key] = _flag(data, key, "hand")
+    if "hands" in data:
+        hands = data["hands"]
+        if not isinstance(hands, list) or not 1 <= len(hands) <= MAX_HANDS:
+            raise GestureError(f"hand.hands must be a list of 1 to {MAX_HANDS} hands")
+        out["hands"] = [_hand_entry(entry, f"hand.hands[{i}]") for i, entry in enumerate(hands)]
+    if "pair" in data:
+        if len(out.get("hands", ())) != 2:
+            raise GestureError("hand.pair comes only with two hands")
+        out["pair"] = _pair(data["pair"])
+    return out
+
+
+def _flag(data: dict[str, Any], key: str, name: str) -> bool:
+    if not isinstance(data.get(key), bool):
+        raise GestureError(f"{name}.{key} must be true or false")
+    return data[key]
+
+
+def _one_hand(data: dict[str, Any], name: str) -> dict[str, Any]:
+    """One hand's fields: the hand message's top level, or an entry of `hands`."""
+    out: dict[str, Any] = {}
+    for key in HAND_NUMBERS:
+        if key not in data:
+            raise GestureError(f"{name}.{key} is missing")
+        out[key] = _unit(data[key], f"{name}.{key}")
+    out["engaged"] = _flag(data, "engaged", name) if "engaged" in data else False
     if "curl" in data:
         curl = data["curl"]
         if not isinstance(curl, dict) or set(curl) - set(DIGITS):
-            raise GestureError(f"hand.curl must be an object of {', '.join(DIGITS)}")
-        out["curl"] = {d: _unit(curl[d], f"hand.curl.{d}") for d in DIGITS if d in curl}
+            raise GestureError(f"{name}.curl must be an object of {', '.join(DIGITS)}")
+        out["curl"] = {d: _unit(curl[d], f"{name}.curl.{d}") for d in DIGITS if d in curl}
     if "gap" in data:
-        out["gap"] = _unit(data["gap"], "hand.gap")
+        out["gap"] = _unit(data["gap"], f"{name}.gap")
     if "shape" in data:
         if data["shape"] not in SHAPES:
-            raise GestureError(f"hand.shape must be one of {', '.join(SHAPES)}")
+            raise GestureError(f"{name}.shape must be one of {', '.join(SHAPES)}")
         out["shape"] = data["shape"]
     points = data.get("points", {})
     if not isinstance(points, dict) or set(points) - set(POINTS):
-        raise GestureError(f"hand.points must be an object of {', '.join(POINTS)}")
+        raise GestureError(f"{name}.points must be an object of {', '.join(POINTS)}")
     shaped: dict[str, list[float]] = {}
     for key in POINTS:
         if key not in points:
             continue
         pair = points[key]
         if not isinstance(pair, list) or len(pair) != 2:
-            raise GestureError(f"hand.points.{key} must be [x, y]")
-        shaped[key] = [_unit(pair[0], f"hand.points.{key}"), _unit(pair[1], f"hand.points.{key}")]
+            raise GestureError(f"{name}.points.{key} must be [x, y]")
+        shaped[key] = [_unit(pair[0], f"{name}.points.{key}"), _unit(pair[1], f"{name}.points.{key}")]
     if shaped:
         out["points"] = shaped
     return out
+
+
+def _hand_entry(data: Any, name: str) -> dict[str, Any]:
+    """An entry of `hands`: its id (a positive integer, the same while that hand stays), its handedness (the user's
+    own `left` or `right`; absent when not known), whether it is the primary and whether it pinches, and one
+    hand's fields."""
+    if not isinstance(data, dict):
+        raise GestureError(f"{name} must be an object")
+    unknown = set(data) - set(HAND_NUMBERS) - {"engaged", "points", "shape", "curl", "gap"} - set(HAND_ENTRY)
+    if unknown:
+        raise GestureError(f"unknown {name} fields: {sorted(unknown)}")
+    slot = data.get("id")
+    if isinstance(slot, bool) or not isinstance(slot, int) or not 1 <= slot < 2 ** 31:
+        raise GestureError(f"{name}.id must be a positive integer")
+    out: dict[str, Any] = {"id": slot}
+    if "handedness" in data:
+        if data["handedness"] not in HANDEDNESS:
+            raise GestureError(f"{name}.handedness must be left or right")
+        out["handedness"] = data["handedness"]
+    out["primary"] = _flag(data, "primary", name)
+    out["pinched"] = _flag(data, "pinched", name) if "pinched" in data else False
+    return out | _one_hand(data, name)
+
+
+def _pair(data: Any) -> dict[str, Any]:
+    """`pair`: the palms' distance (in x and y's own units, 0 up to 1.5), the angle of the line from the hand on the
+    screen's left to the one on its right (degrees on the picture, -90 to 90, positive when the right one is
+    higher) and whether both pinch."""
+    if not isinstance(data, dict) or set(data) != set(PAIR_FIELDS):
+        raise GestureError(f"hand.pair must be an object of {', '.join(PAIR_FIELDS)}")
+    for key, low, high in (("distance", 0.0, 1.5), ("angle", -90.0, 90.0)):
+        value = data[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) \
+                or not low <= value <= high:
+            raise GestureError(f"hand.pair.{key} must be a number from {low:g} to {high:g}")
+    return {"distance": round(float(data["distance"]), 3), "angle": round(float(data["angle"]), 1),
+            "both_pinched": _flag(data, "both_pinched", "hand.pair")}
 
 
 # --- the brain's desk -------------------------------------------------------------------

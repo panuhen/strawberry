@@ -30,12 +30,19 @@ by a hand that had been up for `settle_s` before it started. A wave is an open p
 two turns of `wave_amp` within `wave_s`). A pinch held still for `slide_hold_s` becomes a slider (`pinch_slide`):
 moving the hand up or down moves it, and letting go ends it. x is as in a mirror (the user's right is +x), so
 swipe_right is a move to the user's right and point_right a finger toward it.
+
+Two hands (`Tracker.step_hands`): the hands seen are followed as slots (each with its own id, smoothing and shape
+reading), and one of them is the primary: the raised one, else the higher, and the other takes over only when it
+is clearly better for PRIMARY_DWELL_S, never while a ring shows or a slide goes on. Only the primary makes
+gestures (the guards above, as with one hand); a change of primary ends what the old one was doing and starts the
+new one afresh (no swipe from the jump, the latch kept), and the hand message gains `hands` and `pair`.
 """
 
 from __future__ import annotations
 
 import math
 from collections import deque
+from itertools import combinations, permutations
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -72,6 +79,19 @@ UPRIGHT = 60.0        # a count needs the hand upright: the wrist-to-knuckles li
 SHH_NEAR = 0.25
 # A gesture's own cooldown after it fired, beyond the shared `cooldown_s`.
 COOLDOWNS = {"wave": 3.0, "shh": 5.0, "nod": 1.5, "shake": 1.5}
+# Two hands: the other hand becomes the primary when it is raised and the primary is not, or both are alike and its
+# palm is PRIMARY_MARGIN (of the frame) higher, for PRIMARY_DWELL_S on end.
+PRIMARY_MARGIN = 0.08
+PRIMARY_DWELL_S = 0.3
+# Two hands whose palms are this close (of the smaller hand's size) are one hand the recogniser found twice.
+SAME_HAND = 0.25
+# Matching hands to slots: a hand that says it is the other hand costs this much more (of the frame) on top of the
+# distance between the palms (the label can blink, so it only tips a close call).
+HANDEDNESS_COST = 0.15
+# A new primary may not fire the shape the old one fired within this long without leaving it first (the latch).
+SWITCH_LATCH_S = 3.0
+# The per-hand fields of the hand message, as in each entry of `hands`.
+HAND_FIELDS = ("x", "y", "size", "pinch", "open", "engaged", "shape", "points", "curl", "gap")
 
 
 @dataclass(frozen=True)
@@ -86,6 +106,7 @@ class Hand:
     score: float = 1.0
     world: tuple[tuple[float, float, float], ...] | None = None
     aspect: float = 1.0
+    handedness: str = ""      # "left" or "right": the user's own hand (MediaPipe's label); "" when not known
 
 
 @dataclass(frozen=True)
@@ -168,7 +189,7 @@ class LandmarkFilter:
                 self.world = [OneEuro(min_cutoff=2.0, beta=40.0) for _ in flat_w]
             smooth_w = [f(t, c) for f, c in zip(self.world, flat_w)]
             world = tuple((smooth_w[i], smooth_w[i + 1], smooth_w[i + 2]) for i in range(0, len(smooth_w), 3))
-        return Hand(points, hand.label, hand.score, world, hand.aspect)
+        return Hand(points, hand.label, hand.score, world, hand.aspect, hand.handedness)
 
 
 # --- the geometry ----------------------------------------------------------------------
@@ -363,12 +384,16 @@ class Shaper:
         return ""
 
 
-def features(hand: Hand, min_score: float = 0.5, face: Face | None = None) -> Features:
-    """The hand's numbers and shape, read with no memory (a fresh Shaper, the default thresholds)."""
-    f = Shaper().read(hand, face, min_score)
+def _counted(f: Features) -> Features:
+    """A hand that is no shape but a clear count goes as count_N."""
     if not f.shape and f.count:
         return Features(f.x, f.y, f.size, f.pinch, f.open, f.wrist_y, f"count_{f.count}", f.curl, f.gap, f.count)
     return f
+
+
+def features(hand: Hand, min_score: float = 0.5, face: Face | None = None) -> Features:
+    """The hand's numbers and shape, read with no memory (a fresh Shaper, the default thresholds)."""
+    return _counted(Shaper().read(hand, face, min_score))
 
 
 def hand_message(hand: Hand, f: Features, engaged: bool, facing: dict[str, bool] | None = None) -> dict[str, Any]:
@@ -386,6 +411,16 @@ def hand_message(hand: Hand, f: Features, engaged: bool, facing: dict[str, bool]
     if facing is not None:
         message |= facing
     return message
+
+
+def palm_of(hand: Hand) -> tuple[float, float]:
+    """The palm's centre (the wrist and three knuckles), from the points as they are."""
+    return tuple(sum(hand.points[i][k] for i in (WRIST, INDEX_MCP, MIDDLE_MCP, PINKY_MCP)) / 4 for k in (0, 1))
+
+
+def _extent(hand: Hand) -> float:
+    xs, ys = [q[0] for q in hand.points], [q[1] for q in hand.points]
+    return max(max(xs) - min(xs), max(ys) - min(ys))
 
 
 def turns(values: list[float], threshold: float) -> int:
@@ -470,6 +505,31 @@ class Settings:
 
 
 @dataclass
+class Slot:
+    """One of the (at most two) hands followed across frames: its id (the same while the hand stays, a new one for a
+    hand that comes back after it went), its own smoothing and shape reading, where its palm was last seen and when,
+    the last few handedness labels (the hand is what most of them say), and this frame's hand (None: not seen now).
+    `entry` is its part of the hand message this frame."""
+
+    id: int
+    palm: tuple[float, float]
+    seen_at: float
+    shaper: Shaper
+    hand: Hand | None = None
+    votes: deque = field(default_factory=lambda: deque(maxlen=7))
+    smooth: LandmarkFilter = field(default_factory=LandmarkFilter)
+    entry: dict[str, Any] | None = None
+
+    @property
+    def handedness(self) -> str:
+        known = [v for v in self.votes if v]
+        if not known:
+            return ""
+        left, right = known.count("left"), known.count("right")
+        return known[-1] if left == right else "left" if left > right else "right"
+
+
+@dataclass
 class Tracker:
     settings: Settings = field(default_factory=Settings)
     approval: dict[str, bool] | None = None   # the brain's open question a thumb may answer ({"yes", "no"})
@@ -505,6 +565,13 @@ class Tracker:
     slide_free_since: float | None = None
     shaper: Shaper | None = None
     smooth: LandmarkFilter = field(default_factory=LandmarkFilter)
+    # Two hands (step_hands): the slots, the primary's id (0: none), the next id to give, and since when the other
+    # hand has been the better primary.
+    slots: list[Slot] = field(default_factory=list)
+    primary: int = 0
+    next_id: int = 1
+    rival_since: float | None = None
+    fired_shape: tuple[str, float] = ("", -1e9)   # the shape (as the hand made it) that last fired, and when
 
     def __post_init__(self) -> None:
         if self.shaper is None:
@@ -514,6 +581,8 @@ class Tracker:
         """New settings (the config changed): the shapes are read with its thresholds from now on."""
         self.settings = settings
         self.shaper = Shaper(settings.thresholds)
+        for slot in self.slots:
+            slot.shaper = self.shaper if slot.id == self.primary else Shaper(settings.thresholds)
 
     def arm(self, until: float) -> None:
         self.armed_until = max(self.armed_until, until)
@@ -530,15 +599,14 @@ class Tracker:
         to run the face model on this frame)?"""
         if hand is None:
             return False
-        xs, ys = [q[0] for q in hand.points], [q[1] for q in hand.points]
-        size = max(max(xs) - min(xs), max(ys) - min(ys))
-        return hand.points[WRIST][1] <= self.settings.zone and size >= self.settings.min_size
+        return hand.points[WRIST][1] <= self.settings.zone and _extent(hand) >= self.settings.min_size
 
-    def wants_face(self, t: float, hand: Hand | None) -> bool:
+    def wants_face(self, t: float, hand: Hand | list[Hand] | None) -> bool:
         """Should the face model look at this frame: only while a hand is up (or a slide goes on) or a question
-        is open that a nod or a shake may answer."""
-        return self.settings.face and (self.approval is not None or self.sliding or self.raised(hand)
-                                       or t - self.last_engaged < 0.5)
+        is open that a nod or a shake may answer. `hand` may be the frame's hands, as a list."""
+        hands = hand if isinstance(hand, (list, tuple)) else [hand]
+        return self.settings.face and (self.approval is not None or self.sliding
+                                       or any(self.raised(h) for h in hands) or t - self.last_engaged < 0.5)
 
     def present(self, t: float) -> bool:
         return t - self.face_at <= self.settings.present_s
@@ -640,12 +708,10 @@ class Tracker:
         s = self.settings
         # The palm's place from the raw points (a move is not slowed down by smoothing: swipes, waves, stillness,
         # the slider); the shape and the hand the bodies draw from the smoothed ones.
-        raw = tuple(sum(hand.points[i][k] for i in (WRIST, INDEX_MCP, MIDDLE_MCP, PINKY_MCP)) / 4 for k in (0, 1))
+        raw = palm_of(hand)
         hand = self.smooth(t, hand)
         face = self.face if self.face is not None and self.present(t) else None
-        f = self.shaper.read(hand, face, s.min_score)
-        if not f.shape and f.count:
-            f = Features(f.x, f.y, f.size, f.pinch, f.open, f.wrist_y, f"count_{f.count}", f.curl, f.gap, f.count)
+        f = _counted(self.shaper.read(hand, face, s.min_score))
         engaged = f.wrist_y <= s.zone and f.size >= s.min_size
         self.seen, self.last_seen = True, t
         self.palm = (_clip(raw[0]), _clip(raw[1]))
@@ -688,6 +754,152 @@ class Tracker:
             return out
         self._hold(t, name, out)
         return out
+
+    # --- two hands --------------------------------------------------------------------
+
+    def step_hands(self, t: float, hands: list[Hand]) -> list[tuple[str, dict[str, Any]]]:
+        """One frame's hands (up to two, in any order). They are followed as slots; the primary goes through `step`
+        (the gestures, exactly as one hand), and its hand message gains `hands` (each hand seen now, left to right
+        on the screen) and, with two, `pair`. The other hand makes no gesture."""
+        out: list[tuple[str, dict[str, Any]]] = []
+        self._follow(t, self._distinct(hands))
+        self._choose(t, out)
+        primary = self._slot(self.primary)
+        out += self.step(t, primary.hand if primary is not None else None)
+        for slot in self.slots:
+            slot.entry = self._entry(t, slot) if slot.hand is not None and slot is not primary else None
+        for kind, payload in out:
+            if kind == "hand" and payload.get("present") and primary is not None:
+                self._with_hands(payload, primary)
+        return out
+
+    def _slot(self, slot_id: int) -> Slot | None:
+        return next((slot for slot in self.slots if slot.id == slot_id), None)
+
+    @staticmethod
+    def _distinct(hands: list[Hand]) -> list[Hand]:
+        """At most two hands, and a hand found twice (two palms nearly on top of each other) counted once."""
+        kept: list[Hand] = []
+        for hand in hands:
+            palm, size = palm_of(hand), _extent(hand)
+            if not any(math.dist(palm, palm_of(k)) < SAME_HAND * min(size, _extent(k)) for k in kept):
+                kept.append(hand)
+        return kept[:2]
+
+    def _follow(self, t: float, hands: list[Hand]) -> None:
+        """Match the frame's hands to the slots: the pairing with the least distance between palms (plus
+        HANDEDNESS_COST where a hand says it is the other one) among all of them (two by two at most). A slot not
+        seen for lost_s is gone; a hand left over takes a new slot with a new id."""
+        s = self.settings
+        self.slots = [slot for slot in self.slots if t - slot.seen_at <= s.lost_s]
+        for slot in self.slots:
+            slot.hand = None
+        palms = [palm_of(hand) for hand in hands]
+        k = min(len(self.slots), len(hands))
+        best: tuple[tuple[int, int], ...] = ()
+        best_cost = math.inf
+        for picked in permutations(range(len(self.slots)), k):
+            for chosen in combinations(range(len(hands)), k):
+                cost = sum(self._cost(self.slots[i], hands[j], palms[j]) for i, j in zip(picked, chosen))
+                if cost < best_cost:
+                    best, best_cost = tuple(zip(picked, chosen)), cost
+        for i, j in best:
+            self._see(self.slots[i], t, hands[j], palms[j])
+        taken = {j for _, j in best}
+        for j, hand in enumerate(hands):
+            if j not in taken and len(self.slots) < 2:
+                slot = Slot(self.next_id, palms[j], t, Shaper(s.thresholds))
+                self.next_id += 1
+                self._see(slot, t, hand, palms[j])
+                self.slots.append(slot)
+
+    @staticmethod
+    def _cost(slot: Slot, hand: Hand, palm: tuple[float, float]) -> float:
+        other = bool(slot.handedness and hand.handedness and slot.handedness != hand.handedness)
+        return math.dist(slot.palm, palm) + (HANDEDNESS_COST if other else 0.0)
+
+    @staticmethod
+    def _see(slot: Slot, t: float, hand: Hand, palm: tuple[float, float]) -> None:
+        slot.hand, slot.palm, slot.seen_at = hand, palm, t
+        slot.votes.append(hand.handedness)
+
+    def _rank(self, slot: Slot) -> tuple[int, float]:
+        """The better primary sorts first: a raised hand (in the zone, near enough), then the higher palm."""
+        return (0 if self.raised(slot.hand) else 1, slot.palm[1])
+
+    def _choose(self, t: float, out: list) -> None:
+        """Which hand is the primary. The first one seen (the better of two) is; when it goes, the other takes over;
+        while both are there the other takes over only once it has been clearly better (raised while the primary
+        is not, or PRIMARY_MARGIN higher) for PRIMARY_DWELL_S, and never while a ring shows or a slide goes on."""
+        visible = [slot for slot in self.slots if slot.hand is not None]
+        current = self._slot(self.primary)
+        if current is None:
+            if visible:
+                self._switch(t, min(visible, key=self._rank), out)
+            else:
+                self.primary, self.rival_since = 0, None
+            return
+        rivals = [slot for slot in visible if slot is not current]
+        if not rivals or self.sliding or (self.held and self.held_told):
+            self.rival_since = None
+            return
+        if current.hand is None:
+            return               # the primary blinked out for a frame: it is still the primary
+        rival = min(rivals, key=self._rank)
+        mine, theirs = self._rank(current), self._rank(rival)
+        if not (theirs[0] < mine[0] or (theirs[0] == mine[0] and theirs[1] < mine[1] - PRIMARY_MARGIN)):
+            self.rival_since = None
+            return
+        if self.rival_since is None:
+            self.rival_since = t
+        if t - self.rival_since >= PRIMARY_DWELL_S:
+            self._switch(t, rival, out)
+
+    def _switch(self, t: float, slot: Slot, out: list) -> None:
+        """`slot` is the primary from now on. What the old one was doing ends (a hold is cancelled, a slide done, a
+        swipe's track forgotten, so the jump from one hand to the other is no swipe, and the new one must settle
+        first). The latch carries over (the shape that fired, or one that fired in the last SWITCH_LATCH_S): two
+        thumbs up fire once, even when the hand that fired is lowered and the other, still up, takes over."""
+        if self.primary:
+            shape, at = self.fired_shape
+            latched = self.latched or (shape if t - at < SWITCH_LATCH_S else "")
+            self._drop(t, out)
+            self.latched, self.latch_free_since = latched, None
+        self.primary, self.rival_since = slot.id, None
+        self.smooth, self.shaper = slot.smooth, slot.shaper
+
+    def _entry(self, t: float, slot: Slot) -> dict[str, Any]:
+        """The other hand's part of the hand message: as the primary's, read with its own smoothing and shapes."""
+        s = self.settings
+        hand = slot.smooth(t, slot.hand)
+        f = _counted(slot.shaper.read(hand, None, s.min_score))
+        entry = hand_message(hand, f, f.wrist_y <= s.zone and f.size >= s.min_size)
+        del entry["present"]
+        entry["pinched"] = slot.shaper.pinched
+        return entry
+
+    def _with_hands(self, payload: dict[str, Any], primary: Slot) -> None:
+        """`hands` and `pair` on the primary's hand message (its top-level fields stay as they were)."""
+        entries = []
+        for slot in self.slots:
+            if slot is primary:
+                entry = {k: payload[k] for k in HAND_FIELDS if k in payload} | {"pinched": self.shaper.pinched}
+            elif slot.entry is not None:
+                entry = slot.entry
+            else:
+                continue
+            head: dict[str, Any] = {"id": slot.id, "primary": slot is primary}
+            if slot.handedness:
+                head["handedness"] = slot.handedness
+            entries.append(head | entry)
+        entries.sort(key=lambda e: e["x"])
+        payload["hands"] = entries
+        if len(entries) == 2:
+            a, b = entries
+            aspect = primary.hand.aspect if primary.hand is not None else 1.0
+            payload["pair"] = {"distance": round(math.hypot(b["x"] - a["x"], b["y"] - a["y"]), 3),
+                               "angle": round(math.degrees(math.atan2(a["y"] - b["y"], (b["x"] - a["x"]) * aspect)), 1),
+                               "both_pinched": bool(a["pinched"] and b["pinched"])}
 
     # --- the parts ------------------------------------------------------------------
 
@@ -877,5 +1089,6 @@ class Tracker:
         self.cooldown_until = t + self.settings.cooldown_s
         self.fired_at[name] = t
         self.latched, self.latch_free_since = shape or "", None
+        self.fired_shape = (shape or "", t)
         if self.settings.arming and t < self.armed_until:
             self.armed_until = t + self.settings.armed_s   # a gesture keeps command mode on
