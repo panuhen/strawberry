@@ -16,6 +16,9 @@ grid:
              a period from where the previous estimate put it (she visibly stumbles)
     beatless share of estimates over silence, noise or beatless pads that claim a beat
              (confidence >= 0.3, or steady when the tracker reports it)
+    downbeat share of locked estimates whose next_downbeat lands within 70 ms of a true
+             downbeat (a guess scores 0.25 in 4/4), and the same for those with
+             downbeat_confidence >= 0.5 (`downbeat_sure`, with the share of estimates that are)
     cpu      process CPU seconds per second of audio (feed + estimate)
 
 The synthetic test set is generated, never recorded: click tracks and kick/snare/hat/bass
@@ -26,6 +29,7 @@ breakdowns, loud pads and noise. Only this generator is committed; `gen` writes 
     scripts/beat_eval.py run DIR [--tracker FILE] [--json OUT] [--verbose]
     scripts/beat_eval.py run --synthetic              generate in memory and score
     scripts/beat_eval.py run song.wav --bpm 123       a real capture with a known tempo
+    scripts/beat_eval.py run --synthetic --recheck 0  without the watcher's quicker recheck
 
 `--tracker` loads a different beat_track.py (e.g. `git show HEAD~1:src/.../beat_track.py`)
 so two versions can be compared on the same set.
@@ -36,7 +40,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import math
 import sys
 import time
 import wave
@@ -48,6 +51,7 @@ import numpy as np
 SR = 22050
 CHUNK = 2048
 INTERVAL_S = 2.0
+RECHECK_S = 1.0            # beat_watch.RECHECK_S: the next estimate this soon while the tracker is pending()
 SILENT_DB = -60.0          # beat_watch.SILENT_DB: quieter estimates are posted as {"silent": true}
 TOL = 0.04
 PHASE_TOL_S = 0.07
@@ -130,6 +134,7 @@ class Clip:
     sections: list[tuple[float, float]]              # (start, end) of each stretch with a beat
     kind: str = "beat"                               # "beat" or "beatless"
     tags: list[str] = field(default_factory=list)
+    downbeats: list[float] = field(default_factory=list)   # true first beats of the bars, when known
 
 
 def beat_grid(tempo, seconds: float, start: float = 0.0) -> list[float]:
@@ -242,7 +247,7 @@ def synthetic_set(seconds: float = 30.0) -> list[Clip]:
         for i, b in enumerate(beats):
             place(out, click(1500.0 if i % 4 == 0 else 1000.0), b)
         out += pink(rng(name), len(out)) * 0.01
-        clips.append(Clip(name, normalise(out), beats, whole, tags=["click"]))
+        clips.append(Clip(name, normalise(out), beats, whole, tags=["click"], downbeats=beats[::4]))
 
     def drums(name, bpm, pattern, tags, swing=0.0, humanize=0.0, bass="", extra=None, noise=0.01, **kw):
         r = rng(name)
@@ -251,7 +256,7 @@ def synthetic_set(seconds: float = 30.0) -> list[Clip]:
         if extra is not None:
             out = out + extra(r, beats)
         out = out + pink(r, len(out)) * noise
-        return Clip(name, normalise(out), beats, whole, tags=tags)
+        return Clip(name, normalise(out), beats, whole, tags=tags, downbeats=beats[::3 if kw.get("waltz") else 4])
 
     clips += [
         drums("house_124", 124, "four", ["edm"], bass="offbeat"),
@@ -287,19 +292,21 @@ def synthetic_set(seconds: float = 30.0) -> list[Clip]:
     b2 = beat_grid(128, seconds, start=b1[-1] + 60.0 / 100)
     out = drum_track(r, b1 + b2, seconds, "rock", humanize_ms=4)
     out += pink(r, len(out)) * 0.01
-    clips.append(Clip("change_100_128", normalise(out), b1 + b2, [(0.0, b2[0]), (b2[0], seconds)], tags=["change"]))
+    clips.append(Clip("change_100_128", normalise(out), b1 + b2, [(0.0, b2[0]), (b2[0], seconds)], tags=["change"],
+                      downbeats=(b1 + b2)[::4]))
 
     r = rng("change_140_92")
     b1 = beat_grid(140, half)
     b2 = beat_grid(92, seconds, start=b1[-1] + 60.0 / 140)
     out = drum_track(r, b1 + b2, seconds, "four", bass="offbeat")
     out += pink(r, len(out)) * 0.01
-    clips.append(Clip("change_140_92", normalise(out), b1 + b2, [(0.0, b2[0]), (b2[0], seconds)], tags=["change"]))
+    clips.append(Clip("change_140_92", normalise(out), b1 + b2, [(0.0, b2[0]), (b2[0], seconds)], tags=["change"],
+                      downbeats=(b1 + b2)[::4]))
 
     r = rng("ramp_118_134")
     beats = beat_grid(lambda t: 118.0 + 16.0 * min(1.0, t / seconds), seconds)
     out = drum_track(r, beats, seconds, "four", bass="root") + pink(r, int(seconds * SR)) * 0.01
-    clips.append(Clip("ramp_118_134", normalise(out), beats, whole, tags=["change"]))
+    clips.append(Clip("ramp_118_134", normalise(out), beats, whole, tags=["change"], downbeats=beats[::4]))
 
     # Silence gap: 12 s of music, 5 s of nothing, then the same song again.
     r = rng("gap_128")
@@ -309,7 +316,8 @@ def synthetic_set(seconds: float = 30.0) -> list[Clip]:
     out = normalise(out)
     out += pink(r, len(out)) * 1e-4
     kept = [b for b in beats if not (12.0 <= b < 17.0)]
-    clips.append(Clip("gap_128", out, kept, [(0.0, 12.0), (17.0, seconds)], tags=["change"]))
+    clips.append(Clip("gap_128", out, kept, [(0.0, 12.0), (17.0, seconds)], tags=["change"],
+                      downbeats=[b for b in beats[::4] if not (12.0 <= b < 17.0)]))
 
     # Beatless: noise, near-silence, pads alone.
     r = rng("noise_only")
@@ -356,7 +364,8 @@ def load_dir(folder: Path) -> list[Clip]:
     out = []
     for entry in manifest:
         out.append(Clip(entry["name"], read_wav(folder / f"{entry['name']}.wav"), entry["beats"],
-                        [tuple(s) for s in entry["sections"]], entry["kind"], entry.get("tags", [])))
+                        [tuple(s) for s in entry["sections"]], entry["kind"], entry.get("tags", []),
+                        entry.get("downbeats", [])))
     return out
 
 
@@ -372,8 +381,9 @@ def clip_from_wav(path: Path, bpm: float | None) -> Clip:
 # --------------------------------------------------------------------------- scoring
 
 def load_tracker(path: str | None):
+    # The package on the path either way: a beat_track.py loaded from a file finds beat_structure through it.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
     if path is None:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
         from strawberry_crab.doorways import beat_track
         return beat_track
     spec = importlib.util.spec_from_file_location("beat_track_under_test", path)
@@ -410,7 +420,9 @@ def phase_ok(clip: Clip, next_beat: float) -> bool:
     return float(np.min(np.abs(beats - next_beat))) <= PHASE_TOL_S
 
 
-def run_clip(module, clip: Clip) -> dict:
+def run_clip(module, clip: Clip, recheck: float = RECHECK_S) -> dict:
+    """The clip through the tracker as beat_watch drives it: an estimate every INTERVAL_S, and `recheck`
+    seconds after one in which the tracker was pending() (0: never sooner)."""
     tracker = module.BeatTracker(sample_rate=SR)
     reports = []   # (t, estimate-dict or None)
     next_report = INTERVAL_S
@@ -421,8 +433,9 @@ def run_clip(module, clip: Clip) -> dict:
         c0 = time.process_time()
         tracker.feed(piece, t)
         if t >= next_report:
-            next_report = t + INTERVAL_S
             tempo = tracker.estimate(t)
+            sooner = recheck > 0 and getattr(tracker, "pending", lambda: False)()
+            next_report = t + (recheck if sooner else INTERVAL_S)
             cpu += time.process_time() - c0
             if tempo is None or tempo.loudness_db < SILENT_DB:
                 reports.append((t, None))
@@ -437,7 +450,8 @@ def score(clip: Clip, reports: list, cpu: float) -> dict:
     seconds = len(clip.audio) / SR
     res = {"name": clip.name, "kind": clip.kind, "tags": clip.tags, "cpu_per_s": cpu / seconds, "n": 0,
            "ok": 0, "octave": 0, "other": 0, "none": 0, "phase_ok": 0, "phase_n": 0, "claims": 0, "claim_n": 0,
-           "steady_n": 0, "steady_ok": 0, "jumps": 0, "jump_n": 0, "locks": [], "jitter": [], "trace": []}
+           "steady_n": 0, "steady_ok": 0, "jumps": 0, "jump_n": 0, "locks": [], "jitter": [], "trace": [],
+           "down_n": 0, "down_ok": 0, "sure_n": 0, "sure_ok": 0}
     has_steady = any(r is not None and "steady" in r for _, r in reports)
     for t, r in reports:
         truth = true_bpm(clip, t) if clip.kind == "beat" else None
@@ -484,6 +498,13 @@ def score(clip: Clip, reports: list, cpu: float) -> dict:
                     if t - a >= lock_t and v and r is not None:
                         res["phase_n"] += 1
                         res["phase_ok"] += phase_ok(clip, r["next_beat"])
+                        if clip.downbeats and "next_downbeat" in r:
+                            on = float(np.min(np.abs(np.asarray(clip.downbeats) - r["next_downbeat"]))) <= PHASE_TOL_S
+                            res["down_n"] += 1
+                            res["down_ok"] += on
+                            if r["downbeat_confidence"] >= 0.5:
+                                res["sure_n"] += 1
+                                res["sure_ok"] += on
             for r1, r2 in zip(locked, locked[1:]):
                 # Where the previous estimate said the beats would fall vs where this one says.
                 k = round((r2["next_beat"] - r1["next_beat"]) / r1["period_s"])
@@ -516,12 +537,16 @@ def summarise(results: list[dict]) -> dict:
         "beatless_claims": sum(r["claims"] for r in results) / claim_n,
         "steady_share": steady_n / n,
         "steady_precision": (sum(r["steady_ok"] for r in beat) / steady_n) if steady_n else None,
+        "downbeat": (sum(r["down_ok"] for r in beat) / down_n) if (down_n := sum(r["down_n"] for r in beat)) else None,
+        "downbeat_sure": (sum(r["sure_ok"] for r in beat) / sure_n) if (sure_n := sum(r["sure_n"] for r in beat)) else None,
+        "downbeat_sure_share": (sure_n / down_n) if down_n else None,
         "cpu_ms_per_s": 1000.0 * float(np.mean([r["cpu_per_s"] for r in results])),
     }
 
 
 def print_table(results: list[dict], summary: dict, verbose: bool) -> None:
-    print(f"{'clip':<20} {'acc1':>5} {'oct':>5} {'oth':>5} {'lock':>6} {'jit':>5} {'phase':>6} {'claim':>6} {'steady':>7}")
+    print(f"{'clip':<20} {'acc1':>5} {'oct':>5} {'oth':>5} {'lock':>6} {'jit':>5} {'phase':>6} {'claim':>6} {'steady':>7}"
+          f" {'down':>5}")
     for r in results:
         n = max(r["n"], 1)
         lock = "-" if not r["locks"] else f"{max(r['locks']):.0f}"
@@ -529,8 +554,9 @@ def print_table(results: list[dict], summary: dict, verbose: bool) -> None:
         phase = "-" if not r["phase_n"] else f"{r['phase_ok'] / r['phase_n']:.2f}"
         claim = "-" if not r["claim_n"] else f"{r['claims'] / r['claim_n']:.2f}"
         steady = "-" if not r["n"] else f"{r['steady_n'] / n:.2f}"
+        down = "-" if not r["down_n"] else f"{r['down_ok'] / r['down_n']:.2f}"
         print(f"{r['name']:<20} {r['ok'] / n:>5.2f} {r['octave'] / n:>5.2f} {r['other'] / n:>5.2f} {lock:>6} {jit:>5} "
-              f"{phase:>6} {claim:>6} {steady:>7}")
+              f"{phase:>6} {claim:>6} {steady:>7} {down:>5}")
         if verbose:
             print("    t, bpm, conf, steady, truth:", r["trace"])
     print()
@@ -550,6 +576,8 @@ def main() -> None:
     r.add_argument("--bpm", type=float, help="true tempo of the given wav files (real captures)")
     r.add_argument("--tracker", help="path to a beat_track.py to evaluate instead of the package's")
     r.add_argument("--only", default="", help="comma-separated substrings of clip names")
+    r.add_argument("--recheck", type=float, default=RECHECK_S,
+                   help="seconds to the next estimate while the tracker is pending (0: every INTERVAL_S)")
     r.add_argument("--json", type=Path)
     r.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
@@ -560,7 +588,8 @@ def main() -> None:
         for clip in synthetic_set(args.seconds):
             write_wav(args.dir / f"{clip.name}.wav", clip.audio)
             manifest.append({"name": clip.name, "beats": [round(b, 5) for b in clip.beats],
-                             "sections": clip.sections, "kind": clip.kind, "tags": clip.tags})
+                             "sections": clip.sections, "kind": clip.kind, "tags": clip.tags,
+                             "downbeats": [round(b, 5) for b in clip.downbeats]})
         (args.dir / "manifest.json").write_text(json.dumps(manifest))
         print(f"wrote {len(manifest)} clips to {args.dir}")
         return
@@ -579,7 +608,7 @@ def main() -> None:
     if not clips:
         parser.error("nothing to evaluate: give a directory, wav files or --synthetic")
     module = load_tracker(args.tracker)
-    results = [run_clip(module, c) for c in clips]
+    results = [run_clip(module, c, args.recheck) for c in clips]
     summary = summarise(results)
     print_table(results, summary, args.verbose)
     if args.json:
