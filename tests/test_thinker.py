@@ -239,9 +239,10 @@ async def test_over_max_tools_the_topic_and_the_common_tools_survive(caplog):
     toolbox, thinker = two_servers(max_tools=6)
     with caplog.at_level("INFO", logger="strawberryd.thinker"):
         specs = await thinker.tools(topic="music")
-    # The music server's own common tools, in the adapter's order; the notes server is out.
-    assert [s.name for s in specs] == ["play", "pause", "next", "previous", "get_current_track", "get_playlists"]
-    assert "17 tools is more than max_tools=6" in caplog.text
+    # The music server's own common tools, kept by the adapter's order and offered in the one order every
+    # sentence gets (the prompt cache); the notes server is out.
+    assert [s.name for s in specs] == ["next", "previous", "pause", "play", "get_current_track", "get_playlists"]
+    assert "17 tool schemas" in caplog.text and "over max_tools=6" in caplog.text
     assert "spotify.get_devices" in caplog.text and "notes.note_0" in caplog.text
     # A sentence the gate read as notes keeps the notes tools instead.
     assert [s.name for s in await thinker.tools(topic="notes")] == [f"note_{i}" for i in range(6)]

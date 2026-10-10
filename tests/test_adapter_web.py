@@ -168,7 +168,7 @@ async def test_only_the_search_and_the_reader_reach_the_brain_in_short(tools, se
 async def test_a_listing_is_compacted_counted_and_cut_after():
     box, _ = web_box()
     await box.tools_for("other")
-    result = await box.call("web", "searxng_web_search", {"query": "godot release"})
+    result = await box.call("web", "searxng_web_search", {"query": "godot release"}, shape=True)   # as the thinker reads it
     assert result.ok and count(result.text) == 3
     assert result.text.startswith(f"1. Result 0 {RESULT_CANARY} (example0.org)\nSnippet number 0 about it.\n"
                                   "https://www.example0.org/page/0")
@@ -209,8 +209,9 @@ def test_other_failures_in_short():
 
 @pytest.mark.parametrize("log_sentences", [False, True])
 async def test_the_journal_has_the_count_and_never_a_result(caplog, log_sentences):
-    """Off (the default): that a search ran, the query's length, the result count, the time. On, the
-    query is in the line like any tool argument (§15); the results never are, either way."""
+    """That a search ran, the argument's name, the result count, the time; the query and the results never,
+    whatever log_sentences says: the web server is foreign (trust.py), so its calls are logged as names and
+    counts only (tools.Server.logs_detail)."""
     logtext.configure(log_sentences)
     box, _ = web_box()
     await box.tools_for("other")
@@ -220,11 +221,8 @@ async def test_the_journal_has_the_count_and_never_a_result(caplog, log_sentence
     messages = [r.getMessage() for r in caplog.records]
     assert not any(RESULT_CANARY in m for m in messages)
     line = next(m for m in messages if "searxng_web_search" in m)
-    assert "-> ok in" in line and "3 results" in line
-    assert (QUERY_CANARY in line) is log_sentences
-    if not log_sentences:
-        assert f'"query": "<{len(QUERY_CANARY)} chars>"' in line
-        assert not any(QUERY_CANARY in m for m in messages)
+    assert "-> ok in" in line and "3 results" in line and "searxng_web_search(query)" in line
+    assert not any(QUERY_CANARY in m for m in messages)
     await box.close()
 
 

@@ -19,6 +19,12 @@ daemon's lifetime; a Spotify server is a small Python process and a cold connect
 Tool results come back as text, cut to `result_chars` before any model sees them: a playlist
 listing is where the tokens would otherwise come from. Some servers report failures as a
 normal text result with an `error` key rather than the MCP error flag, so `ok` reads both.
+Control characters are taken out of every result, and a server's trust flags (trust.py: private,
+foreign, egress) decide what the journal may say of its calls: a private, foreign or unknown
+server's results and arguments are logged as counts and sizes only.
+
+A server that runs inside the daemon (memory and messages, from stages 5 and 6 of brain step 6) is
+added with `Toolbox.add_builtin`: the same Server, with a session object in place of a process.
 """
 
 from __future__ import annotations
@@ -32,7 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from .config import RISKS, ToolsConfig
-from . import logtext
+from . import logtext, trust
 
 log = logging.getLogger("strawberryd.tools")
 
@@ -172,6 +178,13 @@ class Server:
         # (`confirm = []` asks about none), else the adapter's own default.
         self.confirm: frozenset[str] = frozenset(config["confirm"] if "confirm" in config
                                                  else getattr(adapter, "confirm", ()) or ())
+        # private / foreign / egress (trust.py): the adapter's, plus what the config adds; all three for a
+        # server nobody has said anything about.
+        self.flags: frozenset[str] = trust.flags_for(adapter, config)
+        self.unknown = adapter is None and "flags" not in config   # all three by default, not by anyone's word
+        # When the thinker is offered its tools: always, only for a sentence of its topic, or only when a
+        # sentence asks for it (Thinker.tools). The config's `offer`, else the adapter's, else always.
+        self.offer: str = config.get("offer") or getattr(adapter, "offer", "") or "always"
         self.connect = connect
         self.connect_timeout_s = connect_timeout_s
         self.call_timeout_s = call_timeout_s
@@ -260,11 +273,13 @@ class Server:
         from .adapters import adapter_for_tools   # local: the adapters import this module
 
         claimed = adapter_for_tools(names)
-        if claimed is None or claimed is self.adapter or getattr(self.adapter, "untrusted", False):
+        if claimed is None or claimed is self.adapter or getattr(self.adapter, "foreign", False):
             return
         log.warning("tools: %s lists %s tools; using the %s adapter for it (name it [tools.servers.%s] or set "
                     "adapter = \"%s\" to say so)", self.name, claimed.name, claimed.name, claimed.name, claimed.name)
         self.adapter = claimed
+        self.flags = trust.flags_for(claimed, self.config)
+        self.unknown = False
         if self.on_adapter is not None:
             self.on_adapter(self.name, claimed)
 
@@ -298,17 +313,27 @@ class Server:
 
     def risk(self, name: str, overrides: dict[str, str] | None = None) -> str:
         """The approval tier of one of this server's tools (approvals.py): read | change | sends |
-        destructive. `[approvals] risk` decides when it names the tool ("server.tool") or the whole
-        server, taken as written; else the adapter's own tier (`Adapter.risk`), else `change`. A tool
-        the server marks destructiveHint is then raised to `destructive`; an annotation never lowers a
-        tier (readOnlyHint is not believed here: a server cannot talk its way out of a yes)."""
+        destructive. An `[approvals] risk` entry for the tool ("server.tool") decides, taken as written:
+        the one way to lower a tool below what its adapter or its server says. Otherwise the adapter's own
+        tier (`Adapter.risk`), else `change`; a tool the server marks destructiveHint is raised to
+        `destructive`; and a whole-server entry ("server") then raises or lowers it, but never below the
+        adapter's own tier or the annotation (it says how to treat the server's ordinary tools, not that
+        its deletions are harmless). An annotation never lowers a tier (readOnlyHint is not believed here:
+        a server cannot talk its way out of a yes)."""
         overrides = overrides or {}
-        configured = overrides.get(f"{self.name}.{name}") or overrides.get(self.name)
-        if configured in RISKS:
-            return configured
-        tier = self._adapted("risk", None, name)
-        tier = tier if tier in RISKS else "change"
-        return "destructive" if name in self.destructive else tier
+        own = overrides.get(f"{self.name}.{name}")
+        if own in RISKS:
+            return own
+        declared = self._adapted("risk", None, name)
+        declared = declared if declared in RISKS else None
+        floor = "destructive" if name in self.destructive else "read"
+        if declared is not None and RISKS.index(declared) > RISKS.index(floor):
+            floor = declared
+        whole = overrides.get(self.name)
+        if whole in RISKS:
+            return whole if RISKS.index(whole) >= RISKS.index(floor) else floor
+        tier = declared or "change"
+        return tier if RISKS.index(tier) >= RISKS.index(floor) else floor
 
     def _drain(self, error: Exception) -> None:
         while not self.queue.empty():
@@ -323,7 +348,18 @@ class Server:
         self.task = None
         self.ready.clear()
 
-    async def call(self, name: str, arguments: dict[str, Any] | None, result_chars: int) -> ToolResult:
+    def logs_detail(self) -> bool:
+        """May the journal carry what this server's calls say (the first 160 characters of a result, the
+        arguments as logtext shows them)? Only for a server whose adapter opts in (`log_detail`) and
+        that is neither private nor foreign; every other one is logged as counts and sizes."""
+        return (self.adapter is not None and getattr(self.adapter, "log_detail", False) is True
+                and not self.flags & {"private", "foreign"})
+
+    async def call(self, name: str, arguments: dict[str, Any] | None, result_chars: int,
+                   shape: bool = False) -> ToolResult:
+        """One call. `shape`: the result as a model reads it (the adapter's `shape_result`, one line per
+        hit); without it, as the server wrote it, for the code that parses it (a reflex, the vocabulary,
+        an adapter's `ask` and `done`). Either way cut to `result_chars`, without control characters."""
         arguments = arguments or {}
         started = time.perf_counter()
         self.calls += 1
@@ -341,12 +377,12 @@ class Server:
             self.failures += 1
             ms = (time.perf_counter() - started) * 1000
             self.last_ms = ms
-            if getattr(self.adapter, "log_result", None) and self.adapter.log_result(name, "", False) is not None:
+            if not self.logs_detail():
                 # This server's results stay out of the journal; an SDK error can quote its arguments.
                 log.warning("tools: %s.%s failed (%s; not logged)", self.name, name, type(exc).__name__)
             else:
                 log.warning("tools: %s", exc)
-            return ToolResult(self.name, name, False, str(exc), ms, arguments=arguments)
+            return ToolResult(self.name, name, False, trust.clean(str(exc)), ms, arguments=arguments)
         ms = (time.perf_counter() - started) * 1000
         self.last_ms = ms
         is_error = flagged_error(raw)
@@ -354,21 +390,25 @@ class Server:
         ok = not is_error and not looks_like_error(text)
         urls = self._adapted("result_urls", [], name, text, ok)
         urls = tuple(u for u in urls if isinstance(u, str)) if isinstance(urls, (list, tuple)) else ()
-        text = self._adapted("shape_result", text, name, text, ok)
-        if not isinstance(text, str):
-            text = result_text(raw)
+        if shape:
+            text = self._adapted("shape_result", text, name, text, ok)
+            if not isinstance(text, str):
+                text = result_text(raw)
+        text = trust.clean(text)
+        # The adapter may keep a result out of the journal (a web search's results, which can
+        # quote the query) and say what it was instead: the count, the size, of the whole result.
+        summary = self._adapted("log_result", None, name, text, ok)
         truncated = len(text) > result_chars
         if truncated:
             text = text[:result_chars] + f"\n… [{len(text) - result_chars} more characters cut]"
         if not ok:
             self.failures += 1
-        # The adapter may keep a result out of the journal (a web search's results, which can
-        # quote the query) and say what it was instead: the count, the size.
-        summary = self._adapted("log_result", None, name, text, ok)
+        detail = self.logs_detail()
         if not isinstance(summary, str):
-            summary = text[:160].replace("\n", " ")
-        log.info("tools: %s.%s(%s) -> %s in %.0f ms: %s", self.name, name, logtext.arguments(arguments),
-                 "ok" if ok else "error", ms, summary)
+            summary = text[:160].replace("\n", " ") if detail else f"{len(text)} chars (not logged)"
+        log.info("tools: %s.%s(%s) -> %s in %.0f ms: %s", self.name, name,
+                 logtext.arguments(arguments) if detail else logtext.names(arguments), "ok" if ok else "error", ms,
+                 summary)
         return ToolResult(self.name, name, ok, text, ms, truncated, arguments, urls)
 
     async def close(self) -> None:
@@ -390,7 +430,7 @@ class Server:
         return {"topic": self.topic, "state": self.state, "tools": len(self.tools), "calls": self.calls,
                 "failures": self.failures, "last_ms": round(self.last_ms, 1) if self.last_ms is not None else None,
                 "error": self.failed or None, "adapter": self.adapter.name if self.adapter else None,
-                "confirm": sorted(self.confirm)}
+                "confirm": sorted(self.confirm), "flags": sorted(self.flags), "offer": self.offer}
 
 
 def _read_only(tool: Any) -> bool:
@@ -481,13 +521,36 @@ class Toolbox:
             self.functions[spec.function] = spec
         return resolved
 
+    async def offered(self, servers: list[str] | set[str] | frozenset[str], careful: bool = True) -> list[ToolSpec]:
+        """The thinker's tools for one sentence: these servers' tools in one stable order (by topic, then the
+        server's name, then the server's own order), so the schemas after the system prompt read the same from
+        sentence to sentence and Ollama's prompt cache holds; names that collide anywhere among them are
+        prefixed with their server. A server that does not connect is left out with a warning."""
+        chosen = sorted((self.servers[n] for n in servers if n in self.servers), key=lambda s: (s.topic, s.name))
+        results = await asyncio.gather(*(s.ensure() for s in chosen), return_exceptions=True)
+        specs: list[ToolSpec] = []
+        for server, outcome in zip(chosen, results):
+            if isinstance(outcome, Exception):
+                log.warning("tools: %s unavailable: %s", server.name, outcome)
+                continue
+            specs += [t for t in server.tools if careful or t.name not in server.careful]
+        names = [s.name for s in specs]
+        resolved = [
+            ToolSpec(s.server, s.name, s.description, s.schema, s.name if names.count(s.name) == 1 else f"{s.server}_{s.name}")
+            for s in specs
+        ]
+        for spec in resolved:
+            self.functions[spec.function] = spec
+        return resolved
+
     async def call(self, server: str, name: str, arguments: dict[str, Any] | None = None,
-                   result_chars: int | None = None) -> ToolResult:
+                   result_chars: int | None = None, shape: bool = False) -> ToolResult:
         """`result_chars` overrides the configured cut for callers that parse the whole result
-        themselves (the vocabulary reads a 50-track listing); a model never gets more than the config."""
+        themselves (the vocabulary reads a 50-track listing); a model never gets more than the config.
+        `shape`: as a model reads it (Server.call)."""
         if server not in self.servers:
             return ToolResult(server, name, False, f"no server named {server!r} in [tools.servers]", 0.0, arguments=arguments or {})
-        return await self.servers[server].call(name, arguments, result_chars or self.config.result_chars)
+        return await self.servers[server].call(name, arguments, result_chars or self.config.result_chars, shape=shape)
 
     def label(self, server: str, name: str) -> str:
         """The tool as the widget's step chip names it ("Spotify: next", "searching the web…"): the
@@ -518,19 +581,67 @@ class Toolbox:
         found = self.servers.get(server)
         return found.risk(name, self.risks) if found is not None else "change"
 
-    def needs_approval(self, server: str, name: str) -> bool:
+    def needs_approval(self, server: str, name: str, foreign: bool = False) -> bool:
         """Does this call wait for a yes (approvals.needed): on its server's `confirm` list, or `sends` or
-        `destructive`?"""
+        `destructive`, or, with `foreign` (strangers' text is in the conversation), anything but `read`?"""
         from .approvals import needed   # local: approvals imports confirm, which imports this module
 
-        return needed(self.needs_confirm(server, name), self.risk(server, name))
+        return needed(self.needs_confirm(server, name), self.risk(server, name), foreign=foreign)
+
+    def flags(self, server: str) -> frozenset[str]:
+        """The server's trust flags (trust.py); all three for a server that is not configured."""
+        found = self.servers.get(server)
+        return found.flags if found is not None else trust.UNKNOWN
+
+    def private(self, server: str) -> bool:
+        return "private" in self.flags(server)
+
+    def shown(self, call: ToolResult) -> dict[str, Any]:
+        """A call as /health keeps it (`thinker.last`, `actions.last`): for a private, foreign or unknown server
+        its result as its size and its arguments by name only, the journal's rule (Server.logs_detail);
+        for the rest the first 200 characters, as before."""
+        out = call.to_dict()
+        found = self.servers.get(call.server)
+        detail = found is not None and found.logs_detail()
+        if detail:
+            out["text"] = call.text[:200]
+        else:
+            source = " from outside" if self.foreign(call.server) else ""
+            out["text"] = f"<{len(call.text)} chars{source}>"
+            out["arguments"] = sorted(call.arguments)
+        return out
+
+    def foreign(self, server: str) -> bool:
+        return "foreign" in self.flags(server)
+
+    def egress(self, server: str) -> bool:
+        return "egress" in self.flags(server)
+
+    def add_builtin(self, name: str, topic: str, open_session: Callable[[], Awaitable[Any]],
+                    adapter: Any | None = None, config: dict[str, Any] | None = None) -> Server:
+        """A server that runs inside the daemon (the hook for brain step 6's memory and messages): the same
+        Server, offered, guarded and logged like any other, whose session is `await open_session()` (an
+        object with list_tools() and call_tool(name, arguments)) instead of a process. Its flags come from
+        its adapter, as for any server; without one it is unknown, so all three."""
+
+        async def connect(stack: AsyncExitStack, _config: dict[str, Any]) -> Any:
+            return await open_session()
+
+        server = Server(name, {"topic": topic, **(config or {})}, connect, self.config.connect_timeout_s,
+                        self.config.call_timeout_s, adapter)
+        server.on_adapter = self.adapters.__setitem__
+        self.servers[name] = server
+        if adapter is not None:
+            self.adapters[name] = adapter
+        return server
 
     async def call_function(self, function: str, arguments: dict[str, Any] | None = None) -> ToolResult:
-        """By the model-facing name from the last `tools_for`."""
+        """By the model-facing name from the last `tools_for`: the thinker's calls, so the result is
+        shaped for a model (Server.call `shape`)."""
         spec = self.functions.get(function)
         if spec is None:
             return ToolResult("?", function, False, f"no tool named {function!r} was offered", 0.0, arguments=arguments or {})
-        return await self.call(spec.server, spec.name, arguments)
+        return await self.call(spec.server, spec.name, arguments, shape=True)
 
     def stats(self) -> dict[str, Any]:
         return {name: server.stats() for name, server in self.servers.items()}

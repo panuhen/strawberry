@@ -53,6 +53,12 @@ def arguments(values: dict[str, Any]) -> str:
     return json.dumps(shown, ensure_ascii=False)[:120]
 
 
+def names(values: dict[str, Any]) -> str:
+    """A tool call's arguments as their names only: for a private, foreign or unknown server, whose
+    arguments are never logged, whatever log_sentences says (tools.Server.call)."""
+    return ", ".join(str(key)[:32] for key in values) if values else ""
+
+
 @contextmanager
 def hearing(text: str) -> Iterator[None]:
     """Mark `text` as the sentence being answered while the block runs."""
@@ -66,8 +72,12 @@ def hearing(text: str) -> Iterator[None]:
 
 
 def from_web() -> None:
-    """Her line for the sentence being answered carries text from web results (see line())."""
+    """Her line for the sentence being answered carries text from a foreign server's results (a web
+    search, a page; trust.py): see line()."""
     _from_web.set(True)
+
+
+from_foreign = from_web
 
 
 def line(text: str) -> str:

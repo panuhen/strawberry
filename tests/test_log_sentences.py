@@ -146,7 +146,7 @@ async def test_no_sentence_in_any_log_record(aiohttp_client, caplog, log_sentenc
     else:
         assert leaked == [], leaked
         for where in ("widget typed: <sentence, 30 chars>", "voice: heard <sentence, 26 chars>", "gate: <sentence,",
-                      "actions: <sentence,", "thinker: <sentence,", '"query": "<24 chars>"'):
+                      "actions: <sentence,", "thinker: <sentence,", "spotify.search(query)"):
             assert any(where in m for m in messages), where
 
 

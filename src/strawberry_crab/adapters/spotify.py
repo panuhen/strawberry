@@ -26,6 +26,13 @@ What it adds over the plain tool list:
     confirm         the two removals are asked about first ("Remove 'Teardrop' from Gym? Say yes."),
                     with "current" pinned to the playing track so a yes removes the one she named.
     guard           a Liked Songs removal with an ID the server cannot read is sent back to look it up.
+    private, egress the trust flags (trust.py): what it returns is the user's own (their library, what
+                    they play), and a call reaches Spotify, where a playlist's name or description can
+                    be seen by others. Not foreign: see `SpotifyAdapter`.
+    shape_tool,     its schemas without `device_id` but where a call starts playback, and its listings as
+    shape_result    the thinker reads them: one line per hit (name, artists, album, URI), not JSON.
+    log_result      a call's result in the journal as counts and a size, never a name.
+    reflex_tools    the tools each reflex calls, so a tier raised to need a yes sends it to the thinker.
 
 The user's favourites are Spotify's Liked Songs: the server once kept a separate local list
 with tools of its own, and that list is gone.
@@ -42,7 +49,7 @@ import re
 from typing import Any
 
 from ..actions import Outcome, Reflex
-from ..tools import Toolbox, ToolResult
+from ..tools import Toolbox, ToolResult, ToolSpec
 from .base import Adapter
 
 
@@ -532,9 +539,88 @@ GUIDE = (
 )
 
 
+# Listings the thinker reads one line per hit (`shape_result`). A reflex, `ask`, `done` and the vocabulary
+# read the server's own JSON: they get the result unshaped (tools.Server.call `shape`).
+LISTINGS = ("search", "get_queue", "get_playlists", "get_playlist_tracks", "get_saved_tracks", "find_playlist",
+            "get_devices")
+# Fields said in the order a model needs them; anything else of an item after them, as key=value.
+FIRST_FIELDS = ("name", "artists", "album")
+# Only these start playback somewhere: the rest act on the active device, so `device_id` is only tokens.
+DEVICE_TOOLS = ("play", "play_liked")
+
+
+def _hit(item: dict[str, Any]) -> str:
+    """One listing item on one line: "Blue Monday – New Order (Substance) · uri=spotify:track:…"."""
+    name = str(item.get("name", "") or "")
+    artists = item.get("artists")
+    if isinstance(artists, list):
+        artists = ", ".join(str(a) for a in artists)
+    line = name + (f" – {artists}" if artists else "")
+    if item.get("album"):
+        line += f" ({item['album']})"
+    rest = [f"{key}={value}" for key, value in item.items()
+            if key not in FIRST_FIELDS and value not in (None, "", [], {}) and not isinstance(value, (dict, list))]
+    return " · ".join([line.strip() or "?", *rest])
+
+
+def shape_listing(text: str) -> str:
+    """spotify-mcp's JSON listing as numbered lines, one per hit, under each kind's name; anything that is
+    not such a listing as it came."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if not isinstance(data, dict) or "error" in data:
+        return text
+    lines: list[str] = []
+    for key, value in data.items():
+        if isinstance(value, list) and all(isinstance(v, dict) for v in value):
+            lines.append(f"{key}: {len(value)}" if value else f"{key}: none")
+            lines += [f"{i}. {_hit(item)}" for i, item in enumerate(value, 1)]
+        elif not isinstance(value, (dict, list)):
+            lines.append(f"{key}: {value}")
+        else:
+            return text      # a shape this does not know: the model gets the server's own
+    return "\n".join(lines) if lines else text
+
+
+def count_hits(text: str) -> str:
+    """What the journal says of a listing: how many of each kind, never a name."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        hits = len(re.findall(r"^\d+\. ", text, re.MULTILINE))
+        return f"{hits} hits, " if hits else ""
+    if not isinstance(data, dict):
+        return ""
+    kinds = [f"{len(v)} {k}" for k, v in data.items() if isinstance(v, list)]
+    return ", ".join(kinds) + ", " if kinds else ""
+
+
 class SpotifyAdapter(Adapter):
     name = "spotify"
     server_names = ("spotify",)
+    # What it returns is the user's own (their library, their playlists, what they play): private. A call
+    # reaches Spotify, and some write what others can see (a playlist's name and description, a public
+    # playlist): egress. Not foreign: its results are catalogue fields (titles, artists, playlist names) in
+    # the server's own JSON, not free text a stranger wrote to be read; marked foreign, every "play X" after a
+    # search would wait for a yes. A title can still say anything, so the thinker never lets a result call a
+    # tool the sentence did not offer, and the removals ask first. After a web result its tools are refused.
+    private = True
+    egress = True
+    # The tools each reflex calls (actions.Actor.asks_first): a tier raised to need a yes sends the sentence
+    # to the thinker, which asks, instead of a reflex that would not.
+    reflex_tools = {
+        "skip": ("next", "get_current_track"),
+        "previous": ("previous", "get_current_track"),
+        "pause": ("pause",),
+        "resume": ("get_current_track", "play"),
+        "volume_down": ("get_devices", "set_volume"),
+        "volume_up": ("get_devices", "set_volume"),
+        "now_playing": ("get_current_track",),
+        "like": ("like_current",),
+        "play_liked": ("play_liked",),
+    }
     reflexes: dict[str, Reflex] = {
         "skip": skip,
         "previous": previous,
@@ -597,6 +683,23 @@ class SpotifyAdapter(Adapter):
 
     def guard(self, state: dict[str, Any], name: str, arguments: dict[str, Any]) -> str | None:
         return guard(name, arguments)
+
+    def shape_tool(self, spec: ToolSpec) -> ToolSpec:
+        # `device_id` only where a call starts playback somewhere; elsewhere the active device is the one.
+        properties = (spec.schema or {}).get("properties") or {}
+        if spec.name in DEVICE_TOOLS or "device_id" not in properties:
+            return spec
+        schema = {**spec.schema, "properties": {k: v for k, v in properties.items() if k != "device_id"}}
+        if "required" in schema:
+            schema["required"] = [k for k in schema["required"] if k != "device_id"]
+        return ToolSpec(spec.server, spec.name, spec.description, schema, spec.function)
+
+    def shape_result(self, name: str, text: str, ok: bool) -> str:
+        return shape_listing(text) if ok and name in LISTINGS else text
+
+    def log_result(self, name: str, text: str, ok: bool) -> str | None:
+        counted = count_hits(text) if ok and name in LISTINGS else ""
+        return f"{counted}{len(text)} chars (not logged)" if ok else f"error, {len(text)} chars (not logged)"
 
     async def ask(self, toolbox: Toolbox, server: str, name: str,
                   arguments: dict[str, Any]) -> tuple[str, dict[str, Any]]:

@@ -7,8 +7,9 @@ the one open question and who may answer it. A call waits for a yes when
     its tier is `sends` or `destructive`           (Toolbox.risk: [approvals] risk, the adapter, MCP's
                                                     destructiveHint, which only ever raises a tier)
 
-and, from stage 3 of brain step 6, every call that is not `read` once text from strangers is in the
-conversation (`needed(..., foreign=True)`; nothing passes it yet).
+and, since stage 3 of brain step 6, every call that is not `read` once text from strangers (a foreign
+server's result, trust.py) is in the conversation (`needed(..., foreign=True)`, from Thinker._run). The
+question is then the core's own, naming only the tool (confirm.hold `foreign`).
 
     approval = book.request(run, held)      # approval.request on the run: awaiting_approval
     book.answer(approval_id, "yes", "body", hold=True)   # first answer wins; later ones are refused
@@ -65,8 +66,8 @@ TICK_S = 0.25          # how often a wait past its expiry looks again while the 
 
 def needed(listed: bool, risk: str, foreign: bool = False) -> bool:
     """Does a call wait for a yes? On its server's `confirm` list, or of the `sends` or `destructive`
-    tier. `foreign` is stage 3's rule (WIRING §19): once foreign text is in the conversation, every call
-    that is not `read`. No caller passes it yet."""
+    tier, or, with `foreign` (WIRING §20: text from strangers is in the conversation), any that is not
+    `read`."""
     return listed or risk in ALWAYS or (foreign and risk != "read")
 
 

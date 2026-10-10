@@ -704,9 +704,10 @@ class Daemon:
         sent = await self.perform(performance)
         if outcome.held is not None:
             self.hold(outcome.held, run)   # the clock starts once she has asked
-        # An answer from web results is not kept in her words: the ledger goes into the next
-        # sentence's prompt before anything marks it as strangers' text (Thinker._run).
-        web = self.thinker.used_untrusted(outcome) if hasattr(self.thinker, "used_untrusted") else False
+        # An answer from a foreign server's results (web results, a page; trust.py) is not kept in her
+        # words: the ledger goes into the next sentence's prompt before anything marks it as strangers'
+        # text (Thinker._run). Nor will memory keep it (brain step 6, stage 5: the same test).
+        web = self.thinker.used_foreign(outcome) if hasattr(self.thinker, "used_foreign") else False
         # Her question before a held call is not kept in her words either: with it in the ledger, Qwen
         # asked "Remove Blue Monday from your Liked Songs? Say yes." itself, with no call held (confirm.py).
         said = WEB_REPLY if web else confirm.LEDGER_HELD if outcome.held is not None else performance.text or ""

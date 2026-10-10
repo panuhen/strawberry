@@ -13,13 +13,21 @@ earns once you use it every day:
     common_tools    the tools worth keeping first when the brain's context is tight
     tools           the only tools of the server the brain is offered, and shorter schemas for them
     shape_result    a result made compact before it is cut to result_chars
-    log_result      what the journal says of a call, when the result itself must stay out of it
+    log_result      what the journal says of a call (a count and a size; the result stays out of it)
+    log_detail      True: the journal may carry the first 160 characters of a result and the arguments,
+                    for a server that is neither private nor foreign (off by default)
     guide           what the brain is told about these tools when they are offered (and
                     `unavailable`, when the server is configured but not answering)
     wanted          whether a sentence wants this server's tools at all, or asks for them outright
     max_calls       how many calls to its tools one sentence may make
-    untrusted       its results are outside text; with `guard`, `forward`, `screen` and `observe`,
-                    what may follow one, and in what form it is sent
+    private, foreign, egress
+                    the trust flags (trust.py, WIRING §20): its results are the user's own, its results
+                    carry strangers' text, a call sends something off the machine. A foreign result
+                    in a conversation brings the thinker's containment; with `guard`, `forward`,
+                    `screen` and `observe`, what may follow one, and in what form it is sent
+    offer           when the thinker is offered its tools: always, topic, asked (Thinker.tools)
+    reflex_tools    which of its tools each reflex calls, so a tier that needs a yes hands the
+                    sentence to the thinker instead (actions.Actor)
     confirm         the tools she asks about before calling, unless the config's `confirm` says
                     otherwise; `ask` words the question (and pins the call), `describe` the line
                     on her approval card, `done` the result
@@ -70,12 +78,32 @@ class Adapter:
     #: at most this many calls to this server's tools for one sentence (0: no limit beyond the
     #: thinker's max_rounds); a call over it is not made and the brain is told to answer
     max_calls: int = 0
-    #: True when its results are text from strangers (web pages): once one is in a conversation,
-    #: the thinker takes the user's private context out of it and refuses every other server's
-    #: tools for the rest of that sentence (Thinker._run), and `guard` checks each further call
-    untrusted: bool = False
+    #: The trust flags (trust.py, WIRING §20). `private`: its results are the user's own (their library,
+    #: what they play, their messages). `foreign`: its results carry text written by others (web pages,
+    #: snippets, messages): once one is in a conversation, the thinker takes the user's private context
+    #: out of it, refuses every private or egress server's tools but this one's, asks before anything
+    #: that is not a read (Thinker._run), and `guard` checks each further call. `egress`: a call sends
+    #: what it carries off the machine to someone else (a query, an address, a name others may see):
+    #: once foreign text is in, a call that carries a phrase of the user's private context is refused.
+    #: An adapter that sets none says its server is none of them; a server with no adapter is all three
+    #: unless its config says otherwise.
+    private: bool = False
+    foreign: bool = False
+    egress: bool = False
+    #: When the thinker is offered this server's tools (Thinker.tools): "always" (every sentence; the
+    #: prompt stays the same and Ollama's cache holds), "topic" (a sentence the gate reads as this
+    #: server's topic, or one `wanted` says asks for it) or "asked" (only one `wanted` says asks for it,
+    #: or that names the server). The config's `offer` decides over it
+    offer: str = "always"
+    #: True: the journal may say what this server's calls carry (the first 160 characters of a result,
+    #: the arguments); only for a server that is neither private nor foreign. Off: counts and sizes
+    log_detail: bool = False
+    #: reflex (the gate's option, or a said reflex's name) -> the server tools it calls. A reflex whose
+    #: tools include one that waits for a yes ([approvals] risk raised it, or its confirm list) is not
+    #: run: the sentence goes to the thinker, which asks (actions.Actor)
+    reflex_tools: dict[str, tuple[str, ...]] = {}
     #: tool names that mark a server as this adapter's whatever its name: listed by a server with
-    #: no adapter (or with one that is not `untrusted`), they give it this adapter (Server._run)
+    #: no adapter (or with one that is not `foreign`), they give it this adapter (Server._run)
     claims_tools: tuple[str, ...] = ()
     #: tools she asks about first, out loud, and calls only after a spoken yes (confirm.py), when the
     #: server's config has no `confirm` list of its own
@@ -125,13 +153,14 @@ class Adapter:
         return spec
 
     def shape_result(self, name: str, text: str, ok: bool) -> str:
-        """A result made compact before it is cut to `result_chars` (the noise of a search listing
-        would otherwise fill it). Returned unchanged by default."""
+        """A result as the thinker reads it, made compact before it is cut to `result_chars` (the noise
+        of a search listing would otherwise fill it): one line per hit. Only for the thinker's calls; a
+        reflex, `ask`, `done` and the vocabulary get the server's own text. Returned unchanged by default."""
         return text
 
     def log_result(self, name: str, text: str, ok: bool) -> str | None:
-        """The journal's summary of a call's result in place of its text, or None for the core's
-        own line (the first 160 characters). For results that may carry what the user asked."""
+        """The journal's summary of a call's result in place of its text (a count, a size), or None for
+        the core's own line: the size, or with `log_detail` the first 160 characters."""
         return None
 
     def wanted(self, text: str, route: Any) -> bool | None:
