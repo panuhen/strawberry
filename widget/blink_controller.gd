@@ -59,7 +59,8 @@ func advance_blink(delta: float) -> void:
 	wide_value = 0.0
 	happy_values = Vector2.ZERO
 	var clip: String = player.assigned_animation if is_instance_valid(player) else ""
-	# Sleep clips own the closed lids and their gradual opening during wake-up.
+	# Sleep clips own the closed lids (asleep: sleep_loop). Going down and getting up, the tuck layer
+	# closes and opens them through its "sleep" layer below (sleep_tuck.gd).
 	if clip in ["sleep_enter", "sleep_loop", "wake_up"]:
 		elapsed = -1.0
 		previous_expression = clip

@@ -9,7 +9,7 @@ extends Node
 ##   how often pokes in a row escalate: curious (the zone's reaction), then mildly annoyed
 ##             (alert_snap and a squint), then on the sixth she scuttles a short step away from the
 ##             poke (wander.gd, the gait) and the annoyance starts over.
-##   asleep    a poke wakes her gently (the wake_up clip), nothing else.
+##   asleep    a poke wakes her (the wake-up of sleep_tuck.gd), nothing else.
 ##   busy      talking, listening, thinking, a run going on (the step chip), a one-shot or a
 ##             daemon reaction playing: only a blink. Nothing here plays a clip over a line,
 ##             opens the claws while she speaks, or stops a drag.
@@ -103,7 +103,7 @@ func poke(pixel: Vector2) -> void:
 	report_touch()
 	var sleeper: Node = widget.sleeper
 	if sleeper and sleeper.phase != "awake":
-		sleeper.wake()           # gently: the wake_up clip, and nothing on top of it
+		sleeper.wake()           # the wake-up (sleep_tuck.gd), and nothing on top of it
 		streak = 0
 		last_zone = "asleep"
 		return

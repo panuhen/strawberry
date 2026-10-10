@@ -1,8 +1,10 @@
 extends Node
 ## Local visual sleep state. The daemon's idle/dancing contract remains unchanged.
 ## Incoming performances wait for the stand-up transition; audio starts afterwards.
-const SLEEP_CLIPS := ["sleep_enter", "sleep_loop", "wake_up"]
+## How she goes down and gets up (the tuck and spin) is sleep_tuck.gd; asleep, `sleep_loop` breathes.
+const SleepTuck = preload("res://sleep_tuck.gd")
 var widget: Node3D
+var tuck: Node
 var phase := "awake"
 var pending: Dictionary = {}
 var idle_seconds := -1.0
@@ -15,13 +17,17 @@ var python_path: String = preload("res://paths.gd").python()
 var helper_path := ""
 var last_sample_at := -1.0
 var sleep_started_at := 0.0
+var reduced_motion := -1
 
 func setup(owner: Node3D) -> void:
 	widget = owner
 	process_priority = 80
 	helper_path = preload("res://paths.gd").on_disk("res://desktop_idle.py")
 	monitor_enabled = not widget.is_headless()
-	widget.player.animation_finished.connect(animation_finished)
+	tuck = SleepTuck.new()
+	tuck.name = "SleepTuck"
+	add_child(tuck)
+	tuck.setup(widget)
 
 func _exit_tree() -> void:
 	if probe.is_started():
@@ -75,39 +81,46 @@ func tick(delta: float) -> void:
 		quiet_elapsed = 0.0
 		if phase in ["entering", "sleeping"]:
 			wake()
-		return
-	quiet_elapsed += delta
-	if phase == "awake" and widget.sleep_after_minutes > 0.0 and idle_seconds >= 0.0:
-		var threshold: float = widget.sleep_after_minutes * 60.0
-		if minf(quiet_elapsed, idle_seconds) >= threshold:
-			begin_sleep()
+	else:
+		quiet_elapsed += delta
+		if phase == "awake" and widget.sleep_after_minutes > 0.0 and idle_seconds >= 0.0:
+			var threshold: float = widget.sleep_after_minutes * 60.0
+			if minf(quiet_elapsed, idle_seconds) >= threshold:
+				begin_sleep()
+	if tuck.advance(delta, phase):
+		finished(tuck.channels.lids > 0.5)
+	widget.blink_controller.set_layer("sleep", 0.0, 0.0, 0.0, tuck.channels.lids)
 
+## The system's reduced-motion setting, where the platform reports one (Windows and macOS; elsewhere
+## it is unknown and she hops). `reduced_motion` 0 or 1 overrides it (the checks).
+func calm() -> bool:
+	if reduced_motion >= 0:
+		return reduced_motion == 1
+	return DisplayServer.accessibility_should_reduce_animation() == 1
+
+## Going to sleep: from awake, or again while she is getting up (and nothing is waiting to play).
 func begin_sleep() -> void:
-	if phase != "awake" or not can_sleep():
+	if phase not in ["awake", "waking"] or not pending.is_empty() or not can_sleep():
 		return
 	phase = "entering"
 	sleep_started_at = Time.get_ticks_msec() / 1000.0
 	widget.player.speed_scale = 1.0
-	widget.play_clip("sleep_enter", 0.25)
 	widget.gaze.enabled = false
+	tuck.start_enter(calm())
 
 func activity() -> void:
 	quiet_elapsed = 0.0
 	if phase in ["entering", "sleeping"]:
 		wake()
 
+## Waking: from asleep, or part way down (sleep_tuck.gd blends from wherever she is).
 func wake() -> void:
 	if phase in ["awake", "waking"]:
 		return
-	# Reverse the descent from its current point when interrupted mid-settle.
-	var offset := 0.0
-	if phase == "entering":
-		var progress: float = widget.player.current_animation_position / widget.player.get_animation("sleep_enter").length
-		offset = (1.0 - clampf(progress, 0.0, 1.0)) * widget.player.get_animation("wake_up").length
 	phase = "waking"
 	widget.player.speed_scale = 1.0
-	widget.player.play("wake_up", 0.15)
-	widget.player.seek(offset, true)
+	widget.play_clip(widget.STATE_CLIPS[widget.state], 0.3)
+	tuck.start_wake(calm())
 
 func defer_performance(data: Dictionary) -> bool:
 	quiet_elapsed = 0.0
@@ -121,11 +134,12 @@ func defer_performance(data: Dictionary) -> bool:
 	wake()
 	return true
 
-func animation_finished(clip: StringName) -> void:
-	if clip == "sleep_enter" and phase == "entering":
+## A sequence has run out: settled asleep (the breathing clip takes over), or up and awake.
+func finished(asleep: bool) -> void:
+	if asleep and phase == "entering":
 		phase = "sleeping"
-		widget.play_clip("sleep_loop", 0.0)
-	elif clip == "wake_up" and phase == "waking":
+		widget.play_clip("sleep_loop", 0.5)
+	elif not asleep and phase == "waking":
 		phase = "awake"
 		quiet_elapsed = 0.0
 		widget.gaze.enabled = true
