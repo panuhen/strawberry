@@ -368,6 +368,32 @@ async def test_the_live_view_asks_the_watcher_for_the_hand_only_while_it_is_open
     assert daemon.gestures.state()["wanted"] == {"gesture": False, "hand": False}
 
 
+async def test_the_live_view_gets_both_hands_and_the_pair_and_the_page_draws_them(client):
+    """The second hand's data path (PROTOCOL Part 1d): the watcher's `hands` and `pair` reach the Input tab's live
+    view as they came, and the page draws the other hand and shows the pair; `[gestures] hands` is a setting there."""
+    from tests.bus import BUS_SECRET
+    from tests.test_gestures_hands import Settings, Tracker, frames, left, right, stepped
+
+    signed = await sign_in(client)
+    stream = await signed.get("/ui/api/input/live")
+    await read_event(stream, "status")
+    _, told = stepped(Tracker(Settings()), frames(0.4, lambda t: [left(pinch=True), right(y=0.4)]))
+    message = told[-1]
+    assert len(message["hands"]) == 2 and "pair" in message
+    reply = await client.post("/hand", json=message, headers={"X-Strawberry-Secret": BUS_SECRET})
+    assert reply.status == 200
+    got = await read_event(stream, "hand")
+    assert got["hands"] == message["hands"] and got["pair"] == message["pair"]
+    assert {h["handedness"] for h in got["hands"]} == {"left", "right"} and sum(h["primary"] for h in got["hands"]) == 1
+    stream.close()
+    script = (brainui.UI_DIR / "app.js").read_text(encoding="utf-8")
+    assert "drawOtherHand" in script and "H.pair" in script and "both_pinched" in script and 'id = "tune-hands"' in script
+    view = await (await signed.get("/ui/api/input")).json()
+    view["settings"]["gestures"]["hands"] = 1
+    saved = await signed.post("/ui/api/input/save", {"settings": view["settings"]})
+    assert saved.status == 200 and daemon_of(client).config.gestures.hands == 1
+
+
 def test_the_page_has_the_input_tab_and_puts_text_in_as_text():
     page = (brainui.UI_DIR / "index.html").read_text(encoding="utf-8")
     assert 'data-section="input"' in page and '<section id="input"' in page

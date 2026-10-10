@@ -8,7 +8,8 @@
 
 (() => {
   const CSRF = document.querySelector('meta[name="csrf"]').content;
-  const SECTIONS = ["persona", "profile", "runs", "router", "learning", "data", "settings", "input", "apps", "system"];
+  const SECTIONS = ["persona", "profile", "runs", "router", "learning", "data", "settings", "config", "tools", "input", "apps",
+                    "system"];
   const MAX_ROUTES = 100;
   const MAX_RUNS = 50;
   const TERMINAL = { "run.completed": "completed", "run.failed": "failed", "run.cancelled": "cancelled" };
@@ -572,7 +573,9 @@
       el("p", { class: "dim" }, chip(a.risk, ["read", "playback", "change"].includes(a.risk) ? null : "warn"), ` ${a.tool} · ${a.approval_id} for ${a.run_id}`,
         left ? ` · ${left}` : null, a.hold ? " · a hold on her card" : null),
       el("div", { class: "actions" },
-        actionButton("Yes", (b) => answerApproval(b, a.approval_id, "yes"), "primary"),
+        // A settings change this page asked for takes its yes on her card or out loud (yes_by), never from here.
+        a.yes_by && !a.yes_by.includes("ui") ? el("span", { class: "dim", text: "Hold Yes on her card, or say yes: this page cannot say yes to it." })
+          : actionButton("Yes", (b) => answerApproval(b, a.approval_id, "yes"), "primary"),
         actionButton("No", (b) => answerApproval(b, a.approval_id, "no"), "danger")));
   }
 
@@ -780,7 +783,7 @@
       el("div", { class: "v small" }, chip(value, kind)),
       lines.map((line) => el("p", { class: "s" }, line)));
     root.replaceChildren(
-      panel("Privacy", "read-only here: change these in config.toml, then restart her",
+      panel("Privacy", "read-only here: change these on the Config file tab (loosening asks on her card)",
         el("div", { class: "grid" },
           card("Outcome logging", onOff(l.log_outcomes), l.log_outcomes ? "warn" : "good", [
             l.log_outcomes ? "The sentences you say or type are kept on this machine with what came of each, for the learning loop."
@@ -812,7 +815,7 @@
         el("div", { class: "actions" },
           actionButton("Apply [notifications] now", (b) => applySettings(b), "primary"),
           el("span", { class: "faint", text: "reads config.toml again for the notification settings; the rest needs strawberry restart" }))),
-      panel("config.toml, as in effect", `read-only: edit ${where}`,
+      panel("config.toml, as in effect", "read-only here; the Config file tab edits the file",
         el("details", null, el("summary", { text: "Show every setting" }),
           el("pre", { class: "config", text: S.toml || JSON.stringify(c, null, 2) }))));
   }
@@ -1265,6 +1268,510 @@
     renderAppsHead();
   }
 
+  // --------------------------------------------------------------------------- settings: config.toml and the tools
+
+  // config.toml, edited here (WIRING.md §28). The draft is the file's text with every secret as "<hidden N: kept as
+  // is>": the daemon puts the values back. The form's edits go to the daemon, which writes them into the draft with
+  // the file's comments and order kept; the raw view edits the same text. A change that loosens safety is saved only
+  // after a held yes on her card or the user's own yes: this page cannot say yes to it.
+
+  const conf = {
+    view: null,             // GET config: schema, the file's text and values (masked), base (hash, mtime), pending
+    draft: null,            // the draft's masked text while it differs from the file (null: not edited)
+    values: null,           // the draft as parsed (masked), for the form
+    check: null,            // the last check: ok, problems, diff, lowering, restart, live, stale
+    mode: "form",
+    edits: [],              // the form's edits not yet sent
+    timer: null,
+    busy: false,
+    open: new Set(["notifications", "speech"]),
+    poll: null,
+    tools: null,            // GET tools
+    server: null,           // the Tools page's server form (null: none open)
+  };
+
+  function confText() { return conf.draft !== null ? conf.draft : (conf.view ? conf.view.text : ""); }
+  function confValues() { return conf.values || (conf.view ? conf.view.values : {}) || {}; }
+  function confDirty() { return Boolean(conf.check && !conf.check.same && conf.draft !== null); }
+
+  function confEdit(edit) {
+    conf.edits = conf.edits.filter((e) => e.key !== edit.key);
+    conf.edits.push(edit);
+    clearTimeout(conf.timer);
+    conf.timer = setTimeout(confCheck, 350);
+  }
+
+  async function confCheck() {
+    if (conf.busy || !conf.view || conf.view.text === null) return;
+    conf.busy = true;
+    const edits = conf.edits.splice(0);
+    const sent = confText();
+    try {
+      const r = await api("config/check", { text: sent, edits, base: conf.view.base.sha256 });
+      conf.check = r;
+      if (r.values) conf.values = r.values;
+      // The raw view keeps what the user is typing; the form takes the daemon's text back.
+      if (conf.mode === "form" || edits.length) conf.draft = r.text;
+      else if (conf.draft === null) conf.draft = sent;
+    } catch (e) {
+      conf.check = { ok: false, problems: [e.message], diff: [], lowering: [], restart: [], live: [] };
+    } finally {
+      conf.busy = false;
+    }
+    if (conf.edits.length) { confCheck(); return; }
+    renderConfReview();
+    renderToolsReview();
+    if (conf.mode === "raw" && document.getElementById("conf-raw") === null) renderConfBody();
+  }
+
+  function confReset() {
+    conf.draft = null; conf.values = null; conf.check = null; conf.edits = []; conf.server = null;
+  }
+
+  function renderConfig() {
+    const root = $("#config");
+    const V = conf.view;
+    if (!V) {
+      root.replaceChildren(panel("config.toml", null, el("p", { class: "empty", text: "Loading..." })));
+      return;
+    }
+    fill(root,
+      panel("config.toml", "the settings file, edited here; comments and order are kept",
+        el("div", { id: "conf-head" })),
+      el("div", { id: "conf-pending" }),
+      V.error ? null : panel("Settings", "a field set in the file shows ✎; the rest are the defaults",
+        el("div", { class: "actions" },
+          ["form", "raw"].map((m) => el("button", { type: "button", class: conf.mode === m ? "primary small" : "ghost small",
+            text: m === "form" ? "Form" : "Raw TOML", on: { click: () => { conf.mode = m; renderConfig(); } } }))),
+        el("div", { id: "conf-body" })),
+      V.error ? null : panel("Review and save", "checked as she checks it at start", el("div", { id: "conf-review" })));
+    renderConfHead();
+    renderConfPending();
+    renderConfBody();
+    renderConfReview();
+  }
+
+  function renderConfHead() {
+    const node = document.getElementById("conf-head");
+    if (!node || !conf.view) return;
+    const V = conf.view;
+    fill(node,
+      el("div", { class: "actions" }, el("span", { class: "dim mono", text: V.path }),
+        V.exists ? chip("in use", "good") : chip("no file yet: the draft starts from the commented template"),
+        chip(`loaded ${clock(Date.now() / 1000)}`, null, `sha256 ${V.base.sha256.slice(0, 12)}…`),
+        actionButton("Reload from the file", () => refreshConfig(true), "ghost small")),
+      V.error ? el("div", { class: "note berry" }, el("b", { text: "Not shown: " }), V.error,
+        el("p", { text: "Fix it in a text editor (strawberry config). Nothing of the file is shown until it parses, so no secret in it can leak here." })) : null,
+      el("p", { class: "dim", text: "Secrets in the file (a server's env, a token in its arguments or address, a key named like one) show as <hidden N: kept as is> and are kept as they are. Type a whole new value over one to change it." }));
+  }
+
+  function renderConfPending() {
+    const node = document.getElementById("conf-pending");
+    if (!node || !conf.view) return;
+    const P = conf.view.pending;
+    if (!P) { node.replaceChildren(); return; }
+    const reasons = el("ul", null, (P.lowering || []).map((f) => el("li", null, el("code", { text: f.key }), ` ${f.why}`)));
+    if (P.state === "waiting") {
+      fill(node, panel("Waiting for your yes on her card", "this page cannot say yes to its own change",
+        el("div", { class: "approval" },
+          el("p", { class: "prompt", text: "Hold Yes on her card, or say yes, to save this change." }),
+          el("p", { class: "dim", text: typeof P.expires_in === "number" ? `About ${Math.ceil(P.expires_in)} s left when loaded. No answer is a no.` : "" }),
+          el("p", { class: "dim", text: "It loosens safety:" }), reasons,
+          el("div", { class: "actions" }, actionButton("No, leave it", (b) => {
+            b.disabled = true;
+            api("approval", { approval_id: P.approval_id, answer: "no" }).then(() => confPoll()).catch((e) => toast(e.message, true));
+          }, "danger")))));
+      return;
+    }
+    const said = { saved: ["Saved after your yes.", "good"], left: ["Not saved: left as it was.", "warn"],
+                   changed: ["Not saved: the file changed while she waited.", "warn"], failed: ["Not saved.", "warn"] }[P.state] || [P.state, null];
+    fill(node, panel("The last change she asked about", null,
+      el("div", { class: "actions" }, chip(said[0], said[1]), P.detail ? el("span", { class: "dim", text: P.detail }) : null,
+        P.by ? el("span", { class: "faint", text: `answered by ${P.by}` }) : null,
+        P.restart && P.restart.length && P.state === "saved" ? chip(`needs a restart: ${P.restart.map((s) => `[${s}]`).join(" ")}`, "warn") : null),
+      reasons));
+  }
+
+  function confPoll() {
+    clearTimeout(conf.poll);
+    conf.poll = setTimeout(async () => {
+      try {
+        const r = await api("config");
+        const was = conf.view && conf.view.pending;
+        if (conf.view) conf.view.pending = r.pending; else conf.view = r;
+        if (r.pending && r.pending.state !== "waiting" && was && was.state === "waiting") {
+          toast(r.pending.state === "saved" ? "Saved after your yes on her card." : `Not saved (${r.pending.detail || r.pending.state}).`,
+            r.pending.state !== "saved");
+          if (r.pending.state === "saved") {
+            if (r.pending.file === "input.toml") { if (state.section === "input") refreshInput(); }
+            else { conf.view = r; confReset(); rerender("config"); if (state.section === "tools") refreshTools(); return; }
+          }
+        }
+        renderConfPending();
+        renderToolsPending();
+        if (r.pending && r.pending.state === "waiting") confPoll();
+      } catch (e) { /* the next look */ }
+    }, 1000);
+  }
+
+  // --- the form
+
+  const ELSEWHERE_TAB = { tools: "tools", input: "input" };
+
+  function shown(value) {
+    if (value === "" || value === null || value === undefined) return '""';
+    return typeof value === "string" ? value : JSON.stringify(value);
+  }
+
+  function renderConfBody() {
+    const node = document.getElementById("conf-body");
+    if (!node || !conf.view) return;
+    if (conf.mode === "raw") {
+      const area = el("textarea", { id: "conf-raw", class: "editor", spellcheck: "false", "aria-label": "config.toml, raw" });
+      area.value = confText();
+      area.addEventListener("input", () => {
+        conf.draft = area.value;
+        clearTimeout(conf.timer);
+        conf.timer = setTimeout(confCheck, 500);
+      });
+      fill(node, area, el("p", { class: "faint", text: "Checked as you type. Keep the <hidden N: kept as is> values as they are, or type a whole new value in their place." }));
+      return;
+    }
+    if (conf.check && !conf.check.values && conf.draft !== null) {
+      fill(node, el("div", { class: "note berry", text: "The raw text does not parse, so the form cannot show it. Fix it in Raw TOML, or Undo my edits." }));
+      return;
+    }
+    const values = confValues();
+    fill(node, conf.view.schema.map((section) => {
+      const set = values[section.name] || {};
+      const count = Object.keys(set).length;
+      const details = el("details", { class: "conf-section", open: conf.open.has(section.name) },
+        el("summary", null, el("span", { class: "mono", text: `[${section.name}]` }), " ",
+          section.live ? chip("applies now", "good", section.live) : chip("needs a restart", null, "read when she starts"),
+          count ? el("span", { class: "faint", text: ` ${count} set in the file` }) : null),
+        section.doc ? el("p", { class: "dim", text: section.doc }) : null,
+        el("div", { class: "conf-fields" }, section.fields.map((f) => confField(section.name, f, set))));
+      details.addEventListener("toggle", () => { if (details.open) conf.open.add(section.name); else conf.open.delete(section.name); });
+      return details;
+    }));
+  }
+
+  function confField(section, f, set) {
+    const key = `${section}.${f.key}`;
+    const id = `conf-${section}-${f.key}`;
+    const has = Object.prototype.hasOwnProperty.call(set, f.key);
+    const value = has ? set[f.key] : f.default;
+    const label = el("label", { class: "k", for: id }, el("span", { class: "mono", text: f.key }), has ? el("span", { class: "set", text: " ✎", title: "set in the file" }) : null,
+      f.deprecated ? chip("deprecated", "warn") : null);
+    const bad = el("span", { class: "s bad hidden" });
+    const send = (v) => { bad.classList.add("hidden"); confEdit({ key, value: v }); };
+    const fail = (why) => { bad.textContent = why; bad.classList.remove("hidden"); };
+    let input;
+    if (f.elsewhere) {
+      input = el("div", { class: "dim" }, `${shown(value)} · edited on ${f.elsewhere.where} `,
+        actionButton("Go there", () => show(ELSEWHERE_TAB[f.elsewhere.tab] || "config"), "ghost small"));
+    } else if (f.kind === "bool") {
+      input = el("input", { type: "checkbox", id, checked: Boolean(value), on: { change: (ev) => send(ev.target.checked) } });
+    } else if (f.kind === "int" || f.kind === "float") {
+      input = el("input", { type: "number", id, step: f.kind === "int" ? "1" : "any", value: String(value),
+        on: { input: (ev) => { const v = Number(ev.target.value); if (ev.target.value === "" || !Number.isFinite(v) || (f.kind === "int" && !Number.isInteger(v))) fail(f.kind === "int" ? "a whole number" : "a number"); else send(v); } } });
+    } else if (f.kind === "choice") {
+      input = el("select", { id, on: { change: (ev) => send(f.choices[Number(ev.target.value)]) } },
+        f.choices.map((c, i) => el("option", { value: String(i), selected: JSON.stringify(c) === JSON.stringify(value), text: shown(c) })));
+    } else if (f.kind === "multi") {
+      const picked = new Set(Array.isArray(value) ? value : []);
+      input = el("div", { class: "actions", id }, f.choices.map((c) => el("label", { class: "check" },
+        el("input", { type: "checkbox", checked: picked.has(c), on: { change: (ev) => { if (ev.target.checked) picked.add(c); else picked.delete(c); send(f.choices.filter((x) => picked.has(x))); } } }), c)));
+    } else if (f.kind === "list") {
+      input = el("textarea", { id, class: "small", rows: Math.max(2, Math.min(6, (value || []).length + 1)), placeholder: "one per line",
+        on: { input: (ev) => send(ev.target.value.split("\n").map((s) => s.trim()).filter(Boolean)) } });
+      input.value = (value || []).join("\n");
+    } else if (f.kind === "map") {
+      input = el("textarea", { id, class: "small", rows: Math.max(2, Math.min(6, Object.keys(value || {}).length + 1)), placeholder: "name = value, one per line",
+        on: { input: (ev) => {
+          const out = {};
+          for (const line of ev.target.value.split("\n")) {
+            if (!line.trim()) continue;
+            const at = line.indexOf("=");
+            if (at < 1) { fail(`"${line.trim()}" is not name = value`); return; }
+            out[line.slice(0, at).trim()] = line.slice(at + 1).trim().replace(/^"(.*)"$/, "$1");
+          }
+          send(out);
+        } } });
+      input.value = Object.entries(value || {}).map(([k, v]) => `${k} = ${v}`).join("\n");
+    } else if (f.kind === "json") {
+      input = el("textarea", { id, class: "small mono", rows: 3, on: { input: (ev) => { try { send(JSON.parse(ev.target.value)); } catch (e) { fail("not valid JSON"); } } } });
+      input.value = JSON.stringify(value);
+    } else if (f.kind === "duration") {
+      input = el("input", { type: "text", id, value: String(value), on: { input: (ev) => {
+        const t = ev.target.value.trim();
+        if (/^-?\d+$/.test(t)) send(Number(t)); else if (t) send(t); else fail("seconds, or a duration like 10m");
+      } } });
+    } else {
+      input = el("input", { type: "text", id, value: value === null || value === undefined ? "" : String(value), on: { input: (ev) => send(ev.target.value) } });
+    }
+    const reset = has && !f.elsewhere ? actionButton("Default", () => { confEdit({ key, reset: true }); setTimeout(() => renderConfBody(), 450); }, "ghost small") : null;
+    return el("div", { class: "conf-field" }, label, el("div", { class: "conf-input" }, input, reset),
+      el("span", { class: "s" }, `default ${shown(f.default)}`, f.hint ? ` · ${f.hint}` : ""), bad);
+  }
+
+  // --- review and save (shared by the Config file and Tools tabs)
+
+  function reviewBlock() {
+    const C = conf.check;
+    const V = conf.view;
+    if (!V) return null;
+    if (!C || conf.draft === null) return el("p", { class: "faint", text: "No changes yet." });
+    const diff = (C.diff || []).map((line) => el("span", {
+      class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : null,
+      text: `${line}\n` }));
+    const lowers = (C.lowering || []).length > 0;
+    const waiting = V.pending && V.pending.state === "waiting";
+    const save = confirmButton(lowers ? "Save: ask on her card" : "Save config.toml", lowers ? "Ask her now?" : "Save it now?", (b) => confSave(b), "primary");
+    save.disabled = !(C.ok && !C.same && !C.stale && !waiting);
+    return el("div", { class: "conf-review" },
+      C.stale ? el("div", { class: "note berry" }, el("b", { text: "config.toml changed since this page loaded it. " }),
+        "Saving would overwrite that change, so it is refused. Reload to see the file as it is now (your edits here are dropped).",
+        el("div", { class: "actions" }, actionButton("Reload from the file", () => refreshConfig(true), "small"))) : null,
+      !C.ok ? el("div", { class: "note berry" }, el("b", { text: "Not saved like this:" }), el("ul", null, (C.problems || []).map((p) => el("li", { text: p }))))
+        : C.same ? el("p", null, chip("same as the file")) : el("p", null, chip("checks out", "good"), " as she would read it at start."),
+      lowers ? el("div", { class: "note berry" }, el("b", { text: "This loosens safety, so she asks first: " }),
+        "after Save, hold Yes on her card or say yes. This page cannot say yes for you.",
+        el("ul", null, C.lowering.map((f) => el("li", null, el("code", { text: f.key }), ` ${f.why}`)))) : null,
+      (C.live || []).length ? el("p", null, chip(`applies now: ${C.live.map((s) => `[${s}]`).join(" ")}`, "good")) : null,
+      (C.restart || []).length ? el("p", null, chip(`needs a restart: ${C.restart.map((s) => `[${s}]`).join(" ")}`, "warn"),
+        el("span", { class: "faint", text: " after saving, run strawberry restart (she never restarts herself)" })) : null,
+      el("h3", { text: "Changes against the file" }),
+      diff.length ? el("pre", { class: "diff" }, diff) : el("p", { class: "faint", text: "No changes." }),
+      el("div", { class: "actions" }, save,
+        actionButton("Undo my edits", () => { confReset(); renderConfig(); renderTools(); }, "ghost")));
+  }
+
+  function renderConfReview() {
+    const node = document.getElementById("conf-review");
+    if (node) fill(node, reviewBlock());
+  }
+
+  async function confSave(button) {
+    button.disabled = true;
+    try {
+      const r = await api("config/save", { text: confText(), base: conf.view.base.sha256 });
+      if (r.pending) {
+        conf.view.pending = r.pending;
+        toast("She asks on her card now: hold Yes there, or say yes.");
+        renderConfPending();
+        renderConfReview();
+        renderToolsPending();
+        confPoll();
+        return;
+      }
+      if (r.same) { toast("Nothing to save: the same as the file."); return; }
+      toast(`Saved.${r.backup ? " The old one is kept beside it." : ""}${(r.restart || []).length ? ` ${r.restart.map((s) => `[${s}]`).join(" ")} need(s) strawberry restart.` : ""}`);
+      conf.view = r;
+      confReset();
+      renderConfig();
+      if (state.section === "tools") refreshTools();
+    } catch (e) {
+      toast(e.message, true);
+      button.disabled = false;
+      confCheck();
+    }
+  }
+
+  async function refreshConfig(force) {
+    try {
+      const r = await api("config");
+      if (force || conf.draft === null) { conf.view = r; if (force) confReset(); }
+      else conf.view.pending = r.pending;
+    } catch (e) { if (!state.ended) toast(e.message, true); }
+    if (conf.view && conf.view.pending && conf.view.pending.state === "waiting") confPoll();
+    rerender("config");
+    if (force) rerender("tools");
+  }
+
+  // --- the Tools page
+
+  const TIER_KIND = { read: "good", playback: "good", change: null, sends: "warn", destructive: "berry" };
+
+  function renderTools() {
+    const root = $("#tools");
+    const T = conf.tools;
+    if (!T || !conf.view) {
+      root.replaceChildren(panel("Tools", null, el("p", { class: "empty", text: "Loading..." })));
+      return;
+    }
+    const rows = T.servers.map((s) => {
+      const tools = el("details", null, el("summary", { text: s.tools.length ? `${s.tools.length} tool(s)` : (s.state === "not running" ? "not running yet" : "connects on first use") }),
+        s.tools.length ? table(["Tool", "Tier", "Offered to the thinker", "Asks first", "Careful"], s.tools.map((t) => el("tr", null,
+          td(el("span", { class: "mono", text: t.name })), td(chip(t.tier, TIER_KIND[t.tier], t.destructive_hint ? "the server marks it destructive" : null)),
+          td(t.offered ? "yes" : "no"), td(t.confirm ? "yes" : dash), td(t.careful ? "only when you ask for such a change" : dash)))) : null);
+      return el("tr", null,
+        td([el("b", { text: s.name }), s.builtin ? el("span", { class: "sub", text: "built in" }) : null,
+          s.restart ? el("span", { class: "sub", text: s.state === "not running" ? "in the file: starts with strawberry restart" : "the file differs: strawberry restart" }) : null]),
+        td(s.kind), td(s.topic || dash), td(s.adapter || dash),
+        td(s.flags && s.flags.length ? s.flags.map((f) => chip(f, f === "private" ? null : "warn")) : dash),
+        td(s.offer || dash),
+        td([chip(s.state, s.state === "ready" ? "good" : s.error ? "berry" : null, s.error || ""), s.login ? loginBlock(s.login) : null]),
+        el("td", null, tools),
+        td(!s.builtin && T.file[s.name] ? actionButton("Edit", () => { conf.server = serverForm(s.name, T.file[s.name]); renderToolsForm(); document.getElementById("tools-form").scrollIntoView({ block: "start" }); }, "small") : null));
+    });
+    fill(root,
+      panel("Tools", "the MCP servers she acts through, and how each tool is treated",
+        el("div", { class: "actions" }, chip(T.enabled ? "tools on" : "tools off ([tools] enabled = false)", T.enabled ? "good" : "warn"),
+          el("span", { class: "dim mono", text: T.path })),
+        el("p", { class: "dim", text: "Tier: read and playback go ahead; change asks once strangers' text is in the conversation; sends and destructive always ask. Flags: private (your own data), foreign (strangers' text), egress (sends things off this machine). A server with no adapter and no flags is all three." }),
+        table(["Server", "Kind", "Topic", "Adapter", "Flags", "Offered", "State", "Tools", ""], rows, { empty: "No tool servers." })),
+      el("div", { id: "tools-pending" }),
+      panel("Add or edit a server", "saved to config.toml through the same review: a new or changed command or address asks on her card",
+        el("div", { id: "tools-form" })),
+      panel("Review and save", "checked as she checks it at start", el("div", { id: "tools-review" })));
+    renderToolsPending();
+    renderToolsForm();
+    renderToolsReview();
+  }
+
+  function loginBlock(login) {
+    const copy = actionButton("Copy", () => {
+      (navigator.clipboard ? navigator.clipboard.writeText(login.command) : Promise.reject(new Error("no clipboard")))
+        .then(() => toast("Copied. Run it in a terminal: it opens your browser to sign in."))
+        .catch(() => toast(`Run in a terminal: ${login.command}`));
+    }, "ghost small");
+    return el("div", { class: "login" }, chip(login.saved ? "signed in" : "needs a login", login.saved ? "good" : "warn"),
+      " ", el("code", { text: login.command }), " ", copy);
+  }
+
+  function renderToolsPending() {
+    const node = document.getElementById("tools-pending");
+    if (!node) return;
+    const P = conf.view && conf.view.pending;
+    fill(node, P && P.state === "waiting" ? el("div", { class: "note berry" }, el("b", { text: "Waiting for your yes on her card. " }),
+      "Hold Yes there, or say yes; this page cannot. The Config file tab shows the details.") : null);
+  }
+
+  function serverForm(name, table) {
+    const t = table || {};
+    return {
+      original: name || null, name: name || "", transport: t.url ? "url" : "command",
+      command: t.command || "", url: t.url || "", args: (t.args || []).join("\n"), cwd: t.cwd || "",
+      env: Object.entries(t.env || {}).map(([k, v]) => `${k} = ${v}`).join("\n"),
+      topic: t.topic || "other", adapter: t.adapter || "", flags: new Set(t.flags || []), offer: t.offer || "",
+      careful: (t.careful || []).join(", "), confirmDefault: !("confirm" in t), confirm: (t.confirm || []).join(", "),
+      workspaces: (t.workspaces || []).slice(), workspace: "",
+    };
+  }
+
+  function serverTable(F) {
+    const list = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
+    const out = { topic: F.topic };
+    if (F.transport === "url") out.url = F.url.trim();
+    else {
+      out.command = F.command.trim();
+      const args = F.args.split("\n").map((a) => a.trim()).filter(Boolean);
+      if (args.length) out.args = args;
+      const env = {};
+      for (const line of F.env.split("\n")) {
+        if (!line.trim()) continue;
+        const at = line.indexOf("=");
+        if (at < 1) throw new Error(`env: "${line.trim()}" is not NAME = value`);
+        env[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+      }
+      if (Object.keys(env).length) out.env = env;
+      if (F.cwd.trim()) out.cwd = F.cwd.trim();
+    }
+    if (F.adapter) out.adapter = F.adapter;
+    if (F.flags.size) out.flags = [...F.flags];
+    if (F.offer) out.offer = F.offer;
+    if (list(F.careful).length) out.careful = list(F.careful);
+    if (!F.confirmDefault) out.confirm = list(F.confirm);
+    if (recallish(F)) out.workspaces = F.workspaces.slice();
+    return out;
+  }
+
+  function recallish(F) { return F.adapter === "recall" || (!F.adapter && F.name.trim().toLowerCase() === "recall"); }
+
+  function renderToolsForm() {
+    const node = document.getElementById("tools-form");
+    if (!node || !conf.tools) return;
+    const T = conf.tools;
+    const F = conf.server;
+    if (!F) {
+      fill(node, el("div", { class: "actions" },
+        actionButton("Add a server", () => { conf.server = serverForm("", null); renderToolsForm(); }, "primary"),
+        el("span", { class: "faint", text: "or Edit one in the list above. Built-in servers are hers and are not edited here." })));
+      return;
+    }
+    const O = T.options;
+    const text = (key, label, hint, attrs = {}) => el("label", { class: "field", for: `srv-${key}` }, el("span", { class: "k", text: label }),
+      el("input", Object.assign({ type: "text", id: `srv-${key}`, value: F[key], on: { input: (ev) => { F[key] = ev.target.value; } } }, attrs)),
+      hint ? el("span", { class: "s", text: hint }) : null);
+    const area = (key, label, hint) => {
+      const a = el("textarea", { id: `srv-${key}`, class: "small mono", rows: 3, on: { input: (ev) => { F[key] = ev.target.value; } } });
+      a.value = F[key];
+      return el("label", { class: "field", for: `srv-${key}` }, el("span", { class: "k", text: label }), a, el("span", { class: "s", text: hint }));
+    };
+    const pick = (key, label, values, hint) => el("label", { class: "field", for: `srv-${key}` }, el("span", { class: "k", text: label }),
+      el("select", { id: `srv-${key}`, on: { change: (ev) => { F[key] = ev.target.value; renderToolsForm(); } } },
+        values.map(([v, t]) => el("option", { value: v, selected: F[key] === v, text: t }))), hint ? el("span", { class: "s", text: hint }) : null);
+    const workspaces = recallish(F) ? el("div", { class: "field" }, el("span", { class: "k", text: "Workspaces she may read" }),
+      el("div", { class: "actions" }, F.workspaces.length ? F.workspaces.map((w, i) => el("span", { class: "chip" }, w,
+        el("button", { type: "button", class: "ghost small", "aria-label": `Remove ${w}`, text: "✕", on: { click: () => { F.workspaces.splice(i, 1); renderToolsForm(); } } })))
+        : el("span", { class: "faint", text: "none: no note is readable" })),
+      el("div", { class: "actions" }, el("input", { type: "text", id: "srv-workspace", value: F.workspace, placeholder: "a workspace's name or id",
+        on: { input: (ev) => { F.workspace = ev.target.value; } } }),
+        actionButton("Add", () => { const w = F.workspace.trim(); if (w && !F.workspaces.includes(w)) F.workspaces.push(w); F.workspace = ""; renderToolsForm(); }, "small")),
+      el("span", { class: "s", text: "By name or id, typed here: the server's list is not read from this page. Adding one asks on her card." })) : null;
+    fill(node,
+      el("div", { class: "fields" },
+        text("name", "Name", "letters, digits, - and _; recall, spotify or web get that adapter", { disabled: F.original ? true : null }),
+        pick("transport", "Runs as", [["command", "a command on this machine (stdio)"], ["url", "a server at an address (https)"]]),
+        pick("topic", "Topic", O.topics.map((t) => [t, t]), "the gate's topic its tools belong to"),
+        pick("adapter", "Adapter", [["", "by its name (or none)"], ...O.adapters.map((a) => [a, a])]),
+        pick("offer", "Offered to the thinker", [["", "the adapter's (else always)"], ...O.offers.map((o) => [o, o])])),
+      F.transport === "url"
+        ? el("div", { class: "fields" }, text("url", "Address", "https, or http on this machine only; then sign in with strawberry tools login"))
+        : el("div", { class: "fields" }, text("command", "Command", "a full path is safest"), area("args", "Arguments", "one per line"),
+          area("env", "Environment", "NAME = value, one per line; hidden values stay as they are"), text("cwd", "Folder", "optional")),
+      el("div", { class: "actions" }, el("span", { class: "k", text: "Flags" }),
+        O.flags.map((f) => el("label", { class: "check" }, el("input", { type: "checkbox", checked: F.flags.has(f),
+          on: { change: (ev) => { if (ev.target.checked) F.flags.add(f); else F.flags.delete(f); } } }), f)),
+        el("span", { class: "faint", text: "none ticked and no adapter: all three. Taking one away asks on her card." })),
+      el("div", { class: "fields" }, text("careful", "Careful tools", "offered only when you ask for such a change; comma separated"),
+        el("label", { class: "field" }, el("span", { class: "k", text: "Asks first" }),
+          el("label", { class: "check" }, el("input", { type: "checkbox", checked: F.confirmDefault, on: { change: (ev) => { F.confirmDefault = ev.target.checked; renderToolsForm(); } } }), "the adapter's own list"),
+          F.confirmDefault ? null : el("input", { type: "text", id: "srv-confirm", value: F.confirm, placeholder: "none", on: { input: (ev) => { F.confirm = ev.target.value; } } }))),
+      workspaces,
+      el("div", { class: "actions" },
+        actionButton("Review this server", () => toolsReview(false), "primary"),
+        F.original ? confirmButton("Remove from config.toml", "Remove it?", () => toolsReview(true), "danger") : null,
+        actionButton("Close", () => { conf.server = null; renderToolsForm(); }, "ghost")));
+  }
+
+  function toolsReview(remove) {
+    const F = conf.server;
+    const name = (F.original || F.name).trim();
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(name)) { toast("A server's name has letters, digits, - and _ only.", true); return; }
+    let value;
+    try { value = serverTable(F); } catch (e) { toast(e.message, true); return; }
+    confEdit(remove ? { key: `tools.servers.${name}`, reset: true } : { key: `tools.servers.${name}`, value });
+    clearTimeout(conf.timer);
+    confCheck().then(() => { const n = document.getElementById("tools-review"); if (n) n.scrollIntoView({ block: "start" }); });
+  }
+
+  function renderToolsReview() {
+    const node = document.getElementById("tools-review");
+    if (node) fill(node, reviewBlock());
+  }
+
+  async function refreshTools() {
+    try {
+      const [tools, view] = await Promise.all([api("tools"), conf.view ? Promise.resolve(null) : api("config")]);
+      conf.tools = tools;
+      if (view) conf.view = view;
+    } catch (e) { if (!state.ended) toast(e.message, true); }
+    if (conf.server && document.getElementById("tools-form")) { renderToolsReview(); return; }
+    rerender("tools");
+  }
+
   // --------------------------------------------------------------------------- settings: input
 
   // Hand gestures from the camera and touch from the bodies. The live view is drawn from the hand's few
@@ -1574,7 +2081,14 @@
         el("label", { class: "field", for: "tune-camera" }, el("span", { class: "k", text: "Camera" }),
           el("input", { type: "text", id: "tune-camera", value: G.camera, placeholder: "the first",
             on: { input: (ev) => { G.camera = ev.target.value.trim(); edited(); } } }),
-          el("span", { class: "s", text: "an index (1) or a device (/dev/video2); empty: the first" }))),
+          el("span", { class: "s", text: "an index (1) or a device (/dev/video2); empty: the first" })),
+        el("label", { class: "field", for: "tune-hands" }, el("span", { class: "k", text: "Hands" }),
+          (() => {
+            const s = selectOf(["1", "2"], String(G.hands || 2), (v) => (v === "1" ? "one" : "two"), (v) => { G.hands = Number(v); edited(); }, "Hands");
+            s.id = "tune-hands";
+            return s;
+          })(),
+          el("span", { class: "s", text: "two: both, while a body or this view asks for the hand (the primary one makes the gestures; twice the CPU then)" }))),
       el("div", { class: "actions" },
         box("arming", "Arming", "a held open palm turns command mode on first"),
         box("approvals", "A thumb or the head answers her card", "a held thumbs up or down, a nod or a shake, for a tier her card takes with a tap"),
@@ -1806,6 +2320,14 @@
     button.disabled = true;
     try {
       const r = await api("input/save", { settings: inputSettings(state.inputForm) });
+      if (r.pending) {
+        // A thumb that answers her card, or a camera always watching: she asks on her card first (WIRING.md §28).
+        toast("That loosens safety, so she asks on her card: hold Yes there, or say yes. The Config file tab shows how it went.");
+        if (conf.view) conf.view.pending = r.pending;
+        confPoll();
+        button.disabled = false;
+        return;
+      }
       toast(r.backup ? "Saved. The old one is kept as input.toml.bak." : "Saved. She uses it at once.");
       state.input = r;
       state.inputEdited = false;
@@ -2027,6 +2549,28 @@
     }
     const color = H.engaged ? berry : faint;
     const pts = H.points || {};
+    // Two hands (PROTOCOL Part 1d): the top level is the primary's, drawn as before; the other is drawn softer,
+    // each labelled with the user's own hand (L or R). Only the primary makes gestures.
+    const list = Array.isArray(H.hands) ? H.hands : [];
+    const primary = list.find((h) => h.primary) || null;
+    const others = list.filter((h) => !h.primary);
+    const soft = cssVar("--cream");
+    for (const o of others) drawOtherHand(ctx, o, X, Y, height, soft);
+    if (H.pair && others.length) {
+      const o = others[0];
+      ctx.strokeStyle = H.pair.both_pinched ? good : soft;
+      ctx.globalAlpha = 0.7;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([2, 5]);
+      ctx.beginPath(); ctx.moveTo(X(H.x), Y(H.y)); ctx.lineTo(X(o.x), Y(o.y)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = H.pair.both_pinched ? good : faint;
+      ctx.textAlign = "center";
+      ctx.fillText(`${num(H.pair.distance)} · ${num(H.pair.angle, 1)}°`, (X(H.x) + X(o.x)) / 2, (Y(H.y) + Y(o.y)) / 2 - 8);
+      ctx.textAlign = "start";
+    }
+    if (primary && pts.wrist) handLabel(ctx, primary, X(pts.wrist[0]), Y(pts.wrist[1]), ink);
     // The hand's extent around the palm, against the smallest hand.
     ctx.strokeStyle = H.size >= G.min_size ? good : faint;
     ctx.setLineDash([3, 4]);
@@ -2085,8 +2629,52 @@
         typeof H.facing === "boolean" ? chip(H.facing ? "facing the screen" : H.face ? "not facing: gestures wait" : "no face seen",
           H.facing ? "good" : "warn", "The face model's yes or no; nothing else of the face leaves the watcher") : null,
         chip(`pinch ${num(H.pinch)}`), chip(`open ${num(H.open)}`), chip(`size ${num(H.size)}`),
+        others.length ? chip(`two hands: primary ${sideOf(primary)}, the other ${sideOf(others[0])}`, null,
+          "The primary hand makes the gestures; the other is followed for the bodies (two-hand grabs)") : null,
+        H.pair ? chip(`apart ${num(H.pair.distance)}, angle ${num(H.pair.angle, 1)}°`, null,
+          "Between the two palms, in the camera's view; the angle is positive when the right one is higher") : null,
+        H.pair && H.pair.both_pinched ? chip("both pinched", "good") : null,
         gesture ? gestureChip(gesture) : null);
     }
+  }
+
+  function sideOf(hand) {
+    return !hand ? "?" : hand.handedness === "left" ? "L" : hand.handedness === "right" ? "R" : "?";
+  }
+
+  function handLabel(ctx, hand, x, y, color) {
+    ctx.fillStyle = color;
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(sideOf(hand), x, y + 22);
+    ctx.textAlign = "start";
+    ctx.font = "12px system-ui, sans-serif";
+  }
+
+  // The hand that is not the primary: the same stick figure, thinner and softer, with its L or R.
+  function drawOtherHand(ctx, hand, X, Y, height, color) {
+    const pts = hand.points || {};
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = hand.engaged ? 0.75 : 0.45;
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    if (pts.wrist) {
+      for (const name of ["thumb", "index", "middle", "ring", "pinky"]) {
+        if (!pts[name]) continue;
+        ctx.beginPath(); ctx.moveTo(X(pts.wrist[0]), Y(pts.wrist[1])); ctx.lineTo(X(pts[name][0]), Y(pts[name][1])); ctx.stroke();
+      }
+    }
+    for (const [name, p] of Object.entries(pts)) {
+      ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), name === "wrist" ? 5 : 4, 0, Math.PI * 2); ctx.fill();
+    }
+    if (hand.pinched && pts.thumb && pts.index) {
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(X(pts.thumb[0]), Y(pts.thumb[1])); ctx.lineTo(X(pts.index[0]), Y(pts.index[1])); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(X(hand.x), Y(hand.y), 6, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    if (pts.wrist) handLabel(ctx, hand, X(pts.wrist[0]), Y(pts.wrist[1]), color);
   }
 
   function gestureChip(g) {
@@ -2180,11 +2768,11 @@
   }
 
   const RENDER = { persona: renderPersona, profile: renderProfile, learning: renderLearning, router: renderRouter,
-                   runs: renderRuns, data: renderData, settings: renderSettings, input: renderInput, apps: renderApps,
-                   system: renderSystem };
+                   runs: renderRuns, data: renderData, settings: renderSettings, config: renderConfig, tools: renderTools,
+                   input: renderInput, apps: renderApps, system: renderSystem };
   const REFRESH = { persona: refreshPersona, profile: refreshProfile, learning: refreshLearning, router: refreshRoutes,
-                    runs: refreshRuns, data: refreshData, settings: refreshSettings, input: refreshInput, apps: refreshApps,
-                    system: refreshSystem };
+                    runs: refreshRuns, data: refreshData, settings: refreshSettings, config: () => refreshConfig(false),
+                    tools: refreshTools, input: refreshInput, apps: refreshApps, system: refreshSystem };
 
   function show(section, anchor) {
     if (!SECTIONS.includes(section)) section = "persona";
