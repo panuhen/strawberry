@@ -74,6 +74,7 @@ Setup names the licence of each model before it pulls it.
 | Speech recognition weights | whisper `small` (config `[voice] model`) | Hugging Face (the CTranslate2 conversions faster-whisper uses) | MIT (OpenAI Whisper weights) |
 | Her voice | Piper `en_GB-alba-medium` | Hugging Face, [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) | the voice is trained on the Edinburgh "Alba" dataset, licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); see the voice's `MODEL_CARD` |
 | The hand gesture recogniser (only with `[gestures]` on) | `gesture_recognizer.task`, float16 version 1 (`strawberry gestures fetch`, sha256 checked) | Google's MediaPipe model storage (`storage.googleapis.com/mediapipe-models/…`) | Apache-2.0 (MediaPipe's model card) |
+| The face landmarker (only with `[gestures]` on; for facing the screen, shh, nod and shake, not face recognition) | `face_landmarker.task`, float16 version 1 (`strawberry gestures fetch`, sha256 checked) | Google's MediaPipe model storage (`storage.googleapis.com/mediapipe-models/…`) | Apache-2.0 (MediaPipe's model card) |
 
 Any other model or voice you choose in the config comes with its own licence; the model card on
 Ollama or Hugging Face says which.
