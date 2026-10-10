@@ -302,9 +302,10 @@ class RunsConfig:
 RISKS = ("read", "playback", "change", "sends", "destructive")
 TRUST_FLAGS = ("private", "foreign", "egress")     # = trust.FLAGS
 GESTURE_WATCH = ("always", "armed")
-# = gestures.DEFAULT_MAP (a test keeps the two the same): what a gesture does once [gestures] is on
+# What a gesture does once [gestures] is on (a test holds it to gestures.check_map)
 DEFAULT_GESTURE_MAP = {"thumb_up": "like", "swipe_left": "previous", "swipe_right": "skip", "palm_hold": "pause",
-                       "point_hold": "listen"}
+                       "point_hold": "listen", "point_left": "previous", "point_right": "skip",
+                       "pinch_slide": "volume", "wave": "wave_back", "shh": "quiet"}
 OFFERS = ("always", "topic", "asked")
 
 
@@ -359,7 +360,13 @@ class GesturesConfig:
     zone: float = 0.8              # a hand counts only with its wrist above this line (0 top, 1 bottom)…
     min_size: float = 0.12         # …and at least this big (of the frame's height): raised toward the screen
     hand_hz: float = 15.0          # the hand's position to the bodies that ask for it, at most this often
+    require_facing: bool = True    # a gesture counts only while the user faces the screen (needs the face model;
+                                   # without it the check is skipped)
+    face_fps: float = 5.0          # the face model's reads a second, only while a hand is up or her card is open
+    shh_minutes: float = 30.0      # a finger to the lips: her voice off this long (the bubble stays)
     map: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_GESTURE_MAP))
+    # The user's hand, as the Input tab's calibration recorded it (gestures.CALIBRATION_KEYS); empty: the defaults.
+    calibration: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -692,8 +699,9 @@ def _touch_tier(config: Config, action: str, tier: str, adapter_for: Any) -> str
 
 
 def _validate_gestures(gestures: GesturesConfig) -> None:
-    """[gestures] (WIRING.md §26): the map may name only read and playback actions (gestures.check_map)."""
-    from .gestures import GestureError, check_map   # local: gestures.py reads paths, and tests import it alone
+    """[gestures] (WIRING.md §26): the map may name only read and playback actions (gestures.check_map), and the
+    calibration only known keys with numbers that make sense (gestures.check_calibration)."""
+    from .gestures import GestureError, check_calibration, check_map   # local: gestures.py reads paths
 
     if gestures.watch not in GESTURE_WATCH:
         raise ConfigError(f"gestures.watch must be one of {', '.join(GESTURE_WATCH)}")
@@ -707,8 +715,13 @@ def _validate_gestures(gestures: GesturesConfig) -> None:
         raise ConfigError("gestures.zone must be 0.1-1 and gestures.min_size 0 up to 1")
     if not (1.0 <= gestures.hand_hz <= 30.0):
         raise ConfigError("gestures.hand_hz must be between 1 and 30")
+    if not (1.0 <= gestures.face_fps <= 15.0):
+        raise ConfigError("gestures.face_fps must be between 1 and 15")
+    if not (1.0 <= gestures.shh_minutes <= 720.0):
+        raise ConfigError("gestures.shh_minutes must be between 1 and 720")
     try:
         gestures.map = check_map(gestures.map)
+        gestures.calibration = check_calibration(gestures.calibration)
     except GestureError as exc:
         raise ConfigError(str(exc)) from None
 
@@ -1071,11 +1084,18 @@ def _gestures_toml() -> list[str]:
         f"zone = {ge.zone}                     # the wrist must be above this line (0 top, 1 bottom)",
         f"min_size = {ge.min_size}               # and the hand this big: raised toward the screen, not on the desk",
         f"hand_hz = {ge.hand_hz}                # the hand's position to the bodies that ask, at most this often",
+        f"require_facing = {str(ge.require_facing).lower()}         # a gesture counts only while you face the screen (the face model)",
+        f"face_fps = {ge.face_fps}                 # the face model's reads a second, only while a hand is up or her card is open",
+        f"shh_minutes = {ge.shh_minutes}            # a finger to the lips: her voice off this long, the bubble stays",
         "",
         "[gestures.map]",
-        "# thumb_up thumb_down palm_hold fist_hold point_hold victory_hold pinch_hold swipe_left swipe_right",
-        "# -> now_playing pause resume skip previous volume_up volume_down like play_liked listen",
+        "# thumb_up thumb_down palm_hold fist_hold point_hold point_left point_right victory_hold pinch_hold",
+        "# count_1 … count_5 shh swipe_left swipe_right wave pinch_slide",
+        "# -> now_playing pause resume skip previous volume_up volume_down like play_liked listen wave_back quiet",
+        "#    (pinch_slide -> volume, and nothing else). count_1 is point_hold's hand, count_2 victory_hold's,",
+        "#    count_5 palm_hold's, pinch_slide pinch_hold's: map one of each pair. Nod and shake answer her card.",
         "# Only these: a gesture runs what plays and how, never a change that needs a yes.",
     ]
     lines += [f'{name} = "{action}"' for name, action in ge.map.items()]
+    lines += ["", "# [gestures.calibration] is written by the Brain UI's Input tab (Calibrate): your hand's own numbers."]
     return lines

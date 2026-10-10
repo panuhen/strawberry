@@ -33,6 +33,8 @@ earns once you use it every day:
                     for a server that is not foreign; and the final text read once more
     reflex_tools    which of its tools each reflex calls, so a tier that needs a yes hands the
                     sentence to the thinker instead (actions.Actor)
+    volume_level, set_volume_level
+                    the volume read and set as a level, for the gesture slider (gestures.py)
     confirm         the tools she asks about before calling, unless the config's `confirm` says
                     otherwise; `ask` words the question (and pins the call), `describe` the line
                     on her approval card, `done` the result
@@ -119,6 +121,11 @@ class Adapter:
     #: tools include one that waits for a yes ([approvals] risk raised it, or its confirm list) is not
     #: run: the sentence goes to the thinker, which asks (actions.Actor)
     reflex_tools: dict[str, tuple[str, ...]] = {}
+    #: the volume as a level, for the gesture slider (gestures.py): `volume_level(toolbox, server)` -> 0-1 or None,
+    #: `set_volume_level(toolbox, server, level)` -> Outcome (staticmethods). Both or neither; the tools they call
+    #: go in `reflex_tools["volume"]`. Without them the slider uses MPRIS
+    volume_level: Any = None
+    set_volume_level: Any = None
     #: tool names that mark a server as this adapter's whatever its name: listed by a server with
     #: no adapter (or with one that is not `foreign`), they give it this adapter (Server._run)
     claims_tools: tuple[str, ...] = ()

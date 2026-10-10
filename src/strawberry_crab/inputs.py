@@ -43,7 +43,8 @@ MAX_TEXT = 20_000
 # The [gestures] keys input.toml holds, in the order it is written: everything but `enabled`, which is the
 # tray's switch and stays in config.toml.
 GESTURE_KEYS = ("camera", "watch", "fps", "idle_fps", "hold_ms", "arming", "armed_s", "approvals", "zone",
-                "min_size", "hand_hz", "map")
+                "min_size", "hand_hz", "require_facing", "face_fps", "shh_minutes", "map", "calibration")
+TABLES = ("map", "calibration")      # [gestures.map] and [gestures.calibration], after the section's keys
 TOUCH_KEYS = ("target_s", "cooldown_s", "actions")
 HEADER = """\
 # Hand gestures and touch (WIRING.md §25, §26). Written by the Brain UI's Input tab (`strawberry ui`); edit it
@@ -143,11 +144,15 @@ def _key(key: str) -> str:
 
 
 def render(gestures: GesturesConfig, touch: TouchConfig) -> str:
-    """The two sections as input.toml says them: every key written out, the map after its section."""
+    """The two sections as input.toml says them: every key written out, the map and the calibration (when there is
+    one) after their section."""
     lines = [HEADER, "[gestures]"]
-    lines += [f"{key} = {_value(getattr(gestures, key))}" for key in GESTURE_KEYS if key != "map"]
+    lines += [f"{key} = {_value(getattr(gestures, key))}" for key in GESTURE_KEYS if key not in TABLES]
     lines += ["", "[gestures.map]"]
     lines += [f"{_key(key)} = {_value(action)}" for key, action in gestures.map.items()]
+    if gestures.calibration:
+        lines += ["", "[gestures.calibration]   # the Input tab's Calibrate: your hand's own numbers"]
+        lines += [f"{_key(key)} = {_value(float(value))}" for key, value in gestures.calibration.items()]
     lines += ["", "[touch]", f"target_s = {_value(touch.target_s)}", f"cooldown_s = {_value(touch.cooldown_s)}"]
     for entity, kinds in touch.actions.items():
         lines += [f"{_key(entity)}.{_key(kind)} = {_value(action)}" for kind, action in kinds.items()]
@@ -176,6 +181,9 @@ def from_view(data: Any, base: Any) -> tuple[str, GesturesConfig, TouchConfig]:
     for key, action in gestures.map.items():
         if not isinstance(key, str) or not isinstance(action, str):
             raise ConfigError("gestures.map must be {gesture: action}")
+    for key, value in gestures.calibration.items():
+        if not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ConfigError("gestures.calibration must be {key: number}")
     for entity, kinds in touch.actions.items():
         if not all(isinstance(k, str) and isinstance(v, str) for k, v in kinds.items()):
             raise ConfigError(f"touch.{entity} must be {{kind: action}}")
@@ -277,18 +285,24 @@ class Live:
 
 
 WATCHER_HEADER = "X-Strawberry-Watcher"
-_WATCHER = re.compile(r"^camera=(open|closed); fps=(\d{1,3}(?:\.\d{1,2})?); cpu=(\d{1,4}(?:\.\d)?)$")
+_WATCHER = re.compile(r"^camera=(open|closed); fps=(\d{1,3}(?:\.\d{1,2})?); cpu=(\d{1,4}(?:\.\d)?)"
+                      r"(?:; face=(on|missing|failed))?$")
 
 
 def parse_watcher(value: str | None) -> dict[str, Any] | None:
-    """The watcher's own report on each of its requests: `camera=open; fps=4.0; cpu=5.1` (the frames it read a
-    second and its share of one CPU core, %). None when absent or not exactly that."""
-    if not value or len(value) > 64:
+    """The watcher's own report on each of its requests: `camera=open; fps=4.0; cpu=5.1; face=on` (the frames it
+    read a second, its share of one CPU core in %, and its face model: on, missing (not fetched) or failed (did
+    not load); absent before the camera first opened). None when absent or not exactly that."""
+    if not value or len(value) > 80:
         return None
     match = _WATCHER.match(value.strip())
     if match is None:
         return None
-    return {"camera": match.group(1) == "open", "fps": float(match.group(2)), "cpu": float(match.group(3))}
+    report: dict[str, Any] = {"camera": match.group(1) == "open", "fps": float(match.group(2)),
+                              "cpu": float(match.group(3))}
+    if match.group(4):
+        report["face"] = match.group(4)
+    return report
 
 
 class InputStore:

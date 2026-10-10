@@ -1379,7 +1379,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--last", type=int, default=10, metavar="N", help="show the last N records (default 10; 0: none)")
     p.add_argument("--clear", action="store_true", help="delete the file")
     p = add("gestures", "hand gestures through the webcam (opt-in): status, on, off, arm (command mode now), "
-                        "fetch (the recogniser's model)")
+                        "fetch (the hand and face models)")
     p.add_argument("action", nargs="?", default="status", choices=("status", "on", "off", "arm", "fetch"))
     p = add("doctor", "check everything she needs and say how to fix what is missing (exit 1 if something is)")
     p.add_argument("--talk", action="store_true",

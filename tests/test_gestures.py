@@ -38,21 +38,57 @@ from tests.test_voice import Sink
 FPS = 15.0
 DT = 1.0 / FPS
 
-# An upright hand, its points relative to its centre in units of its height (x right as in a mirror, y down).
-SHAPE = [(0.0, 0.5),
-         (-0.15, 0.35), (-0.25, 0.2), (-0.32, 0.08), (-0.38, -0.02),
-         (-0.1, 0.0), (-0.12, -0.2), (-0.13, -0.32), (-0.14, -0.45),
-         (0.0, -0.02), (0.0, -0.24), (0.0, -0.37), (0.0, -0.5),
-         (0.1, 0.0), (0.11, -0.2), (0.12, -0.32), (0.13, -0.43),
-         (0.19, 0.05), (0.22, -0.1), (0.24, -0.2), (0.26, -0.3)]
+# An upright open hand, its points relative to its centre in units of its height (x right as in a mirror, y down):
+# the wrist, the thumb (stretched out and tucked in) and each finger's four joints.
+WRIST = (0.0, 0.5)
+THUMB_OUT = [(-0.15, 0.35), (-0.25, 0.2), (-0.32, 0.08), (-0.38, -0.02)]
+THUMB_IN = [(-0.15, 0.35), (-0.12, 0.25), (-0.02, 0.15), (0.06, 0.08)]
+CHAINS = {"index": [(-0.1, 0.0), (-0.12, -0.2), (-0.13, -0.32), (-0.14, -0.45)],
+          "middle": [(0.0, -0.02), (0.0, -0.24), (0.0, -0.37), (0.0, -0.5)],
+          "ring": [(0.1, 0.0), (0.11, -0.2), (0.12, -0.32), (0.13, -0.43)],
+          "pinky": [(0.19, 0.05), (0.22, -0.1), (0.24, -0.2), (0.26, -0.3)]}
+BENDS = (90.0, 100.0, 50.0)      # a finger's joints bent this much (degrees) at curl 1: a fist
+CURLED = {"index": 1.0, "middle": 1.0, "ring": 1.0, "pinky": 1.0}
+# The recogniser's label and the hand that goes with it: (finger curls, thumb tucked 0-1).
+LABELLED = {"None": ({}, 0.0), "Open_Palm": ({}, 0.0), "Closed_Fist": (CURLED, 1.0),
+            "Pointing_Up": ({"middle": 1.0, "ring": 1.0, "pinky": 1.0}, 1.0),
+            "Victory": ({"ring": 1.0, "pinky": 1.0}, 1.0), "Thumb_Up": (CURLED, 0.0), "Thumb_Down": (CURLED, 0.0)}
+
+
+def _turn(v: tuple[float, float], degrees: float) -> tuple[float, float]:
+    a = math.radians(degrees)
+    return v[0] * math.cos(a) - v[1] * math.sin(a), v[0] * math.sin(a) + v[1] * math.cos(a)
+
+
+def _finger(chain: list[tuple[float, float]], curl: float) -> list[tuple[float, float]]:
+    """A finger's four joints, each bone turned by its joints' bends (in the picture's plane, toward the little
+    finger): curl 0 is the open hand's, 1 a fist's."""
+    points, total = [chain[0]], 0.0
+    for i in range(3):
+        length = math.dist(chain[i], chain[i + 1])
+        bone = ((chain[i + 1][0] - chain[i][0]) / length, (chain[i + 1][1] - chain[i][1]) / length)
+        total += BENDS[i] * curl
+        v = _turn(bone, total)
+        points.append((points[-1][0] + v[0] * length, points[-1][1] + v[1] * length))
+    return points
 
 
 def hand(x: float = 0.5, y: float = 0.45, size: float = 0.25, label: str = "None", score: float = 0.9,
-         pinch: bool = False) -> Hand:
-    shape = list(SHAPE)
+         pinch: bool = False, curl: dict[str, float] | None = None, thumb: float | None = None,
+         turn: float = 0.0) -> Hand:
+    """A synthetic hand: its label's shape (LABELLED) unless `curl` (each finger, 0 straight … 1 curled) and `thumb`
+    (0 out … 1 tucked) say otherwise; `pinch` puts the thumb's tip on the index's; `turn` turns it about the wrist
+    (degrees, clockwise as seen: 90 points the fingers to the user's right)."""
+    curls, tucked = LABELLED.get(label, ({}, 0.0))
+    curls = curl if curl is not None else curls
+    tucked = thumb if thumb is not None else tucked
+    rel = [WRIST] + [(a[0] + (b[0] - a[0]) * tucked, a[1] + (b[1] - a[1]) * tucked) for a, b in zip(THUMB_OUT, THUMB_IN)]
+    for name in ("index", "middle", "ring", "pinky"):
+        rel += _finger(CHAINS[name], curls.get(name, 0.0))
     if pinch:
-        shape[4] = (-0.13, -0.42)        # the thumb's tip on the index's
-    return Hand(tuple((x + dx * size, y + dy * size) for dx, dy in shape), label, score)
+        rel[4] = rel[8]                  # the thumb's tip on the index's
+    rel = [_turn((p[0] - WRIST[0], p[1] - WRIST[1]), turn) for p in rel]
+    return Hand(tuple((x + (dx + WRIST[0]) * size, y + (dy + WRIST[1]) * size) for dx, dy in rel), label, score)
 
 
 def run(tracker: Tracker, frames: list[tuple[float, Hand | None]]) -> list[dict]:
@@ -177,7 +213,7 @@ def test_hand_messages_are_numbers_and_fixed_names_only():
     messages = [p for kind, p in Tracker().step(0.0, hand(label="Open_Palm")) if kind == "hand"]
     assert len(messages) == 1
     message = messages[0]
-    assert set(message) == {"present", "x", "y", "size", "pinch", "open", "engaged", "shape", "points"}
+    assert set(message) == {"present", "x", "y", "size", "pinch", "open", "engaged", "shape", "points", "curl", "gap"}
     assert message["shape"] == "palm_hold"                                      # the shape seen now, by name
     assert set(message["points"]) == set(gestures.POINTS)
     assert gestures.parse_hand(message) == message                              # the brain takes it as it is
@@ -222,7 +258,7 @@ def test_a_map_naming_more_than_read_or_playback_is_refused_when_the_config_load
 
 def test_the_map_keys_are_gestures_optionally_for_a_target(tmp_path):
     with pytest.raises(ConfigError, match="is not a gesture"):
-        load(write(tmp_path, '[gestures.map]\nwave = "skip"\n'), env={})
+        load(write(tmp_path, '[gestures.map]\njazz_hands = "skip"\n'), env={})
     with pytest.raises(ConfigError, match="entity id"):
         load(write(tmp_path, '[gestures.map]\n"Music Orb:thumb_up" = "skip"\n'), env={})
     config = load(write(tmp_path, '[gestures]\nenabled = true\n[gestures.map]\n"music:thumb_up" = "like"\n'
@@ -328,7 +364,7 @@ async def test_the_routes_need_the_secret_a_schema_and_gestures_on(aiohttp_clien
     assert (await bare.post("/gesture", json=ok)).status == 403
     assert (await bare.post("/hand", json={"present": False})).status == 403
     assert (await bare.get("/gesture")).status == 403
-    for wrong in ({"name": "wave", "phase": "done"}, {"name": "thumb_up", "phase": "held"},
+    for wrong in ({"name": "jazz_hands", "phase": "done"}, {"name": "thumb_up", "phase": "held"},
                   {"name": "thumb_up", "phase": "progress"}, {"name": "thumb_up", "phase": "progress", "progress": 1.5},
                   {"name": "thumb_up", "phase": "done", "frame": "iVBORw0KGgo="}, ["thumb_up"]):
         response = await client.post("/gesture", json=wrong)
@@ -524,7 +560,8 @@ async def test_health_says_counts_and_names_only(aiohttp_client):
     await client.post("/hand", json={"present": True, "x": 0.5, "y": 0.4, "size": 0.2, "pinch": 0.1, "open": 1.0,
                                      "engaged": True, "points": {"wrist": [0.5, 0.6]}})
     stats = (await (await client.get("/health")).json())["gestures"]
-    assert set(stats) == {"enabled", "received", "acted", "answered", "refused", "last", "hand_age_s"}
+    assert set(stats) == {"enabled", "received", "acted", "answered", "refused", "last", "hand_age_s", "quiet_s",
+                          "sliding"}
     assert "0.4" not in json.dumps(stats) and "points" not in json.dumps(stats)
 
 

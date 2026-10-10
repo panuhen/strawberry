@@ -415,6 +415,31 @@ class Actor:
                 return "mpris", action, reflex
         return None
 
+    def volume_control(self) -> tuple[str, Callable[..., Awaitable[float | None]],
+                                      Callable[..., Awaitable[Outcome]]] | None:
+        """Who reads and sets the volume to a level (the gesture slider, gestures.py): a configured music server
+        whose adapter has `volume_level` and `set_volume_level`, else MPRIS. (server, get(toolbox, server) -> 0-1
+        or None, set(toolbox, server, level) -> Outcome), or None when nothing here can."""
+        if not self.config.enabled:
+            return None
+        for name, server in self.toolbox.servers.items():
+            adapter = self.adapters.get(name)
+            if server.topic != MPRIS_TOPIC or adapter is None:
+                continue
+            get, put = getattr(adapter, "volume_level", None), getattr(adapter, "set_volume_level", None)
+            if get is not None and put is not None:
+                return name, get, put
+        mpris = self.mpris
+        if mpris is not None and hasattr(mpris, "volume_level") and hasattr(mpris, "set_volume_level"):
+            async def get_level(_toolbox: Any, _server: str) -> float | None:
+                return await mpris.volume_level()
+
+            async def set_level(_toolbox: Any, _server: str, level: float) -> Outcome:
+                return await mpris.set_volume_level(level)
+
+            return "mpris", get_level, set_level
+        return None
+
     def above(self, server: str, action: str, tiers: tuple[str, ...]) -> str:
         """Why a reflex may not run for a gesture ("" when it may): one of its calls (its adapter's
         `reflex_tools`) is of a tier outside `tiers`, or waits for a yes, or the adapter does not say which
