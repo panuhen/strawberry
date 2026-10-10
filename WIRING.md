@@ -1254,10 +1254,11 @@ So no text is judged by what it says. Instead:
   Greek letters is logged, nothing more.
 - *The `playback` tier* (`[approvals] risk`, `Adapter.risks`): a change to what plays and how, local to
   the user's player and undone in a second or a word. Spotify's `play`, `play_liked`, `pause`, `next`,
-  `previous`, `seek`, `set_volume`, `shuffle`, `repeat`, `add_to_queue`, and liking or saving a track
-  (`like_current`, `save_tracks`) are `playback`. After foreign text every call *above* `playback` waits
-  for a yes (`approvals.UNDER_FOREIGN`): adding to or making a playlist, the removals, any other server's
-  change, every `sends` and `destructive` call. So the worst a name can steer without the user is "it
+  `previous`, `seek`, `set_volume`, `shuffle`, `repeat`, `add_to_queue`, and liking the playing track
+  (`like_current`: it touches only the track already playing, one tap undoes it) are `playback`;
+  `save_tracks` is not (it saves whatever track ids the model picked). After foreign text every call
+  *above* `playback` waits for a yes (`approvals.UNDER_FOREIGN`): saving chosen tracks, adding to or making
+  a playlist, the removals, any other server's change, every `sends` and `destructive` call. So the worst a name can steer without the user is "it
   played, skipped or liked a song". A `playback` call may carry the user's
   library names to Spotify after foreign text (the private-phrase check is for egress that others read).
 - *The removals* ask first whatever happens (`confirm`), in Spotify's own words, which name only what
@@ -1274,8 +1275,8 @@ So no text is judged by what it says. Instead:
   playlists the user made), and not when they are only the user's own `[voice] vocabulary`. The playing
   track's name is shown as it is, cut and quoted.
 
-What changes for the user: a search and play, a skip, the volume, the queue and a like or a save need no
-yes, as before. While a track is playing (or the library names come from Spotify, which is nearly always),
+What changes for the user: a search and play, a skip, the volume, the queue and a like of the playing
+track need no yes, as before; saving tracks the model picked asks. While a track is playing (or the library names come from Spotify, which is nearly always),
 adding to or making a playlist and any other server's change ask first, through the thinker, even with
 `confirm = []`; the reflexes ("I like this", "skip") never ask. After a Spotify result the web search and
 other private or egress servers are refused for the rest of that sentence, and her answer from Spotify

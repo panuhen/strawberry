@@ -185,9 +185,9 @@ package and the widget binary.
   Web search is foreign and egress; Spotify private and egress, and every Spotify result with a name
   in it is foreign: names are written by others, and no text is trusted or distrusted by what it says.
   Once foreign text is in a conversation, your private context leaves it, private and egress tools are
-  refused, and anything above the new `playback` tier (play, pause, skip, volume, the queue, a like or
-  a save) waits for your yes, asked in her own fixed words: a playlist change, a removal, another add-on's
-  change. The line about what is playing counts too: while a track plays, a playlist change or another
+  refused, and anything above the new `playback` tier (play, pause, skip, volume, the queue, a like of
+  the playing track) waits for your yes, asked in her own fixed words: saving tracks the model picked, a
+  playlist change, a removal, another add-on's change. The line about what is playing counts too: while a track plays, a playlist change or another
   add-on's change asks first, even with `confirm = []`. WIRING.md §20.
 - `offer = "always" | "topic" | "asked"` per server: when she gets its tools. `[thinker] tool_tokens`
   (4000): a budget for the tool descriptions in the big model's prompt beside `max_tools`; past

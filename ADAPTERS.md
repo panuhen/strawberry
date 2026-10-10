@@ -51,7 +51,7 @@ asks about nothing. A tool can be on both lists, on one, or on neither. `/health
 she is waiting for.
 
 Every tool also has an approval tier: `read`, `playback` (what plays and how, undone in a second: play,
-pause, skip, volume, the queue, a like), `change`, `sends` (something reaches other people, or
+pause, skip, volume, the queue, a like of the playing track), `change`, `sends` (something reaches other people, or
 leaves the machine for someone: a message, an email) or `destructive` (deletes, or cannot be
 undone). A `sends` or `destructive` call is always asked about, confirm list or not, and waits 30 s
 (`sends_s`, `destructive_s`); on her card its yes is a press-and-hold. The tier comes from
@@ -61,7 +61,10 @@ it is `change`. A server that marks a tool `destructiveHint` raises it to `destr
 annotation never lowers a tier, so `readOnlyHint` does not make a tool `read` here. A whole-server
 entry (`"notes" = "read"`) then sets the server's ordinary tools, but never lowers a tool below its
 adapter's tier or its `destructiveHint`: only the tool's own entry can. Once text from strangers is in
-a conversation, every call above `playback` is asked about too (WIRING §20). The card shows one line, the adapter's `describe` (by default her question without "Say
+a conversation, every call above `playback` is asked about too (WIRING §20). Keep `playback` to calls
+whose target the model cannot choose freely: Spotify's `like_current` is `playback` (it touches only the
+track already playing, and one tap undoes it), its `save_tracks` is `change` (it saves whatever track ids
+the model picked, which a stranger's text could choose). The card shows one line, the adapter's `describe` (by default her question without "Say
 yes."), cut to 160 characters, and goes on the bus to every body that shows approvals. **Rule for
 `sends` and `destructive` tools:** neither `describe` nor the question `ask` writes may carry free
 text from the arguments: no message body, no note text, nothing being sent. Naming the target is
@@ -86,7 +89,7 @@ the adapter says holds.
 | server | flags |
 |---|---|
 | web | foreign, egress |
-| Spotify | private, egress, and every result with a name in it foreign (`view`): names are written by others, and trust is not decided by what they say. What they can steer is bounded by the tiers: its play, pause, skip, volume, queue, like and save tools are `playback` and go ahead; a playlist change asks. Its situation line names the playing track, so while one plays the sentence starts foreign |
+| Spotify | private, egress, and every result with a name in it foreign (`view`): names are written by others, and trust is not decided by what they say. What they can steer is bounded by the tiers: its play, pause, skip, volume, queue and like-the-playing-track tools are `playback` and go ahead; saving chosen tracks and a playlist change ask. Its situation line names the playing track, so while one plays the sentence starts foreign |
 | no adapter, no `flags` | private, foreign, egress |
 
 The flags also decide the journal: a private, foreign or unknown server's calls are logged as the

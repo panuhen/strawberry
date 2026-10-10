@@ -587,10 +587,11 @@ BREAKS = {"Cc", "Zl", "Zp"}            # control characters and line separators:
 HIDDEN = {"Cf", "Co", "Cs", "Cn"}      # format (zero-width, bidi), private, unassigned: nothing
 # The tier of its tools that change only what plays and how: local to the user's player, undone in a second.
 # After strangers' text these still go ahead (approvals.UNDER_FOREIGN); its library changes do not.
-# Saving or liking a track is undone in a word too: `playback`, so "like this song" while a track plays (its name
-# in the situation, strangers' text) still needs no yes. Playlist changes and the removals are above it.
+# Liking the playing track is undone in a tap too: `playback`, so "like this song" while a track plays (its name
+# in the situation, strangers' text) still needs no yes. `save_tracks` is not: it saves whatever track ids the
+# model picked, which strangers' text could choose. Playlist changes and the removals are above it as well.
 PLAYBACK = ("play", "play_liked", "pause", "next", "previous", "seek", "set_volume", "shuffle", "repeat",
-            "add_to_queue", "like_current", "save_tracks")
+            "add_to_queue", "like_current")
 
 
 def _normal(value: str) -> str:

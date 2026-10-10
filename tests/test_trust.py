@@ -545,7 +545,8 @@ def hostile_spotify(search_result: dict, script: list, careful: bool = False):
 
 
 @pytest.mark.parametrize("name", HOSTILE)
-@pytest.mark.parametrize("call", [("add_to_playlist", {"playlist_id": "x", "uris": ["spotify:track:1"]}),
+@pytest.mark.parametrize("call", [("save_tracks", {"track_ids": ["spotify:track:" + "1" * 22]}),
+                                  ("add_to_playlist", {"playlist_id": "x", "uris": ["spotify:track:1"]}),
                                   ("create_playlist", {"name": "pwned"}),
                                   ("add_current_to_playlist", {"playlist": "gym"}),
                                   ("remove_from_playlist", {"playlist": "gym", "track": "current"})])
@@ -596,7 +597,8 @@ async def test_spotify_tiers():
     for tool in ("play", "pause", "next", "previous", "set_volume", "play_liked", "like_current"):
         assert toolbox.risk("spotify", tool) == "playback"
         assert not toolbox.needs_approval("spotify", tool, foreign=True)
-    for tool in ("add_current_to_playlist", "create_playlist"):
+    assert toolbox.risk("spotify", "save_tracks") == "change"         # chosen ids: not playback
+    for tool in ("add_current_to_playlist", "create_playlist", "save_tracks"):
         assert toolbox.risk("spotify", tool) == "change" and toolbox.needs_approval("spotify", tool, foreign=True)
         assert not toolbox.needs_approval("spotify", tool)              # before strangers' text: as before
     assert toolbox.needs_approval("spotify", "remove_from_playlist")    # the removals: always
@@ -774,6 +776,7 @@ async def test_the_daemon_reads_the_situations_trust_and_the_librarys():
 
 
 @pytest.mark.parametrize("call", [("add_current_to_playlist", {"playlist": "gym"}),
+                                  ("save_tracks", {"track_ids": ["spotify:track:" + "7" * 22]}),
                                   ("create_playlist", {"name": "pwned", "public": True}),
                                   ("add_to_playlist", {"playlist_id": "x", "uris": ["spotify:track:1"]}),
                                   ("turn_on", {"room": "all"})])
@@ -781,7 +784,7 @@ async def test_a_hostile_name_in_the_situation_cannot_change_anything_above_play
     """The playing track's name reaches the prompt before any tool: the run starts foreign, so a playlist change
     or another server's change asks; nothing is made."""
     toolbox, searxng, lights, fake, sessions = world()
-    for name in ("add_current_to_playlist", "create_playlist", "add_to_playlist"):
+    for name in ("add_current_to_playlist", "create_playlist", "add_to_playlist", "save_tracks"):
         sessions["spotify"].tools.append(FakeTool(name))
     qwen = SnapshotQwen([[call], "[happy] Done."])
     situation = f"Today is Monday. Now playing on Spotify: {json.dumps(HOSTILE_TRACK['name'])} by \"Someone\"."
