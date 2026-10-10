@@ -11,7 +11,8 @@ earns once you use it every day:
     clarify_error   this server's confusing refusals, reworded before a model reads them
     gate_examples   extra phrases for the gate's questions, in that server's vocabulary
     common_tools    the tools worth keeping first when the brain's context is tight
-    tools           the only tools of the server the brain is offered, and shorter schemas for them
+    tools           the only tools of the server the brain is offered, and shorter schemas for them;
+                    with `only_tools`, the only ones that can be called at all (a read-only adapter)
     shape_result    a result made compact before it is cut to result_chars
     log_result      what the journal says of a call (a count and a size; the result stays out of it)
     log_detail      True: the journal may carry the first 160 characters of a result and the arguments,
@@ -72,6 +73,9 @@ class Adapter:
     #: the only tools of this server the brain is offered; empty offers all of them. A filter,
     #: unlike common_tools: a tool left out here never reaches the brain
     tools: tuple[str, ...] = ()
+    #: True: a tool not in `tools` is refused on every path (by hand too), not only kept from the brain: a
+    #: read-only adapter for a server that also has tools that write (recall)
+    only_tools: bool = False
     #: True when the server's tools only look things up and change nothing on the user's computer
     #: (web search): the thinker then keeps the rules for having no player to act through
     looks_up_only: bool = False
@@ -140,6 +144,11 @@ class Adapter:
         if self.looks_up_only or name in self.reads:
             return "read"
         return None
+
+    def for_server(self, server_name: str, server_config: dict[str, Any]) -> "Adapter":
+        """The adapter for that configured server: itself by default; an adapter whose behaviour depends on
+        its server's table (recall's workspaces) returns an instance of its own for it."""
+        return self
 
     def matches(self, server_name: str, server_config: dict[str, Any]) -> bool:
         """Is this adapter for that configured server? An explicit `adapter` key decides alone."""
@@ -234,6 +243,11 @@ class Adapter:
     def result_urls(self, name: str, text: str, ok: bool) -> list[str]:
         """The URLs a call's result names as its own (a search's results), read from the server's whole
         answer before `shape_result` and the cut to `result_chars`; they reach `observe` as `urls`."""
+        return []
+
+    def result_ids(self, name: str, text: str, ok: bool) -> list[str]:
+        """The ids a call's result names as its own (a notes search's hits), read like `result_urls` from the
+        server's whole answer; they reach `observe` in `urls` too, so a later call can be pinned to them."""
         return []
 
     def observe(self, state: dict[str, Any], name: str, arguments: dict[str, Any], text: str, ok: bool,

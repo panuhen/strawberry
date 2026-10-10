@@ -23,13 +23,14 @@ import logging
 from typing import Any
 
 from .base import Adapter
+from .recall import RECALL
 from .spotify import SPOTIFY
 from .web import WEB
 
 log = logging.getLogger("strawberryd.adapters")
 
 #: every adapter that ships. One line per adapter; nothing else registers them.
-REGISTRY: tuple[Adapter, ...] = (SPOTIFY, WEB)
+REGISTRY: tuple[Adapter, ...] = (SPOTIFY, WEB, RECALL)
 
 
 def adapter_for(server_name: str, server_config: dict[str, Any]) -> Adapter | None:
@@ -54,11 +55,14 @@ def adapter_for_tools(names: list[str] | set[str]) -> Adapter | None:
 
 
 def load(servers: dict[str, dict[str, Any]]) -> dict[str, Adapter]:
-    """Server name -> its adapter, for the configured servers that have one."""
+    """Server name -> its adapter, for the configured servers that have one (`Adapter.for_server`: the
+    adapter's own instance for that server's table, when its behaviour depends on it)."""
     found: dict[str, Adapter] = {}
     for name, server in servers.items():
-        adapter = adapter_for(name, server if isinstance(server, dict) else {})
+        table = server if isinstance(server, dict) else {}
+        adapter = adapter_for(name, table)
         if adapter is not None:
+            adapter = adapter.for_server(name, table)
             found[name] = adapter
             log.info("adapters: %s for server %s", adapter.name, name)
     return found

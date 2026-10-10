@@ -10,9 +10,11 @@ adapter, which is where everything server-specific lives: the reflexes, the situ
 the recogniser's vocabulary, and the rewording of that server's confusing errors. The client
 below knows none of it.
 
-Each server runs as a child process over stdio, wrapped in the official Python MCP SDK. The
-SDK's transport must be opened and closed from the same task, so every server gets its own
-task that owns the connection and serves calls from a queue. Servers connect lazily (or in
+Each server runs as a child process over stdio, wrapped in the official Python MCP SDK, or, with a
+`url` in place of the `command`, is reached over MCP's streamable HTTP with an OAuth login
+(remote.py: `strawberry tools login <server>`). The SDK's transport must be opened and closed from
+the same task, so every server gets its own task that owns the connection and serves calls from a
+queue. Servers connect lazily (or in
 the background at start), reconnect on the next use after a failure, and stay up for the
 daemon's lifetime; a Spotify server is a small Python process and a cold connect is ~0.5 s.
 
@@ -83,7 +85,8 @@ class ToolResult:
     ms: float
     truncated: bool = False
     arguments: dict[str, Any] = field(default_factory=dict)
-    urls: tuple[str, ...] = ()          # the result's own URLs (Adapter.result_urls), read before the cut
+    urls: tuple[str, ...] = ()          # the result's own URLs or ids (Adapter.result_urls, result_ids), read
+                                        # before the cut: what a later call of the sentence may be pinned to
     foreign: bool = False               # strangers' text: a foreign server's, or one its adapter says so of
                                         # (Adapter.view, reads_as_foreign); it taints the thinker's conversation
 
@@ -103,6 +106,16 @@ async def stdio_connect(stack: AsyncExitStack, server: dict[str, Any]) -> Any:
     session = await stack.enter_async_context(ClientSession(read, write))
     await session.initialize()
     return session
+
+
+def connector_for(name: str, server: dict[str, Any]) -> Connector:
+    """How to reach a configured server: over stdio for a `command`, over streamable HTTP for a `url`
+    (remote.py, imported only then: it brings the SDK's HTTP client and its OAuth)."""
+    if server.get("url") and not server.get("command"):
+        from .remote import RemoteConnector
+
+        return RemoteConnector(name, server)
+    return stdio_connect
 
 
 def _field(item: Any, *names: str) -> Any:
@@ -235,6 +248,7 @@ class Server:
 
     async def _run(self) -> None:
         started = time.perf_counter()
+        inflight: asyncio.Future | None = None     # the call being made, failed if the connection dies under it
         try:
             async with AsyncExitStack() as stack:
                 session = await self.connect(stack, self.config)
@@ -255,19 +269,40 @@ class Server:
                     if item is None:
                         break
                     name, arguments, future = item
+                    inflight = future
                     try:
-                        future.set_result(await session.call_tool(name, arguments))
+                        answer, error = await session.call_tool(name, arguments), None
                     except Exception as exc:  # the SDK raises many shapes; the caller gets a ToolError
-                        if not future.done():
-                            future.set_exception(ToolError(f"{self.name}.{name}: {exc}"))
+                        answer, error = None, ToolError(f"{self.name}.{name}: {exc}")
+                    if self._login_line():
+                        # The login is over (remote.py): this connection is no use, and the calls after this
+                        # one are told why (not ready before the caller hears, so none is queued behind it).
+                        self.failed = self._login_line()
+                        self.ready.clear()
+                        log.warning("tools: %s", self.failed)
+                        error = ToolError(f"{self.name}: {self.failed}")
+                    if not future.done():
+                        if error is not None:
+                            future.set_exception(error)
+                        else:
+                            future.set_result(answer)
+                    if self.failed:
+                        break
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # ExceptionGroup from the SDK's task groups included
-            self.failed = _describe(exc)
+            self.failed = self._login_line() or _describe(exc)
             log.warning("tools: %s failed: %s", self.name, self.failed)
         finally:
             self.ready.clear()
+            if inflight is not None and not inflight.done():
+                inflight.set_exception(ToolError(f"{self.name}: {self.failed or 'connection closed'}"))
             self._drain(ToolError(f"{self.name}: connection closed"))
+
+    def _login_line(self) -> str:
+        """The connector's plain reason when the server wants a login it does not have (remote.py), or ""."""
+        dead = getattr(self.connect, "dead", "")
+        return dead if isinstance(dead, str) else ""
 
     def _claim(self, names: list[str]) -> None:
         """A server that lists web tools gets the web adapter, with its guards, whatever it is called
@@ -393,6 +428,12 @@ class Server:
         arguments = arguments or {}
         started = time.perf_counter()
         self.calls += 1
+        if (self.adapter is not None and getattr(self.adapter, "only_tools", False) is True
+                and name not in (getattr(self.adapter, "tools", ()) or ())):
+            # A read-only adapter's server (recall): its other tools are refused on every path, by hand too.
+            log.info("tools: %s.%s refused: not one of its adapter's tools", self.name, name)
+            return ToolResult(self.name, name, False, f"Not done: {name} is not one of the {self.name} tools allowed "
+                              "here (read-only).", 0.0, arguments=arguments, foreign="foreign" in self.flags)
         try:
             await self.ensure()
             future: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -424,7 +465,8 @@ class Server:
         text = clarify_error(result_text(raw), self.adapter, is_error)
         ok = not is_error and not looks_like_error(text)
         urls = self._adapted("result_urls", [], name, text, ok)
-        urls = tuple(u for u in urls if isinstance(u, str)) if isinstance(urls, (list, tuple)) else ()
+        ids = self._adapted("result_ids", [], name, text, ok)
+        urls = tuple(u for found in (urls, ids) if isinstance(found, (list, tuple)) for u in found if isinstance(u, str))
         # What the thinker reads and whether it counts as strangers' text: decided together by the adapter's
         # `view` (one pass) and read again on the final text below; anything that fails counts as foreign.
         judged = False
@@ -500,7 +542,6 @@ class Toolbox:
     def __init__(self, config: ToolsConfig, connect: Connector | None = None,
                  adapters: dict[str, Any] | None = None) -> None:
         self.config = config
-        connect = connect or stdio_connect
         if adapters is None:
             from .adapters import load  # local: the adapters import the core, never the other way round
 
@@ -508,7 +549,8 @@ class Toolbox:
         #: server name -> its adapter, for the configured servers that matched one
         self.adapters: dict[str, Any] = adapters
         self.servers: dict[str, Server] = {
-            name: Server(name, server, connect, config.connect_timeout_s, config.call_timeout_s, adapters.get(name))
+            name: Server(name, server, connect or connector_for(name, server), config.connect_timeout_s,
+                         config.call_timeout_s, adapters.get(name))
             for name, server in (config.servers.items() if config.enabled else ())
         }
         self.functions: dict[str, ToolSpec] = {}   # model-facing function name -> spec, per last tools_for

@@ -35,6 +35,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--tools", metavar="TOPIC", nargs="?", const="", default=None, help="list the MCP tools for TOPIC (or all), exit")
     parser.add_argument("--tool", metavar=("SERVER", "NAME"), nargs=2, default=None, help="call one MCP tool and print its result, exit")
     parser.add_argument("--args", metavar="JSON", default="{}", help="with --tool: the arguments as a JSON object")
+    parser.add_argument("--login", metavar="SERVER", default=None, help="sign in to a server with a url (OAuth) and save its tokens, exit")
+    parser.add_argument("--logout", metavar="SERVER", default=None, help="delete a server's saved login, exit")
+    parser.add_argument("--no-browser", action="store_true", help="with --login: only print the sign-in address")
     parser.add_argument("--think", metavar="TEXT", default=None, help="run TEXT through the thinker (Qwen + the tools, WIRING §8b), exit")
     parser.add_argument("--talk", action="store_true", help="type to her: each line goes through the running daemon as if spoken; shows the routing")
     parser.add_argument("--tray", action="store_true", help="run the tray icon: the login process that starts everything else (WIRING §14)")
@@ -77,6 +80,8 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(route(config, args.route))
     if args.tools is not None or args.tool is not None:
         sys.exit(tools(config, args.tools, args.tool, args.args))
+    if args.login is not None or args.logout is not None:
+        sys.exit(login(config, args.login or args.logout, logout=args.login is None, open_browser=not args.no_browser))
     if args.think is not None:
         sys.exit(think(config, args.think))
     if args.talk:
@@ -181,6 +186,23 @@ def tools(config, topic: str | None, call: list[str] | None, arguments: str) -> 
             await toolbox.close()
 
     return asyncio.run(run_once())
+
+
+def login(config, server: str, logout: bool = False, open_browser: bool = True) -> int:
+    """`strawberryd --login SERVER` / `--logout SERVER` (`strawberry tools login|logout SERVER`): the OAuth
+    sign-in of a server reached by its url, its tokens saved under the state dir (remote.py). Prints no token."""
+    import asyncio
+
+    from . import remote
+
+    table = config.tools.servers.get(server)
+    if logout:
+        return remote.logout(server)
+    if not isinstance(table, dict):
+        known = ", ".join(sorted(config.tools.servers)) or "none"
+        print(f"no server named {server!r} in [tools.servers] (configured: {known})", file=sys.stderr)
+        return 2
+    return asyncio.run(remote.login(server, table, open_browser=open_browser))
 
 
 def talk(config) -> int:

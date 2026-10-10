@@ -36,6 +36,9 @@ model runs on your own computer through [Ollama](https://ollama.com); nothing is
   depends on something current (the weather, news, results, prices, opening hours, the latest
   version of something), and answers in a sentence or two, naming the site, never reading a
   link out. See [Web search](#web-search-optional).
+- **Your notes (optional).** With a [recall](#your-notes-optional) notes server configured and
+  logged in, "what did we decide about the orbs?" makes her search your notes, read the one or
+  two that fit and answer in a sentence or two. She only reads, and only the workspaces you list.
 - **A tray icon.** The 🍓 in the top bar (on Windows, the notification area) shows her state
   (idle, listening, thinking, talking) and has the same menu as right-clicking her: show/hide, chat, mute, quiet hour, volume, skin,
   top hat, settings file, restart, quit.
@@ -153,7 +156,8 @@ The settings you are most likely to change:
 | `[voice]` | `enabled`, `model`, `device` | speech recognition: whisper size, `cpu` or `cuda` |
 | `[speech]` | `enabled`, `voice`, `quiet_hours`, `noise_scale`, `noise_w` | her voice (off by default; the bubble always shows); the two noise settings make it livelier |
 | `[brain]`, `[thinker]` | `reaction_model`, `action_model` | which Ollama models she uses |
-| `[tools.servers.*]` | | MCP servers; see [ADAPTERS.md](ADAPTERS.md) and [Web search](#web-search-optional) |
+| `[tools.servers.*]` | | MCP servers; see [ADAPTERS.md](ADAPTERS.md), [Web search](#web-search-optional) and [Your notes](#your-notes-optional) |
+| `[tools.servers.*]` | `url`, `workspaces` | a server reached over HTTP instead of a `command` (`strawberry tools login <name>` signs in); recall's readable workspaces |
 | `[tools.servers.*]` | `flags`, `offer` | what a server without an add-on is (`private`, `foreign`, `egress`; unset: all three, the safe default) and when she gets its tools (`always`, `topic`, `asked`); see [ADAPTERS.md](ADAPTERS.md) |
 | `[thinker]` | `max_tools`, `tool_tokens` | at most this many tool descriptions (30), and this many tokens of them (4000), in the big model's prompt; past either the least likely are left out |
 | `[daemon]` | `log_sentences` | write what you say or type to the log (off: only its length); see [Privacy](#privacy) |
@@ -394,6 +398,46 @@ adapter (ADAPTERS.md); a server listing the same tools gets it under any name. T
 `strawberry restart`, and `strawberry tools` should list `searxng_web_search` and
 `web_url_read`. If `npx` is missing or SearXNG is down, the daemon logs a warning and carries
 on, and she says search isn't available.
+
+## Your notes (optional)
+
+She can read your notes in [recall](ADAPTERS.md#the-recall-adapter), a markdown knowledge base served
+as a remote MCP server with an OAuth login. She only searches and reads: every tool of the server
+that writes is never offered to her and is refused if anything asks for it. Add to the config:
+
+```toml
+[tools.servers.recall]
+topic = "notes"
+url = "https://recall.example.com/mcp"   # your recall server's MCP address
+workspaces = ["My project"]              # the only workspaces she may read, by name or id
+```
+
+Then sign in once:
+
+```bash
+strawberry tools login recall        # opens the sign-in page; --no-browser only prints its address
+```
+
+The sign-in page is your recall server's own. After it, the page sends your browser back to a
+listener on 127.0.0.1 that `login` started on a random port, and the tokens are saved in
+`~/.local/state/strawberry/tokens/recall.json` (on Windows under `%LOCALAPPDATA%`), readable by you
+alone. They are never logged or printed, and never shown in `/health`, `/config` or the Brain UI.
+She refreshes them herself; when the server no longer takes them she says she can't reach your
+notes, and `strawberry tools` shows "recall needs a login: run `strawberry tools login recall`".
+`strawberry tools logout recall` deletes them. No restart is needed either way.
+
+The server must be on a public address (or on this machine, for one you run locally): every
+connection goes to an address checked to be public, so a server on your LAN is not reachable.
+
+`workspaces` is an allowlist: a note in any other workspace is dropped from her search results
+before the model sees it, and a note whose workspace she cannot tell is not read. With an empty
+list she reads nothing, and the log says so. She is offered the notes tools only for a sentence
+about notes, decisions or plans ("what did we decide…", "check my notes…") or one the router reads
+as being about notes, so the rest of the time they cost nothing. A note's text counts as
+strangers' text (notes quote web pages and other people): once she has read one, your private
+context leaves that conversation and anything that would change something waits for your yes,
+as after a web search. Your query goes to your recall server; the log says how many notes came
+back and how long it took, never the query or a note.
 
 ## Developers
 

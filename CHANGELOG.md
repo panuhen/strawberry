@@ -12,6 +12,23 @@ package and the widget binary.
 - A livelier voice without changing it. `[speech] noise_scale` and `noise_w` set Piper's own variation of
   pitch and tone and of rhythm; 0 (the default) keeps the voice's own. Around 0.85 and 1.1 she sounds
   less flat; much higher and the voice starts to slur.
+- **Your notes, read-only: recall.** Ask "what did we decide about the orbs?" and she searches your
+  recall notes, reads the one or two that fit and answers in a sentence or two. Add
+  `[tools.servers.recall]` with the server's `url` and the `workspaces` she may read, then run
+  `strawberry tools login recall`. She only searches and reads: every tool of the server that writes
+  is never offered and is refused if called. Notes from other workspaces are dropped before the
+  model sees them; a note is read only by an id from that question's own search. A note's text
+  counts as strangers' text, so after one anything that changes something asks first. The log keeps
+  counts only. README *Your notes*, ADAPTERS.md *The recall adapter*.
+- **Servers over HTTP, with a login.** A `[tools.servers.<name>]` can have a `url` (https, or http on
+  this machine) instead of a `command`: she reaches it over MCP's streamable HTTP. `strawberry tools
+  login <name>` signs in through the browser (OAuth with PKCE, a redirect to a listener on
+  127.0.0.1) and saves the tokens in `~/.local/state/strawberry/tokens/<name>.json`, readable by you
+  alone; `strawberry tools logout <name>` deletes them. She refreshes them herself, and when the
+  server no longer takes them she says she can't reach it and `strawberry tools` says to log in
+  again. Tokens are never logged, printed or shown. Every connection goes to an address that was
+  checked: public addresses only (a server's metadata cannot point her at this machine or the LAN),
+  or this machine for a server configured on it. Needs `mcp` 2.2 or newer.
 - The beat comes with the bar and the section, for bodies that pulse on the predicted beat. Each
   tempo estimate now also says how many beats a bar has (four, or three for a waltz), where the
   next beat sits in it and when the next downbeat is, with a confidence; and whether the track is

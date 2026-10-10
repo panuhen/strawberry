@@ -219,9 +219,10 @@ async def test_an_egress_call_carrying_a_private_phrase_is_refused_for_any_egres
     """Not only the web: a foreign and egress server (recall-like) whose own result is in may not carry the
     ledger or the library out in its next call."""
     recall = Plain(f"a note {RESULT_CANARY}")
-    toolbox = box({"recall": {"topic": "notes", "command": "recall", "flags": ["foreign", "egress"]}},
-                  {"recall": FakeSession([FakeTool("search"), FakeTool("read_note")], recall.handle)},
-                  risks={"recall": "read"})
+    # Named "kb": a server called recall gets the recall adapter (adapters/recall.py), with guards of its own.
+    toolbox = box({"kb": {"topic": "notes", "command": "kb", "flags": ["foreign", "egress"]}},
+                  {"kb": FakeSession([FakeTool("search"), FakeTool("read_note")], recall.handle)},
+                  risks={"kb": "read"})
     qwen = SnapshotQwen([[("search", {"q": "orbs"})], [("search", {"q": f"about {SECRET_NAME}"}), ("read_note", {"id": "7"})],
                          "[neutral] Found it."])
     await Thinker(ThinkerConfig(), toolbox, "q", chat=qwen).run(
