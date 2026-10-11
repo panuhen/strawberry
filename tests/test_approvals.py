@@ -610,6 +610,10 @@ async def test_the_brain_ui_shows_the_open_approval_and_answers_it(aiohttp_clien
     assert pending["approval_id"] == event["approval_id"] and pending["tool"] == "spotify.remove_from_playlist"
     assert pending["prompt"] == "Remove 'Feeling Good' from Running?" and 0 < pending["expires_in"] <= 10
     approval_id = pending["approval_id"]
+    # The header and the Now view: she waits for a yes, it lives in the Runs tab, and no card is on a screen.
+    now = await (await signed.get("/ui/api/now")).json()
+    assert now["approval"]["approval_id"] == approval_id and now["approval"]["where"] == "runs"
+    assert now["approval"]["risk"] == pending["risk"] and now["bodies"]["cards"] == 0     # a v1 body: no card
     assert (await signed.post("/ui/api/approval", {"approval_id": approval_id, "answer": "yes"}, csrf=False)).status == 403
     assert (await signed.post("/ui/api/approval", {"approval_id": "<b>", "answer": "yes"})).status == 400
     assert (await signed.post("/ui/api/approval", {"approval_id": approval_id, "answer": "sure"})).status == 400
