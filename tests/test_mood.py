@@ -506,3 +506,12 @@ async def test_the_same_decisions_at_any_mood(aiohttp_client, monkeypatch):
         assert got["decisions"] == base["decisions"], (energy, feeling)
         assert set(got["seen"]) == {words(energy, feeling)}
         assert all("right now." not in p for p in got["decisions"]["thinker"])   # never in the thinker's prompt
+
+
+def test_the_mood_view_is_text_only():
+    script = (Path(__file__).parents[1] / "src" / "strawberry_crab" / "ui" / "app.js").read_text(encoding="utf-8")
+    block = script[script.index("her: mood (moodui.py"):script.index("// her: mood end")]
+    assert "innerHTML" not in block and "insertAdjacentHTML" not in block and "/ui/api/mood" not in block
+    assert 'api("mood")' in block and 'api("mood/reset", {})' in block
+
+

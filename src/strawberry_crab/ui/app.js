@@ -2903,5 +2903,156 @@
     }, 10000);
   }
 
+  // --------------------------------------------------------------------------- her: mood (moodui.py, WIRING §29)
+  //
+  // A view of its own under "Her": the two dials now, where they rest, a graph of the last hours and the
+  // reasons (a source and two sizes each, never a sentence). Read-only but for "Reset to her baseline". It
+  // registers itself (its nav button, its section, SECTIONS, RENDER and REFRESH) before start() runs.
+
+  const mood = { view: null, timer: null };
+  const MOOD_ODD = { "reset": "reset to her baseline (the Brain UI)", "baseline.time": "the hour moved where her energy rests",
+                     "baseline.idle": "nothing happening moved where her energy rests" };
+
+  function moodWord(value, low, mid, high) {
+    if (typeof value !== "number") return dash;
+    return value <= -0.55 ? `very ${low}` : value <= -0.2 ? low : value < 0.2 ? mid : value < 0.55 ? high : `very ${high}`;
+  }
+  function signed(x) { return typeof x === "number" ? `${x >= 0 ? "+" : ""}${x.toFixed(2)}` : dash; }
+
+  function renderMood() {
+    const root = $("#mood");
+    const V = mood.view;
+    if (!V) {
+      fill(root, panel("Mood", null, el("p", { class: "empty", text: "Loading..." })));
+      return;
+    }
+    if (!V.enabled) {
+      fill(root, panel("Mood", "her living mood", el("p", { class: "empty",
+        text: "The mood is off ([mood] enabled = false in config.toml): she moves, speaks and words her lines as she always did." })));
+      return;
+    }
+    const T = V.temperament || {};
+    const reset = confirmButton("Reset to her baseline", "Reset now?", (b) => resetMood(b), "small");
+    fill(root,
+      panel("Mood", "how lively and how pleased she is: it changes how she moves, how fast she speaks and her word choice, never what she does",
+        el("div", { class: "stats" },
+          stat("Energy", signed(V.energy), moodWord(V.energy, "calm", "even", "lively")),
+          stat("Feeling", signed(V.feeling), moodWord(V.feeling, "grumpy", "even", "pleased")),
+          stat("Where she rests", `${signed(V.baseline.energy)} / ${signed(V.baseline.feeling)}`,
+               "her temperament, energy lower late at night and after a quiet while"),
+          stat("Voice pace", `×${num(V.pace, 3)}`, "Piper's length scale: under 1 is faster")),
+        el("p", { class: "dim" }, "What the reaction model is told: ", el("q", { text: V.line })),
+        el("div", { class: "actions" }, reset)),
+      panel("The last hours", "once a minute; the lines end at now", moodChart(V)),
+      panel("Why", "each nudge: where it came from and how far it moved each dial (newest first)",
+        table(["When", "Source", "What", { label: "Energy", num: true }, { label: "Feeling", num: true }],
+          (V.reasons || []).slice(0, 120).map((r) => el("tr", null, td(clock(r.t), "mono"), td(r.source, "mono"),
+            td((V.nudges[r.source] || {}).what || MOOD_ODD[r.source] || dash),
+            td(signed(r.energy), `num ${r.energy > 0 ? "up" : r.energy < 0 ? "down" : ""}`),
+            td(signed(r.feeling), `num ${r.feeling > 0 ? "up" : r.feeling < 0 ? "down" : ""}`))),
+          { empty: "Nothing has moved her yet." })),
+      panel("What moves her", `each source moves a dial at most its cap in a minute, all together ${num(V.limits.total_cap)}; her temperament is persona.md's ## Temperament`,
+        kv([["Energy rests at", signed(T.energy)], ["Feeling rests at", signed(T.feeling)],
+            ["Recovery", `${num(T.recovery, 0)} min`], ["A sulk lingers", `${num(T.sulk, 0)} min`]]),
+        table(["Source", "What", { label: "Energy", num: true }, { label: "Feeling", num: true }, { label: "Cap a minute", num: true }],
+          Object.entries(V.nudges || {}).map(([name, n]) => el("tr", null, td(name, "mono"), td(n.what),
+            td(signed(n.energy), "num"), td(signed(n.feeling), "num"), td(num(n.cap), "num"))))));
+  }
+
+  // Two series on one -1..1 axis (one scale, so one chart): energy solid, feeling dashed, each labelled at its
+  // end; a crosshair and a readout follow the pointer.
+  function moodChart(V) {
+    const points = (V.history || []).filter((p) => Array.isArray(p) && p.length === 3);
+    const W = 760, H = 240, L = 46, R = 70, TOP = 14, B = 26;
+    const wrap = el("div");
+    if (points.length < 2) {
+      add(wrap, [el("p", { class: "empty", text: "Not enough yet: a point a minute." })]);
+      return wrap;
+    }
+    const t0 = points[0][0], t1 = points[points.length - 1][0];
+    const x = (t) => L + ((t - t0) / Math.max(t1 - t0, 1)) * (W - L - R);
+    const y = (v) => TOP + ((1 - v) / 2) * (H - TOP - B);
+    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img",
+                               "aria-label": "Her energy and feeling over the last hours, from -1 to 1" });
+    for (const v of [1, 0.5, 0, -0.5, -1]) {
+      chart.append(svg("line", { class: v === 0 ? "axis" : "gridline", x1: L, x2: W - R, y1: y(v), y2: y(v) }),
+        svg("text", { class: "label", x: L - 8, y: y(v) + 4, "text-anchor": "end", text: v > 0 ? `+${v}` : `${v}` }));
+    }
+    chart.append(svg("line", { class: "mood-rest", x1: L, x2: W - R, y1: y(V.baseline.energy), y2: y(V.baseline.energy) },
+      svg("title", { text: "where her energy rests now" })));
+    const ticks = Math.min(6, points.length);
+    for (let i = 0; i < ticks; i++) {
+      const t = t0 + ((t1 - t0) * i) / Math.max(ticks - 1, 1);
+      chart.append(svg("text", { class: "label", x: x(t), y: H - 8, "text-anchor": i === 0 ? "start" : i === ticks - 1 ? "end" : "middle",
+                                 text: clock(t).slice(0, 5) }));
+    }
+    for (const [index, cls, name] of [[1, "mood-energy", "energy"], [2, "mood-feeling", "feeling"]]) {
+      chart.append(svg("polyline", { class: cls, points: points.map((p) => `${x(p[0]).toFixed(1)},${y(p[index]).toFixed(1)}`).join(" ") }));
+      const last = points[points.length - 1];
+      chart.append(svg("text", { class: "label", x: W - R + 6, y: y(last[index]) + (index === 1 ? -4 : 12), text: name }));
+    }
+    const cross = svg("line", { class: "mood-cross", x1: 0, x2: 0, y1: TOP, y2: H - B, visibility: "hidden" });
+    const dotE = svg("circle", { class: "mood-dot-energy", r: 4, cx: 0, cy: 0, visibility: "hidden" });
+    const dotF = svg("circle", { class: "mood-dot-feeling", r: 4, cx: 0, cy: 0, visibility: "hidden" });
+    const hit = svg("rect", { class: "mood-hit", x: L, y: TOP, width: W - L - R, height: H - TOP - B });
+    chart.append(cross, dotE, dotF, hit);
+    const readout = el("div", { class: "mood-readout", text: "Point at the graph for a reading." });
+    const at = (event) => {
+      const box = chart.getBoundingClientRect();
+      const px = ((event.clientX - box.left) / box.width) * W;
+      let best = points[0];
+      for (const p of points) if (Math.abs(x(p[0]) - px) < Math.abs(x(best[0]) - px)) best = p;
+      for (const node of [cross, dotE, dotF]) node.setAttribute("visibility", "visible");
+      cross.setAttribute("x1", x(best[0])); cross.setAttribute("x2", x(best[0]));
+      dotE.setAttribute("cx", x(best[0])); dotE.setAttribute("cy", y(best[1]));
+      dotF.setAttribute("cx", x(best[0])); dotF.setAttribute("cy", y(best[2]));
+      readout.textContent = `${clock(best[0])}: energy ${signed(best[1])} (${moodWord(best[1], "calm", "even", "lively")}), ` +
+        `feeling ${signed(best[2])} (${moodWord(best[2], "grumpy", "even", "pleased")})`;
+    };
+    hit.addEventListener("pointermove", at);
+    hit.addEventListener("pointerleave", () => {
+      for (const node of [cross, dotE, dotF]) node.setAttribute("visibility", "hidden");
+      readout.textContent = "Point at the graph for a reading.";
+    });
+    add(wrap, [chart, readout,
+      el("div", { class: "legend" },
+        el("span", null, el("i", { class: "mood-energy" }), "Energy: calm (-1) to lively (+1)"),
+        el("span", null, el("i", { class: "mood-feeling" }), "Feeling: grumpy (-1) to pleased (+1)"),
+        el("span", null, el("i", { class: "dash" }), "where her energy rests now"))]);
+    return wrap;
+  }
+
+  async function refreshMood() {
+    try { mood.view = await api("mood"); } catch (e) { if (!state.ended) toast(e.message, true); }
+    rerender("mood");
+  }
+
+  async function resetMood(button) {
+    button.disabled = true;
+    try {
+      mood.view = await api("mood/reset", {});
+      toast("She is back at her baseline.");
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      button.disabled = false;
+    }
+    rerender("mood");
+  }
+
+  (function registerMood() {
+    const profileButton = document.querySelector('#nav button[data-section="profile"]');
+    const button = el("button", { type: "button", data: { section: "mood" }, text: "Mood" });
+    profileButton.after(button);
+    $("#profile").after(el("section", { id: "mood", class: "section hidden" }));
+    SECTIONS.splice(SECTIONS.indexOf("profile") + 1, 0, "mood");
+    RENDER.mood = renderMood;
+    REFRESH.mood = refreshMood;
+    mood.timer = setInterval(() => {
+      if (!state.ended && !document.hidden && state.section === "mood") refreshMood();
+    }, 15000);
+  })();
+  // her: mood end
+
   start();
 })();
