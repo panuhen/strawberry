@@ -939,7 +939,7 @@ Or press play in any media player: the MPRIS watcher (§4b) does the rest.
 A local web page, served by the daemon, that shows what the router decides and what the learning loop learns (§8a–8d), and lets the user act on it. `strawberry ui` opens it. It calls `learning.py` and reads the daemon's parts; it decides nothing itself.
 
 **The layout (since the persona stage).** Ten sections in five groups, in the side bar: **Her** (Persona,
-Profile, Mood), **Activity** (Runs with its approvals and the shared timeline, Router live), **Learning** (Learning,
+Profile, Mood), **Activity** (Runs with its approvals and the shared timeline, Router live, History), **Learning** (Learning,
 Data and scores), **Settings** (Settings and privacy, Config file, Tools, Input, Apps) and **System**. The page opens on Persona. The header has
 the 🍓 mark (the page title too) and one "needs your attention" spot: the most urgent of an open approval
 ("She is waiting for your yes"), a persona.md that does not check out, and a candidate head waiting, with how
@@ -1021,6 +1021,9 @@ many more there are; a click goes to its section. The new parts:
     reflex, no approval answered, no arming; the recent row says what it would have done.
 - *Mood* (`moodui.py`, §29): her two dials now, where they rest, a graph of the last hours and the reasons (each
   nudge's source and size, never a sentence), with **Reset to her baseline**.
+- *History* (`historyui.py`, §30): her history by day, a day's rows on opening it, the search she uses, forget a
+  row, a day or everything, the user's own digest, the reminders, and the retention with a link to `[history]` in
+  the Config file tab.
 - *Apps* (`appsui.py`, §27): which apps she may open or close. The installed apps (NoDisplay and Hidden ones left
   out) in a table with a search box, the listed ones first, each with ticks for *may open*, *may close* and *ask
   before closing* and a field for aliases; an app listed but no longer installed says so. The list is checked on
@@ -1057,6 +1060,7 @@ many more there are; a click goes to its section. The new parts:
 | `GET /ui/api/input`; `GET /ui/api/input/live` (events); `POST /ui/api/input/check`, `input/save` (`{settings}`), `input/practice` (`{on}`), `input/camera` (`{on}`) | the Input tab: status (with `camera: {enabled, state}`), settings in use, the dropdowns' choices, bodies, the file and its status, recent; the live view; a draft checked (`ok`, `problems`, `text`, `diff`); saved as input.toml (400 when it does not check out); practice mode; the camera switch (`{enabled, status}`; 409 when config.toml cannot be written or does not load) | the page |
 | `GET /ui/api/apps`; `POST /ui/api/apps/check`, `apps/save` (`{apps: [{id, name, aliases, open, close, close_asks}]}`) | the Apps tab (§27): the list in use, the installed apps, the file and its status; a list checked (`ok`, `problems`, `text`, `diff`); saved as apps.toml (400 when it does not check out or names an id that is not installed) | the page |
 | `GET /ui/api/config`; `POST /ui/api/config/check` (`{text, edits?, base?}`), `config/save` (`{text, base}`); `GET /ui/api/tools` | the Config file and Tools tabs (§28): the schema, the file's text and values with secrets hidden, `base` (`tag`: an HMAC of the file under a per-start key, and the mtime), a change waiting on her card; a draft checked (`ok`, `problems`, `text`, `values`, `diff`, `lowering`, `changed`, `restart`, `live`, `stale`); saved (200), asked about on her card (202 `{pending}`), 400 with the problems, 409 when the file changed under the page or a change already waits; the tool servers with each tool's tier, flags and whether it is offered | the page |
+| `GET /ui/api/history` (`?before=DAY`), `history/day` (`?day=DAY&offset=N`), `history/search` (`?q=`); `POST /ui/api/history/forget/row` (`{id}`), `forget/day` (`{day}`), `forget/all` (`{confirm: "forget", timers}`), `history/digest` (`{day, text}`), `history/timer/cancel` (`{id}`) | the History view (§30): the retention, counts, reminders and a page of 30 days (each with `state`: `digest`, `digest_only`, `pending`, `open`); a day's rows, 200 a page; rows and digests found, by day; forgotten (404 for a row already gone); the user's digest (400 for an empty or too long one, 404 for a day the history has nothing of); a pending reminder cancelled (409 when it is not pending). 409 with the history off or its file not open | the page |
 | `GET /ui/api/runs` | also carries `timeline` (above) | the page |
 
 **The security model.** Every other route refuses any request with an `Origin` header (§2), so no web page the user visits can make her talk, read `/health` or open `/ws`. `/ui` is the one place a browser is let in, on these terms (`brainui.checked`, one decorator on every UI handler; `server.local_only` lets a handler through only when it carries the decorator's mark, so a new route cannot open itself by accident, and an unmatched path such as `/ui/../health` still meets the Origin rule):
@@ -2934,7 +2938,50 @@ yesterday?" called `look_back(when)`, the result's foreign record made the run a
 the records; the log had the call as "6 lines, 685 chars (not logged)" and her line as its length; the file and its
 log were 0600.
 
-**Not done.** The Brain UI's History view (M3) and the reminders (M2) build on this. Digest quality from the thinker
+**The Brain UI's History view** (`historyui.py`, registered in `brainui.setup` as the Mood view is; a
+self-contained block in `app.js` with its own state, its nav button after Router live). Every route behind
+`brainui.checked`; the reads and writes run on the store's writer thread (`History.call`).
+
+- *Days*, newest first, 30 a page (`?before=` the last one shown): each with its row and foreign counts and its
+  digest, or why it has none: `open` (the day has not ended: "no digest yet"), `pending` (it has: "digest
+  pending" until the digester gets to it), `digest_only` (the raw rows expired or were forgotten). A digest the
+  user wrote is marked *edited by you*. A closed day shows its digest; opening it loads its rows, newest first,
+  200 a page: the time, the kind with an icon (exchange, notice, tool run, approval, played, reminder), and what
+  it was. An exchange is split into the user's words and her reply where `meta.said` says the user's words end;
+  a foreign row carries a *foreign* chip and a stripe. A row's meta reaches the page only as the fields its kind
+  keeps (`historyui.META`: a turn's `did` and `withheld`, a run's tools, tier, outcome and detail, an approval's
+  tool, risk and outcome); the store keeps no argument, and nothing else in `meta` is passed on.
+- *Search*: `History.search` (at most 60 rows, best first) and `search_digests`, grouped by day, newest day first.
+  The query rides in the URL of a GET; the access log never logs a `/ui` query or a successful API read.
+- *Forget* a row or a day (a second click), or everything: the page wants `forget` typed and the route wants
+  `{confirm: "forget"}`; `timers` (a separate tick) deletes the reminders too, else they stay. No card: forgetting
+  only ever makes her know less.
+- *Edit a digest*: an inline editor, checked on the page and again on the server (some text, no line over
+  `DIGEST_LINE_CHARS`, at most `DIGEST_CHARS`; the store would cut a longer one silently, so the route refuses it),
+  only for a day the history has; `edit_digest` sets `edited_by_user`, which the digester never overwrites.
+- *Reminders*: the pending ones (due, text) with **Cancel** (`set_timer_state(id, "cancelled")`, only from
+  pending, checked under the store's lock), and the last 20 fired, missed or cancelled ones. It reads the
+  `timers` table directly.
+- *Retention*: "raw kept N days · digests M months · storing sentences: on/off" from the `[history]` she runs
+  with, and a button that opens the Config file tab at `[history]` (§28: a change that keeps more asks on her
+  card there). The view writes no setting.
+- *Off*: with `[history] enabled = false` the view says so and links to the Config file tab, and every other
+  route answers 409; a file that did not open says so with its error code.
+
+Row text and digests are the user's own words: the page puts them in as text nodes only, like every other string
+(§17). The view shows what the file holds whatever `[learning] log_outcomes` says: `[history] sentences` decides
+what is kept. The view's log lines carry counts and ids only (`ui: a history row forgotten (id 11)`).
+
+Seen (2026-10-11, a throwaway daemon on port 8792 with temp XDG dirs and a seeded file: today with a foreign
+notification, a play and a skip, yesterday and a day five days back without a digest, the digester's digest, the
+user's own, two digest-only days, reminders in every state; headless Chrome over the DevTools protocol, light and
+dark): the digester wrote the older pending day's plain digest 20 s after start while yesterday stayed pending;
+a typed `<img src=x onerror=…>` showed as text with no `img` in the page; a search for "crab lamp" gave two rows
+and two digests over three days; a digest saved as the user's; a row forgotten, a reminder cancelled, and
+everything forgotten with the reminders kept; the link opened `[history]` in the Config file tab; with
+`enabled = false` the view said so. The log had ids and counts only.
+
+**Not done.** The reminders (M2) build on this. Digest quality from the thinker
 on a short prompt wants a week of real digests before it is trusted. A turn where she used any tool but her profile's
 is foreign in the timeline (§23), so her answer from a look-back of only trusted rows is still kept as foreign.
 
@@ -2946,5 +2993,9 @@ retry, catch-up over days off and the 04:00 boundary, yielding to the user, a mo
 digest; forgetting a row, a day and everything with nothing left in the file, its log or the index; `when`; rows or
 the digest; the budget and the foreign mark; records as quoted data; the trust of a foreign record against a lamp;
 the offer's phrase list, by the sentence alone, and in the daemon; the hooks and `/health`; the timeline in memory and
-a restart; no sentence, row or digest in any log record), `tests/test_configui.py` (the classifier rows),
+a restart; no sentence, row or digest in any log record), `tests/test_historyui.py` (the History view: the days
+and their states, a day's rows with only the kind's meta, a turn split by its length, paging, the search by day,
+forgetting a row, a day and everything with the reminders kept, the user's digest and its length, cancelling only a
+pending reminder, every route behind the session, the CSRF header and the Origin, the history off and its file not
+open, no text in any log line with the daemon's own access log), `tests/test_configui.py` (the classifier rows),
 `tests/test_messages.py` (no message text in any file, the history's included).

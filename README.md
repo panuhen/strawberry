@@ -318,8 +318,9 @@ you yesterday?", "when did we talk about the garden?"):
   A day's raw rows are deleted only after its digest is written.
 
 Nothing of it goes into a prompt unless your sentence is about the past: then she can look back,
-adding at most about 500 tokens. Nothing of it is logged (only counts). The Brain UI will get a
-History view to browse, search and forget (a row, a day or everything) and to edit a digest.
+adding at most about 500 tokens. Nothing of it is logged (only counts). The Brain UI's **History**
+view (under Activity) browses it by day, searches it, forgets a row, a day or everything, lets you
+write a day's digest yourself, and lists and cancels reminders.
 `[history] sentences = false` keeps no sentences or replies, only what happened; `keep_days`,
 `digest_months` and `lookback_tokens` change the lengths; `enabled = false` turns it off (the file
 stays until you delete it). Making any of these keep more asks on her card first.
@@ -403,6 +404,16 @@ problem, a new router head waiting).
   learned from, each with Approve and Reject; the learning log; every head, with Use; the week.
 - **Router live**: each sentence as she routes it: what she read it as, how sure she was, what
   handled it and how long it took.
+- **History** (under Activity): her history (see [Privacy](#privacy)) day by day, newest first, each
+  day with its digest or why it has none yet ("no digest yet" while the day lasts, "digest pending"
+  until she is idle, "digest only" once the raw rows are gone); open a day for its rows, with text
+  others wrote marked *foreign*. A search box uses the same search she does, and shows the rows and
+  digests it finds by day. **Forget** a row or a day, or everything (type `forget` to confirm; your
+  reminders stay unless you tick them too); forgetting needs no card. **Edit digest** writes your
+  own digest of a day, which her digester never overwrites. Pending reminders with **Cancel**, and
+  the recent ones (fired, missed, cancelled). How long she keeps things and whether she keeps
+  sentences is shown with a link to `[history]` in the Config file tab, where keeping more asks on
+  her card.
 - **Runs**: the timeline (what the big model is told happened lately, and which of it was written
   by others), and each thing she did, step by step (how she read it, thinking, each tool and how long it
   took, what she said, how it ended), with Cancel on the one going on. Tool names and timings
@@ -451,7 +462,8 @@ problem, a new router head waiting).
 
 The link works once, within a minute; the page then runs on a cookie that ends after 12 hours
 without use or when she restarts. Everything stays on this machine and the page loads nothing
-from the internet. Sentences show only while the learning log is on. No other web page can
+from the internet. Sentences show only while the learning log is on (the History view shows what her
+history keeps, which `[history] sentences` decides). No other web page can
 reach her: every other address refuses browsers, and this one takes only its own page, signed
 in. The sign-in link needs her key (see [Privacy](#privacy)), so other users on the computer cannot
 get one; programs you run yourself can. No browser opening (a remote shell, say)?
