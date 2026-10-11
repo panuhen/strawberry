@@ -414,3 +414,38 @@ textarea.small.mono { font-family: var(--mono); font-size: 0.8rem; }
 .legend i.mood-energy { border: 0; border-top: 2px solid var(--mood-energy); height: 0; width: 16px; vertical-align: 3px; }
 .legend i.mood-feeling { border: 0; border-top: 2px dashed var(--mood-feeling); height: 0; width: 16px; vertical-align: 3px; }
 .mood-readout { font-size: 0.82rem; color: var(--ink-dim); min-height: 1.3em; margin-top: 4px; }
+
+/* --- her history (the History view, WIRING §30) ------------------------------------------- */
+
+details.hist-day { border: 1px solid var(--line); background: var(--glass); padding: 8px 12px; }
+details.hist-day + details.hist-day { margin-top: 8px; }
+details.hist-day > summary { color: var(--ink); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; list-style: none; }
+details.hist-day > summary::-webkit-details-marker { display: none; }
+details.hist-day > summary::before { content: "▸"; color: var(--ink-faint); width: 1em; }
+details.hist-day[open] > summary::before { content: "▾"; }
+details.hist-day > summary:focus-visible { outline: 2px solid var(--berry); outline-offset: 2px; }
+.hist-day-name { font-weight: 600; margin-right: 6px; }
+.hist-preview { flex-basis: 100%; padding-left: 1.4em; color: var(--ink-dim); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.92rem; }
+details.hist-day[open] .hist-preview { display: none; }
+.hist-day-body { margin-top: 10px; }
+.hist-day-body > * + * { margin-top: 10px; }
+.hist-digest { border-left: 3px solid var(--rim-strong); padding: 4px 0 4px 12px; }
+.hist-digest > * + * { margin-top: 6px; }
+.hist-digest .k { color: var(--ink-dim); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.hist-digest p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.hist-digest .s { display: block; color: var(--ink-faint); font-size: 0.8rem; }
+.hist-digest .s.bad { color: var(--berry-ink); }
+.hist-said { display: block; }
+.hist-said b { color: var(--ink-dim); font-weight: 600; }
+.hist-icon { display: inline-block; width: 1.5em; }
+tr.hist-foreign td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.hist-group + .hist-group { margin-top: 14px; }
+.hist-group > * + * { margin-top: 6px; }
+.hist-retention { justify-content: space-between; }
+.hist-older { margin-top: 12px; }
+#hist-q { min-width: 220px; flex: 1; max-width: 480px; }
+#hist-confirm { width: 9em; }
+input[type="search"] {
+  font: inherit; font-size: 0.88rem; color: var(--ink); background: var(--glass-strong);
+  border: 1px solid var(--rim-strong); padding: 4px 8px;
+}

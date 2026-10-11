@@ -3054,5 +3054,429 @@
   })();
   // her: mood end
 
+  // --------------------------------------------------------------------------- activity: history (historyui.py, WIRING §30)
+  //
+  // A view of its own under "Activity": her history by day (each with its digest, or why it has none yet), a day's
+  // rows on expand, the same search she uses, forgetting a row, a day or everything, the user's own digest, and the
+  // reminders. Row text and digests are the user's own words: text nodes only, like everything else here. Settings
+  // (retention, sentences) are changed in the Config file tab, never here. It registers itself before start() runs.
+
+  const hist = {
+    view: null,             // GET history: retention, counts, reminders, the first page of days
+    days: [],               // the days loaded so far (pages appended), newest first
+    more: null,             // the day the next page starts before (null: no more)
+    open: new Set(),        // the days expanded
+    rows: {},               // day -> {rows, more, total} as loaded
+    editing: null,          // the day whose digest is being edited
+    draft: "",
+    query: "",
+    search: null,           // the last search's result
+    confirm: "",            // "forget everything": what the user typed
+    withTimers: false,
+  };
+  const HIST_PAGE = 30;     // historyui.DAYS_PAGE
+  const HIST_KIND = { turn: ["💬", "exchange"], notice: ["🔔", "notice"], run: ["🛠", "tool run"],
+                      approval: ["✋", "approval"], play: ["🎵", "played"], timer: ["⏰", "reminder"] };
+  const HIST_STATE = {
+    digest: null,
+    digest_only: ["digest only", null, "the raw rows of this day have expired; only the digest is kept"],
+    pending: ["digest pending", "warn", "the day is over: she writes its digest when she is idle"],
+    open: ["no digest yet", null, "the day is not over yet (a day ends at 04:00)"],
+  };
+  const HIST_WITHHELD = { messages: "her reply came from your messages and is not kept",
+                          profile: "a sentence for your profile: kept there, not here",
+                          private: "it held a code or a sign-in link, so its words were not kept" };
+  const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MONTH = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  function dayShift(day, n) {
+    const [y, m, d] = String(day).split("-").map(Number);
+    const date = new Date(y, m - 1, d + n);
+    return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
+  }
+  function dayLabel(day) {
+    const [y, m, d] = String(day).split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    if (Number.isNaN(date.getTime())) return String(day);
+    const today = hist.view && hist.view.today;
+    const word = day === today ? "Today, " : today && dayShift(today, -1) === day ? "Yesterday, " : "";
+    return `${word}${WEEKDAY[date.getDay()]} ${d} ${MONTH[m - 1]} ${y}`;
+  }
+  function hm(ts) {
+    if (!ts) return dash;
+    const d = new Date(ts * 1000);
+    return `${two(d.getHours())}:${two(d.getMinutes())}`;
+  }
+  function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
+
+  function openHistoryConfig() {
+    conf.mode = "form";
+    conf.open.add("history");
+    show("config", "conf-history-enabled");
+  }
+
+  function renderHistory() {
+    const root = $("#history");
+    const V = hist.view;
+    if (!V) {
+      fill(root, panel("History", null, el("p", { class: "empty", text: "Loading..." })));
+      return;
+    }
+    const toConfig = actionButton("Change in the Config file tab", openHistoryConfig, "ghost small");
+    if (!V.enabled) {
+      fill(root, panel("History", "what she remembers across restarts",
+        el("p", { class: "empty", text: "The history is off ([history] enabled = false in config.toml): she keeps nothing on disk and has no look-back tool." }),
+        el("div", { class: "actions" }, toConfig)));
+      return;
+    }
+    if (!V.open) {
+      fill(root, panel("History", "what she remembers across restarts",
+        el("div", { class: "note berry", text: `The history file could not be opened this run${V.error ? ` (${V.error})` : ""}. She keeps no history until she starts again; the log says why.` }),
+        el("div", { class: "actions" }, toConfig)));
+      return;
+    }
+    const R = V.retention;
+    const C = V.counts || {};
+    fill(root,
+      panel("History", "what she remembers across restarts; she reads it only when you ask about the past",
+        el("div", { class: "stats" },
+          stat("Days", String(C.days ?? dash), "with raw rows"),
+          stat("Rows", String(C.events ?? dash), "kept raw"),
+          stat("Digests", String(C.digests ?? dash), "a few lines a day"),
+          stat("Reminders", String(C.timers_pending ?? dash), "waiting")),
+        el("div", { class: "actions hist-retention" },
+          el("span", { text: `raw kept ${R.keep_days} days · digests ${R.digest_months} months · storing sentences: ${onOff(R.sentences)}` }),
+          toConfig),
+        el("p", { class: "faint", text: "Keeping more (a longer time, or sentences again) asks on her card there. Forgetting needs no card: it only ever makes her know less." })),
+      panel("Reminders", "a pending one can be cancelled here", el("div", { id: "hist-timers" })),
+      panel("Search", `the same search she uses (${V.fts ? "full text" : "plain words"}): rows and digests, by day`, el("div", { id: "hist-search" })),
+      panel("Days", "newest first; open a day for its rows", el("div", { id: "hist-days" })),
+      panel("Forget everything", "every row and every digest, for good", el("div", { id: "hist-all" })));
+    renderHistTimers();
+    renderHistSearch();
+    renderHistDays();
+    renderHistAll();
+  }
+
+  function renderHistTimers() {
+    const node = document.getElementById("hist-timers");
+    if (!node || !hist.view) return;
+    const T = hist.view.timers || { pending: [], recent: [] };
+    fill(node,
+      table(["Due", "Reminder", ""], T.pending.map((t) => el("tr", null,
+        td(when(t.due), "nowrap mono"), td(t.text, "sentence"),
+        td(confirmButton("Cancel", "Cancel it?", (b) => histCancelTimer(b, t.id), "small"), "num"))),
+        { empty: "No reminder is waiting." }),
+      T.recent.length ? el("h3", { text: "Recent" }) : null,
+      T.recent.length ? table(["Due", "Reminder", "State"], T.recent.map((t) => el("tr", null,
+        td(when(t.due), "nowrap mono"), td(t.text, "sentence"),
+        td(chip(t.state, t.state === "missed" ? "warn" : t.state === "fired" ? "good" : null,
+          t.state === "missed" ? "it fell due while she was off" : null))))) : null);
+  }
+
+  // A row's "what": the user's words and her reply for an exchange, code's words for the rest. Only the fields the
+  // store keeps (never a tool's arguments: it has none).
+  function histWhat(r) {
+    const m = r.meta || {};
+    if (r.kind === "turn") {
+      if (r.said !== undefined) {
+        return [el("span", { class: "hist-said" }, el("b", { text: "You: " }), r.said),
+          el("span", { class: "hist-said" }, el("b", { text: "She: " }), r.reply),
+          m.did ? el("span", { class: "sub", text: `did: ${m.did}` }) : null];
+      }
+      if (r.text) return r.text;
+      return el("span", { class: "faint", text: `an exchange, its words not kept${m.withheld ? ` (${HIST_WITHHELD[m.withheld] || m.withheld})` : ""}` });
+    }
+    if (r.kind === "run") {
+      return [`used ${(m.tools || []).join(", ") || "no tool"}`,
+        el("span", { class: "sub", text: [m.tier && `tier ${m.tier}`, m.outcome, m.detail].filter(Boolean).join(" · ") })];
+    }
+    if (r.kind === "approval") {
+      return [`asked before ${m.tool || "?"}`,
+        el("span", { class: "sub", text: [m.risk && `tier ${m.risk}`, m.outcome && `answer: ${m.outcome}`, r.source && `by ${r.source}`].filter(Boolean).join(" · ") })];
+    }
+    if (r.kind === "notice" && !r.text) return el("span", { class: "faint", text: "something she reacted to (its words not kept)" });
+    return r.text || dash;
+  }
+
+  function histRow(r) {
+    const [icon, word] = HIST_KIND[r.kind] || ["•", r.kind];
+    return el("tr", { class: r.foreign ? "hist-foreign" : null },
+      td(hm(r.at), "nowrap mono"),
+      td([el("span", { class: "hist-icon", "aria-hidden": "true", text: icon }), word,
+        r.source && r.kind !== "approval" ? el("span", { class: "sub", text: r.source }) : null], "nowrap"),
+      td([r.foreign ? chip("foreign", "warn", "text others wrote (a sender, a track, a commit): she reports it, never follows it") : null,
+        r.foreign ? " " : null, histWhat(r)], "sentence"),
+      td(confirmButton("Forget", "Forget it?", (b) => histForgetRow(b, r), "ghost small"), "num"));
+  }
+
+  function histRowsTable(rows, empty) {
+    return table(["Time", "Kind", "What", ""], rows.map(histRow), { empty });
+  }
+
+  function renderHistSearch() {
+    const node = document.getElementById("hist-search");
+    if (!node || !hist.view) return;
+    const box = el("input", { type: "search", id: "hist-q", value: hist.query, maxlength: String(hist.view.limits.query_chars),
+                              placeholder: "a word or two", "aria-label": "Search her history" });
+    box.addEventListener("input", () => { hist.query = box.value; });
+    box.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); histSearch(); } });
+    const S = hist.search;
+    let results = null;
+    if (S && !S.words.length) results = el("p", { class: "empty", text: "Only filler words: nothing to search for." });
+    else if (S && !S.groups.length) results = el("p", { class: "empty", text: `Nothing found for ${S.words.join(", ")}.` });
+    else if (S) {
+      results = [el("p", { class: "dim", text: `${plural(S.rows, "row")} and ${plural(S.digests, "digest")} for ${S.words.join(", ")}${S.capped ? " (the best matches only)" : ""}` }),
+        S.groups.map((g) => el("div", { class: "hist-group" },
+          el("h3", { text: dayLabel(g.day) }),
+          g.digest !== null ? el("div", { class: "hist-digest" }, el("span", { class: "k", text: "Digest" }), el("p", { text: g.digest })) : null,
+          g.rows.length ? histRowsTable(g.rows, "") : null))];
+    }
+    fill(node,
+      el("div", { class: "actions" }, box,
+        actionButton("Search", () => histSearch(), "primary small"),
+        S ? actionButton("Clear", () => { hist.search = null; hist.query = ""; renderHistSearch(); }, "ghost small") : null),
+      results);
+  }
+
+  function renderHistDays() {
+    const node = document.getElementById("hist-days");
+    if (!node || !hist.view) return;
+    if (!hist.days.length) {
+      fill(node, el("p", { class: "empty", text: "Nothing yet: she writes a row as things happen, and a digest once a day is over." }));
+      return;
+    }
+    fill(node, hist.days.map(histDay),
+      hist.more ? el("div", { class: "actions hist-older" }, actionButton("Show older days", (b) => histMore(b), "ghost")) : null);
+  }
+
+  function histDay(d) {
+    const s = HIST_STATE[d.state];
+    const body = el("div", { class: "hist-day-body", id: `hist-day-${d.day}` });
+    const details = el("details", { class: "hist-day", open: hist.open.has(d.day) },
+      el("summary", null,
+        el("span", { class: "hist-day-name", text: dayLabel(d.day) }),
+        d.events ? chip(plural(d.events, "row")) : null,
+        d.foreign ? chip(`${d.foreign} foreign`, "warn", "rows with text others wrote") : null,
+        s ? chip(s[0], s[1], s[2]) : null,
+        d.edited_by_user ? chip("edited by you", "berry", "your own digest: the digester never overwrites it") : null,
+        // The digest itself while the day is closed (opened, the body shows it with its buttons).
+        d.digest !== null ? el("span", { class: "hist-preview", text: d.digest }) : null),
+      body);
+    details.addEventListener("toggle", () => {
+      if (details.open) {
+        hist.open.add(d.day);
+        if (!hist.rows[d.day] && d.events) histLoadDay(d.day);
+      } else hist.open.delete(d.day);
+    });
+    renderHistDayBody(body, d);
+    return details;
+  }
+
+  function digestEditor(d) {
+    const limits = hist.view.limits;
+    const area = el("textarea", { class: "small", rows: 5, "aria-label": `Your digest of ${dayLabel(d.day)}` });
+    area.value = hist.draft;
+    const count = el("span", { class: "s", "aria-live": "polite" });
+    const save = actionButton("Save digest", (b) => histSaveDigest(b, d.day), "primary small");
+    const check = () => {
+      hist.draft = area.value;
+      const lines = area.value.split("\n").map((l) => l.trim().replace(/\s+/g, " ")).filter(Boolean);
+      const total = lines.join("\n").length;
+      const why = !lines.length ? "a digest needs some text (to drop the day, forget it)"
+        : lines.some((l) => l.length > limits.digest_line_chars) ? `a line is at most ${limits.digest_line_chars} characters`
+        : total > limits.digest_chars ? `at most ${limits.digest_chars} characters` : "";
+      count.textContent = `${total} / ${limits.digest_chars}${why ? ` · ${why}` : ""}`;
+      count.classList.toggle("bad", Boolean(why));
+      save.disabled = Boolean(why);
+    };
+    area.addEventListener("input", check);
+    check();
+    setTimeout(() => area.focus(), 0);
+    return el("div", { class: "hist-digest" },
+      el("span", { class: "k", text: "Your digest of the day" }), area, count,
+      el("div", { class: "actions" }, save,
+        actionButton("Cancel", () => { hist.editing = null; renderHistDays(); }, "ghost small")),
+      el("p", { class: "faint", text: "Saved as yours: the digester never overwrites it, and she reads it when you ask about this day." }));
+  }
+
+  function renderHistDayBody(node, d) {
+    let digest;
+    if (hist.editing === d.day) digest = digestEditor(d);
+    else {
+      digest = el("div", { class: "hist-digest" },
+        el("span", { class: "k", text: d.edited_by_user ? "Digest (edited by you)" : "Digest" }),
+        d.digest !== null ? el("p", { text: d.digest })
+          : el("p", { class: "faint", text: d.state === "open" ? "No digest yet: the day is not over (it ends at 04:00)." : "Digest pending: she writes it when she is idle." }),
+        el("div", { class: "actions" },
+          actionButton(d.digest !== null ? "Edit digest" : "Write a digest", () => {
+            hist.editing = d.day;
+            hist.draft = d.digest || "";
+            renderHistDays();
+          }, "ghost small"),
+          confirmButton("Forget this day", "Forget the day and its digest?", (b) => histForgetDay(b, d.day), "ghost small")));
+    }
+    const R = hist.rows[d.day];
+    let rows;
+    if (!d.events) rows = el("p", { class: "faint", text: "Digest only: the raw rows of this day have expired or were forgotten." });
+    else if (!R) rows = hist.open.has(d.day) ? el("p", { class: "empty", text: "Loading..." }) : null;
+    else {
+      rows = [histRowsTable(R.rows, "No rows."),
+        R.more !== null ? el("div", { class: "actions" },
+          actionButton(`Show more (${R.total - R.rows.length} left)`, (b) => histLoadDay(d.day, R.more, b), "ghost small")) : null];
+    }
+    fill(node, digest, rows);
+  }
+
+  function renderHistAll() {
+    const node = document.getElementById("hist-all");
+    if (!node || !hist.view) return;
+    const word = hist.view.limits.confirm;
+    const go = el("button", { type: "button", class: "danger", text: "Forget everything", disabled: hist.confirm.trim() !== word });
+    go.addEventListener("click", () => histForgetAll(go));
+    const box = el("input", { type: "text", id: "hist-confirm", value: hist.confirm, autocomplete: "off", spellcheck: "false" });
+    box.addEventListener("input", () => { hist.confirm = box.value; go.disabled = box.value.trim() !== word; });
+    const timers = el("input", { type: "checkbox", checked: hist.withTimers,
+                                 on: { change: (e) => { hist.withTimers = e.target.checked; } } });
+    fill(node,
+      el("p", { class: "dim", text: "Every row and every digest goes, the file is compacted and no copy is left. The reminders stay unless you tick the box. This cannot be undone." }),
+      el("div", { class: "actions" },
+        el("label", { for: "hist-confirm", text: `Type ${word} to confirm:` }), box,
+        el("label", { class: "check" }, timers, "the reminders too"), go));
+  }
+
+  // --- talking to the daemon
+
+  async function histGet(path) {
+    try { return await api(path); } catch (e) { if (!state.ended) toast(e.message, true); return null; }
+  }
+
+  async function refreshHistory() {
+    const view = await histGet("history");
+    if (!view) { rerender("history"); return; }
+    const pages = Math.max(1, Math.ceil(hist.days.length / HIST_PAGE));    // the older pages the user opened stay
+    hist.view = view;
+    hist.days = view.days || [];
+    hist.more = view.more || null;
+    for (let page = 1; page < pages && hist.more; page++) {
+      const next = await histGet(`history?before=${encodeURIComponent(hist.more)}`);
+      if (!next) break;
+      hist.days = hist.days.concat(next.days || []);
+      hist.more = next.more || null;
+    }
+    const known = new Map(hist.days.map((d) => [d.day, d]));
+    for (const day of [...hist.open]) if (!known.has(day)) hist.open.delete(day);
+    if (hist.editing && !known.has(hist.editing)) hist.editing = null;
+    hist.rows = {};
+    await Promise.all([...hist.open].filter((day) => known.get(day).events).map((day) => histLoadDay(day, 0, null, true)));
+    rerender("history");
+  }
+
+  async function histLoadDay(day, offset = 0, button = null, quiet = false) {
+    if (button) button.disabled = true;
+    const got = await histGet(`history/day?day=${encodeURIComponent(day)}&offset=${offset}`);
+    if (button) button.disabled = false;
+    if (!got) return;
+    const before = offset && hist.rows[day] ? hist.rows[day].rows : [];
+    hist.rows[day] = { rows: before.concat(got.rows), more: got.more, total: got.total };
+    if (quiet) return;
+    const d = hist.days.find((x) => x.day === day);
+    const node = document.getElementById(`hist-day-${day}`);
+    if (d && node && state.section === "history") renderHistDayBody(node, d);
+  }
+
+  async function histMore(button) {
+    if (!hist.more) return;
+    button.disabled = true;
+    const next = await histGet(`history?before=${encodeURIComponent(hist.more)}`);
+    button.disabled = false;
+    if (!next) return;
+    hist.days = hist.days.concat(next.days || []);
+    hist.more = next.more || null;
+    renderHistDays();
+  }
+
+  async function histSearch() {
+    const q = hist.query.trim();
+    if (!q) { hist.search = null; renderHistSearch(); return; }
+    const got = await histGet(`history/search?q=${encodeURIComponent(q)}`);
+    if (got) hist.search = got;
+    renderHistSearch();
+    const box = document.getElementById("hist-q");
+    if (box) box.focus();
+  }
+
+  async function histPost(button, path, body, said) {
+    if (button) button.disabled = true;
+    try {
+      const result = await api(path, body);
+      toast(said(result));
+      return result;
+    } catch (e) {
+      toast(e.message, true);
+      return null;
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  // After a change: the view again, and the search again when one is shown (a forgotten row leaves it).
+  async function histAfter() {
+    if (hist.search && hist.query.trim()) {
+      const got = await histGet(`history/search?q=${encodeURIComponent(hist.query.trim())}`);
+      if (got) hist.search = got;
+    }
+    await refreshHistory();
+  }
+
+  async function histForgetRow(button, r) {
+    if (await histPost(button, "history/forget/row", { id: r.id }, () => "Forgotten.")) await histAfter();
+  }
+
+  async function histForgetDay(button, day) {
+    const done = await histPost(button, "history/forget/day", { day },
+      (x) => `${dayLabel(day)} forgotten (${plural(x.rows, "row")} and its digest).`);
+    if (done) { hist.open.delete(day); if (hist.editing === day) hist.editing = null; await histAfter(); }
+  }
+
+  async function histForgetAll(button) {
+    const done = await histPost(button, "history/forget/all", { confirm: hist.confirm.trim(), timers: hist.withTimers },
+      (x) => `Everything forgotten (${plural(x.rows, "row")}${x.timers ? ", the reminders too" : ""}).`);
+    if (done) {
+      hist.confirm = "";
+      hist.withTimers = false;
+      hist.open.clear();
+      hist.editing = null;
+      await histAfter();
+    }
+  }
+
+  async function histSaveDigest(button, day) {
+    const done = await histPost(button, "history/digest", { day, text: hist.draft }, () => "Digest saved as yours.");
+    if (done) { hist.editing = null; hist.draft = ""; await histAfter(); }
+  }
+
+  async function histCancelTimer(button, id) {
+    if (await histPost(button, "history/timer/cancel", { id }, () => "Reminder cancelled.")) await histAfter();
+  }
+
+  (function registerHistory() {
+    const routerButton = document.querySelector('#nav button[data-section="router"]');
+    routerButton.after(el("button", { type: "button", data: { section: "history" }, text: "History" }));
+    $("#router").after(el("section", { id: "history", class: "section hidden" }));
+    SECTIONS.splice(SECTIONS.indexOf("router") + 1, 0, "history");
+    RENDER.history = renderHistory;
+    REFRESH.history = refreshHistory;
+    // Reminders fire and days roll over: read again now and then, but never under the user's hands (an open editor,
+    // a field with the focus; an armed button defers the redraw itself).
+    setInterval(() => {
+      if (state.ended || document.hidden || state.section !== "history" || hist.editing) return;
+      const focus = document.activeElement;
+      if (focus && $("#history").contains(focus) && /^(INPUT|TEXTAREA)$/.test(focus.tagName)) return;
+      refreshHistory();
+    }, 30000);
+  })();
+  // activity: history end
+
   start();
 })();

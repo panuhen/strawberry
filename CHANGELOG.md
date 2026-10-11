@@ -21,6 +21,13 @@ package and the widget binary.
   `[history]` (`enabled`, `sentences`, `keep_days`, `digest_months`, `lookback_tokens`) sets it, and an
   edit that keeps more asks on her card. A message's text is never kept, nothing of it is logged, and
   `/health` gets counts only. A `timers` table is ready for reminders. WIRING §30.
+- **A History view in the Brain UI** (under Activity). Her history day by day, each day with its digest
+  (or "no digest yet", "digest pending", "digest only"), its rows on opening it with text others wrote
+  marked foreign, and a search box with the same search she uses. Forget a row, a day or everything (typing
+  `forget` to confirm; reminders stay unless ticked too), write or edit a day's digest yourself (the
+  digester never overwrites yours), see and cancel pending reminders and the recent ones. The retention
+  shows with a link to `[history]` in the Config file tab. Nothing of it is logged but counts and ids.
+  WIRING §17, §30.
 
 - **Her living mood.** Two dials, energy (calm to lively) and feeling (grumpy to pleased), drift with what
   happens and ease back to her temperament: the music's tempo and its drops and breaks, your pats and
