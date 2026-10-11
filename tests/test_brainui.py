@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from pathlib import Path
 
 import aiohttp
@@ -285,7 +286,7 @@ async def test_sentences_reach_the_page_only_while_outcome_logging_is_on(aiohttp
     client, daemon = await learning_daemon(aiohttp_client, log_outcomes)
     signed = await sign_in(client)
     bodies = {}
-    for name in ("learning", "routes", "data", "settings", "system"):
+    for name in ("learning", "routes", "data", "settings", "system", "now"):
         response = await signed.get(f"/ui/api/{name}")
         assert response.status == 200, name
         bodies[name] = await response.text()
@@ -300,7 +301,7 @@ async def test_sentences_reach_the_page_only_while_outcome_logging_is_on(aiohttp
         for name, body in bodies.items():
             assert CANARY not in body, name
         assert all("text" not in e for e in learning["examples"])
-    for name in ("data", "settings", "system"):
+    for name in ("data", "settings", "system", "now"):
         assert CANARY not in bodies[name], name
     await daemon.close()
 
@@ -349,7 +350,7 @@ async def test_no_sentence_or_token_reaches_a_log_line(caplog):
             page = await (await session.get(base + "/ui", headers=headers)).text()
             csrf = re.search(r'content="([^"]+)">', page.split('name="csrf"')[1]).group(1)
             headers[brainui.CSRF_HEADER] = csrf
-            for name in ("learning", "routes", "data", "system"):
+            for name in ("learning", "routes", "data", "system", "now"):
                 body = await (await session.get(f"{base}/ui/api/{name}", headers=headers)).text()
                 assert name != "learning" or CANARY in body
             await session.get(f"{base}/ui/login?token={token}", allow_redirects=False)   # used: a 403, logged
@@ -549,3 +550,52 @@ def test_the_settings_page_shows_secrets_as_set():
     assert out["tools"]["servers"]["spotify"]["env"] == {"CLIENT_SECRET": "(set)", "PORT": "(set)"}
     assert out["thinker"] == {"api_key": "(set)", "keep_alive": "30m", "max_tokens": 5}
     assert "s3cr3t" not in json.dumps(out)
+
+
+# ----------------------------------------------------------------------------- the Now view and the header
+
+
+async def test_the_now_view_says_her_state_her_card_what_needs_the_user_and_what_is_off(client):
+    from tests.test_runs import HELLO_V2, v2_sink
+
+    signed = await sign_in(client)
+    daemon = ui_of(client).daemon
+    assert (await client.get("/ui/api/now")).status == 401
+    assert (await signed.get("/ui/api/now", csrf=False)).status == 403
+    now = await (await signed.get("/ui/api/now")).json()
+    assert now["state"] == "idle" and now["approval"] is None and now["files"] == [] and now["candidate"] is None
+    assert now["bodies"] == {"widgets": 0, "cards": 0} and now["runs"] == [] and now["privacy"] == []
+    assert now["mood"]["enabled"] and -1 <= now["mood"]["energy"] <= 1 and -1 <= now["mood"]["feeling"] <= 1
+    off = {o["key"] for o in now["off"]}
+    assert {"brain.enabled", "speech.enabled", "voice.enabled", "gate.enabled", "tools.enabled", "thinker.enabled",
+            "learning.log_outcomes", "gestures.enabled"} <= off
+    assert not off & {"history.enabled", "mood.enabled", "messages.enabled"}
+    # Reminders: the next one, and those due within the hour (the user's own words, shown on the page only).
+    soon = daemon.history.add_timer(time.time() + 600, f"call {CANARY}")
+    later = daemon.history.add_timer(time.time() + 3 * 3600, "water the plants")
+    reminders = (await (await signed.get("/ui/api/now")).json())["reminders"]
+    assert reminders["enabled"] and reminders["pending"] == 2 and reminders["next"]["id"] == soon
+    assert [t["id"] for t in reminders["soon"]] == [soon] and later != soon
+    # A body that shows her card and may answer it counts; one that only draws does not.
+    v2_sink(daemon, HELLO_V2)
+    v2_sink(daemon, HELLO_V2 | {"capabilities": HELLO_V2["capabilities"] | {"approvals": True,
+                                                                          "sends": {"approval": True}}})
+    now = await (await signed.get("/ui/api/now")).json()
+    assert now["bodies"] == {"widgets": 2, "cards": 1}
+    assert (await (await signed.get("/ui/api/system")).json())["cards"] == 1
+    # A privacy setting looser than its default shows; a file that does not check out says where it is fixed.
+    daemon.config.learning.log_outcomes = True
+    daemon.config.notifications.body_apps = {"Signal": "glance"}
+    daemon.apps.path.parent.mkdir(parents=True, exist_ok=True)
+    daemon.apps.path.write_text("this is = = not toml\n", encoding="utf-8")
+    daemon.apps.check(force=True)
+    now = await (await signed.get("/ui/api/now")).json()
+    assert [p["key"] for p in now["privacy"]] == ["learning.log_outcomes", "notifications.body"]
+    assert [(f["file"], f["tab"]) for f in now["files"]] == [("apps.toml", "apps")] and now["files"][0]["problems"]
+    assert "learning.log_outcomes" not in {o["key"] for o in now["off"]}
+
+
+async def test_the_system_view_names_the_head_in_use_even_with_the_gate_off(client):
+    signed = await sign_in(client)
+    system = await (await signed.get("/ui/api/system")).json()
+    assert system["head"] == "shipped" and system["cards"] == 0

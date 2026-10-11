@@ -152,8 +152,19 @@ def test_the_page_has_the_new_groups_and_puts_text_in_as_text():
     page = (ui / "index.html").read_text(encoding="utf-8")
     for group in ("Her", "Activity", "Learning", "Settings", "System"):
         assert f"<h3>{group}</h3>" in page
-    for section in ("persona", "profile", "runs", "router", "learning", "data", "settings", "system"):
+    sections = ("now", "persona", "profile", "mood", "runs", "history", "learning", "privacy", "config", "tools", "input",
+                "apps", "health")
+    for section in sections:
         assert f'data-section="{section}"' in page and f'<section id="{section}"' in page
+    # The side bar's order is the script's, and Now (the landing view) comes first.
+    nav = page[page.index("<nav"):page.index("</nav>")]
+    assert [nav.index(f'data-section="{s}"') for s in sections] == sorted(nav.index(f'data-section="{s}"') for s in sections)
     script = (ui / "app.js").read_text(encoding="utf-8")
+    assert '"now", "persona", "profile", "mood", "runs", "history", "learning", "privacy", "config", "tools", "input",' in script
     assert "innerHTML" not in script and "insertAdjacentHTML" not in script and "eval(" not in script
     assert 'id="attention"' in page
+    # No tab shares its group's name, and the old tabs' links open where their content went.
+    for gone in ("router", "data", "settings", "system"):
+        assert f'data-section="{gone}"' not in page and f'<section id="{gone}"' not in page
+    assert ('const MOVED = { router: ["runs", "router"], data: ["learning", "evaluation"], settings: ["privacy", null],\n'
+            '                  system: ["health", null] };') in script

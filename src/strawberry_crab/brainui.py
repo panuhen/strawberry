@@ -7,6 +7,8 @@ nothing here decides anything.
     GET  /ui/login?token=     swaps the token for a session cookie, then redirects to /ui
     GET  /ui                  the page; /ui/app.js, /ui/style.css, /ui/icon.svg beside it
     GET  /ui/api/learning | routes | runs | data | settings | system | persona | profile | input
+    GET  /ui/api/now          the Now view and the header: her state and mood, her card on a screen or not, what
+                              needs the user, the last runs, what is switched off and what privacy is loosened
     GET  /ui/api/events       server-sent events: `route` (a sentence routed), `run` (a step of a run,
                               runs.py), `learning` (a file of the loop changed), a comment line as a
                               keep-alive
@@ -218,6 +220,7 @@ def setup(app: web.Application, daemon) -> BrainUI:
         web.get("/ui/api/data", api_data),
         web.get("/ui/api/settings", api_settings),
         web.get("/ui/api/system", api_system),
+        web.get("/ui/api/now", api_now),
         web.get("/ui/api/events", api_events),
         web.post("/ui/api/accept", api_accept),
         web.post("/ui/api/reject", api_reject),
@@ -508,9 +511,93 @@ def system_view(ui: BrainUI) -> dict[str, Any]:
     thinker = {k: v for k, v in d.thinker.stats().items() if k != "last"}
     trainer = d.trainer.health()
     return {"version": __version__, "uptime_s": round(d.uptime, 1), "widgets": d.hub.count,
-            "widget_versions": d.hub.versions, "state": d.current_state(), "gate": gate, "brain": d.brain_stats(),
-            "thinker": thinker, "speech": d.speaker.stats(), "voice": voice, "tools": d.toolbox.stats(),
-            "learning": d.outcomes.stats() | trainer, "config_path": str(d.config.path) if d.config.path else None}
+            "widget_versions": d.hub.versions, "cards": card_count(d), "state": d.current_state(), "gate": gate,
+            "brain": d.brain_stats(), "thinker": thinker, "speech": d.speaker.stats(), "voice": voice,
+            "tools": d.toolbox.stats(), "learning": d.outcomes.stats() | trainer,
+            "head": ui.learning.in_use().get("version"),
+            "config_path": str(d.config.path) if d.config.path else None}
+
+
+def card_count(d) -> int:
+    """How many connected bodies show her approval card and may answer it (`approvals` and `approval` accepted,
+    as approval_card.gd reads its welcome): with none, a question that only her card takes cannot be answered."""
+    return sum(1 for row in d.hub.bodies() if row.get("approvals") and row.get("approval"))
+
+
+# ----------------------------------------------------------------------------- the Now view
+
+NOW_RUNS = 5                   # the last runs the Now view shows
+SOON_S = 3600.0                # a reminder due within this counts as "soon"
+# What can be switched off, as (section, key, what it is), for the Now view's "switched off" list.
+SWITCHES = (("brain", "enabled", "the reaction model (canned lines only)"), ("speech", "enabled", "her voice"),
+            ("voice", "enabled", "listening"), ("gate", "enabled", "the gate (router)"),
+            ("actions", "enabled", "reflexes"), ("thinker", "enabled", "the thinker"), ("tools", "enabled", "tools"),
+            ("beat", "enabled", "dancing to the beat"), ("messages", "enabled", "the messages inbox"),
+            ("history", "enabled", "history"), ("mood", "enabled", "mood"), ("gestures", "enabled", "hand gestures"),
+            ("learning", "log_outcomes", "router learning (outcome logging)"))
+
+
+def privacy_loosened(config) -> list[dict[str, str]]:
+    """The privacy settings set looser than their defaults (the Privacy tab's three cards), for the header."""
+    n = config.notifications
+    out = []
+    if config.learning.log_outcomes:
+        out.append({"key": "learning.log_outcomes", "what": "keeping your sentences"})
+    if config.daemon.log_sentences:
+        out.append({"key": "daemon.log_sentences", "what": "sentences in the log"})
+    if n.body != "off" or any(mode != "off" for mode in n.body_apps.values()):
+        out.append({"key": "notifications.body", "what": "reading message text"})
+    return out
+
+
+def now_view(ui: BrainUI, pending: Any) -> dict[str, Any]:
+    """The Now view and the header: what she is doing, her mood, whether her card is on a screen, what needs the
+    user, the last runs and what is switched off. Sync (file reads): off the event loop. `pending`: the settings
+    change waiting on her card (configui), whose approval lives in the Config file tab."""
+    d, c = ui.daemon, ui.daemon.config
+    approval = d.approvals.views()["open"]
+    if approval is not None:
+        asks = pending is not None and pending.state == "waiting" and pending.approval.approval_id == approval["approval_id"]
+        approval = {k: approval.get(k) for k in ("approval_id", "tool", "risk", "prompt", "expires_in", "yes_by")}
+        approval["where"] = "config" if asks else "runs"
+    files = []
+    problems = d.persona.status()["error"]
+    if problems:
+        files.append({"file": "persona.md", "tab": "persona", "problems": list(problems)})
+    for name, tab, status in (("input.toml", "input", d.input.store.status()), ("apps.toml", "apps", d.apps.status())):
+        if status.get("error"):
+            files.append({"file": name, "tab": tab, "problems": [status["error"]]})
+    candidate = ui.learning.candidate()
+    mood = {"enabled": d.mood.enabled}
+    if d.mood.enabled:
+        energy, feeling = d.mood.current()
+        mood |= {"energy": round(energy, 3), "feeling": round(feeling, 3)}
+    off = [{"key": f"{section}.{key}", "what": what} for section, key, what in SWITCHES
+           if not getattr(getattr(c, section), key)]
+    return {"state": d.current_state(), "mood": mood, "bodies": {"widgets": d.hub.count, "cards": card_count(d)},
+            "approval": approval, "files": files, "candidate": (candidate or {}).get("version"),
+            "runs": [run.view() for run in d.runs.recent(NOW_RUNS)], "off": off, "privacy": privacy_loosened(c)}
+
+
+def reminders_soon(store: Any, now: float) -> dict[str, Any]:
+    """The pending reminders: the next one and those due within the hour. On the history's writer thread."""
+    pending = store.timers("pending")
+    soon = [t for t in pending if t["due"] <= now + SOON_S]
+    return {"next": pending[0] if pending else None, "soon": soon, "pending": len(pending)}
+
+
+@checked("get")
+async def api_now(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    from .configui import DESK   # local: configui imports this module
+
+    desk = request.app.get(DESK)
+    out = await asyncio.to_thread(now_view, ui, desk.pending if desk is not None else None)
+    store = ui.daemon.history
+    reminders: dict[str, Any] = {"enabled": store is not None and store.conn is not None, "next": None, "soon": [],
+                                 "pending": 0}
+    if reminders["enabled"]:
+        reminders |= await store.call(reminders_soon, store, time.time())
+    return web.json_response(out | {"reminders": reminders})
 
 
 async def json_of(work: Callable[[], Any]) -> web.Response:
