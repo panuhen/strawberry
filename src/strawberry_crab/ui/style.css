@@ -372,3 +372,27 @@ tr.dup td { background: var(--warn-wash); }
   border: 1px solid var(--rim-strong); padding: 4px 8px; min-width: 260px;
 }
 #apps-table input[type="text"] { width: 100%; min-width: 180px; }
+
+/* The Config file and Tools tabs (WIRING.md §28) */
+details.conf-section { border: 1px solid var(--line); background: var(--glass); padding: 8px 12px; }
+details.conf-section + details.conf-section { margin-top: 8px; }
+details.conf-section > summary { color: var(--ink); font-weight: 600; }
+details.conf-section[open] > summary { margin-bottom: 8px; }
+.conf-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px 20px; }
+.conf-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.88rem; min-width: 0; }
+.conf-field .k { color: var(--ink-dim); }
+.conf-field .k .set { color: var(--berry-ink); }
+.conf-field .s { color: var(--ink-faint); font-size: 0.78rem; overflow-wrap: anywhere; }
+.conf-field .s.bad, .field .s.bad { color: var(--berry-ink); }
+.conf-input { display: flex; gap: 6px; align-items: flex-start; min-width: 0; }
+.conf-input > .dim { overflow-wrap: anywhere; min-width: 0; }
+.conf-input input[type="text"], .conf-input select { flex: 1; min-width: 0; }
+textarea.small {
+  width: 100%; min-height: 54px; resize: vertical; padding: 6px 8px; font: inherit; font-size: 0.86rem;
+  color: var(--ink); background: var(--glass-strong); border: 1px solid var(--rim-strong);
+}
+textarea.small.mono { font-family: var(--mono); font-size: 0.8rem; }
+.conf-review > * + * { margin-top: 10px; }
+.login { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#tools-form .fields + .fields, #tools-form .fields + .actions, #tools-form .actions + .fields, #tools-form .actions + .field,
+#tools-form .field + .actions { margin-top: 12px; }

@@ -16,6 +16,7 @@ nothing here decides anything.
     POST /ui/api/persona/check | persona/save | persona/try | profile/save | profile/revert
     POST /ui/api/input/check | input/save | input/practice | input/camera
     GET  /ui/api/apps; POST /ui/api/apps/check | apps/save    the Apps tab (appsui.py)
+    GET  /ui/api/config | tools; POST /ui/api/config/check | config/save    the Config file and Tools tabs (configui.py)
 
 Everything else on the port refuses a request with an Origin header, so no web page can reach
 it. The routes under /ui are the one place a browser is let in, and only this way:
@@ -240,9 +241,10 @@ def setup(app: web.Application, daemon) -> BrainUI:
         web.post("/ui/api/input/practice", api_input_practice),
         web.post("/ui/api/input/camera", api_input_camera),
     ])
-    from . import appsui   # local: the Apps tab's routes use this module's checks (appsui.py, WIRING §27)
+    from . import appsui, configui   # local: these tabs' routes use this module's checks (WIRING §27, §28)
 
     appsui.add_routes(app)
+    configui.add_routes(app)
     return ui
 
 
@@ -543,8 +545,16 @@ async def api_data(request: web.Request, ui: BrainUI, session: Session) -> web.R
 
 @checked("get")
 async def api_settings(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
+    from .configform import secret_paths   # local: configform brings tomlkit
+
     config = ui.daemon.config
     shown = redacted(config.to_dict())
+    # And what the editor hides too: a token in a server's arguments or in an address (configform.secret_paths).
+    for path in secret_paths(shown):
+        node: Any = shown
+        for part in path[:-1]:
+            node = node[part]
+        node[path[-1]] = "(set)"
     return web.json_response({"path": str(config.path) if config.path else None, "config": shown,
                               "toml": as_toml(shown), "live": LIVE, "persona_path": str(paths.persona_file()),
                               "profile_path": str(paths.profile_file())})
@@ -758,7 +768,9 @@ async def api_approval(request: web.Request, ui: BrainUI, session: Session) -> w
         raise web.HTTPBadRequest(text="answer must be yes or no")
     reason = ui.daemon.approvals.answer(approval_id, answer, "ui")
     if reason is not None:
-        why = {"resolved": "that question has been answered already"}.get(reason, "she is not waiting on that question")
+        why = {"resolved": "that question has been answered already",
+               "not_here": "this one takes a held Yes on her card, not a yes from this page (No works here)",
+               }.get(reason, "she is not waiting on that question")
         return web.json_response({"error": why, "reason": reason}, status=409)
     log.info("ui: approval %s answered %s by hand", approval_id, answer)
     return web.json_response({"answered": approval_id, "answer": answer})
@@ -1085,10 +1097,14 @@ async def api_input_check(request: web.Request, ui: BrainUI, session: Session) -
 async def api_input_save(request: web.Request, ui: BrainUI, session: Session) -> web.Response:
     """Settings that check out written as input.toml (atomic, the old file kept as input.toml.bak) and used at
     once; never config.toml. 400 with the problems when they do not check out."""
-    draft = _input_draft(ui, await _payload(request))
+    data = await _payload(request)
+    draft = _input_draft(ui, data)
     if not draft["ok"]:
         return web.json_response({"error": "the settings do not check out", "problems": draft["problems"]}, status=400)
     store = ui.daemon.input.store
+    pending = _input_asks(request, ui, data, draft["text"])
+    if pending is not None:
+        return pending
     try:
         backup = await asyncio.to_thread(inputs.save, draft["text"], store.path)
     except OSError as exc:
@@ -1100,6 +1116,41 @@ async def api_input_save(request: web.Request, ui: BrainUI, session: Session) ->
              " (the old one kept as input.toml.bak)" if backup else "")
     return web.json_response({"saved": str(store.path), "backup": str(backup) if backup else None}
                              | await asyncio.to_thread(input_view, ui))
+
+
+def _input_asks(request: web.Request, ui: BrainUI, data: dict[str, Any], text: str) -> web.Response | None:
+    """input.toml's [gestures] replaces config.toml's whole, so a setting that loosens safety there (a thumb that
+    answers her card, a camera that watches all the time instead of when armed: configform.lowering against what
+    she runs with) waits for a yes on her card like the same edit in config.toml (configui.ask): 202. None: no
+    such setting, save at once."""
+    import dataclasses
+
+    from . import configform, configui   # local: configui builds on this module
+
+    d = ui.daemon
+    _text, gestures_, touch = inputs.from_view(data.get("settings"), d.config)
+    after = dataclasses.replace(d.config, gestures=dataclasses.replace(gestures_, enabled=d.config.gestures.enabled),
+                                touch=touch)
+    findings = configform.lowering(d.config, after, configui.known_tools(ui))
+    if not findings:
+        return None
+    desk = request.app[configui.DESK]
+    if desk.busy(ui) is not None:
+        return web.json_response({"error": desk.busy(ui), "busy": True}, status=409)
+    store = d.input.store
+
+    def write(new: str, base: str) -> Path | None:
+        if configform.tag(store.text()) != base:
+            raise configform.Stale("input.toml changed since this page loaded it")
+        return inputs.save(new, store.path)
+
+    def apply() -> list[str]:
+        store.check(force=True)
+        return ["gestures", "touch"]
+
+    pending = configui.ask(ui, desk, text, configform.tag(store.text()), findings, ["gestures"], file="input.toml",
+                           write=write, apply=apply)
+    return web.json_response({"pending": pending.view()}, status=202)
 
 
 @checked("post")

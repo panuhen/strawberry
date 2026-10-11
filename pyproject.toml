@@ -33,6 +33,8 @@ dependencies = [
     # Linux records with pw-record.
     "sounddevice>=0.5; sys_platform == 'win32'",
     "tokenizers>=0.20",
+    # The Brain UI's config.toml editor (configform.py): edits that keep the file's comments and order.
+    "tomlkit>=0.13",
     # Media on Windows: the System Media Transport Controls (smtc.py, doorways/smtc_watch.py).
     "winrt-runtime>=3.2; sys_platform == 'win32'",
     "winrt-Windows.Foundation>=3.2; sys_platform == 'win32'",
