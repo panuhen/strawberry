@@ -16,6 +16,7 @@ nothing here decides anything.
     POST /ui/api/persona/check | persona/save | persona/try | profile/save | profile/revert
     POST /ui/api/input/check | input/save | input/practice | input/camera
     GET  /ui/api/apps; POST /ui/api/apps/check | apps/save    the Apps tab (appsui.py)
+    GET  /ui/api/mood; POST /ui/api/mood/reset                the Mood view (moodui.py)
 
 Everything else on the port refuses a request with an Origin header, so no web page can reach
 it. The routes under /ui are the one place a browser is let in, and only this way:
@@ -243,6 +244,9 @@ def setup(app: web.Application, daemon) -> BrainUI:
     from . import appsui   # local: the Apps tab's routes use this module's checks (appsui.py, WIRING §27)
 
     appsui.add_routes(app)
+    from . import moodui   # the Mood view (moodui.py, WIRING §29)
+
+    moodui.add_routes(app)
     return ui
 
 

@@ -31,6 +31,7 @@ from . import persona as personas
 from . import profile as profiles
 from .inbox import Inbox, MessagesAdapter, MessagesSession
 from .inputs import InputDesk
+from .mood import Mood
 from .apps import AppStore, apps_file
 from .desktop import SERVER, TOPIC as DESKTOP_TOPIC, Desktop, DesktopAdapter, DesktopSession, SpotifyWake
 from .outcomes import OutcomeLog
@@ -186,6 +187,18 @@ class Daemon:
         # input.toml (live), the last gestures and touch actions, the Input tab's live view and practice mode
         # (inputs.py, WIRING.md §17, §26).
         self.input = InputDesk(self)
+        self._living_mood()
+
+    def _living_mood(self) -> None:
+        """Her living mood (mood.py, WIRING §29): expression only. It goes to the bodies that ask, into Piper's pace
+        and into the reaction model's prompt; nothing that decides reads it."""
+        self.mood = Mood(self.config.mood, temperament=self.persona.temperament)
+        self.mood.send = self.hub.send_mood
+        if self.mood.enabled:
+            if hasattr(self.reactor, "mood"):
+                self.reactor.mood = self.mood.line
+            if hasattr(self.speaker, "pace"):
+                self.speaker.pace = self.mood.pace
 
     def _desktop_controls(self) -> None:
         """The desktop's own controls (desktop.py, apps.py, WIRING §27): the apps on the user's list (apps.toml, read
@@ -260,6 +273,7 @@ class Daemon:
         self.trainer.start()
         self.input.store.start()
         self.apps.start()
+        self.mood.start(self.runs)
         if self.config.voice.enabled and self.config.voice.hotwords and self.toolbox.servers:
             self.vocabulary_task = asyncio.get_running_loop().create_task(self._vocabulary_loop())
         if self.wake is not None:
@@ -314,6 +328,7 @@ class Daemon:
             task.cancel()
         self.input.store.close()
         self.apps.close()
+        await self.mood.close()
         await self.trainer.close()
         self.outcomes.close()
         # Each part is closed even if another one fails: an HTTP session left open is an
@@ -455,6 +470,7 @@ class Daemon:
         """Forward one beat estimate to the widgets as {"tempo": {...}} and remember it."""
         self.tempo = tempo
         self.tempo_at = time.monotonic()
+        self.mood.tempo(tempo)     # its numbers and section only (mood.py)
         return await self.hub.send({"tempo": tempo})
 
     async def refresh_vocabulary(self) -> None:
@@ -666,6 +682,7 @@ class Daemon:
         way) and is handled as usual, after "I've left that, then.\""""
         self.voice_handling += 1
         self.voice_at = time.monotonic()
+        self.mood.heard(event.title)   # the user's own sentence: matched, not kept (mood.py); decides nothing
         try:
             pending = self.approvals.open
             said = confirm.answer(event.title) if pending is not None else None
@@ -1220,6 +1237,7 @@ class Daemon:
         that asked (`touched`), and, when [touch] maps it to a reflex, that reflex is run in the background
         (one at a time, `cooldown_s` apart). Nothing is said; the timeline gets a notice when it acted."""
         self.targets.touched(body, body.id, touch.entity, touch.kind, touch.t)
+        self.mood.touched(touch.entity.kind, touch.kind)
         action = self.touch_action(touch.entity.id, touch.kind)
         entry = None
         recent = self.input.recent

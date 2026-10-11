@@ -4,7 +4,7 @@ A v2 body names the separate things it draws in its hello (`capabilities.entitie
 crab herself) and says what input it sends (`capabilities.sends.touch`, `sends.target`). Then it reports
 what the user does to them:
 
-    touch   {entity, kind: poke|flick|grab|drag|release|fuse, with?, strength?, t?}   a discrete touch
+    touch   {entity, kind: poke|flick|grab|drag|release|fuse|pat, with?, strength?, t?}   a discrete touch
     target  {entity | null, via: pointer|touch|gesture, t?}                             what the user points at
 
 Both need the bus secret (a trusted body, PROTOCOL §1.4) and the declared capability, are rate-limited per
@@ -34,7 +34,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
-TOUCH_KINDS = ("poke", "flick", "grab", "drag", "release", "fuse")
+TOUCH_KINDS = ("poke", "flick", "grab", "drag", "release", "fuse", "pat")
 VIAS = ("pointer", "touch", "gesture")
 # An entity's id: a lowercase token, starting with a letter. Short, so it can sit in a config key ([touch]
 # music.flick) and be how code names it to a model ("the music orb") without being anyone's sentence.
@@ -65,7 +65,7 @@ TOUCH_ACTIONS = {
 ACTION_ALIASES = {"next": "skip", "play": "resume"}
 # How her timeline says the touch (Daemon: the notice when one was acted on).
 VERBS = {"poke": "poked", "flick": "flicked", "grab": "grabbed", "drag": "dragged", "release": "let go of",
-         "fuse": "fused"}
+         "fuse": "fused", "pat": "patted"}
 
 
 def action_name(value: str) -> str:

@@ -147,6 +147,8 @@ class OllamaReactor:
         self.recent: deque[str] = deque(maxlen=RECENT_LINES)
         self.rng = random.Random()
         self.rewarm: asyncio.Task | None = None
+        # Her living mood's one sentence (mood.Mood.line, set by the daemon): word choice only, after the rules.
+        self.mood: Any = None
 
     def stats(self) -> dict[str, Any]:
         return {
@@ -211,13 +213,15 @@ class OllamaReactor:
 
     def system(self) -> str:
         """The system prompt: `[brain] persona` as written when it is set (deprecated), else persona.md's,
-        with the profile's short summary when there is one."""
+        with the profile's short summary when there is one; then her mood's sentence when the mood is on."""
+        mood = self.mood() if self.mood is not None else ""
         if self.brain.persona:
-            return self.brain.persona
+            return f"{self.brain.persona} {mood}" if mood else self.brain.persona
         summary = ""
         if self.profile is not None:
             summary = self.profile.summary(personas.REACT_PROFILE_TOKENS)
-        return self.persona.current().reaction_system(self.brain.max_words, summary)
+        system = self.persona.current().reaction_system(self.brain.max_words, summary)
+        return f"{system} {mood}" if mood else system
 
     def examples(self) -> list[dict[str, str]]:
         """`[brain] examples` when set (deprecated), else persona.md's, shown as real events are."""

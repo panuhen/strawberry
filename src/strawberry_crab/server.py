@@ -47,7 +47,7 @@ from .daemon import Daemon
 from .events import Event
 from .gestures import GestureError, parse_gesture, parse_hand
 from .inputs import WATCHER_HEADER
-from .hub import accepted_gestures
+from .hub import accepted_gestures, accepted_mood
 from .logtext import sentence
 
 log = logging.getLogger("strawberryd.http")
@@ -246,6 +246,7 @@ async def health(request: web.Request) -> web.Response:
             "confirm": daemon.confirm_stats(),
             "approvals": daemon.approvals.stats(),
             "gestures": daemon.gestures.stats(),
+            "mood": daemon.mood.stats(),       # her living mood (mood.py): the two dials and counts
             "thinker": daemon.thinker.stats(),
             "learning": daemon.outcomes.stats() | daemon.trainer.health(),
             "ledger": daemon.ledger.to_list(notices=True),
@@ -586,6 +587,7 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
     if kind == "hello":
         log.info("widget hello: %s", {k: v for k, v in data.items() if k not in ("type", "capabilities", bussecret.FIELD)})
         body = daemon.hub.hello(ws, data, daemon.bus_secret())
+        body.mood = body.mood and daemon.mood.enabled   # [mood] enabled = false: nobody gets it (mood.py)
         if not body.trusted:
             log.info("widget hello without %s bus secret: the shape of performances and phases only, no words, "
                      "input or approvals",
@@ -607,6 +609,8 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
                 pending = daemon.approvals.open
                 if pending is not None and pending.request is not None and body.approvals:
                     await ws.send_str(json.dumps(pending.request, ensure_ascii=False))
+                if body.mood:   # her mood as it is now (PROTOCOL Part 1e); then on each change
+                    await ws.send_str(json.dumps(daemon.mood.message()))
             _first_run_notice(daemon, ws, body)
     elif kind == "ping":
         sent_t = data.get("t")
@@ -718,7 +722,8 @@ def welcome(daemon: Daemon, body) -> dict[str, Any]:
     message: dict[str, Any] = {"type": "welcome", "protocol": body.protocol, "brain": __version__,
                                "t": round(time.monotonic(), 6), "rest_state": daemon.rest_state,
                                "accepted": {"phases": sorted(body.phases), "cancel": body.cancel}
-                               | body.accepted_approvals() | body.accepted_input() | accepted_gestures(body), "trusted": body.trusted}
+                               | body.accepted_approvals() | body.accepted_input() | accepted_gestures(body)
+                               | accepted_mood(body), "trusted": body.trusted}
     if body.id:
         message["body_id"] = body.id
     return message

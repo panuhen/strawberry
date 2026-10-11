@@ -120,6 +120,8 @@ class Body:
     connected: float = field(default_factory=time.monotonic)
     gestures: frozenset[str] = frozenset()   # accepted: `gesture` and/or `hand` (gestures.py; trusted v2 only)
     gestures_asked: bool = False             # its hello mentioned capabilities.gestures (welcome says what it got)
+    mood: bool = False                       # accepted: it gets `mood` (mood.py, PROTOCOL Part 1e; trusted v2 only)
+    mood_asked: bool = False                 # its hello mentioned capabilities.mood
 
     def wants(self, kind: str) -> bool:
         if self.protocol < 2:
@@ -230,6 +232,24 @@ def gestures_from_hello(body: Body, data: dict[str, Any]) -> None:
     body.gestures = frozenset(k for k in wanted if k in GESTURE_KINDS) if body.trusted else frozenset()
 
 
+def mood_from_hello(body: Body, data: dict[str, Any]) -> None:
+    """`capabilities.mood: true` (PROTOCOL Part 1e): her living mood, given only to a trusted v2 body (it moves with
+    what the user does to her)."""
+    if body.protocol < 2:
+        return
+    capabilities = data.get("capabilities") if isinstance(data.get("capabilities"), dict) else {}
+    asked = capabilities.get("mood")
+    if asked is None:
+        return
+    body.mood_asked = True
+    body.mood = asked is True and body.trusted
+
+
+def accepted_mood(body: Body) -> dict[str, bool]:
+    """`mood` for welcome's `accepted` and /health, when the hello mentioned it."""
+    return {"mood": body.mood} if body.mood_asked else {}
+
+
 def accepted_gestures(body: Body) -> dict[str, list[str]]:
     """`gestures` for welcome's `accepted` and /health, when the hello mentioned it."""
     return {"gestures": sorted(body.gestures)} if body.gestures_asked else {}
@@ -271,6 +291,7 @@ class WidgetHub:
         daemon's bus secret, which the hello must present for input and approvals (body_from_hello)."""
         body = body_from_hello(data, secret)
         gestures_from_hello(body, data)
+        mood_from_hello(body, data)
         self._bodies[ws] = body
         return body
 
@@ -287,7 +308,7 @@ class WidgetHub:
                 if body.asked_input:
                     row |= body.accepted_input() | {"entities": [e.to_dict() for e in body.entities],
                                                     "inputs": dict(body.inputs)}
-                row |= accepted_gestures(body)
+                row |= accepted_gestures(body) | accepted_mood(body)
             out.append(row)
         return out
 
@@ -382,6 +403,22 @@ class WidgetHub:
     def wants_gesture(self, kind: str) -> bool:
         """Does any open socket take `gesture` or `hand` (the watcher sends the hand only then)?"""
         return any(kind in self.body(ws).gestures for ws in self._sockets if not ws.closed)
+
+    async def send_mood(self, message: dict[str, Any]) -> int:
+        """Her mood (mood.py, PROTOCOL Part 1e) to every trusted v2 body that accepted it; no other socket gets it."""
+        text = json.dumps(message, ensure_ascii=False)
+        sent = 0
+        for ws in list(self._sockets):
+            body = self.body(ws)
+            if ws.closed or not body.trusted or not body.mood:
+                continue
+            try:
+                await ws.send_str(text)
+                sent += 1
+            except (ConnectionResetError, RuntimeError) as exc:
+                log.warning("dropping widget socket: %s", exc)
+                self._sockets.discard(ws)
+        return sent
 
     async def send_gesture(self, message: dict[str, Any]) -> int:
         """A `gesture` or `hand` message (gestures.py) to every trusted v2 body that asked for its kind; no
