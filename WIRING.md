@@ -996,7 +996,8 @@ added later read as one tool:
   sentences (*held-out*), quick actions (*reflexes*), "sure when right, unsure when wrong" (*AUROC*), reading ms (not
   "gate ms"). Raw ids (a run's, an approval's, an example's key) are in a time's or a sentence's title or in an *Ids*
   fold, never a line of their own. A tab still loading says what it waits for ("Reading config.toml…"); an empty
-  table says what fills it. Prose keeps a measure (78ch); the targets of a link clear the sticky header.
+  table says what fills it. Prose keeps a measure (64ch, about 80 characters); headings step down from a panel's h2 to
+  h3 to h4, never the other way; the targets of a link clear the sticky header.
 - Two time formats, both from `when(ts, recent)`: `YYYY-MM-DD HH:MM`, or for recent activity "40 s ago",
   "in 25 min" within a day (`timeCell` puts the absolute time in its title). Chart axes keep short labels.
 - `rerender` leaves a tab alone while a button there is armed or a field there has the focus, and gives the focus

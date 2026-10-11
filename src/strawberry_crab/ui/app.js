@@ -3538,7 +3538,7 @@
       const node = document.getElementById(anchor);
       if (!node) return;
       for (let fold = node.closest("details"); fold; fold = fold.parentElement && fold.parentElement.closest("details")) fold.open = true;
-      node.scrollIntoView({ block: "start" });
+      (node.closest(".conf-field, .field") || node).scrollIntoView({ block: "start" });     // a field with its label
       if (node.matches("input, select, textarea")) node.focus({ preventScroll: true });
     });
   }

@@ -116,9 +116,9 @@ body {
 code, .mono { font-family: var(--mono); font-size: 0.92em; }
 
 h1, h2, h3, h4 { margin: 0; font-weight: 650; letter-spacing: 0.01em; }
-h2 { font-size: 1.05rem; }
+h2 { font-size: 1.15rem; }
 h3 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); font-weight: 600; }
-h4 { font-size: 0.8rem; color: var(--ink); font-weight: 600; }
+h4 { font-size: 0.72rem; color: var(--ink-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 p { margin: 0.4rem 0; }
 
 .hidden { display: none !important; }
@@ -160,7 +160,7 @@ button.chip { font: inherit; font-size: 0.82rem; color: var(--ink); cursor: poin
 
 .nav { display: flex; flex-direction: column; gap: var(--space-4); position: sticky; top: var(--sticky-top); align-self: start; }
 .nav .group { display: flex; flex-direction: column; gap: 2px; }
-.nav .group h3 { font-size: 0.7rem; color: var(--ink-faint); padding: 0 var(--space-3) var(--space-1); }
+.nav .group h3 { font-size: 0.74rem; color: var(--ink-faint); padding: 0 var(--space-3) var(--space-1); }
 .nav button {
   text-align: left; padding: 9px var(--space-3); background: transparent; color: var(--ink-dim);
   border: 1px solid transparent; border-left: 3px solid transparent; font: inherit; cursor: pointer;
@@ -171,7 +171,7 @@ button.chip { font: inherit; font-size: 0.82rem; color: var(--ink); cursor: poin
 main { min-width: 0; }
 .section { display: flex; flex-direction: column; gap: var(--space-5); }
 .section > :empty { display: none; }      /* a slot with nothing in it (a change waiting, a try) takes no gap */
-.section [id] { scroll-margin-top: calc(var(--sticky-top) + var(--space-2)); }   /* a link's target clears the header */
+.section [id], .section .conf-field, .section .field { scroll-margin-top: calc(var(--sticky-top) + var(--space-2)); }   /* a link's target clears the header */
 
 /* --- the page template: a title panel (the tab's name, a hint, one row of stats), then section panels ------- */
 
@@ -332,9 +332,9 @@ ul.rows > li > .dim { flex-basis: 100%; order: 3; font-size: 0.88rem; }
 
 .empty { color: var(--ink-faint); padding: 10px 0; }
 /* Prose reads at a measure; tables and forms keep the panel's width. */
-.panel > p, .stack > p, .split-main > p, p.dim, p.faint { max-width: 78ch; }
+.panel > p, .stack > p, .split-main > p, p.dim, p.faint { max-width: 64ch; }
 /* A term of art after the plain words: small, never louder than them. */
-.term { color: var(--ink-faint); font-size: 0.82em; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.term { color: var(--ink-faint); font-size: 0.75rem; font-weight: 500; letter-spacing: 0; text-transform: none; }
 td.empty { padding: var(--space-3); }
 
 /* Notes: information (neutral), attention (amber) and something that does not work (berry ink), in a full rim. */
