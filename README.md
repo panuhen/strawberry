@@ -197,6 +197,7 @@ The settings you are most likely to change:
 | `[thinker]` | `stream` | read the big model's reply as it is written, for the tokens-per-second gauge (on) |
 | `[ledger]` | `turns`, `notices`, `window_minutes`, `foreign_minutes` | her short memory: your last exchanges (8) and what she reacted to on her own (8), none older than 60 minutes; for 10 minutes after a sender's or a track's name, a change asks first |
 | `[messages]` | `enabled`, `keep`, `max_age_hours` | her inbox for "any new messages?": on, at most 100 notifications, none older than 24 hours, in memory only; message text only as `[notifications] body` allows |
+| `[history]` | `enabled`, `sentences`, `keep_days`, `digest_months`, `lookback_tokens` | her history on disk (see Privacy): on, your sentences and her replies kept, raw for 14 days, a daily digest for 6 months, a look back adds at most 500 tokens |
 | `[touch]` | `target_s`, `cooldown_s`, `<entity>.<touch>` | what you point at on a body stays meant for 8 s after the body last said so; touch actions at least 1 s apart; the action map, e.g. `music.flick = "next"` (none by default: a touch changes nothing) |
 | `[gestures]` | `enabled`, `watch`, `camera`, `arming`, `require_facing`, `shh_minutes`, `map`, `calibration` | hand gestures through the webcam (off); see [Hand gestures](#hand-gestures-optional). The Brain UI's Input tab keeps this section and `[touch]` in `input.toml`, all but `enabled` |
 | `[gate]` | `scorer` | how she sorts what you say: `head` (a trained head, the default) or `nearest` (each option's nearest examples); `strawberry gate eval` compares them |
@@ -298,7 +299,32 @@ to remember about you ("remember I prefer 24-hour time", "call me Sam") in `prof
 your settings: readable only by you, edited by hand or in the Brain UI, with every earlier version
 kept in the state folder so a change can be undone ("forget that") or reverted. She writes to it
 only from your own sentence, never while a notification, a song or a web page is part of what
-she is answering, and says back what she saved. Nothing else is kept,
+she is answering, and says back what she saved.
+
+**Her history.** She also keeps a history on disk, in `strawberry.db` in the state directory
+(`~/.local/state/strawberry/`, on Windows `%LOCALAPPDATA%\strawberry\state\`), readable only by
+you, so you can ask about the past ("what were we talking about this morning?", "what did I ask
+you yesterday?", "when did we talk about the garden?"):
+
+- **For 14 days, as it was:** what you said or typed and what she answered, what she did (the
+  tools she called, never what she called them with), the questions she asked before a change and
+  your answers, what started playing, and what she reacted to on her own (a notification's app and
+  sender, a commit's subject; never a message's text, and never her line about it). An answer she
+  wrote from your messages is kept without her words; a sentence for your profile, or one with a
+  one-time code or a sign-in link in it, without its words.
+- **Then for 6 months, a short digest of each day:** three to five lines her thinking model writes
+  when she is idle, from what you said and what she did. It never names a sender, a track or a
+  web page; notifications and music go in only as counts ("a few notifications", "some music").
+  A day's raw rows are deleted only after its digest is written.
+
+Nothing of it goes into a prompt unless your sentence is about the past: then she can look back,
+adding at most about 500 tokens. Nothing of it is logged (only counts). The Brain UI will get a
+History view to browse, search and forget (a row, a day or everything) and to edit a digest.
+`[history] sentences = false` keeps no sentences or replies, only what happened; `keep_days`,
+`digest_months` and `lookback_tokens` change the lengths; `enabled = false` turns it off (the file
+stays until you delete it). Making any of these keep more asks on her card first.
+
+Nothing else is kept,
 unless you turn on the learning log (`[learning] log_outcomes = true`, off by default). Then each
 sentence you say or type is kept in `outcomes.jsonl` in the state directory, with how she routed
 it and what came of it (an undo, a correction, a rephrase, or silence), so she can learn from
