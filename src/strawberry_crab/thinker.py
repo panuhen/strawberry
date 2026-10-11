@@ -604,8 +604,11 @@ class Thinker:
         if inbox or past:
             logtext.from_private("the user's messages" if inbox else "her history")
         inbox = inbox or past
+        # A sentence for the profile or her reminders (logtext.private, as its handling began): lengths only here too.
+        private = logtext.private(text) or logtext.withheld() == "profile"
         self.last = {
-            "asked": text, "did": outcome.did, "said": f"<{len(outcome.fact)} chars>" if inbox else outcome.fact,
+            "asked": sentence(text) if private else text, "did": outcome.did,
+            "said": f"<{len(outcome.fact)} chars>" if inbox or private else outcome.fact,
             "emotion": outcome.emotion, "ok": outcome.ok,
             "s": round(self.last_s, 2), "held": outcome.held.key if outcome.held is not None else None,
             "calls": [self.toolbox.shown(c) for c in outcome.calls],

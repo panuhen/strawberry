@@ -35,6 +35,7 @@ import json
 import logging
 import re
 import time
+import weakref
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
@@ -462,6 +463,22 @@ CANCEL_ONE = re.compile(r"^(?:the|my|that|this)?\s*(?P<before>.*?)\s*reminder(?:
 # A sentence about reminders at all: the thinker's offer (`wanted`), and what keeps it out of the journal.
 ASKS = re.compile(r"\bremind\s+me\b|\breminders?\b", re.IGNORECASE)
 logtext.private_sentences(ASKS)   # such a sentence, and her answer, are logged as their lengths only
+
+
+class _Answering:
+    """Read as a pattern by logtext.private: while her "when?" is out, the user's next sentence (a bare "at 16:00"
+    that sets a reminder, its words in her answer) is kept out of the journal too. Asked as the sentence's handling
+    starts (logtext.hearing), before the said reflex reads it."""
+
+    def __init__(self) -> None:
+        self.adapters: weakref.WeakSet[RemindersAdapter] = weakref.WeakSet()
+
+    def search(self, text: str) -> bool:
+        return any(adapter.expecting() for adapter in list(self.adapters))
+
+
+ANSWERING = _Answering()
+logtext.private_sentences(ANSWERING)   # type: ignore[arg-type] - duck-typed: only `search` is used
 _MATCH_STOP = frozenset("the a an my that this to about for at on of reminder reminders one".split())
 
 
@@ -759,7 +776,7 @@ class Reminders:
     def stats(self) -> dict[str, Any]:
         """/health's `reminders`: counts only."""
         return {"available": self.available, "running": self.task is not None and not self.task.done(),
-                "held": self.held_since is not None, **self.counts,
+                "holding": self.held_since is not None, **self.counts,
                 "next_in_s": round(self.next_due - self.clock(), 1) if self.next_due is not None else None}
 
 
@@ -990,7 +1007,9 @@ class RemindersAdapter(Adapter):
     any_topic = True
     # Her questions name a reminder by its time only (code's words), never an argument as it came.
     asks_after_foreign = True
-    private_reply = True
+    #: its reflexes' facts are code's words around the user's own (Daemon._handle_voice): the turn is not foreign in
+    #: the timeline, so "remind me…" does not make the next sentence's run ask before every change
+    own_facts = True
     max_calls = 4
     reads = ("list_reminders",)
     # Setting and cancelling change what she will say later: no question on the user's own sentence, a question once
@@ -1010,6 +1029,7 @@ class RemindersAdapter(Adapter):
     def __init__(self, reminders: Reminders) -> None:
         self.reminders = reminders
         self.awaiting: _Waiting | None = None
+        ANSWERING.adapters.add(self)
 
     def waiting(self, text: str, when: When) -> None:
         """Her question about the time is out: the user's next sentence may be just a time (AWAIT_S)."""

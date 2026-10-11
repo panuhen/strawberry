@@ -575,20 +575,41 @@ async def test_nothing_goes_through_notify_send_or_any_other_program(monkeypatch
     assert "notify" not in source and "subprocess" not in source
 
 
-async def test_no_reminder_text_reaches_a_log_or_health(aiohttp_client, caplog):
+@pytest.mark.parametrize("log_sentences", [False, True])
+async def test_no_reminder_text_reaches_a_log_or_health(aiohttp_client, caplog, log_sentences):
+    """A canary in a reminder's words, set every way there is (a whole sentence, the answer to her "when?", the
+    thinker's call), listed, fired, missed and cancelled: never in a log record at any level, whatever log_sentences
+    says, nor in /health but its timeline."""
+    from strawberry_crab import logtext
+
     caplog.set_level(logging.DEBUG)
-    daemon, sink, qwen, clock = await remind_daemon()
-    client = await aiohttp_client(create_app(daemon))
-    await say(daemon, f"remind me in 20 minutes to feed the {CANARY}")
-    await say(daemon, "what reminders do I have")
-    await daemon.history.call(daemon.history.add_timer, NOW - 3600, f"water the {CANARY}")
-    clock.now += 20 * 60 + 1
-    assert await daemon.reminders.tick() == 2
-    assert any(CANARY in line for line in lines(sink))            # she said them…
-    await say(daemon, f"cancel the {CANARY} reminder")
-    health = await (await client.get("/health")).json()
-    assert health["reminders"]["fired"] == 1 and health["reminders"]["missed"] == 1
-    # …and nothing kept them anywhere else: /health has counts (its `ledger` is the timeline, the user's sentences
-    # as for any other exchange), and no log record has a word of them.
-    assert CANARY not in json.dumps({k: v for k, v in health.items() if k != "ledger"})
-    assert not [r for r in caplog.records if CANARY in r.getMessage()]
+    daemon, sink, qwen, clock = await remind_daemon(
+        [[("set_reminder", {"due": "at 23:00", "text": f"walk the {CANARY}"})], f"[neutral] Okay: walk the {CANARY}."],
+        routes={"at 22:00": reading("at 22:00", kind="other")})
+    logtext.configure(log_sentences)
+    try:
+        client = await aiohttp_client(create_app(daemon))
+        await say(daemon, f"remind me in 20 minutes to feed the {CANARY}")
+        await say(daemon, f"remind me about the {CANARY}")
+        assert (await say(daemon, "at 22:00")).startswith(f"Okay, at 22:00: the {CANARY}.")
+        # The reminders' own turns are not strangers' text: no question here.
+        assert (await say(daemon, f"could you sort out a reminder at 23:00 to walk the {CANARY}")).endswith(
+            CANARY + ".")
+        assert not [e for e in daemon.ledger.to_list() if e["foreign"]]
+        await say(daemon, "what reminders do I have")
+        await daemon.history.call(daemon.history.add_timer, NOW - 3600, f"water the {CANARY}")
+        clock.now += 20 * 60 + 1
+        assert await daemon.reminders.tick() == 2
+        assert any(CANARY in line for line in lines(sink))            # she said them…
+        assert (await say(daemon, f"cancel the {CANARY} reminder")).startswith("Which one?")
+        await say(daemon, "cancel my reminders")
+        health = await (await client.get("/health")).json()
+        assert health["reminders"]["fired"] == 1 and health["reminders"]["missed"] == 1
+        assert health["reminders"]["set"] == 3 and health["reminders"]["cancelled"] == 2
+        # …and nothing kept them anywhere else: /health has counts (its `ledger` is the timeline, the user's
+        # sentences as for any other exchange), and no log record has a word of them.
+        assert CANARY not in json.dumps({k: v for k, v in health.items() if k != "ledger"})
+        assert not [r for r in caplog.records if CANARY in r.getMessage()]
+    finally:
+        logtext.configure(False)
+        await daemon.close()

@@ -58,7 +58,7 @@ def configure(log_sentences: bool) -> None:
 
 def sentence(text: str) -> str:
     """The user's sentence for a log line: quoted when log_sentences is on, else only its length."""
-    if LOG_SENTENCES and not private(text):
+    if LOG_SENTENCES and not private(text) and not _about_profile.get():   # private as its handling began, too
         return repr(text)
     return f"<sentence, {len(text)} chars>"
 

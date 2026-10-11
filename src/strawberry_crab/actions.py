@@ -330,7 +330,8 @@ class Actor:
         self.acted += 1
         if not outcome.ok:
             self.failed += 1
-        private = logtext.private(text)   # a sentence for the profile or her reminders: lengths only in /health
+        # A sentence for the profile or her reminders (as its handling began: logtext.hearing): lengths only in /health.
+        private = logtext.private(text) or logtext.withheld() == "profile"
         self.last = {
             "asked": sentence(text) if private else text, "tool": tool, "server": server, "did": outcome.did,
             "fact": f"<{len(outcome.fact)} chars>" if private else outcome.fact,

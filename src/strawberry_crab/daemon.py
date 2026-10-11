@@ -1019,8 +1019,10 @@ class Daemon:
             self.acted(record, live, "reflex", outcome.ok,
                        reflex=f"{last.get('server', '')}.{last.get('tool') or route.tool}")
             performance, sent = await self.report(outcome.event(text), outcome.ok, preface)
-            # A reflex's fact is written from what a server or the player said (a track's name): foreign.
-            self.ledger.record(text, performance.text or "", did=outcome.did, foreign=True)
+            # A reflex's fact is written from what a server or the player said (a track's name): foreign. Unless its
+            # adapter says its facts are code's words and the user's own (her reminders: `own_facts`).
+            own = getattr(self.toolbox.adapters.get(last.get("server", "")), "own_facts", False) is True
+            self.ledger.record(text, performance.text or "", did=outcome.did, foreign=not own)
             return performance, sent
         if route is not None and self.actor.needs_catalogue(route):
             routing("fixed")
@@ -1061,9 +1063,11 @@ class Daemon:
         # Her question before a held call is not kept in her words either: with it in the ledger, Qwen
         # asked "Remove Blue Monday from your Liked Songs? Say yes." itself, with no call held (confirm.py).
         said = WEB_REPLY if web else confirm.LEDGER_HELD if outcome.held is not None else performance.text or ""
-        # Her answer from a tool's result can carry its names (a playlist, a track): foreign in the timeline.
+        # Her answer from a tool's result can carry its names (a playlist, a track): foreign in the timeline. Not the
+        # results of her profile's tools or her reminders' (the user's own words: `own_words_only`, `own_facts`).
         named = said == performance.text and (getattr(outcome, "foreign", False) or any(
-            not getattr(self.toolbox.adapters.get(c.server), "own_words_only", False) for c in outcome.calls))
+            not (getattr(self.toolbox.adapters.get(c.server), "own_words_only", False)
+                 or getattr(self.toolbox.adapters.get(c.server), "own_facts", False) is True) for c in outcome.calls))
         self.ledger.record(text, said, did=outcome.did, foreign=named)
         return performance, sent
 
