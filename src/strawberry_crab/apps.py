@@ -57,7 +57,7 @@ SNAP_DIR = Path("/var/lib/snapd/desktop/applications")
 # Spotify's desktop ids: the snap, a distribution's package, the Flatpak. The first one installed is the default.
 SPOTIFY_IDS = ("spotify_spotify.desktop", "spotify.desktop", "com.spotify.Client.desktop")
 HEADER = """\
-# The apps she may open or close (WIRING.md §27). Written by the Brain UI's Apps tab (`strawberry ui`); edit it
+# The apps she may open or close. Written by the Brain UI's Apps tab (`strawberry ui`); edit it
 # by hand if you like: she reads it again within a second. Each table is a desktop id (a .desktop file's name);
 # she launches it with gtk-launch and closes it only politely (the window's close request, or a media
 # player's Quit). `name` and `aliases` are the names you may say.

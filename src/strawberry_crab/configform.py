@@ -75,6 +75,127 @@ LIVE_SECTIONS = {
 }
 DEPRECATED = {"brain.persona", "brain.examples", "thinker.acks"}
 
+# The form's words for someone who did not write the code: each section's plain title and its group (the Brain UI's
+# side bar groups), each key's plain label (the page shows the key itself under it, in mono). The hints stay
+# config.py's own comments, without the pointers into the docs and the code that only help a developer (plain()).
+GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Her", ("brain", "thinker", "speech", "mood")),
+    ("Activity", ("runs", "approvals", "history", "ledger", "messages")),
+    ("Learning", ("gate", "learning")),
+    ("Settings", ("notifications", "media", "beat", "voice", "gestures", "touch", "tools", "actions")),
+    ("System", ("daemon",)),
+)
+TITLES = {
+    "daemon": "The daemon", "brain": "Her lines", "media": "Media players", "notifications": "Notifications",
+    "speech": "Her voice", "beat": "The beat", "voice": "Listening", "gate": "The router", "tools": "Tool servers",
+    "actions": "Acting on commands", "thinker": "The thinker", "ledger": "Her short memory",
+    "messages": "Messages inbox", "history": "History", "learning": "Router learning", "runs": "Runs",
+    "approvals": "Approvals", "touch": "Touch", "gestures": "Hand gestures", "mood": "Mood",
+}
+LABELS = {
+    "daemon.host": "Address she listens on", "daemon.port": "Port", "daemon.log_level": "How much the log says",
+    "daemon.warm_on_wake": "Load the models again after sleep", "daemon.log_sentences": "Log my sentences",
+    "brain.enabled": "Her lines from a model", "brain.reaction_model": "Model for her quick lines",
+    "brain.action_model": "Model for commands with tools", "brain.ollama_url": "Ollama's address",
+    "brain.timeout_s": "Wait for a line (s)", "brain.temperature": "Variety (temperature)",
+    "brain.max_words": "Most words in a line", "brain.keep_alive": "Keep the model loaded",
+    "brain.persona": "Persona text (old place)", "brain.examples": "Example lines (old place)",
+    "media.only": "Follow only these players", "media.ignore": "Ignore these players",
+    "notifications.ignore_apps": "Ignore these apps", "notifications.only_apps": "Only these apps",
+    "notifications.min_urgency": "Lowest urgency she reacts to", "notifications.body": "Message text",
+    "notifications.body_apps": "Message text, app by app", "notifications.max_body_chars": "Longest message text read",
+    "notifications.ignore_replacements": "Skip updates to a notification",
+    "notifications.coalesce_s": "Merge notifications within (s)",
+    "speech.enabled": "Speak her lines aloud", "speech.voice": "Voice", "speech.voices_dir": "Voices folder",
+    "speech.speed": "Speed", "speech.volume": "Volume", "speech.noise_scale": "How lively the voice is",
+    "speech.noise_w": "How lively the rhythm is", "speech.quiet_hours": "Quiet hours",
+    "speech.max_chars": "Longest line spoken", "speech.keep_files": "Recent sound files kept",
+    "beat.enabled": "Dance to the beat", "beat.target": "Audio to listen to", "beat.interval_s": "Send the beat every (s)",
+    "voice.enabled": "Listen when you press the hotkey", "voice.model": "Speech recognition model",
+    "voice.language": "Language", "voice.device": "Run recognition on", "voice.compute_type": "Number format",
+    "voice.fallback_model": "Model when the graphics card is full", "voice.source": "Microphone",
+    "voice.bluetooth": "Prefer a Bluetooth headset's mic", "voice.max_seconds": "Longest recording (s)",
+    "voice.silence_s": "Quiet that ends a recording (s)", "voice.min_speech_s": "Shortest speech (s)",
+    "voice.level_db": "Speech louder than (dB)", "voice.beam_size": "Search width",
+    "voice.vocabulary": "Names to recognise", "voice.hotwords": "Names from the music server",
+    "voice.max_hotwords": "Most names from the music server",
+    "voice.vocabulary_refresh_s": "Read the names again every (s)", "voice.hotkey": "Listen hotkey (Windows)",
+    "gate.enabled": "Route spoken sentences", "gate.embedder": "Where the sentence model runs",
+    "gate.onnx_dir": "Sentence model folder (ONNX)", "gate.onnx_threads": "Threads for the sentence model",
+    "gate.model": "Sentence model in Ollama", "gate.query_prefix": "Prefix for a sentence",
+    "gate.document_prefix": "Prefix for an example", "gate.scorer": "How a sentence is scored",
+    "gate.head": "Router version file", "gate.neighbours": "Nearest examples counted",
+    "gate.temperature": "How decisive (temperature)", "gate.act": "Confidence to act",
+    "gate.offer": "Confidence to note a label", "gate.topic_min": "Least confidence for a topic",
+    "gate.timeout_s": "Wait for the sentence model (s)", "gate.retry_timeout_s": "Wait again for a notification (s)",
+    "gate.examples": "Extra example phrases",
+    "tools.enabled": "Use tools", "tools.preconnect": "Connect at start", "tools.result_chars": "Longest tool result read",
+    "tools.connect_timeout_s": "Wait to connect (s)", "tools.call_timeout_s": "Wait for a tool (s)",
+    "tools.servers": "Tool servers",
+    "actions.enabled": "Act on commands", "actions.mpris": "Control any media player",
+    "actions.reflex": "Confidence for a quick action", "actions.argument": "Ask the thinker above",
+    "actions.timeout_s": "Wait for a whole action (s)",
+    "thinker.enabled": "Use the thinker", "thinker.model": "Thinker model", "thinker.think": "Think first",
+    "thinker.keep_alive": "Keep it loaded", "thinker.stream": "Read its reply as it comes",
+    "thinker.num_ctx": "Context size (tokens)", "thinker.num_predict": "Longest reply (tokens)",
+    "thinker.max_tools": "Most tools offered", "thinker.tool_tokens": "Most tokens of tools",
+    "thinker.max_rounds": "Most tool rounds", "thinker.timeout_s": "Wait for a reply (s)",
+    "thinker.ack_after_s": "Say she's on it after (s)", "thinker.still_on_it_s": "Say she's still on it after (s)",
+    "thinker.acks": "Cover lines (old place)",
+    "ledger.turns": "Your last exchanges", "ledger.notices": "Things she reacted to",
+    "ledger.window_minutes": "Nothing older than (min)", "ledger.foreign_minutes": "Foreign text counts for (min)",
+    "messages.enabled": "Keep a messages inbox", "messages.keep": "Most messages kept",
+    "messages.max_age_hours": "Nothing older than (h)",
+    "history.enabled": "Keep a history", "history.sentences": "Keep the words said",
+    "history.keep_days": "Keep the raw rows (days)", "history.digest_months": "Keep the digests (months)",
+    "history.lookback_tokens": "Most a look back adds (tokens)",
+    "learning.log_outcomes": "Keep my sentences for learning", "learning.max_days": "Keep records (days)",
+    "learning.max_records": "Most records kept", "learning.undo_s": "An undo within (s)",
+    "learning.rephrase_s": "A rephrase within (s)", "learning.silence_s": "Quiet that counts as right (s)",
+    "learning.rephrase_similarity": "How close a rephrase is", "learning.idle_train": "Train when idle",
+    "learning.idle_minutes": "Idle for (min)", "learning.min_new_labels": "New examples needed",
+    "learning.auto_switch": "Use a new version at once", "learning.weekly_line": "Say what she learned each week",
+    "learning.max_share": "Most weight for your examples",
+    "runs.events": "Show each run's steps", "runs.supersede": "A new sentence stops the last", "runs.keep": "Runs kept",
+    "approvals.change_s": "Wait for a yes: change (s)", "approvals.sends_s": "Wait for a yes: sends (s)",
+    "approvals.destructive_s": "Wait for a yes: destructive (s)", "approvals.grace_s": "More wait while she listens (s)",
+    "approvals.hold": "Tiers that need a held Yes", "approvals.risk": "Tier of a tool",
+    "touch.target_s": "What you point at holds (s)", "touch.cooldown_s": "Between touch actions (s)",
+    "touch.actions": "Touch actions",
+    "gestures.enabled": "Camera on", "gestures.camera": "Camera", "gestures.watch": "When the camera is open",
+    "gestures.fps": "Frames a second, hand up", "gestures.idle_fps": "Frames a second, looking",
+    "gestures.hold_ms": "Hold time (ms)", "gestures.arming": "Arm with an open palm first",
+    "gestures.armed_s": "Command mode lasts (s)", "gestures.approvals": "A thumb or a nod answers her card",
+    "gestures.zone": "Zone line", "gestures.min_size": "Smallest hand", "gestures.hand_hz": "Hand updates a second",
+    "gestures.hands": "Hands", "gestures.require_facing": "Only while I face the screen",
+    "gestures.face_fps": "Face reads a second", "gestures.shh_minutes": "Quiet after shh (min)",
+    "gestures.map": "Gesture actions", "gestures.calibration": "Calibration",
+    "mood.enabled": "Have a mood",
+}
+
+# A pointer for a developer in a comment config.py has: "WIRING.md §25, §26", "PROTOCOL Part 1c", "(Phase 4)", "§8d",
+# a module ("ledger.py") or a name in the code ("bodylink.TOUCH_ACTIONS", "_migrate_actions").
+_POINTERS = (
+    re.compile(r",?\s*WIRING(?:\.md)?\s*§[\w.-]+(?:\s*,\s*§[\w.-]+)*"),
+    re.compile(r",?\s*PROTOCOL(?:\.md)?\s*(?:Part\s+\w+|§[\w.]+)"),
+    re.compile(r"\s*\(Phase \d+\)"),
+    re.compile(r",?\s*§\d+[a-z]?\b"),
+    re.compile(r"(?<![\w/<])[\w/]+\.py\b[,;]?\s*"),
+    re.compile(r"\s*\((?:[a-z_]+\.[A-Z][A-Z_]+(?:,\s*)?)+\)"),
+    re.compile(r",?\s*\b_[a-z_]+\b"),
+)
+
+
+def plain(text: str) -> str:
+    """A hint or a section's words without the pointers into the docs and the code (_POINTERS)."""
+    for pattern in _POINTERS:
+        text = pattern.sub("", text)
+    text = re.sub(r"\(\s*[,;]?\s*\)", "", text)                  # what the pointers leave: "()", "(, )"
+    text = re.sub(r"\(\s*[,;]\s*", "(", text)
+    text = re.sub(r"\s*[,;]\s*\)", ")", text)
+    text = re.sub(r"\s+([:;,)]|\.(?=\s|$))", r"\1", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
 
 def _kind(dotted: str, default: Any) -> str:
     if dotted == "brain.keep_alive" or dotted == "thinker.keep_alive":
@@ -135,8 +256,8 @@ def _doc(cls: type) -> str:
 
 
 def schema() -> list[dict[str, Any]]:
-    """Every section of config.toml and its keys, for the form: kind, default, choices, the code's hint, and where a
-    key is edited instead when not here."""
+    """Every section of config.toml and its keys, for the form: the section's title and group, each key's label,
+    kind, default, choices, the code's hint, and where a key is edited instead when not here."""
     out = []
     for name, cls in cfg._SECTIONS.items():
         hints = field_hints(cls)
@@ -145,8 +266,9 @@ def schema() -> list[dict[str, Any]]:
         for f in dataclasses.fields(cls):
             dotted = f"{name}.{f.name}"
             default = getattr(defaults, f.name)
-            row: dict[str, Any] = {"key": f.name, "kind": _kind(dotted, default), "default": default,
-                                   "hint": hints.get(f.name, "")}
+            row: dict[str, Any] = {"key": f.name, "label": LABELS.get(dotted) or f.name.replace("_", " ").capitalize(),
+                                   "kind": _kind(dotted, default), "default": default,
+                                   "hint": plain(hints.get(f.name, ""))}
             if dotted in CHOICES:
                 row["choices"] = list(CHOICES[dotted])
             if dotted in ELSEWHERE:
@@ -154,7 +276,9 @@ def schema() -> list[dict[str, Any]]:
             if dotted in DEPRECATED:
                 row["deprecated"] = True
             fields.append(row)
-        out.append({"name": name, "doc": _doc(cls), "live": LIVE_SECTIONS.get(name), "fields": fields})
+        group = next((g for g, names in GROUPS if name in names), "Settings")
+        out.append({"name": name, "title": TITLES.get(name, name), "group": group, "doc": plain(_doc(cls)),
+                    "live": LIVE_SECTIONS.get(name), "fields": fields})
     return out
 
 

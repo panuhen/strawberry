@@ -48,7 +48,7 @@ GESTURE_KEYS = ("camera", "watch", "fps", "idle_fps", "hold_ms", "arming", "arme
 TABLES = ("map", "calibration")      # [gestures.map] and [gestures.calibration], after the section's keys
 TOUCH_KEYS = ("target_s", "cooldown_s", "actions")
 HEADER = """\
-# Hand gestures and touch (WIRING.md §25, §26). Written by the Brain UI's Input tab (`strawberry ui`); edit it
+# Hand gestures and touch. Written by the Brain UI's Input tab (`strawberry ui`); edit it
 # by hand if you like: she reads it again within a second. A section here replaces the same section of
 # config.toml whole (keys left out take their defaults), except `[gestures] enabled`, which stays in
 # config.toml: the tray's Hand gestures row and `strawberry gestures on|off` turn the camera on and off.
