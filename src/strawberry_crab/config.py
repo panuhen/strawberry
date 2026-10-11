@@ -264,6 +264,18 @@ class MessagesConfig:
 
 
 @dataclass
+class HistoryConfig:
+    """Her history (history.py, WIRING.md §30): what was said and done, kept on disk in the state dir (strawberry.db,
+    yours alone), so she can look back when you ask about the past. Raw for keep_days, then a short digest a day."""
+
+    enabled: bool = True           # keep a history (off: nothing is written, and she has no look-back tool)
+    sentences: bool = True         # keep your sentences and her replies (false: only what happened: runs, plays…)
+    keep_days: int = 14            # the raw rows, this many days (a day's go only once it has its digest)
+    digest_months: int = 6         # the daily digests, this many months
+    lookback_tokens: int = 500     # the most one look-back adds to the big model's prompt
+
+
+@dataclass
 class LearningConfig:
     """The router's learning loop (WIRING.md §8c, §8d): what came of each routed sentence, and the
     labels, the candidate heads and the switch built on it. Off by default: on, the sentences you
@@ -394,6 +406,7 @@ class Config:
     thinker: ThinkerConfig = field(default_factory=ThinkerConfig)
     ledger: LedgerConfig = field(default_factory=LedgerConfig)
     messages: MessagesConfig = field(default_factory=MessagesConfig)
+    history: HistoryConfig = field(default_factory=HistoryConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
     runs: RunsConfig = field(default_factory=RunsConfig)
     approvals: ApprovalsConfig = field(default_factory=ApprovalsConfig)
@@ -421,6 +434,7 @@ class Config:
             "thinker": asdict(self.thinker),
             "ledger": asdict(self.ledger),
             "messages": asdict(self.messages),
+            "history": asdict(self.history),
             "learning": asdict(self.learning),
             "runs": asdict(self.runs),
             "approvals": asdict(self.approvals),
@@ -447,6 +461,7 @@ _SECTIONS = {
     "thinker": ThinkerConfig,
     "ledger": LedgerConfig,
     "messages": MessagesConfig,
+    "history": HistoryConfig,
     "learning": LearningConfig,
     "runs": RunsConfig,
     "approvals": ApprovalsConfig,
@@ -594,6 +609,14 @@ def _validate(config: Config) -> None:
                           "ledger.foreign_minutes >= 0 are required")
     if config.messages.keep < 1 or config.messages.max_age_hours <= 0:
         raise ConfigError("messages.keep >= 1 and messages.max_age_hours > 0 are required")
+    history = config.history
+    if not (1 <= history.keep_days <= 3650 and 1 <= history.digest_months <= 120):
+        raise ConfigError("history.keep_days must be between 1 and 3650, history.digest_months between 1 and 120")
+    if history.keep_days > history.digest_months * 30:
+        # A day's raw rows go only once it has a digest: a digest that went first would be written again and again.
+        raise ConfigError("history.keep_days must not be longer than history.digest_months (30 days a month)")
+    if not 50 <= history.lookback_tokens <= config.thinker.num_ctx // 2:
+        raise ConfigError("history.lookback_tokens must be between 50 and half of thinker.num_ctx")
     approvals = config.approvals
     if min(approvals.change_s, approvals.sends_s, approvals.destructive_s) <= 0:
         raise ConfigError("approvals.change_s, sends_s and destructive_s must be positive (how long she waits for a yes)")
@@ -1018,6 +1041,17 @@ def default_toml() -> str:
         f"enabled = {str(MessagesConfig().enabled).lower()}",
         f"keep = {MessagesConfig().keep}                     # at most this many",
         f"max_age_hours = {MessagesConfig().max_age_hours}         # none older than this",
+        "",
+        "[history]",
+        "# Her history, on this machine only (strawberry.db in the state dir, readable by you alone): what you said",
+        "# and she answered, what she did, what played and what she reacted to (a notification's app and sender, never",
+        "# its text), so she can look back when you ask about the past (\"what were we doing this morning?\"). The raw",
+        "# rows are kept keep_days, then a short digest of each day digest_months. The Brain UI can forget any of it.",
+        f"enabled = {str(HistoryConfig().enabled).lower()}",
+        f"sentences = {str(HistoryConfig().sentences).lower()}              # false: no sentences or replies, only what happened",
+        f"keep_days = {HistoryConfig().keep_days}                # the raw rows",
+        f"digest_months = {HistoryConfig().digest_months}             # the daily digests",
+        f"lookback_tokens = {HistoryConfig().lookback_tokens}         # the most one look-back adds to the big model's prompt",
         "",
         "[learning]",
         "# The router's learning loop, data only for now: each sentence you say or type, how the gate read",

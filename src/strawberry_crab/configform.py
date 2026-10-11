@@ -887,7 +887,8 @@ def lowering(old: cfg.Config, new: cfg.Config, known: dict[str, Any] | None = No
       (the shorter of the ledger's window and foreign_minutes) or kept out of the ledger (notices = 0); a thumb
       answering her card.
     privacy: message bodies read more (off < react < glance, per app too), longer, from more apps; sentences kept in
-      the log or the outcome file; DEBUG logging; the inbox switched on; recall workspaces added.
+      the log or the outcome file; DEBUG logging; the inbox switched on; recall workspaces added; her history switched
+      on, keeping sentences again, kept longer (keep_days, digest_months) or a larger look-back (lookback_tokens).
     gestures: the camera always watching instead of armed; the face check, arming or the hold time loosened; the
       zone or the smallest hand made easier; command mode armed for longer.
     Everything else is neutral or raises safety."""
@@ -1002,6 +1003,19 @@ def lowering(old: cfg.Config, new: cfg.Config, known: dict[str, Any] | None = No
         add("privacy", "learning.log_outcomes", "the sentences you say or type would be kept in the outcome file")
     if new.messages.enabled and not old.messages.enabled:
         add("privacy", "messages.enabled", "her inbox would keep your notifications for the big model to read")
+    h0, h1 = old.history, new.history
+    if h1.enabled and not h0.enabled:
+        add("privacy", "history.enabled", "she would keep a history of what you say and what happens, on disk")
+    if h1.sentences and not h0.sentences:
+        add("privacy", "history.sentences", "your sentences and her replies would be kept in her history")
+    if h1.keep_days > h0.keep_days:
+        add("privacy", "history.keep_days", f"what you say would be kept longer ({h0.keep_days} -> {h1.keep_days} days)")
+    if h1.digest_months > h0.digest_months:
+        add("privacy", "history.digest_months", f"the daily digests would be kept longer ({h0.digest_months} -> "
+            f"{h1.digest_months} months)")
+    if h1.lookback_tokens > h0.lookback_tokens:
+        add("privacy", "history.lookback_tokens", f"a look back would put more of her history into a prompt "
+            f"({h0.lookback_tokens} -> {h1.lookback_tokens} tokens)")
 
     # --- gestures (the camera is the watcher's: these make a gesture easier to make by accident, or watch longer)
     g0, g1 = old.gestures, new.gestures

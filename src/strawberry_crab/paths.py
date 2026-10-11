@@ -5,7 +5,8 @@ r"""Where Strawberry keeps things on disk: the XDG base directories, in one plac
                                                                     models/ (the gate's ONNX model), gate/heads/
     state    $XDG_STATE_HOME/strawberry/    (~/.local/state/strawberry/)   tray.json, pidfiles, logs, token caches,
                                                                     privacy-notice-shown, outcomes.jsonl,
-                                                                    bus-secret (0600, bussecret.py)
+                                                                    bus-secret (0600, bussecret.py),
+                                                                    strawberry.db (0600, history.py)
     cache    $XDG_CACHE_HOME/strawberry/    (~/.cache/strawberry/)         what can be made again: widget/, app-icons/
 
 An unset, empty or relative XDG variable falls back to the default, as the spec says. Nothing
@@ -192,6 +193,11 @@ def bus_secret_file() -> Path:
 def outcomes_file() -> Path:
     """The learning loop's records, when `[learning] log_outcomes` is on (outcomes.py)."""
     return state_dir() / "outcomes.jsonl"
+
+
+def history_db() -> Path:
+    """Her history (history.py): one SQLite file, 0600, with its -wal and -shm beside it while she runs."""
+    return state_dir() / "strawberry.db"
 
 
 def systemd_user_dir() -> Path:

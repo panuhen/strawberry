@@ -214,6 +214,13 @@ LOWERING = [
     ("[ledger]\nforeign_minutes = 30.0\n", "[ledger]\nforeign_minutes = 30.0\nwindow_minutes = 20.0\n",
      ["ledger.foreign_minutes"]),
     ("", "[gestures]\nrequire_facing = false\n", ["gestures.require_facing"]),
+    # her history (WIRING §30): switched on, sentences kept again, kept longer, a larger look-back
+    ("[history]\nenabled = false\n", "", ["history.enabled"]),
+    ("[history]\nsentences = false\n", "", ["history.sentences"]),
+    ("", "[history]\nkeep_days = 30\n", ["history.keep_days"]),
+    ("", "[history]\ndigest_months = 12\n", ["history.digest_months"]),
+    ("", "[history]\nlookback_tokens = 800\n", ["history.lookback_tokens"]),
+    ("", "[history]\nenabled = false\nsentences = false\nkeep_days = 7\ndigest_months = 3\nlookback_tokens = 300\n", []),
     ("[gestures]\narming = true\n", "", ["gestures.arming"]),
     ("", "[gestures]\nhold_ms = 300.0\n", ["gestures.hold_ms"]),
     ("", "[gestures]\nzone = 0.9\n", ["gestures.zone"]),
