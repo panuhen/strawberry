@@ -10,6 +10,7 @@ the code and cites it as `file:line`. Part 1b is the part of protocol v2 that is
 their events, stopping a run, approvals and their answers, the clock in ping and pong); it cites
 functions rather than lines. Part 1c is the built input from bodies: the entities a body draws, and the
 `touch` and `target` it sends. Part 1d is the gesture family (`gesture` and `hand`, brain → body), as built.
+Part 1e is her mood (`mood`, brain → body), as built.
 Part 2 is the rest of v2, **PROPOSED**: designs for new message families, not code. Each of its
 sections says in its heading whether it is proposed or partly built.
 
@@ -854,7 +855,7 @@ never sent.
 |---|---|---|---|
 | `type` | `"touch"` | yes | |
 | `entity` | string | yes | an id this body declared |
-| `kind` | `poke` `flick` `grab` `drag` `release` `fuse` | yes | `poke`: a tap. `flick`: a quick throw. `grab`: a press that holds it. `drag`: it moved while held (send it at most a few times a second, not every frame). `release`: let go. `fuse`: dragged onto another entity |
+| `kind` | `poke` `flick` `grab` `drag` `release` `fuse` `pat` | yes | `poke`: a tap. `pat`: a gentle press that does not move it (the crab: a still press she leans into; since 2026-10-11, for her mood, Part 1e). `flick`: a quick throw. `grab`: a press that holds it. `drag`: it moved while held (send it at most a few times a second, not every frame). `release`: let go. `fuse`: dragged onto another entity |
 | `with` | string | with `fuse` only | the other entity, an id this body declared, not `entity` itself |
 | `strength` | number 0–1 | no | how hard or fast, if the body measures it |
 | `t` | number 0–1e10 | no | when it happened, in **brain monotonic seconds** (§12.1, the ping and pong clock). A `t` up to 2 s before arrival starts the target's time there; anything else counts from arrival |
@@ -963,6 +964,7 @@ top-level `input` has `targets` (the target now by body and entity id, its age, 
   `targeted`, the `touch` and `target` phase families, `input.refused` reasons `not_declared`,
   `unknown_field`, `bad_value`, `unknown_entity`, `bad_entities`. Replaces the proposed §14 `touch` and
   `point`.
+- 2026-10-11: the touch kind `pat` (the crab sends one per still press she leans into; her mood, Part 1e).
 
 # Part 1d — Gestures, as built (brain → body)
 
@@ -1077,6 +1079,38 @@ A message with one hand has `hands` with one entry and no `pair`. Two hands make
 At most `[gestures] hand_hz` (15) a second, and only while some body wants it: the watcher sends nothing
 for `hand` when none does. Numbers, booleans and these names only: never an image, never a frame, never
 anything of the face but `facing` and `face`. A body must ignore fields it does not know.
+
+# Part 1e — Her mood, as built (brain → body)
+
+Her living mood (WIRING §29): two dials the brain keeps, each −1..1, that change how she moves and speaks and never
+what she does. A body that wants them says so in its hello, and must present the bus secret (§1.4): the mood moves
+with what the user does to her (pats, pokes, thanks), so a socket without the secret gets nothing of it, in any shape.
+
+```json
+{"type": "hello", "protocol": 2, "secret": "…", "capabilities": {"mood": true}}
+{"type": "welcome", "protocol": 2, "accepted": {"phases": [], "cancel": false, "mood": true}, "trusted": true}
+{"type": "mood", "energy": 0.31, "feeling": -0.12}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `energy` | number −1..1, two decimals | calm (−1) … lively (+1) |
+| `feeling` | number −1..1, two decimals | grumpy (−1) … pleased (+1) |
+
+`accepted.mood` is in `welcome` (and in `/health`'s `bodies` row) only when the hello mentioned `capabilities.mood`;
+it is `false` without the secret, for a v1 body (which never gets it), and when the user turned the mood off
+(`[mood] enabled = false`). A body that accepted it gets one `mood` right after `welcome`, then one whenever a dial
+moved 0.03 or more, at most every 2 s, and any smaller change after 20 s, so the last one it got is where she is.
+There is no `t`, `run_id` or `seq`: it belongs to no run.
+
+What a body does with it is its own, within bounds it keeps: the crab (widget/mood.gd) eases toward it over a second
+or two and scales her idle sway and dance, her posture, her eyes and her gaze a little; while she sleeps it shows
+nothing. A body must not take it as a reason to do anything else, and must ignore fields it does not know. The orbs
+could use it for colour; they do not yet.
+
+## 1e.1 Changes
+
+- 2026-10-11: Part 1e added: `capabilities.mood`, `accepted.mood`, `mood`.
 
 ---
 

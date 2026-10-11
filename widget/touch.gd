@@ -60,6 +60,7 @@ var yaw := 0.0                   # read by turn.gd
 
 # For the checks (validate_touch.gd).
 var pokes := 0
+var pats := 0                    # holds reported as a `pat` (the living mood: she likes them)
 var played := {}
 var last_zone := ""
 var last_level := 0
@@ -185,16 +186,19 @@ func begin_hold(pixel: Vector2) -> void:
 	lean = pixel - world_to_pixel(skeleton.global_transform * skeleton.get_bone_global_pose(body_i).origin)
 	if recipe != "hold":
 		play("hold")
+	pats += 1
+	report_touch("pat")
 
 func release_hold() -> void:
 	holding = false
 
-## Every poke goes to the brain as a `touch` on herself (PROTOCOL Part 1c): nothing comes of it unless the
-## user's [touch] map names `crab.poke`, and the other bodies that ask see it. The spoken line below is
-## a separate message (`poked`).
-func report_touch() -> void:
+## Every poke goes to the brain as a `touch` on herself (PROTOCOL Part 1c), and every hold she leans into as a
+## `pat`: nothing comes of either unless the user's [touch] map names it (`crab.poke`, `crab.pat`), the other
+## bodies that ask see it, and her living mood takes it (pats please her, pokes in a row annoy her). The spoken
+## line below is a separate message (`poked`).
+func report_touch(kind := "poke") -> void:
 	if widget.ws != null and widget.ws.is_open():
-		widget.ws.send({"type": "touch", "entity": "crab", "kind": "poke"})
+		widget.ws.send({"type": "touch", "entity": "crab", "kind": kind})
 
 ## The optional spoken line ("Talk when poked", off by default): the daemon picks and voices it,
 ## and turns it down while she is busy or has spoken one lately (PROTOCOL.md, `poked`).

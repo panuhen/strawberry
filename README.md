@@ -33,12 +33,21 @@ model runs on your own computer through [Ollama](https://ollama.com); nothing is
   toward the middle of the screen when she sits near an edge. *Touch reactions*, *Talk when
   poked* (a short line now and then, off by default) and *Turn toward the screen* are in her
   right-click menu.
+- **A mood of her own.** How lively and how pleased she is drifts with what happens: the music (livelier
+  on a drop, calmer in a break or when it stops), your pats and thanks (pleased), pokes in a row and "no,
+  wrong" (a little grumpy, for a while), tools that work or fail, and the clock (calmer late at night and
+  when nothing happens). It shows only in how she sways and dances, stands and looks, a few percent of her
+  voice's speed and her choice of words, and it eases back to her temperament on its own. It never changes
+  what she does or decides, and a notification's or a song's words never move it. Her temperament is the
+  optional `## Temperament` in persona.md; `[mood] enabled = false` turns it off. The Brain UI's **Mood**
+  view shows it.
 - **Touch on other bodies.** A body such as the orbs on a touch screen tells her what you touch or
   point at: poke, flick, grab, drag, let go of or fuse an orb. While you point at the music orb, "what's
   this?" or "turn this down" means that orb. A touch does nothing else unless you map it in `[touch]`:
   `music.flick = "next"` skips the track, `music.grab = "pause"` pauses. Only music commands that never
   need your yes can be mapped (skip, previous, pause, resume, volume, what's playing); she says nothing,
-  and her short memory notes what you did. Each poke on the crab counts too (`crab.poke`).
+  and her short memory notes what you did. Each poke on the crab counts too (`crab.poke`), and a finger
+  held still on her is a pat (`crab.pat`).
 - **Your apps, the volume, the lock (Linux).** "Open Spotify", "close Firefox": she opens and closes
   only the apps you list in the Brain UI's **Apps** tab (Spotify may be opened out of the box), opens
   them by their desktop entry and closes them only politely (the window's close button, or a player's
@@ -360,6 +369,9 @@ problem, a new router head waiting).
   made-up events before you save.
 - **Profile**: what she knows about you, with every change she or you made and a way back to any of
   them.
+- **Mood**: how lively and how pleased she is now and where that rests, a graph of the last hours, and
+  what moved it (a pat, a thanks, a drop in the music; never what you said), with **Reset to her
+  baseline**.
 - **Learning**: the head in use and the one waiting, side by side on the test set (fields right,
   wrong reflexes, each question), with Accept, Reject, Train now and Roll back; the sentences she
   learned from, each with Approve and Reject; the learning log; every head, with Use; the week.

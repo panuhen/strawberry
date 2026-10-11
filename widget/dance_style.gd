@@ -246,6 +246,8 @@ func _process(delta: float) -> void:
 	var m := moves(style, now)
 	if previous_style != "" and since_switch < SWITCH_S:
 		m = mix(moves(previous_style, now), m, Easing.in_out(since_switch / SWITCH_S))
+	if widget != null and widget.get("mood") != null:
+		m = scaled(m, widget.mood.dance_scale())   # her living mood: livelier bigger, calmer smaller (mood.gd)
 	player.speed_scale = m.speed
 	wrote_speed = true
 	last_moves = m
@@ -307,6 +309,13 @@ func moves(name: String, now: float) -> Dictionary:
 			m.yaw = deg_to_rad(6.0) * sin(TAU * now / 6.4)
 			m.happy = 0.4
 	return m
+
+## The moves' sizes times `amount` (the beat, the speed and the eyes stay as they are).
+static func scaled(m: Dictionary, amount: float) -> Dictionary:
+	var out := m.duplicate()
+	for key in ["pitch", "roll", "yaw", "lift_l", "lift_r", "squash", "tap_l", "tap_r", "stomp_l", "stomp_r"]:
+		out[key] = float(m[key]) * amount
+	return out
 
 static func mix(a: Dictionary, b: Dictionary, weight: float) -> Dictionary:
 	var out := {}

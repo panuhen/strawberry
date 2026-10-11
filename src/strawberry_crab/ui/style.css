@@ -396,3 +396,21 @@ textarea.small.mono { font-family: var(--mono); font-size: 0.8rem; }
 .login { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 #tools-form .fields + .fields, #tools-form .fields + .actions, #tools-form .actions + .fields, #tools-form .actions + .field,
 #tools-form .field + .actions { margin-top: 12px; }
+
+/* --- her mood (the Mood view, WIRING §29): two series, their colours checked for colour-blind separation --- */
+
+:root { --mood-energy: #b8842f; --mood-feeling: #4f8bd0; }
+:root[data-theme="light"] { --mood-energy: #8a5a00; --mood-feeling: #1f5fa8; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --mood-energy: #8a5a00; --mood-feeling: #1f5fa8; }
+}
+.chart .mood-energy { fill: none; stroke: var(--mood-energy); stroke-width: 2; stroke-linejoin: round; }
+.chart .mood-feeling { fill: none; stroke: var(--mood-feeling); stroke-width: 2; stroke-linejoin: round; stroke-dasharray: 6 3; }
+.chart .mood-rest { stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 2 4; }
+.chart .mood-cross { stroke: var(--rim-strong); stroke-width: 1; }
+.chart .mood-dot-energy { fill: var(--ground); stroke: var(--mood-energy); stroke-width: 2; }
+.chart .mood-dot-feeling { fill: var(--ground); stroke: var(--mood-feeling); stroke-width: 2; }
+.chart .mood-hit { fill: transparent; }
+.legend i.mood-energy { border: 0; border-top: 2px solid var(--mood-energy); height: 0; width: 16px; vertical-align: 3px; }
+.legend i.mood-feeling { border: 0; border-top: 2px dashed var(--mood-feeling); height: 0; width: 16px; vertical-align: 3px; }
+.mood-readout { font-size: 0.82rem; color: var(--ink-dim); min-height: 1.3em; margin-top: 4px; }

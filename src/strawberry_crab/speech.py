@@ -29,6 +29,7 @@ from .config import SpeechConfig
 log = logging.getLogger("strawberryd.speech")
 
 DOWNLOAD_HINT = "strawberry voices {voice} (or: python -m piper.download_voices --download-dir {dir} {voice})"
+PACE_BOUNDS = (0.9, 1.1)   # the living mood's pace (mood.PACE_MAX is 0.08): never more than this either way
 _QUIET_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$")
 
 
@@ -94,12 +95,17 @@ def piper_synth(model_path: Path, speed: float, volume: float, noise_scale: floa
     voice = PiperVoice.load(model_path)
     # length_scale stretches phonemes: 2.0 is half speed, so speed 1.25 -> 0.8. The noise scales are the
     # voice's variation (pitch and tone, rhythm); None keeps the voice's own from its .onnx.json.
-    syn = SynthesisConfig(length_scale=1.0 / max(speed, 0.25), volume=volume,
-                          noise_scale=noise_scale or None, noise_w_scale=noise_w or None)
+    def config(pace: float = 1.0) -> Any:
+        return SynthesisConfig(length_scale=pace / max(speed, 0.25), volume=volume,
+                               noise_scale=noise_scale or None, noise_w_scale=noise_w or None)
 
-    def synth(text: str, wav: wave.Wave_write) -> None:
-        voice.synthesize_wav(text, wav, syn_config=syn)
+    syn = config()
 
+    def synth(text: str, wav: wave.Wave_write, pace: float = 1.0) -> None:
+        # `pace` (her living mood, mood.py): the length scale times it, a few percent either way.
+        voice.synthesize_wav(text, wav, syn_config=syn if pace == 1.0 else config(pace))
+
+    synth.paced = True   # type: ignore[attr-defined]
     return synth
 
 
@@ -125,6 +131,9 @@ class Speaker:
         self.last_ms = 0.0
         self.disabled_reason: str | None = None if config.enabled else "disabled in config"
         self.loading: asyncio.Task | None = None    # begin(): start() in the background
+        # Her living mood's pace (mood.Mood.pace, set by the daemon): the length scale times it, within PACE_BOUNDS.
+        self.pace: Callable[[], float] | None = None
+        self.last_pace = 1.0
 
     @property
     def ready(self) -> bool:
@@ -182,6 +191,7 @@ class Speaker:
             "spoken": self.spoken,
             "failed": self.failed,
             "last_ms": round(self.last_ms, 1),
+            "pace": self.last_pace,
         }
 
     async def say(self, text: str) -> str | None:
@@ -214,5 +224,10 @@ class Speaker:
 
     def _write(self, text: str, path: Path) -> None:
         assert self.synth is not None
+        pace = min(max(self.pace(), PACE_BOUNDS[0]), PACE_BOUNDS[1]) if self.pace is not None else 1.0
+        self.last_pace = pace
         with wave.open(str(path), "wb") as wav:
-            self.synth(text, wav)
+            if pace != 1.0 and getattr(self.synth, "paced", False):
+                self.synth(text, wav, pace)
+            else:
+                self.synth(text, wav)

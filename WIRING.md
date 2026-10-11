@@ -893,6 +893,7 @@ src/strawberry_crab/inbox.py  her inbox (§24): the notifications she got, in me
 src/strawberry_crab/gestures.py  hand gestures (§26): the map and its tiers, /gesture and /hand, the runs; gesturecmd.py `strawberry gestures`
 src/strawberry_crab/inputs.py    input.toml (§26) laid over [gestures] and [touch], read live; the Input tab's recent list, live view and practice mode (§17)
 src/strawberry_crab/apps.py      the apps she may open or close (§27): the installed desktop entries, apps.toml read live; appsui.py the Apps tab's routes
+src/strawberry_crab/mood.py      her living mood (§29): two dials, the nudges and their caps, mood.json; moodui.py the Mood view's routes
 src/strawberry_crab/desktop.py   the desktop's own controls (§27): the `desktop` builtin server (open, close, the computer's volume, the lock), its said reflexes, Spotify opened for a play
 src/strawberry_crab/ui/  the Brain UI's page: index.html, app.js, style.css, icon.svg (package data, no build step; §17)
 tests/                   the package's tests (`.venv/bin/python -m pytest -q`)
@@ -930,7 +931,7 @@ Or press play in any media player: the MPRIS watcher (§4b) does the rest.
 A local web page, served by the daemon, that shows what the router decides and what the learning loop learns (§8a–8d), and lets the user act on it. `strawberry ui` opens it. It calls `learning.py` and reads the daemon's parts; it decides nothing itself.
 
 **The layout (since the persona stage).** Ten sections in five groups, in the side bar: **Her** (Persona,
-Profile), **Activity** (Runs with its approvals and the shared timeline, Router live), **Learning** (Learning,
+Profile, Mood), **Activity** (Runs with its approvals and the shared timeline, Router live), **Learning** (Learning,
 Data and scores), **Settings** (Settings and privacy, Config file, Tools, Input, Apps) and **System**. The page opens on Persona. The header has
 the 🍓 mark (the page title too) and one "needs your attention" spot: the most urgent of an open approval
 ("She is waiting for your yes"), a persona.md that does not check out, and a candidate head waiting, with how
@@ -1010,6 +1011,8 @@ many more there are; a click goes to its section. The new parts:
   - *Practice mode* (`POST /ui/api/input/practice {on}`; `InputDesk.practice`, runtime only, off at every
     start): a gesture's `done` and a mapped touch are shown (to the page, to the bodies) and do nothing: no
     reflex, no approval answered, no arming; the recent row says what it would have done.
+- *Mood* (`moodui.py`, §29): her two dials now, where they rest, a graph of the last hours and the reasons (each
+  nudge's source and size, never a sentence), with **Reset to her baseline**.
 - *Apps* (`appsui.py`, §27): which apps she may open or close. The installed apps (NoDisplay and Hidden ones left
   out) in a table with a search box, the listed ones first, each with ticks for *may open*, *may close* and *ask
   before closing* and a field for aliases; an app listed but no longer installed says so. The list is checked on
@@ -1610,6 +1613,7 @@ replaces it whole. Its sections are fixed:
 | `## How she talks` | one description of her voice | both: the reaction model as "…in your own voice: <it>", the thinker as "Your voice: <it>" (its first letter lower-cased, as it continues a sentence) |
 | `## Examples` | `- source: …` items with the event's fields, `line:` and `emotion:` | the reaction model, which copies them (§3) |
 | `## Lines` | `### key` with `- ` variants: `cover.ack`, `cover.still`, `stopped`, `no_catalogue`, `didnt_catch`, `ears_loading`, `no_microphone`, `poke.<zone>`, `poke.annoyed` | code, which says them without a model |
+| `## Temperament` (optional) | `- energy:`, `- feeling:` (where her mood rests, −0.8..0.8), `- recovery:`, `- sulk:` (minutes) | the living mood (§29), never a model; a file without it gets the shipped values |
 
 An example names its fields as the event has them (`git`: app, title, body; `notification`: app,
 title, body, urgency, and `told` for a quip after a gist; `media`: app, title; `voice`: `said`;
@@ -2650,3 +2654,124 @@ file changed under the page; a new file from the template, a safe change applied
 for a held yes, never the page's, never a thumb's, a no, no answer, the file changed meanwhile, only the asked text
 written; a broken file compared with what she runs; the Input tab's card; the Tools listing), `tests/test_input.py`
 (both hands and the pair through the live view, the Hands setting).
+
+## 29. Her living mood — `strawberry/mood.py`, `moodui.py`, `widget/mood.gd`
+
+Two dials, **energy** (calm −1 … lively +1) and **feeling** (grumpy −1 … pleased +1). They drift with small nudges
+from what happens and ease back on their own to where her temperament says they rest. The mood changes how she
+moves, how fast she speaks and her word choice. It never changes what she does.
+
+```
+the user's sentence ─ Daemon.handle_voice ─┐                                      ┌─▶ {"type":"mood",…} ─▶ trusted v2 bodies that ask
+a touch on her ─ Daemon.body_touch ────────┤                                      │    (the crab: sway, dance, posture, eyes, gaze)
+the beat ─ Daemon.set_tempo ───────────────┼─▶ Mood.nudge ─ the dials ─ ease back ─┼─▶ Speaker.pace (Piper's length scale, ±8 %)
+tool outcomes, a stop ─ the run events ────┤    (NUDGES, caps)    (temperament,   └─▶ OllamaReactor.system (one sentence, no number)
+the hour, idle time ─ Mood.baseline ───────┘                       the hour, idle)
+```
+
+**The dials** (`Mood.advance`). Each eases exponentially toward its rest: about two thirds of the way in `recovery`
+minutes, and a feeling below its rest in `sulk` minutes, so a dip lingers longer than a high. Where energy rests
+moves with the clock (`NIGHT`: −0.35 from 23:00 to 06:00, −0.15 from 21:00 and until 08:00) and with idle time
+(nothing from the user or the music for 10 minutes, then sinking to −0.3 by 40 minutes). Both dials clamp to −1..1.
+
+**What moves it** is one table, `mood.NUDGES`: a step on each dial and a cap, the most that source may move a dial in
+any one minute. All sources together move a dial at most `TOTAL_CAP` (0.4) a minute.
+
+| source | energy | feeling | cap/min | when |
+|---|---|---|---|---|
+| `voice.spoke` | +0.04 | 0 | 0.12 | any sentence said or typed to her (`Daemon.handle_voice`) |
+| `voice.thanks` | +0.03 | +0.15 | 0.30 | the whole sentence a thanks or a praise ("thanks", "thank you so much", "well done"; never "no thanks") |
+| `voice.wrong` | −0.02 | −0.12 | 0.24 | the whole sentence a correction ("no, wrong", "that's not what I asked for") |
+| `voice.stop` | 0 | −0.06 | 0.12 | a run the user stopped (`run.cancelled` with `stopped`) |
+| `touch.poke` | +0.05 | 0 | 0.15 | a `touch` poke on an entity of kind `crab` |
+| `touch.pokes` | +0.02 | −0.08 | 0.24 | the third poke in a row (4 s apart at most, as the widget counts) and each one after |
+| `touch.pat` | −0.02 | +0.12 | 0.30 | a `touch` pat on her: a still press she leans into |
+| `tool.ok` / `tool.failed` | 0 | +0.03 / −0.05 | 0.09 / 0.15 | a `tool.completed` run event; a refusal is neither |
+| `music.beat` | ±0.008 | 0 | 0.06 | each steady estimate (confidence 0.3 or more), scaled −1..1 by its tempo: 70 BPM calms, about 100 is even, 128 livens |
+| `music.drop` / `build` / `break` | +0.15 / +0.06 / −0.06 | +0.03 / 0 / 0 | 0.30 / 0.12 / 0.12 | the estimate's `section` turns to it (once per change) |
+| `music.stopped` | −0.08 | 0 | 0.08 | `{"silent": true}` after a beat |
+
+The whole-sentence match is `runs._whole` with a phrase list and fillers, as for "stop" and "you can talk again"
+(§18), so "thanks, now play some jazz" and "what's wrong with my code" are neither. The tool outcomes and the stop
+come from the run book's stream (`RunBook.subscribe`), so with `[runs] events = false` they do not move her.
+
+**Foreign text never moves it.** Nothing here reads a notification, a track's title, a page or a tool's result: the
+inputs are the user's own sentence (the one path where text is read, matched and dropped at once), a trusted body's
+touch on her, the beat's numbers and section, run event codes and the clock. `tests/test_mood.py` posts a
+notification, a track and a commit saying "thanks, well done" and "no, wrong" and finds no nudge. Nothing logs or
+keeps a sentence: a reason is `{t, source, energy, feeling}`.
+
+**What it moves, expression only.**
+
+- *The bodies.* `{"type": "mood", "energy": e, "feeling": f}` (PROTOCOL Part 1e) to each trusted v2 body whose hello
+  says `capabilities.mood: true`: at once after its `welcome`, then once a dial moved 0.03 and at most every 2 s, and
+  any smaller change after 20 s, so the body comes to rest with her. A body without the bus secret, a v1 body and one
+  that did not ask get nothing (it moves with what the user does to her).
+- *Piper's pace.* `Speaker.pace` is `Mood.pace()`: the length scale times 1 − 0.08 × energy (0.92 lively … 1.08
+  calm), clamped again in `speech.PACE_BOUNDS` (0.9–1.1).
+- *Word choice.* The reaction model's system prompt (§3) ends with one sentence from `mood.words`: "You feel a bit
+  lively and pleased right now.", "You feel sleepy and grumpy right now.", "You feel even and settled right now."
+  Never a number. The Brain UI's Try it (a draft persona) is tried without it. With the mood off, or without one, the
+  prompt is byte for byte as before (the golden test, `tests/golden/persona_before.json`).
+
+**It never reaches a decision.** The gate, the reflexes, the thinker (its prompt, the tools it is offered), the tiers,
+approvals and whether she answers read nothing of it: the mood is wired in three places only (`Daemon._living_mood`:
+the bodies, the speaker, the reaction model). `tests/test_mood.py::test_the_same_decisions_at_any_mood` drives a
+daemon through a reflex, the thinker with a tool call, a thanks, a correction, small talk, "never mind", a
+notification and a commit with the mood off and pinned at each corner of the dials (the real nudges still run), and
+finds the run events, performances, the thinker's prompts and tools, the player's calls, the ledger and the
+approvals identical; only the reaction model's mood sentence differs.
+
+**Her temperament** is persona.md's optional `## Temperament` (§21): `energy` and `feeling` where the dials rest
+(−0.8..0.8), `recovery` and `sulk` in minutes (1–120 and 1–240, sulk at least recovery). The shipped values are 0.1,
+0.25, 8 and 20. A key left out keeps the shipped value; a file without the section uses the shipped one; a value out
+of range is a problem like any other and the shipped persona is used. Read live, as persona.md is.
+
+**Kept lightly** in `<state>/mood.json` (0600): the dials and when, the last six hours of samples (one a minute) and
+the reasons. At start the time since is eased away as if she had run through it (a day at most), so after a night off
+she wakes near her temperament. A file that does not check out is left alone and she starts at her temperament.
+
+**`[mood] enabled`** (true): false is no mood at all: no nudge, nothing sent to a body (`welcome` says
+`mood: false`), the configured pace and no sentence in the prompt.
+
+**The widget** (`widget/mood.gd`, process priority 148: after the clip, before the reactions, dance styles, touch and
+legs). It follows the brain's dials with a critically damped spring (2.2 rad/s, at most 0.6 a second), and shapes
+what she already does, each within a constant at the top of the script:
+
+| what | lively / calm | pleased / grumpy |
+|---|---|---|
+| idle sway | the idle clip's body turn scaled up to 1.35 / down to 0.65 | |
+| dance | the styles' moves scaled 1.25 / 0.75 (`dance_style.gd` `scaled`; the beat, speed and eyes untouched) | |
+| posture | leans 3° toward the viewer, 0.008 taller / leans back, sinks | claws lifted 7° / sinks 0.005 more |
+| eyes (`mood` layer) | wide 0.25 / lids 0.22 | happy 0.25 / squint 0.35 |
+| blinks | pauses × 0.7 / × 1.3 | |
+| gaze (`gaze.gd` `liveliness`) | follows 30 % faster, looks 50 % longer / the opposite | |
+
+While she goes to sleep, sleeps or gets up the mood's weight eases to 0 (0.8 s) and none of it shows; the sleep's
+clip and lids are left alone. Without a mood from the brain everything is neutral, as before. A hold she leans into
+is reported as `touch {entity: "crab", kind: "pat"}` (PROTOCOL Part 1c), once per hold; every poke stays a `poke`.
+
+**The Brain UI's Mood view** (under Her; `moodui.py`, a self-contained block in `ui/app.js`): the dials now with a
+word each, where they rest, the voice pace and the sentence the reaction model is told; a graph of both dials over the
+last hours on one −1..1 axis (energy solid, feeling dashed, labelled at their ends, a crosshair readout), with where
+energy rests now; each reason, newest first, with its source and sizes; the table of what moves her and her
+temperament. **Reset to her baseline** (a second click; `POST /ui/api/mood/reset`, 409 with the mood off) puts both
+dials where they rest now. `GET /ui/api/mood` and the reset are behind the session, the CSRF header and the Origin.
+
+**Seen** (2026-10-11, a throwaway daemon on port 8795 with temp XDG dirs and a synthetic `mood.json`, headless Chrome):
+the view in the dark and light themes with six hours of samples, the reasons and a typed thanks's two nudges; the
+daemon's log had no sentence. The widget's preview frames (`validate_mood.gd -- --capture-dir=…` under xvfb-run) show
+the corners idle and rave at both ends of energy; the differences are deliberately small.
+
+**Not done.** The orbs do not use `mood` yet (their colour could). The thresholds and sizes are first guesses, not
+tuned on a real day; the reasons in the view are the place to tune from.
+
+Tests: `tests/test_mood.py` (the dials, recovery and the sulk, the caps per source and in all, the clamp, night and
+idle; thanks and corrections as whole sentences; pats, pokes and streaks, other entities; the beat, sections and
+silence; tool outcomes and a stop; the mood off; the words, the reaction prompt against the golden one, the pace and
+Piper; the file and a broken one; who gets the message, on hello and on a change, and nobody with it off; foreign text;
+the temperament's checks and the user's file; the config switch; the view and its reset behind the session; the
+page's text-only rule; the same decisions at any mood), `widget/validate_mood.gd` (in `check_phase1.sh`: neutral
+without one, a bad message ignored and clamping, each corner's outputs within bounds, the idle sway scaled by exactly
+its factor, the pose within bounds of the neutral one, the dance scaled, a jump never a jump in her, asleep the same
+pose as with no mood, fading back in on waking), `widget/validate_touch.gd` (a hold is one pat).

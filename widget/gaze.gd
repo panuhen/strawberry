@@ -30,6 +30,8 @@ var enabled := true
 var held := Vector2.ZERO           # look(): a direction held for a while, over the cursor
 var held_left := 0.0
 var frames := 0
+var liveliness := 0.0              # her living mood (mood.gd), -1 calm … 1 lively: follows faster and keeps
+                                   # looking longer when lively, at most 30 % and 50 % either way
 
 func setup(model: Node, cam: Camera3D) -> void:
 	process_priority = 170
@@ -125,10 +127,11 @@ func _process(delta: float) -> void:
 			still_for = 0.0
 		else:
 			still_for += delta
-		target = Vector2.ZERO if still_for > RELAX_AFTER else target_for(Vector2(mouse))
+		var relax := RELAX_AFTER * (1.0 + 0.5 * clampf(liveliness, -1.0, 1.0))
+		target = Vector2.ZERO if still_for > relax else target_for(Vector2(mouse))
 	else:
 		target = Vector2.ZERO
-	gaze = gaze.lerp(target, 1.0 - exp(-FOLLOW_RATE * delta))
+	gaze = gaze.lerp(target, 1.0 - exp(-FOLLOW_RATE * (1.0 + 0.3 * clampf(liveliness, -1.0, 1.0)) * delta))
 	for side in meshes:
 		var pose: Transform3D = skeleton.get_bone_global_pose(bones[side])
 		var to_rest: Transform3D = rests[side] * pose.affine_inverse()

@@ -372,6 +372,14 @@ class GesturesConfig:
 
 
 @dataclass
+class MoodConfig:
+    """Her living mood (mood.py, WIRING.md §29): two dials that drift with what happens and ease back to her
+    temperament (persona.md). Expression only: how she moves, how fast she speaks, her word choice."""
+
+    enabled: bool = True           # false: no mood; she moves, speaks and words her lines as she always did
+
+
+@dataclass
 class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
@@ -391,6 +399,7 @@ class Config:
     approvals: ApprovalsConfig = field(default_factory=ApprovalsConfig)
     touch: TouchConfig = field(default_factory=TouchConfig)
     gestures: GesturesConfig = field(default_factory=GesturesConfig)
+    mood: MoodConfig = field(default_factory=MoodConfig)
     path: Path | None = None
     # input.toml (inputs.py, WIRING.md §26): the file whose [gestures] and [touch] are in use, or None; and why
     # one that is there is not used ("" when it is, or there is none).
@@ -417,6 +426,7 @@ class Config:
             "approvals": asdict(self.approvals),
             "touch": asdict(self.touch),
             "gestures": asdict(self.gestures),
+            "mood": asdict(self.mood),
         }
         out["path"] = str(self.path) if self.path else None
         out["input_path"] = str(self.input_path) if self.input_path else None
@@ -442,6 +452,7 @@ _SECTIONS = {
     "approvals": ApprovalsConfig,
     "touch": TouchConfig,
     "gestures": GesturesConfig,
+    "mood": MoodConfig,
 }
 
 
@@ -1049,6 +1060,12 @@ def default_toml() -> str:
         '# risk = { "spotify.remove_saved_tracks" = "destructive", "notes" = "read" }',
         "#                              # a tool's (or a whole server's) tier: read | playback | change | sends | destructive;",
         "#                              # a whole server's never lowers a tool its adapter or server marks higher",
+        "",
+        "[mood]",
+        "# Her living mood: how lively and how pleased she is drifts with the music, your pats and thanks, tools",
+        "# that work or fail and the time of day, and eases back to her temperament (persona.md). It changes how",
+        "# she moves, how fast she speaks and her word choice; never what she does or decides.",
+        f"enabled = {str(MoodConfig().enabled).lower()}",
         "",
         "[touch]",
         "# Input from bodies (the orbs on a touch screen, the crab): what the user touches or points at. A target",
