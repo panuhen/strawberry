@@ -9,6 +9,18 @@ package and the widget binary.
 
 ### Added
 
+- **Reminders, one-off.** "Remind me in 20 minutes to stretch", "at 15:00 to call the dentist", "tomorrow
+  at 9", "on Friday at 10": she confirms with the time and, when it comes, says "Reminder: …" in her bubble
+  (waking up if asleep; no voice while she is quiet; never through the system's notifications). During a
+  sentence she is working on or a question on her card it waits until that ends, at most a minute. A time
+  she cannot be sure of makes her ask, never guess, and a bare time answers her. "What reminders do I
+  have", "cancel the dentist reminder", "cancel my reminders". Ones that fell due while she was off are
+  told once, together, when she is back. Whole sentences need no model; anything else goes to the thinking
+  model with a new reminders tool, whose reminder words must be copied from your sentence, and which asks
+  on her card once text others wrote is in what she is answering. Kept in her history's file (so
+  `[history]` must be on); no word of them in any log. New persona lines `reminder_set`, `reminder_due`,
+  `reminder_missed`, `reminder_ask_time`. WIRING §31.
+
 - **Her history, the first memory that outlives a restart.** What you said and she answered, what she
   did, what played and what she reacted to are kept on disk in `strawberry.db` in the state directory
   (readable only by you): as they were for 14 days, then as a short digest of each day for 6 months. The
