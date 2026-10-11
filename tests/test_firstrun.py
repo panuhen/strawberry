@@ -168,3 +168,10 @@ async def test_two_text_bodies_saying_hello_together_get_one_note(unseen, client
     assert len([m for m in got if "text" in m]) == 1 and not firstrun.pending()
     await first.close()
     await second.close()
+
+
+def test_the_bubble_says_what_she_remembers():
+    config = Config()
+    assert "remember our chats for 14 days" in firstrun.bubble_text(config)
+    config.history.sentences = False
+    assert "remember" not in firstrun.bubble_text(config)

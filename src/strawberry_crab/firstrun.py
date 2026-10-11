@@ -41,15 +41,27 @@ def log_text(config: Config) -> str:
                     f"`strawberry outcomes --clear` deletes them); what she learns from them is kept in "
                     f"{paths.data_dir() / 'gate' / 'learned.json'} (`strawberry learning forget` deletes it).")
     else:
-        learning = " What you say to her is not stored ([learning] log_outcomes is off)."
+        learning = " The learning loop keeps none of your sentences ([learning] log_outcomes is off)."
+    history = config.history
+    if history.enabled and history.sentences:
+        kept = (f" Your sentences and her replies are kept for {history.keep_days} days in {paths.history_db()}, "
+                f"then only a short digest a day for {history.digest_months} months ([history]; the Brain UI's "
+                f"History view forgets a row, a day or everything).")
+    elif history.enabled:
+        kept = (f" Her history in {paths.history_db()} keeps what happened, never what you said "
+                f"([history] sentences = false).")
+    else:
+        kept = " She keeps no history ([history] enabled = false)."
     return (f"privacy: {reading}. Modes: off, react, glance; codes, sign-ins and bank alerts are "
             f"always dropped. Change [notifications] body in {where}. Everything runs on this "
-            f"machine; no message text is logged.{learning}")
+            f"machine; no message text is logged.{learning}{kept}")
 
 
 def bubble_text(config: Config) -> str:
-    """The short line for her bubble: what she reads, and where to change it."""
+    """The short line for her bubble: what she reads, what she keeps, and where to change it."""
+    keeps = (f" I remember our chats for {config.history.keep_days} days; the Brain UI's History can forget them."
+             if config.history.enabled and config.history.sentences else "")
     if _reads_bodies(config):
-        return "I read your notification messages, as the settings file says. Nothing leaves this computer."
+        return "I read your notification messages, as the settings file says. Nothing leaves this computer." + keeps
     return ("I only see who sent a notification, never the message. "
-            "Right-click me, Settings file, to change that.")
+            "Right-click me, Settings file, to change that." + keeps)

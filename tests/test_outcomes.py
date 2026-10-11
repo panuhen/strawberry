@@ -380,7 +380,13 @@ def test_cli_counts_shows_and_clears(capsys):
 
 def test_the_privacy_note_says_what_is_kept():
     config = Config()
-    assert "not stored" in firstrun.log_text(config)
+    line = firstrun.log_text(config)
+    assert "keeps none of your sentences" in line
+    assert "Your sentences and her replies are kept for 14 days" in line and str(paths.history_db()) in line
+    config.history.sentences = False
+    assert "never what you said" in firstrun.log_text(config)
+    config.history.enabled = False
+    assert "keeps no history" in firstrun.log_text(config)
     config.learning = on()
     line = firstrun.log_text(config)
     assert str(paths.outcomes_file()) in line and "strawberry outcomes --clear" in line
