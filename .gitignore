@@ -23,3 +23,6 @@ widget/*.png.import
 
 # Built widget binaries (scripts/build_widget.sh)
 dist/
+
+# Impeccable design tool: local critique snapshots and hook caches
+.impeccable/
