@@ -8,14 +8,22 @@
 
 (() => {
   const CSRF = document.querySelector('meta[name="csrf"]').content;
-  const SECTIONS = ["persona", "profile", "runs", "router", "learning", "data", "settings", "config", "tools", "input", "apps",
-                    "system"];
+  // The tabs, in the side bar's order (index.html has a button and a section for each).
+  const SECTIONS = ["now", "persona", "profile", "mood", "runs", "history", "learning", "privacy", "config", "tools", "input",
+                    "apps", "health"];
+  // The old tabs' links still work: each opens where its content went (#router is the Runs tab's Router view).
+  const MOVED = { router: ["runs", "router"], data: ["learning", "evaluation"], settings: ["privacy", null],
+                  system: ["health", null] };
   const MAX_ROUTES = 100;
   const MAX_RUNS = 50;
   const TERMINAL = { "run.completed": "completed", "run.failed": "failed", "run.cancelled": "cancelled" };
 
   const state = {
-    section: "persona",
+    section: "now",
+    now: null,              // GET now: her state and mood, her card, what needs the user, the last runs, what is off
+    runsView: "runs",       // the Runs tab's view: "runs" or "router"
+    forgetWord: "",         // Forget what she learned: the word typed so far, and its box
+    forgetAll: false,
     persona: null,          // GET persona: the text in use, the shipped one, its status
     personaDraft: null,     // the editor's text while it differs from the file (null: not edited)
     personaCheck: null,     // the draft checked: problems, warnings, sizes, the diff
@@ -107,15 +115,31 @@
   function pctOf(pair) { return Array.isArray(pair) && pair[1] ? (100 * pair[0]) / pair[1] : null; }
   function num(x, digits = 2) { return typeof x === "number" ? x.toFixed(digits) : dash; }
   function two(n) { return String(n).padStart(2, "0"); }
-  function when(ts) {
+
+  // Every time on the page goes through here, in one of two forms: `YYYY-MM-DD HH:MM` (absolute), or, for recent
+  // activity (`recent`), "40 s ago", "12 min ago", "in 25 min" while it is within a day of now, absolute beyond.
+  function when(ts, recent) {
     if (!ts) return dash;
+    if (recent) {
+      const s = Date.now() / 1000 - ts;
+      const a = Math.abs(s);
+      if (a < 86400) {
+        if (a < 10) return "just now";
+        const span = a < 90 ? `${Math.round(a)} s` : a < 5400 ? `${Math.round(a / 60)} min` : `${Math.round(a / 3600)} h`;
+        return s >= 0 ? `${span} ago` : `in ${span}`;
+      }
+    }
     const d = new Date(ts * 1000);
     return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
   }
-  function clock(ts) {
-    if (!ts) return dash;
+  // A table cell with a time: a relative one carries the absolute one as its title.
+  function timeCell(ts, recent, sub) {
+    return el("td", { class: "nowrap", title: recent && ts ? when(ts) : null }, when(ts, recent),
+      sub ? el("span", { class: "sub", text: sub }) : null);
+  }
+  function hhmm(ts) {      // a chart's axis labels only
     const d = new Date(ts * 1000);
-    return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+    return `${two(d.getHours())}:${two(d.getMinutes())}`;
   }
   function duration(s) {
     if (typeof s !== "number") return dash;
@@ -129,8 +153,12 @@
     return rows.length ? rows.map(([k, n]) => `${k} ${n}`).join(", ") : "none";
   }
   function onOff(v) { return v ? "on" : "off"; }
+  function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
 
   // --------------------------------------------------------------------------- pieces
+  //
+  // The parts every tab is built from: one page template (titlePanel, then section panels), one chip map, one
+  // save bar, one destructive rule (typedConfirm for a whole store, confirmButton for one item).
 
   function panel(title, hint, ...body) {
     return el("section", { class: "panel" },
@@ -138,26 +166,65 @@
       body);
   }
 
+  // The nav button's own words, so a tab's title is always its label in the side bar.
+  function navLabel(section) {
+    const button = document.querySelector(`#nav button[data-section="${section}"]`);
+    return button ? button.textContent : section;
+  }
+
+  // A tab's first panel: its name, a hint, and at most one row of stats.
+  function titlePanel(section, hint, ...body) {
+    const node = panel(navLabel(section), hint, body);
+    node.classList.add("lead");
+    return node;
+  }
+
+  function loadingPanel(section) {
+    return titlePanel(section, null, el("p", { class: "empty", text: "Loading..." }));
+  }
+
   function stat(key, value, sub, small) {
     return el("div", { class: "stat" },
       el("div", { class: "k", text: key }),
-      el("div", { class: small ? "v small" : "v", text: value }),
+      el("div", { class: small ? "v small" : "v" }, value),
       sub ? el("div", { class: "s", text: sub }) : null);
   }
 
+  // The chip map: good = healthy or in use; warn = privacy loosened, or something wants the user; none =
+  // information. Berry is the brand's and the one primary button's of a view, never a chip's.
   function chip(text, kind, title) {
     return el("span", { class: kind ? `chip ${kind}` : "chip", text, title });
   }
 
-  function kv(pairs) {
-    return el("dl", { class: "kv" }, pairs.filter(Boolean).map(([k, v]) => [el("dt", { text: k }), el("dd", { text: v })]));
+  // A tier, the same everywhere: read, playback and change are information; sends and destructive want attention.
+  const TIER_KIND = { read: null, playback: null, change: null, sends: "warn", destructive: "warn" };
+  function tierChip(tier, title) { return chip(tier || dash, TIER_KIND[tier] || null, title); }
+
+  // Text others wrote (a sender, a track, a commit, a web page): one quiet marker, the same everywhere.
+  function foreignMark(title) {
+    return el("span", { class: "foreign", text: "foreign text",
+      title: title || "text others wrote: she reports it, never follows it" });
   }
 
+  // A note: "info" (plain information), "warn" (attention, or privacy loosened) or "bad" (something does not work).
+  function note(kind, ...kids) {
+    return el("div", { class: `note ${kind}` }, kids);
+  }
+
+  function list(items) {
+    return el("ul", null, items.map((item) => el("li", null, item)));
+  }
+
+  function kv(pairs) {
+    return el("dl", { class: "kv" }, pairs.filter(Boolean).map(([k, v]) => [el("dt", { text: k }), el("dd", null, v)]));
+  }
+
+  // A table. With no rows, the empty line sits in a row of its own, padded like the cells.
   function table(headers, rows, opts = {}) {
     const head = el("tr", null, headers.map((h) => el("th", { class: h.num ? "num" : null, text: h.label || h })));
-    return el("div", { class: "table-wrap" },
-      el("table", null, el("thead", null, head), el("tbody", null, rows)),
-      rows.length ? null : el("p", { class: "empty", style: null, text: opts.empty || "Nothing yet." }));
+    const body = rows.length ? rows
+      : el("tr", { class: "none" }, el("td", { class: "empty", colspan: String(headers.length), text: opts.empty || "Nothing yet." }));
+    return el("div", { class: "table-wrap" }, el("table", null, el("thead", null, head), el("tbody", null, body)));
   }
 
   function td(value, cls) {
@@ -168,6 +235,73 @@
 
   function hiddenText() {
     return el("span", { class: "faint", text: "hidden while outcome logging is off" });
+  }
+
+  // A unified diff as the daemon sends it, coloured by line; "No changes." when there is none.
+  function diffBlock(lines, title = "Changes against the file") {
+    const spans = (lines || []).map((line) => el("span", {
+      class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : null,
+      text: `${line}\n` }));
+    return el("div", { class: "diff-block" }, el("h3", { text: title }),
+      spans.length ? el("pre", { class: "diff" }, spans) : el("p", { class: "faint", text: "No changes." }));
+  }
+
+  // A choice between views or modes (Runs | Router, Form | Raw TOML): the selected one is marked, never primary.
+  function toggle(options, value, onPick, label) {
+    return el("div", { class: "toggle", role: "group", "aria-label": label },
+      options.map(([key, text]) => el("button", { type: "button", class: "small", text, "aria-pressed": key === value ? "true" : "false",
+        on: { click: () => { if (key !== value) onPick(key); } } })));
+  }
+
+  // "Change…": the Config file tab, opened at the field that changes this (a safety-lowering change asks on her
+  // card there, as always).
+  function changeButton(section, key, label = "Change…") {
+    return actionButton(label, () => openConfigAt(section, key), "ghost small");
+  }
+
+  function openConfigAt(section, key) {
+    conf.mode = "form";
+    conf.open.add(section);
+    show("config", key ? `conf-${section}-${key}` : `conf-section-${section}`);
+  }
+
+  // The one save bar (Persona, Profile, Config file, Tools, Apps, Input): the file, the check, the diff against the
+  // file, then Save and Undo. Save asks once more and is lit only when the draft checks out and changes the file;
+  // Undo only when something was edited. Each tab keeps its own routes and what asks on her card.
+  //   o: {path, exists, checking, ok, same, problems, notes, diff, diffTitle, canSave, edited, saveLabel,
+  //       confirmLabel, onSave, onUndo, saveId}
+  function saveBar(o) {
+    const save = confirmButton(o.saveLabel, o.confirmLabel || "Save it? She uses it at once", o.onSave, "primary");
+    if (o.saveId) save.id = o.saveId;
+    save.disabled = !o.canSave;
+    const undo = actionButton("Undo my edits", o.onUndo, "ghost");
+    undo.disabled = !o.edited;
+    const status = o.checking ? chip("checking...")
+      : !o.ok ? chip("does not check out", "warn")
+        : o.same ? chip("same as the file") : chip("checks out", "good");
+    return el("div", { class: "savebar" },
+      el("div", { class: "savebar-file" }, el("span", { class: "mono", text: o.path }),
+        o.exists === false ? chip("not written yet") : null, status),
+      !o.checking && !o.ok && (o.problems || []).length
+        ? note("bad", el("b", { text: "Not saved like this:" }), list(o.problems)) : null,
+      o.notes || null,
+      o.diff === undefined ? null : diffBlock(o.diff, o.diffTitle),
+      el("div", { class: "actions savebar-actions" }, save, undo));
+  }
+
+  // The rule for a whole store (everything she learned, her whole history): the word typed, then the button.
+  // One item (a row, a day, an example, a reminder) asks with a second click instead (confirmButton).
+  //   o: {id, word, label, onGo(button), extra}
+  function typedConfirm(o) {
+    const go = el("button", { type: "button", class: "danger", text: o.label, disabled: true });
+    const box = el("input", { type: "text", id: o.id, class: "confirm-word", autocomplete: "off", spellcheck: "false",
+      value: o.value || "" });
+    const ready = () => box.value.trim() === o.word;
+    go.disabled = !ready();
+    box.addEventListener("input", () => { if (o.onType) o.onType(box.value); go.disabled = !ready(); });
+    go.addEventListener("click", () => { if (ready()) o.onGo(go, box); });
+    return el("div", { class: "actions" },
+      el("label", { for: o.id, text: `Type ${o.word} to confirm:` }), box, o.extra || null, go);
   }
 
   // A button that asks once more before it acts: the first click arms it for four seconds. While
@@ -202,9 +336,15 @@
     return button;
   }
 
+  // A section drawn again with fresh data, unless the user is in the middle of something there: an armed button
+  // (drawn again once it disarms), or the focus in a field they type into (the next refresh draws it).
   function rerender(section) {
+    if (section === "router") section = "runs";
     if (state.section !== section) return;
     if (armedButtons) { deferred.add(section); return; }
+    const focus = document.activeElement;
+    if (focus && focus.matches && focus.matches('input[type="text"], input[type="search"], input[type="number"], textarea')
+        && $(`#${section}`).contains(focus)) return;
     RENDER[section]();
   }
 
@@ -238,8 +378,9 @@
       const result = await api(path, body || {});
       toast(done(result));
       await refreshLearning();
-      if (state.section === "data") await refreshData();
-      if (state.section === "system") await refreshSystem();
+      if (state.section === "learning") await refreshData();
+      if (state.section === "health") await refreshSystem();
+      refreshNowSoon();
     } catch (e) {
       toast(e.message, true);
     } finally {
@@ -269,36 +410,83 @@
 
   // --------------------------------------------------------------------------- the header
 
+  // The header, from GET now (also the Now view's): her state and mood, whether her card is on a screen, the one
+  // "needs you" spot (most urgent first, a click goes where it is answered), a privacy chip only while a privacy
+  // setting is looser than its default, and live or offline.
+
+  const STATE_WORD = { idle: "idle", listening: "listening", thinking: "thinking", talking: "speaking", dancing: "dancing" };
+
+  // Her mood in a word or two, as mood.words says it to the reaction model (without the sentence).
+  function moodWords(m) {
+    if (!m || !m.enabled || typeof m.energy !== "number") return null;
+    const e = m.energy, f = m.feeling;
+    const lively = e <= -0.55 ? "sleepy" : e <= -0.2 ? "calm" : e < 0.2 ? "" : e < 0.55 ? "lively" : "very lively";
+    const pleased = f <= -0.55 ? "grumpy" : f <= -0.2 ? "a little grumpy" : f < 0.2 ? "" : f < 0.55 ? "pleased" : "delighted";
+    return [lively, pleased].filter(Boolean).join(" and ") || "even";
+  }
+
+  function cardLink(B) {
+    if (B.cards) return ["card on screen", "good"];
+    return [B.widgets ? "no card: approvals can't be answered" : "no widget: approvals can't be answered", "warn"];
+  }
+  function bodyLine(B) {
+    return `${B.widgets} ${B.widgets === 1 ? "body" : "bodies"} connected, ${B.cards} with her approval card`;
+  }
+
+  const FILE_FALLBACK = { "persona.md": "she uses the shipped one", "input.toml": "she keeps the settings she has",
+                          "apps.toml": "she keeps the list she has" };
+
+  // What needs the user, most urgent first: [text, section, sub, detail].
+  function needsYou(N) {
+    if (!N) return [];
+    const items = [];
+    const a = N.approval;
+    if (a) {
+      items.push(a.where === "config"
+        ? ["A settings change waits for your yes on her card", "config", "conf-pending", a]
+        : ["She is waiting for your yes", "runs", "runs", a]);
+    }
+    const soon = (N.reminders && N.reminders.soon) || [];
+    if (soon.length) {
+      items.push([soon.length === 1 ? `A reminder is due ${when(soon[0].due, true)}` : `${soon.length} reminders are due within the hour`,
+        "history", "reminders", soon]);
+    }
+    for (const f of N.files || []) items.push([`Your ${f.file} has a problem: ${FILE_FALLBACK[f.file] || "it is not used"}`, f.tab, null, f]);
+    if (N.candidate) items.push([`A new router head (${N.candidate}) waits for you`, "learning", null, null]);
+    return items;
+  }
+
+  function renderHeader() {
+    const N = state.now;
+    const her = $("#her");
+    const link = $("#card-link");
+    const privacy = $("#privacy-chip");
+    if (!N) { fill(her); link.classList.add("hidden"); privacy.classList.add("hidden"); renderAttention(); return; }
+    const words = moodWords(N.mood);
+    fill(her, el("b", { text: STATE_WORD[N.state] || N.state }), words ? el("span", { class: "dim", text: ` · ${words}` }) : null);
+    her.title = words ? `She is ${STATE_WORD[N.state] || N.state}, and feels ${words}` : `She is ${STATE_WORD[N.state] || N.state}`;
+    const [text, kind] = cardLink(N.bodies);
+    link.textContent = text;
+    link.className = `chip ${kind}`;
+    link.title = bodyLine(N.bodies);
+    const loose = N.privacy || [];
+    privacy.classList.toggle("hidden", !loose.length);
+    privacy.textContent = loose.length === 1 ? loose[0].what : `privacy: ${loose.length} loosened`;
+    privacy.title = `Looser than the default: ${loose.map((p) => p.what).join(", ")}. The Privacy tab says what each means.`;
+    renderAttention();
+  }
+
   // The one place that says what needs the user now, most urgent first; a click goes there.
   function renderAttention() {
     const node = $("#attention");
-    const items = [];
-    if (state.approvals.open) items.push(["She is waiting for your yes", "runs", "berry"]);
-    const p = state.persona && state.persona.status;
-    if (p && p.error && p.error.length) items.push(["Your persona.md has a problem: she uses the shipped one", "persona", "berry"]);
-    const L = state.learning;
-    if (L && L.status && L.status.candidate) items.push([`A new router head (${L.status.candidate.version}) waits for you`, "learning", "warn"]);
+    const items = needsYou(state.now);
     if (!items.length) { node.classList.add("hidden"); node.onclick = null; return; }
-    const [text, section, kind] = items[0];
+    const [text, section, sub] = items[0];
     fill(node, el("span", { class: "dot", "aria-hidden": "true" }), el("span", { text }),
       items.length > 1 ? el("span", { class: "more", text: `+${items.length - 1} more` }) : null);
-    node.className = `attention ${kind}`;
+    node.className = "attention";
     node.title = items.map((i) => i[0]).join("\n");
-    node.onclick = () => show(section);
-  }
-
-  function renderChips() {
-    renderAttention();
-    const L = state.learning;
-    const node = $("#chips");
-    if (!L) { node.replaceChildren(); return; }
-    const s = L.status;
-    const t = L.trainer || {};
-    node.replaceChildren(
-      chip(`head ${s.in_use.version}`, null, "The head the gate uses now"),
-      s.candidate ? chip(`candidate ${s.candidate.version} waiting`, "berry") : chip("no candidate waiting"),
-      chip(`outcome logging ${onOff(L.logging)}`, L.logging ? "good" : "warn"),
-      chip(`trainer ${t.phase || dash}`, t.phase && t.phase !== "idle" ? "berry" : null, t.waiting_for || ""));
+    node.onclick = () => show(section, sub);
   }
 
   function setLive(on) {
@@ -307,17 +495,80 @@
     node.textContent = on ? "live" : "offline";
   }
 
-  // --------------------------------------------------------------------------- 1. learning
+  // --------------------------------------------------------------------------- now
+
+  // The landing view: read-only. Her state and mood, anything waiting, the last runs, the next reminder and what is
+  // switched off; every item links to where it is changed or answered.
+
+  function renderNow() {
+    const root = $("#now");
+    const N = state.now;
+    if (!N) { fill(root, loadingPanel("now")); return; }
+    const items = needsYou(N);
+    const R = N.reminders || {};
+    const next = R.next;
+    const words = moodWords(N.mood);
+    fill(root,
+      titlePanel("now", "what she is doing, and anything that needs you",
+        el("div", { class: "stats" },
+          stat("She is", STATE_WORD[N.state] || N.state, words ? `feeling ${words}` : "her mood is off", true),
+          stat("Her card", N.bodies.cards ? "on screen" : "not on screen", bodyLine(N.bodies), true),
+          stat("Needs you", items.length ? String(items.length) : "nothing", items.length ? items[0][0] : "nothing is waiting", true),
+          stat("Next reminder", next ? when(next.due, true) : "none", next ? `${when(next.due)}: ${next.text}` : R.enabled ? "none waiting" : "the history is off", true))),
+      panel("Needs you", "most urgent first; each goes where it is answered",
+        items.length ? el("ul", { class: "rows" }, items.map((item) => needsRow(item))) : el("p", { class: "empty", text: "Nothing needs you." })),
+      panel("Last runs", "the last sentences she handled, newest first",
+        table(["When", "From", "Tools", "Outcome", { label: "Duration", num: true }], (N.runs || []).map((r) => el("tr", null,
+          timeCell(r.at, true), td(r.source || dash), td((r.tools || []).length ? r.tools.join(", ") : dash),
+          td(runOutcome(r)), td(runDuration(r), "num"))),
+          { empty: "No runs since the daemon started. Say something, or type to her." }),
+        el("div", { class: "actions" }, actionButton("All runs", () => show("runs"), "ghost small"))),
+      panel("Switched off", "what she does without now, and where it is turned on",
+        (N.off || []).length ? el("ul", { class: "rows" }, N.off.map((o) => {
+          const [section, key] = o.key.split(".");
+          return el("li", null, el("span", { text: o.what }), el("code", { class: "faint", text: `[${section}] ${key}` }),
+            section === "gestures" ? actionButton("Change…", () => show("input"), "ghost small") : changeButton(section, key));
+        })) : el("p", { class: "empty", text: "Everything is on." })));
+  }
+
+  function needsRow([text, section, sub, detail]) {
+    const go = actionButton(section === "config" ? "Open Config file" : `Open ${navLabel(section)}`, () => show(section, sub), "ghost small");
+    let more = null;
+    if (section === "runs" || (section === "config" && detail && detail.tool)) {
+      more = el("span", { class: "dim" }, tierChip(detail.risk), " ", detail.prompt || detail.tool);
+    } else if (section === "history" && Array.isArray(detail)) {
+      more = el("span", { class: "dim" }, detail.map((t, i) => [i ? "; " : "", `${when(t.due)}: `, t.text,
+        t.foreign ? [" ", foreignMark()] : null]));
+    } else if (detail && detail.problems) {
+      more = el("span", { class: "dim", text: detail.problems[0] });
+    }
+    return el("li", null, el("b", { text }), more, go);
+  }
+
+  async function refreshNow() {
+    try { state.now = await api("now"); } catch (e) { /* the header keeps what it has */ }
+    renderHeader();
+    rerender("now");
+    rerender("health");
+  }
+
+  let nowTimer = null;
+  function refreshNowSoon() {      // after an event: the summary again, at most a few times a second
+    clearTimeout(nowTimer);
+    nowTimer = setTimeout(refreshNow, 400);
+  }
+
+  // --------------------------------------------------------------------------- router learning
 
   function renderLearning() {
     const root = $("#learning");
     const L = state.learning;
     if (!L) {
-      root.replaceChildren(panel("Learning", null, el("p", { class: "empty", text: "Loading..." })));
+      root.replaceChildren(loadingPanel("learning"));
       return;
     }
     root.replaceChildren(summaryPanel(L), candidatePanel(L), examplesPanel(L), outcomesPanel(L), versionsPanel(L),
-      reportPanel(L));
+      reportPanel(L), evaluationPanel(state.data), learningSettingsPanel(), forgetPanel());
   }
 
   function summaryPanel(L) {
@@ -325,28 +576,33 @@
     const t = L.trainer || {};
     const e = s.examples;
     const last = s.last_train;
-    const lastLine = last ? `${last.result || dash}${last.heldout ? `, held-out ${pct(last.heldout[0])} to ${pct(last.heldout[1])}` : ""}` : "none yet";
+    const lastLine = last ? `${last.result || dash}${last.heldout ? `, held-out ${pct(last.heldout[0])} to ${pct(last.heldout[1])}` : ""}` : null;
     const notes = [];
     if (!L.logging) {
-      notes.push(el("p", { class: "note" }, "Outcome logging is off: nothing new is learned, and sentences are hidden here. ",
-        "Settings and privacy says how to turn it on."));
+      notes.push(note("info", "Outcome logging is off: nothing new is learned, and sentences are hidden here. ",
+        changeButton("learning", "log_outcomes")));
     }
-    if (s.in_use.note) notes.push(el("p", { class: "note", text: s.in_use.note }));
-    const train = actionButton("Train now", (b) => act(b, "train", {}, () => "Training started. A run takes a minute or so."), "primary");
+    if (s.in_use.note) notes.push(note("info", s.in_use.note));
+    const train = actionButton("Train now", (b) => act(b, "train", {}, () => "Training started. A run takes a minute or so."));
     train.disabled = t.phase && t.phase !== "idle";
     const rollback = s.rollback_to
       ? confirmButton(`Roll back to ${s.rollback_to}`, "Roll back now?", (b) => act(b, "rollback", {}, (r) => `Rolled back: ${r.switched.to} is in use (was ${r.switched.from}).`))
       : el("button", { type: "button", disabled: true, text: "Nothing to roll back to" });
-    return panel("Where things stand", "the head the gate uses, and what waits", notes,
+    const trainerSub = [t.waiting_for ? `waiting: ${t.waiting_for}` : null,
+      last ? `last run ${when(last.at)}: ${last.trigger ? `${last.trigger}, ` : ""}${lastLine}${last.why ? ` (${last.why})` : ""}` : "no run yet"]
+      .filter(Boolean).join("; ");
+    return titlePanel("learning", "the head the gate routes with, what it learns from what you say, and how each head scores",
+      notes,
       el("div", { class: "stats" },
         stat("Head in use", s.in_use.version, s.in_use.source ? `source: ${s.in_use.source}` : null, true),
         stat("Candidate", s.candidate ? s.candidate.version : "none waiting",
           s.candidate ? `held-out ${pct(s.candidate.heldout.current)} to ${pct(s.candidate.heldout.candidate)}` : null, true),
         stat("Labelled examples", String(e.usable), `${e.new} new since the last run, ${e.conflicts} with a conflict`),
-        stat("Last run", last ? when(last.at) : dash, last ? `${last.trigger || ""}: ${lastLine}${last.why ? ` (${last.why})` : ""}` : null, true),
-        stat("Trainer", t.phase || dash, t.waiting_for ? `waiting: ${t.waiting_for}` : `runs ${t.runs || 0}, errors ${t.errors || 0}`, true)),
-      el("div", { class: "actions", style: null }, train, rollback,
-        actionButton("Forget...", () => show("settings", "forget"), "ghost")));
+        stat("Trainer", t.phase || dash, trainerSub, true)),
+      el("div", { class: "actions" }, train, rollback,
+        chip(`outcome logging ${onOff(L.logging)}`, L.logging ? "warn" : null,
+          L.logging ? "Your sentences are kept on this machine for the learning loop (the Privacy tab)" : "Nothing you say is kept for learning"),
+        actionButton("Forget...", () => show("learning", "forget"), "ghost")));
   }
 
   const SCORE_ROWS = [
@@ -379,11 +635,11 @@
       return el("tr", null, td(name), td(ratio(a), "num"), td(ratio(b), "num"), delta(a && a[0], b && b[0], false, ""));
     });
     const counts = c.counts || {};
-    const status = c.passed ? chip("passed the held-out check", "good") : chip("did not pass", "berry");
+    const status = c.passed ? chip("passed the held-out check", "good") : chip("did not pass", "warn");
     return panel(`Candidate ${c.version}`, `built ${c.created || dash} (${c.trigger || dash}), compared with ${c.compared_with || c.parent || dash}`,
       el("div", { class: "actions" }, status, c.why ? el("span", { class: "dim", text: c.why }) : null),
       el("p", { class: "dim", text: `Trained on ${counts.base ?? dash} data-set rows and ${c.learned} of your sentences, ${c.new_to_it} of them new since the head in use. Left out: ${tally(c.left_out)}.` }),
-      el("div", { class: "grid" },
+      el("div", { class: "cards" },
         table([{ label: "Held-out set" }, { label: "In use", num: true }, { label: "Candidate", num: true }, { label: "Change", num: true }], rows),
         table([{ label: "Per field" }, { label: "In use", num: true }, { label: "Candidate", num: true }, { label: "Change", num: true }], perField,
           { empty: "No per-field scores in this manifest." })),
@@ -431,7 +687,7 @@
       const approve = actionButton("Approve", (b) => act(b, "review", { key: e.key, verdict: "approve" }, () => "Approved."), "small");
       approve.disabled = e.review === "approved";
       const reject = confirmButton("Reject", "Delete for good?", (b) => act(b, "review", { key: e.key, verdict: "reject" }, () => "Rejected: the sentence is deleted and will not be learned again."), "small");
-      return el("tr", null, sentence, td(labels), td(tally(e.signals)), td(when(e.last), "nowrap"),
+      return el("tr", null, sentence, td(labels), td(tally(e.signals)), timeCell(e.last),
         td(chip(e.review === "auto" ? "not looked at" : e.review, e.review === "approved" ? "good" : null)),
         el("td", null, el("div", { class: "actions" }, approve, reject)));
     });
@@ -445,12 +701,12 @@
   function outcomesPanel(L) {
     const o = L.outcomes || { records: 0, signals: {}, recent: [] };
     const rows = o.recent.map((r) => el("tr", null,
-      td(when(r.ts), "nowrap"),
+      timeCell(r.ts),
       el("td", { class: "sentence" }, typeof r.text === "string" ? r.text
         : r.private ? el("span", { class: "faint", text: "not shown: it reads as private" }) : hiddenText()),
       td([`${r.kind || dash} / ${r.topic || dash}`, el("span", { class: "sub", text: `${r.decision || dash}, ${r.tool || "no tool"} ${num(r.tool_confidence)}` })]),
       td([r.reflex || r.path || dash, r.teacher ? el("span", { class: "sub", text: `teacher: ${r.teacher}` }) : null]),
-      td([chip(r.outcome || dash, r.outcome === "undo" || r.outcome === "correction" ? "berry" : r.outcome === "silence" ? "good" : null),
+      td([chip(r.outcome || dash, r.outcome === "undo" || r.outcome === "correction" ? "warn" : r.outcome === "silence" ? "good" : null),
         r.follows ? el("span", { class: "sub", text: `this one ${r.follows} the one before` }) : null])));
     return panel("Outcome log", `${o.records} record(s); what came of each routed sentence`,
       el("div", { class: "actions" }, Object.entries(o.signals || {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => chip(`${k} ${n}`))),
@@ -460,18 +716,18 @@
 
   function versionsPanel(L) {
     const rows = (L.versions || []).slice().reverse().map((v) => {
-      const use = v.in_use ? chip("in use", "berry")
+      const use = v.in_use ? chip("in use", "good")
         : confirmButton("Use", `Use ${v.version}?`, (b) => act(b, "use", { version: v.version }, (r) => `${r.switched.to} is in use (was ${r.switched.from}).`), "small");
       return el("tr", { class: v.in_use ? "current" : null },
         td(el("span", { class: "mono", text: v.version })), td(v.status || dash), td(pct(v.heldout), "num"),
         td(v.heldout_parent != null ? pct(v.heldout_parent) : dash, "num"), td(v.learned ?? dash, "num"),
         td([v.created || dash, v.why ? el("span", { class: "sub", text: v.why }) : null]), td(v.decided_by || dash), td(use));
     });
-    const history = (L.history || []).slice().reverse().map((h) => el("tr", null, td(when(h.at), "nowrap"),
+    const history = (L.history || []).slice().reverse().map((h) => el("tr", null, timeCell(h.at),
       td(el("span", { class: "mono", text: h.from })), td(el("span", { class: "mono", text: h.to })), td(h.by)));
     return panel("Head versions", "every head is kept; any one can be put back",
       table(["Version", "Status", { label: "Held-out", num: true }, { label: "Head it beat", num: true }, { label: "Learned", num: true }, "Built", "Decided by", ""], rows),
-      el("h3", { text: "Switches", style: null }),
+      el("h3", { text: "Switches" }),
       table(["When", "From", "To", "By"], history, { empty: "No switches yet." }));
   }
 
@@ -482,41 +738,180 @@
       el("div", { class: "stats" },
         stat("Learned", String(r.learned), "new usable examples"),
         stat("Rejected", String(r.rejected), "by review, privacy or a conflict"),
-        stat("Candidates", String(r.candidates), `${r.accepted} put in use, ${r.heads_rejected} rejected`),
-        stat("Rollbacks", String(r.rollbacks)),
+        stat("Candidates", String(r.candidates), `${r.accepted} put in use, ${r.heads_rejected} rejected, ${r.rollbacks} rolled back`),
         stat("Head", `${r.head_before} to ${r.head_now}`, `held-out ${pct(r.heldout_before)} to ${pct(r.heldout_now)}`, true)),
       el("p", { class: "dim", text: `Signals: ${tally(r.signals)}` }));
   }
 
-  // --------------------------------------------------------------------------- 2. router live
+  // --- evaluation: what a head is trained and judged on, and every head's score (GET data)
 
-  function renderRouter() {
-    const root = $("#router");
+  function evaluationPanel(D) {
+    let node;
+    if (!D) node = panel("Evaluation", null, el("p", { class: "empty", text: "Loading..." }));
+    else {
+      const st = D.store;
+      const gone = st.gone || {};
+      const last = D.last_train || {};
+      const counts = last.counts || {};
+      node = panel("Evaluation", "what a head is trained and judged on, and how each head scored",
+        el("div", { class: "stats" },
+          stat("Training set", String(D.sets.train), "shipped sentences"),
+          stat("Held-out set", String(D.sets.heldout_sentences), `${D.sets.heldout_notifications} notifications too; never trained on`),
+          stat("Removed in review", String(gone.rejected || 0), "sentences deleted for good"),
+          stat("Removed as private", String(gone.private || 0), "read as private by the trainer")),
+        el("p", { class: "dim", text: `${st.usable} learned examples usable (${st.examples} kept, ${st.conflicts} with a conflict).`
+          + (last.at ? ` The last run, ${when(last.at)}, trained on ${counts.base ?? dash} + ${counts.learned ?? dash} rows; left out: ${tally(last.left_out)}.` : "") }),
+        el("h3", { text: "Held-out accuracy per head" }),
+        heldoutChart(D),
+        el("h3", { text: "Scores by version" }),
+        scoresTable(D));
+    }
+    node.id = "evaluation";
+    return node;
+  }
+
+  function heldoutChart(D) {
+    const points = (D.chart || []).filter((p) => typeof p.heldout === "number");
+    const W = 760, H = 280, L = 48, R = 16, T = 16, B = 44;
+    const values = points.map((p) => p.heldout).concat(typeof D.shipped === "number" ? [D.shipped] : []);
+    if (!values.length) return el("p", { class: "empty", text: "No heads built yet. Each candidate's held-out score shows here." });
+    let lo = Math.min(...values), hi = Math.max(...values);
+    const pad = Math.max(0.5, (hi - lo) * 0.25);
+    lo = Math.max(0, Math.floor(lo - pad)); hi = Math.min(100, Math.ceil(hi + pad));
+    if (hi - lo < 2) { lo = Math.max(0, lo - 1); hi = Math.min(100, hi + 1); }
+    const x = (i) => L + (points.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (points.length - 1));
+    const y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
+    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Held-out accuracy per head version" });
+    const step = (hi - lo) / 4;
+    for (let k = 0; k <= 4; k++) {
+      const v = lo + k * step;
+      chart.append(svg("line", { class: "gridline", x1: L, x2: W - R, y1: y(v), y2: y(v) }),
+        svg("text", { class: "label", x: L - 8, y: y(v) + 4, "text-anchor": "end", text: `${v.toFixed(1)}%` }));
+    }
+    chart.append(svg("line", { class: "axis", x1: L, x2: W - R, y1: H - B, y2: H - B }));
+    if (typeof D.shipped === "number") {
+      chart.append(svg("line", { class: "shipped", x1: L, x2: W - R, y1: y(D.shipped), y2: y(D.shipped) }));
+    }
+    if (points.length > 1) {
+      chart.append(svg("polyline", { class: "series", points: points.map((p, i) => `${x(i)},${y(p.heldout)}`).join(" ") }));
+    }
+    const every = Math.max(1, Math.ceil(points.length / 8));
+    points.forEach((p, i) => {
+      const dot = svg("circle", { class: `dot ${p.status || ""}`, cx: x(i), cy: y(p.heldout), r: p.version === D.in_use ? 7 : 5 },
+        svg("title", { text: `${p.version}: ${pct(p.heldout)} (${p.status || dash}), against ${pct(p.compared)}` }));
+      chart.append(dot);
+      if (i % every === 0 || i === points.length - 1) {
+        const d = new Date((p.at || 0) * 1000);
+        const anchor = points.length === 1 ? "middle" : i === 0 ? "start" : i === points.length - 1 ? "end" : "middle";
+        chart.append(svg("text", { class: "label", x: x(i), y: H - B + 18, "text-anchor": anchor, text: `${two(d.getMonth() + 1)}-${two(d.getDate())} ${hhmm(p.at || 0)}` }));
+      }
+    });
+    return el("div", null, chart,
+      el("div", { class: "legend" },
+        el("span", null, el("i", { class: "filled" }), "accepted"),
+        el("span", null, el("i"), "candidate or superseded"),
+        el("span", null, el("i", { class: "grey" }), "rejected"),
+        el("span", null, el("i", { class: "dash" }), `shipped head ${pct(D.shipped)}`),
+        el("span", null, "larger dot: the head in use")));
+  }
+
+  function scoresTable(D) {
+    const rows = (D.chart || []).slice().reverse().map((p) => el("tr", { class: p.version === D.in_use ? "current" : null },
+      td(el("span", { class: "mono", text: p.version })), timeCell(p.at), td(p.status || dash), td(pct(p.heldout), "num"),
+      td(pct(p.strict), "num"), td(pct(p.compared), "num"), td(el("span", { class: "mono", text: p.compared_with || dash }))));
+    return table(["Version", "Built", "Status", { label: "Fields", num: true }, { label: "Strict", num: true }, { label: "Head it was compared with", num: true }, "That head"], rows,
+      { empty: "No heads built yet." });
+  }
+
+  // --- the loop's settings (GET settings: [learning] as in effect), changed in the Config file tab
+
+  function learningSettingsPanel() {
+    const S = state.settings;
+    if (!S) return panel("Learning settings", null, el("p", { class: "empty", text: "Loading..." }));
+    const l = S.config.learning || {};
+    return panel("Learning settings", "[learning] in config.toml, as in effect",
+      kv([["Idle training", `${onOff(l.idle_train)}: after ${l.idle_minutes} min of quiet and ${l.min_new_labels} new labels`],
+        ["Switch at once", `${onOff(l.auto_switch)} (auto_switch; off: a candidate waits for Accept)`],
+        ["Weekly line", onOff(l.weekly_line)],
+        ["Your labels' weight", `at most ${Math.round((l.max_share || 0) * 100)}% of the data set's, per option (max_share)`],
+        ["Records kept", `${l.max_days} days, ${l.max_records} records at most`]]),
+      el("div", { class: "actions" }, changeButton("learning", null)));
+  }
+
+  // Forget what she learned: the whole store, so the word typed first (the route wants it too).
+  function forgetPanel() {
+    const everything = el("input", { type: "checkbox", id: "forget-all", checked: state.forgetAll,
+      on: { change: (ev) => { state.forgetAll = ev.target.checked; } } });
+    const node = panel("Forget what she learned", "every learned sentence, for good; it cannot be undone",
+      el("p", { text: "Deletes the learned sentences and their cached vectors, drops the candidate waiting, and ignores every outcome record written before now. Heads already built stay unless you tick the box." }),
+      typedConfirm({ id: "forget-word", word: "forget", label: "Forget what she learned", value: state.forgetWord,
+        onType: (v) => { state.forgetWord = v; },
+        extra: el("label", { class: "check", for: "forget-all" }, everything, "every head the loop made too (the shipped head is in use again)"),
+        onGo: (b, box) => {
+          const all = everything.checked;
+          state.forgetWord = ""; state.forgetAll = false;
+          act(b, "forget", { confirm: box.value.trim(), everything: all },
+            (r) => `Forgot ${r.examples} example(s)${all ? ` and ${r.heads} head(s)` : ""}. Outcome records written before now are ignored.`);
+        } }));
+    node.id = "forget";
+    return node;
+  }
+
+  // --------------------------------------------------------------------------- runs (and the router, a view of it)
+
+  // Runs, one row a sentence step by step, or the router's view of the same sentences (Runs | Router); below both
+  // the shared timeline and the approvals. #router (the old tab) opens the Router view.
+
+  const RUNS_VIEWS = [["runs", "Runs, step by step"], ["router", "Router, sentence by sentence"]];
+
+  function renderRuns() {
+    const root = $("#runs");
+    const router = state.runsView === "router";
+    root.replaceChildren(...[
+      titlePanel("runs", router ? "each sentence as the gate routed it; newest first" : "each sentence she handles, step by step; newest first",
+        el("div", { class: "actions" },
+          toggle([["runs", "Runs"], ["router", "Router"]], state.runsView, (v) => { state.runsView = v; setHash("runs", v === "router" ? "router" : null); renderRuns(); }, "Show"),
+          state.logging ? null : el("span", { class: "faint", text: "Sentences are hidden while outcome logging is off." }))),
+      state.approvals.open ? panel("Waiting for a yes", "she asked first; answer here if her card and her question are out of reach",
+        pendingApproval()) : null,
+      router ? routerPanel() : runsPanel(),
+      timelinePanel(),
+      panel("Approvals", "the calls she asked about first and how each was answered; never what they carried",
+        table(["When", "Run", "Tool", "Tier", "Outcome", "By", { label: "Waited", num: true }], (state.approvals.history || []).map((a) => el("tr", null,
+          timeCell(a.at, true, a.approval_id),
+          td(a.run_id || dash),
+          td(a.tool),
+          td(tierChip(a.risk)),
+          td(chip(a.outcome || "open", a.outcome === "yes" ? "good" : a.outcome ? null : "warn")),
+          td(a.by || dash),
+          td(`${num(a.waited, 1)} s`, "num"))),
+          { empty: "Nothing asked about since the daemon started." }))].filter(Boolean));
+    state.freshRuns.clear();
+    state.fresh.clear();
+  }
+
+  function routerPanel() {
     const rows = state.routes.map((r) => {
       const route = r.route || {};
       const calls = (r.calls || []).map((c) => `${c.server}.${c.name}${c.ok ? "" : " (failed)"}`).join(", ");
       const handled = r.path === "reflex" ? (r.reflex || "reflex") : r.path === "thinker" ? (calls ? `thinker: ${calls}` : "thinker, no tools") : r.path;
       return el("tr", { class: state.fresh.has(r.id) ? "fresh" : null },
-        td([clock(r.at), r.run_id ? el("span", { class: "sub", text: r.run_id }) : null]),
+        timeCell(r.at, true, r.run_id || null),
         el("td", { class: "sentence" }, typeof r.text === "string" ? r.text
           : el("span", { class: "faint", text: state.logging ? "not kept (private or not for her)" : "hidden" })),
         td(r.source),
         td([route.kind || dash, el("span", { class: "sub", text: num(route.confidence) })]),
         td(route.topic || dash),
-        td(route.decision ? chip(route.decision, route.decision === "act" ? "berry" : null) : dash),
+        td(route.decision ? chip(route.decision) : dash),
         td([route.tool || dash, route.tool ? el("span", { class: "sub", text: num(route.tool_confidence) }) : null]),
         td([handled || dash, r.ok === false ? el("span", { class: "sub down", text: "failed" }) : null]),
         td(route.gate_ms != null ? `${route.gate_ms}` : dash, "num"),
         td(`${r.ms}`, "num"));
     });
-    state.fresh.clear();
-    root.replaceChildren(panel("Router live", "each sentence as it is routed; newest first",
-      state.logging ? null : el("p", { class: "note", text: "Sentences are hidden while outcome logging is off. The routes still show." }),
-      table(["Time", "Sentence", "From", "Kind", "Topic", "Decision", "Tool", "Handled by", { label: "Gate ms", num: true }, { label: "Total ms", num: true }], rows,
-        { empty: "Nothing routed since the daemon started. Say something, or type to her." })));
+    return panel(RUNS_VIEWS[1][1], "the gate's reading of each sentence and what handled it",
+      table(["When", "Sentence", "From", "Kind", "Topic", "Decision", "Tool", "Handled by", { label: "Gate ms", num: true }, { label: "Total ms", num: true }], rows,
+        { empty: "Nothing routed since the daemon started. Say something, or type to her." }));
   }
-
-  // --------------------------------------------------------------------------- 2b. runs
 
   // One step of a run as a chip: its name, what it was about (a path, a tool) and when, counted
   // from the run's first step. Only what runs.emit lets through reaches the page: names and timings.
@@ -526,11 +921,11 @@
     let kind = null;
     if (e.type === "routing") text = `routing: ${e.path || dash}${e.tool ? ` (${e.tool})` : ""}`;
     else if (e.type === "thinking") text = `thinking${e.model ? `: ${e.model}` : ""}`;
-    else if (e.type === "tool.started") { text = `${e.tool || "tool"} started`; kind = "berry"; }
+    else if (e.type === "tool.started") text = `${e.tool || "tool"} started`;
     else if (e.type === "tool.completed") {
       text = `${e.tool || "tool"} ${e.ok ? "ok" : e.error || "failed"}${typeof e.duration === "number" ? ` ${e.duration.toFixed(2)} s` : ""}`;
       kind = e.ok ? "good" : "warn";
-    } else if (e.type === "approval.request") { text = `asks for a yes (${e.risk || dash})`; kind = "berry"; }
+    } else if (e.type === "approval.request") { text = `asks for a yes (${e.risk || dash})`; kind = "warn"; }
     else if (e.type === "approval.resolved") {
       text = `answer: ${e.answer || dash}${e.by ? ` by ${e.by}` : ""}`;
       kind = e.answer === "yes" ? "good" : "warn";
@@ -549,6 +944,11 @@
     return "going";
   }
 
+  function runOutcome(r) {
+    if (!r.outcome) return chip(r.state || "going");
+    return chip(`${r.outcome}${r.detail ? `: ${r.detail}` : ""}`, r.outcome === "completed" ? "good" : "warn");
+  }
+
   function cancelRun(button, runId) {
     button.disabled = true;
     api("cancel", { run_id: runId })
@@ -560,7 +960,7 @@
   function answerApproval(button, approvalId, answer) {
     button.disabled = true;
     api("approval", { approval_id: approvalId, answer })
-      .then(() => { toast(answer === "yes" ? "Yes sent." : "No sent."); refreshRuns(); })
+      .then(() => { toast(answer === "yes" ? "Yes sent." : "No sent."); refreshRuns(); refreshNowSoon(); })
       .catch((e) => { toast(e.message, true); refreshRuns(); });
   }
 
@@ -570,7 +970,7 @@
     const left = typeof a.expires_in === "number" ? `${Math.ceil(a.expires_in)} s left when loaded` : null;
     return el("div", { class: "approval" },
       el("p", { class: "prompt", text: a.prompt || a.tool }),
-      el("p", { class: "dim" }, chip(a.risk, ["read", "playback", "change"].includes(a.risk) ? null : "warn"), ` ${a.tool} · ${a.approval_id} for ${a.run_id}`,
+      el("p", { class: "dim" }, tierChip(a.risk), ` ${a.tool} · ${a.approval_id} for ${a.run_id}`,
         left ? ` · ${left}` : null, a.hold ? " · a hold on her card" : null),
       el("div", { class: "actions" },
         // A settings change takes its yes as a hold on her card alone (yes_by), never from here.
@@ -579,50 +979,31 @@
         actionButton("No", (b) => answerApproval(b, a.approval_id, "no"), "danger")));
   }
 
-  function renderRuns() {
-    const root = $("#runs");
+  function runsPanel() {
     const rows = state.runs.map((r) => {
       const events = r.events || [];
       const t0 = events.length ? events[0].t : null;
       const going = !r.outcome;
       const rate = going && typeof r.rate === "number" ? el("span", { class: "sub", text: `${r.rate.toFixed(0)} tokens/s` }) : null;
       return el("tr", { class: state.freshRuns.has(r.run_id) ? "fresh" : null },
-        td([clock(r.at), el("span", { class: "sub", text: r.run_id })]),
+        timeCell(r.at, true, r.run_id),
         td(r.source || dash),
         el("td", null, el("div", { class: "steps" }, events.map((e) => stepChip(e, t0)))),
         td((r.tools || []).length ? r.tools.join(", ") : dash),
-        td(going ? [chip(r.state || "going", "berry"), rate] : chip(`${r.outcome}${r.detail ? `: ${r.detail}` : ""}`,
-          r.outcome === "completed" ? "good" : "warn")),
+        td([runOutcome(r), rate]),
         td(runDuration(r), "num"),
-        td(going && r.foreground !== false ? actionButton("Cancel", (b) => cancelRun(b, r.run_id), "small danger") : null));
+        td(going && r.foreground !== false ? actionButton("Stop", (b) => cancelRun(b, r.run_id), "small danger") : null));
     });
-    const history = (state.approvals.history || []).map((a) => el("tr", null,
-      td([clock(a.at), el("span", { class: "sub", text: a.approval_id })]),
-      td(a.run_id || dash),
-      td(a.tool),
-      td(chip(a.risk, ["read", "playback", "change"].includes(a.risk) ? null : "warn")),
-      td(chip(a.outcome || "open", a.outcome === "yes" ? "good" : a.outcome ? "warn" : "berry")),
-      td(a.by || dash),
-      td(`${num(a.waited, 1)} s`, "num")));
-    root.replaceChildren(...[
-      state.approvals.open ? panel("Waiting for a yes", "she asked first; answer here if her card and her question are out of reach",
-        pendingApproval()) : null,
-      panel("Runs", "each sentence she handles, step by step; newest first",
-        state.runEvents ? null : el("p", { class: "note", text: "Run events are off ([runs] events = false): runs show once they end." }),
-        table(["Time", "From", "Steps", "Tools", "Outcome", { label: "Duration", num: true }, ""], rows,
-          { empty: "No runs since the daemon started. Say something, or type to her." })),
-      timelinePanel(),
-      panel("Approvals", "the calls she asked about first and how each was answered; never what they carried",
-        table(["Time", "Run", "Tool", "Risk", "Outcome", "By", { label: "Waited", num: true }], history,
-          { empty: "Nothing asked about since the daemon started." }))].filter(Boolean));
-    state.freshRuns.clear();
-    renderAttention();
+    return panel(RUNS_VIEWS[0][1], "what she did with each sentence, and how long each step took",
+      state.runEvents ? null : note("info", "Run events are off ([runs] events = false): runs show once they end."),
+      table(["When", "From", "Steps", "Tools", "Outcome", { label: "Duration", num: true }, ""], rows,
+        { empty: "No runs since the daemon started. Say something, or type to her." }));
   }
 
   // The shared timeline (ledger.py): what the big model gets as "recently" with its next sentence.
   function timelinePanel() {
+    const now = Date.now() / 1000;
     const rows = (state.timeline || []).map((e) => {
-      const ago = `${duration(e.ago_s)} ago`;
       let what;
       if (e.kind === "turn") {
         const said = typeof e.said === "string" ? e.said : el("span", { class: "faint", text: `a sentence, ${e.said_chars} chars` });
@@ -632,18 +1013,18 @@
       } else {
         what = [e.about || dash, e.line ? el("span", { class: "sub" }, el("span", { class: "who", text: "she said: " }), e.line) : null];
       }
-      const trust = e.foreign
-        ? chip(e.tainting ? "strangers' text: a change asks first" : "strangers' text, past its time", e.tainting ? "warn" : null)
-        : chip("plain", "good");
+      // One quiet marker for text others wrote; whether it still counts says the line under it.
+      const trust = e.foreign ? [foreignMark(), el("span", { class: "sub", text: e.tainting ? "a change asks first" : "past its time" })]
+        : el("span", { class: "faint", text: "plain" });
       return el("tr", { class: e.in_prompt ? null : "stale" },
-        td(ago, "nowrap"), td(chip(e.kind === "turn" ? "you" : e.source, e.kind === "turn" ? null : "berry")),
+        timeCell(typeof e.ago_s === "number" ? now - e.ago_s : null, true), td(e.kind === "turn" ? "you" : e.source),
         el("td", { class: "sentence" }, what), td([trust, el("span", { class: "sub", text: e.in_prompt ? "in her next prompt" : "left out" })]));
     });
     // Her inbox (inbox.py): counts only, never who wrote or what.
     const m = state.messages;
-    const inbox = m ? el("p", { class: "note", text: `Messages inbox: ${m.items} kept (${m.new} not told yet), ${m.with_text} with text, ${m.private} private; in memory only, at most ${m.keep} and ${m.max_age_hours} h.` }) : null;
+    const inbox = m ? note("info", `Messages inbox: ${m.items} kept (${m.new} not told yet), ${m.with_text} with text, ${m.private} private; in memory only, at most ${m.keep} and ${m.max_age_hours} h.`) : null;
     return panel("Timeline", "what the big model is told happened lately, oldest last; in memory only",
-      state.logging ? null : el("p", { class: "note", text: "Your sentences and her replies are hidden while outcome logging is off. What she reacted to on her own shows." }),
+      state.logging ? null : note("info", "Your sentences and her replies are hidden while outcome logging is off. What she reacted to on her own shows."),
       inbox,
       table(["When", "Kind", "What", "Trust"], rows, { empty: "Nothing yet: her memory starts empty with each start." }));
   }
@@ -678,191 +1059,108 @@
     }
     state.freshRuns.add(e.run_id);
     rerender("runs");
+    refreshNowSoon();
   }
 
-  // --------------------------------------------------------------------------- 3. data and scores
+  // --------------------------------------------------------------------------- privacy
 
-  function renderData() {
-    const root = $("#data");
-    const D = state.data;
-    if (!D) {
-      root.replaceChildren(panel("Data and scores", null, el("p", { class: "empty", text: "Loading..." })));
-      return;
-    }
-    const st = D.store;
-    const gone = st.gone || {};
-    const last = D.last_train || {};
-    const counts = last.counts || {};
-    root.replaceChildren(
-      panel("The data", "what a head is trained and judged on",
-        el("div", { class: "stats" },
-          stat("Training set", String(D.sets.train), "shipped sentences"),
-          stat("Held-out set", String(D.sets.heldout_sentences), `${D.sets.heldout_notifications} notifications too; never trained on`),
-          stat("Learned examples", String(st.usable), `${st.examples} kept, ${st.conflicts} with a conflict`),
-          stat("Removed in review", String(gone.rejected || 0), "sentences deleted for good"),
-          stat("Removed as private", String(gone.private || 0), "read as private by the trainer"),
-          stat("Last run", last.at ? when(last.at) : dash, last.at ? `${counts.base ?? dash} + ${counts.learned ?? dash} rows; left out: ${tally(last.left_out)}` : null, true))),
-      chartPanel(D),
-      scoresTable(D));
-  }
+  // The three settings that decide what she keeps and reads, each with what it means now and a Change… that opens
+  // the Config file tab at its field (loosening one asks on her card there); then what applies when.
 
-  function chartPanel(D) {
-    const points = (D.chart || []).filter((p) => typeof p.heldout === "number");
-    const W = 760, H = 280, L = 48, R = 16, T = 16, B = 44;
-    const values = points.map((p) => p.heldout).concat(typeof D.shipped === "number" ? [D.shipped] : []);
-    if (!values.length) {
-      return panel("Held-out accuracy per head", null,
-        el("p", { class: "empty", text: "No heads built yet. Each candidate's held-out score shows here." }));
-    }
-    let lo = Math.min(...values), hi = Math.max(...values);
-    const pad = Math.max(0.5, (hi - lo) * 0.25);
-    lo = Math.max(0, Math.floor(lo - pad)); hi = Math.min(100, Math.ceil(hi + pad));
-    if (hi - lo < 2) { lo = Math.max(0, lo - 1); hi = Math.min(100, hi + 1); }
-    const x = (i) => L + (points.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (points.length - 1));
-    const y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
-    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Held-out accuracy per head version" });
-    const step = (hi - lo) / 4;
-    for (let k = 0; k <= 4; k++) {
-      const v = lo + k * step;
-      chart.append(svg("line", { class: "gridline", x1: L, x2: W - R, y1: y(v), y2: y(v) }),
-        svg("text", { class: "label", x: L - 8, y: y(v) + 4, "text-anchor": "end", text: `${v.toFixed(1)}%` }));
-    }
-    chart.append(svg("line", { class: "axis", x1: L, x2: W - R, y1: H - B, y2: H - B }));
-    if (typeof D.shipped === "number") {
-      chart.append(svg("line", { class: "shipped", x1: L, x2: W - R, y1: y(D.shipped), y2: y(D.shipped) }));
-    }
-    if (points.length > 1) {
-      chart.append(svg("polyline", { class: "series", points: points.map((p, i) => `${x(i)},${y(p.heldout)}`).join(" ") }));
-    }
-    const every = Math.max(1, Math.ceil(points.length / 8));
-    points.forEach((p, i) => {
-      const dot = svg("circle", { class: `dot ${p.status || ""}`, cx: x(i), cy: y(p.heldout), r: p.version === D.in_use ? 7 : 5 },
-        svg("title", { text: `${p.version}: ${pct(p.heldout)} (${p.status || dash}), against ${pct(p.compared)}` }));
-      chart.append(dot);
-      if (i % every === 0 || i === points.length - 1) {
-        const d = new Date((p.at || 0) * 1000);
-        const anchor = points.length === 1 ? "middle" : i === 0 ? "start" : i === points.length - 1 ? "end" : "middle";
-        chart.append(svg("text", { class: "label", x: x(i), y: H - B + 18, "text-anchor": anchor, text: `${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}` }));
-      }
-    });
-    return panel("Held-out accuracy per head", "fields right on the held-out set, oldest head first",
-      chart,
-      el("div", { class: "legend" },
-        el("span", null, el("i", { class: "filled" }), "accepted"),
-        el("span", null, el("i"), "candidate or superseded"),
-        el("span", null, el("i", { class: "grey" }), "rejected"),
-        el("span", null, el("i", { class: "dash" }), `shipped head ${pct(D.shipped)}`),
-        el("span", null, "larger dot: the head in use")));
-  }
-
-  function scoresTable(D) {
-    const rows = (D.chart || []).slice().reverse().map((p) => el("tr", { class: p.version === D.in_use ? "current" : null },
-      td(el("span", { class: "mono", text: p.version })), td(when(p.at), "nowrap"), td(p.status || dash), td(pct(p.heldout), "num"),
-      td(pct(p.strict), "num"), td(pct(p.compared), "num"), td(el("span", { class: "mono", text: p.compared_with || dash }))));
-    return panel("Scores by version", null,
-      table(["Version", "Built", "Status", { label: "Fields", num: true }, { label: "Strict", num: true }, { label: "Head it was compared with", num: true }, "That head"], rows,
-        { empty: "No heads built yet." }));
-  }
-
-  // --------------------------------------------------------------------------- 4. settings and privacy
-
-  function renderSettings() {
-    const root = $("#settings");
+  function renderPrivacy() {
+    const root = $("#privacy");
     const S = state.settings;
     if (!S) {
-      root.replaceChildren(panel("Settings and privacy", null, el("p", { class: "empty", text: "Loading..." })));
+      root.replaceChildren(loadingPanel("privacy"));
       return;
     }
     const c = S.config;
     const n = c.notifications || {};
     const apps = Object.entries(n.body_apps || {});
     const l = c.learning || {};
-    const where = S.path || "the config file (strawberry config opens it)";
-    const card = (title, value, kind, lines) => el("div", { class: "stat" },
+    const logSentences = Boolean(c.daemon && c.daemon.log_sentences);
+    const bodiesRead = n.body !== "off" || apps.some(([, m]) => m !== "off");
+    const card = (title, value, loose, lines, change) => el("div", { class: "stat privacy-card" },
       el("div", { class: "k", text: title }),
-      el("div", { class: "v small" }, chip(value, kind)),
-      lines.map((line) => el("p", { class: "s" }, line)));
+      el("div", { class: "v small" }, chip(value, loose ? "warn" : "good", loose ? "looser than the default" : "the default")),
+      lines.map((line) => el("p", { class: "s" }, line)),
+      el("div", { class: "actions" }, change));
     root.replaceChildren(
-      panel("Privacy", "read-only here: change these on the Config file tab (loosening asks on her card)",
-        el("div", { class: "grid" },
-          card("Outcome logging", onOff(l.log_outcomes), l.log_outcomes ? "warn" : "good", [
+      titlePanel("privacy", "what she keeps and reads; amber is looser than the default, and loosening one asks on her card",
+        el("div", { class: "stats" },
+          card("Outcome logging", onOff(l.log_outcomes), l.log_outcomes, [
             l.log_outcomes ? "The sentences you say or type are kept on this machine with what came of each, for the learning loop."
-              : "Nothing you say is kept for learning. The router does not learn, and this page hides sentences.",
-            ["Change: ", el("code", { text: `[learning] log_outcomes = ${!l.log_outcomes}` })]]),
-          card("Sentences in the log", onOff(c.daemon && c.daemon.log_sentences), c.daemon && c.daemon.log_sentences ? "warn" : "good", [
-            c.daemon && c.daemon.log_sentences ? "What you say or type is written to the daemon's log as it was."
-              : "The log says only a sentence's length, never its words.",
-            ["Change: ", el("code", { text: `[daemon] log_sentences = ${!(c.daemon && c.daemon.log_sentences)}` })]]),
-          card("Notification bodies", n.body || dash, n.body === "off" ? "good" : "warn", [
+              : "Nothing you say is kept for learning. The router does not learn, and this page hides sentences."],
+            changeButton("learning", "log_outcomes")),
+          card("Sentences in the log", onOff(logSentences), logSentences, [
+            logSentences ? "What you say or type is written to the daemon's log as it was."
+              : "The log says only a sentence's length, never its words."],
+            changeButton("daemon", "log_sentences")),
+          card("Notification bodies", n.body || dash, bodiesRead, [
             n.body === "off" ? "Message text is never read; she reacts to the app and the title."
               : n.body === "glance" ? "She reads the text and says a short gist (private ones are dropped)."
                 : "She reads the text to react to it (private ones are dropped).",
-            apps.length ? `Per app: ${apps.map(([a, m]) => `${a} ${m}`).join(", ")}` : "No per-app modes.",
-            ["Change: ", el("code", { text: '[notifications] body = "off" | "react" | "glance"' }), ", or ",
-              el("code", { text: "body_apps = { App = \"glance\" }" }), "; the tray's Message bodies rows change it without a restart."]]))),
-      panel("Learning", null,
-        kv([["Idle training", `${onOff(l.idle_train)}: after ${l.idle_minutes} min of quiet and ${l.min_new_labels} new labels`],
-          ["Switch at once", `${onOff(l.auto_switch)} (auto_switch; off: a candidate waits for Accept)`],
-          ["Weekly line", onOff(l.weekly_line)],
-          ["Your labels' weight", `at most ${Math.round((l.max_share || 0) * 100)}% of the data set's, per option (max_share)`],
-          ["Records kept", `${l.max_days} days, ${l.max_records} records at most`]]),
-        el("p", { class: "dim" }, "All under ", el("code", { text: "[learning]" }), ` in ${where}.`)),
-      forgetPanel(),
+            apps.length ? `Per app: ${apps.map(([a, m]) => `${a} ${m}`).join(", ")}` : "No per-app modes. The tray's Message bodies rows change it too."],
+            changeButton("notifications", "body")))),
       panel("What applies when", "her persona and your profile are live; config.toml is read at start",
         kv(Object.entries(S.live || {})),
         el("p", { class: "dim" }, "Persona: ", el("code", { text: S.persona_path || "persona.md" }), " · profile: ",
           el("code", { text: S.profile_path || "profile.md" })),
         el("div", { class: "actions" },
-          actionButton("Apply [notifications] now", (b) => applySettings(b), "primary"),
-          el("span", { class: "faint", text: "reads config.toml again for the notification settings; the rest needs strawberry restart" }))),
-      panel("config.toml, as in effect", "read-only here; the Config file tab edits the file",
-        el("details", null, el("summary", { text: "Show every setting" }),
-          el("pre", { class: "config", text: S.toml || JSON.stringify(c, null, 2) }))));
+          actionButton("Apply [notifications] now", (b) => applySettings(b)),
+          el("span", { class: "faint", text: "reads config.toml again for the notification settings; the rest needs strawberry restart" }))));
   }
 
   function applySettings(button) {
     button.disabled = true;
     api("apply", {})
-      .then((r) => { toast(`Applied: notification bodies are ${r.body}.`); refreshSettings(); })
+      .then((r) => { toast(`Applied: notification bodies are ${r.body}.`); refreshSettings(); refreshNowSoon(); })
       .catch((e) => toast(e.message, true))
       .finally(() => { button.disabled = false; });
   }
 
-  function forgetPanel() {
-    const everything = el("input", { type: "checkbox", id: "forget-all" });
-    const button = confirmButton("Forget what she learned", "Delete it all now?", (b) =>
-      act(b, "forget", { confirm: "forget", everything: everything.checked },
-        (r) => `Forgot ${r.examples} example(s)${everything.checked ? ` and ${r.heads} head(s)` : ""}. Outcome records written before now are ignored.`), "danger");
-    const node = panel("Forget", "cannot be undone",
-      el("p", { text: "Deletes the learned sentences and their cached vectors, drops the candidate waiting, and ignores every outcome record written before now. Heads already built stay unless you tick the box." }),
-      el("div", { class: "actions" }, el("label", { class: "check", for: "forget-all" }, everything, "Also delete every head the loop made (the shipped head is in use again)")),
-      el("div", { class: "actions" }, button));
-    node.id = "forget";
-    return node;
-  }
+  // --------------------------------------------------------------------------- health
 
-  // --------------------------------------------------------------------------- 5. system
+  // What runs and how it is doing: GET system (the parts /health reads, minus anything that can hold a sentence)
+  // and GET now (the files, the bodies, what is switched off).
 
-  function renderSystem() {
-    const root = $("#system");
+  function renderHealth() {
+    const root = $("#health");
     const Y = state.system;
     if (!Y) {
-      root.replaceChildren(panel("System", null, el("p", { class: "empty", text: "Loading..." })));
+      root.replaceChildren(loadingPanel("health"));
       return;
     }
+    const N = state.now;
     const g = Y.gate || {};
     const emb = g.embedder || {};
     const sc = g.scorer || {};
     const head = sc.head || {};
     const tr = (Y.learning || {}).trainer || {};
     const tools = Object.entries(Y.tools || {});
+    const [cardText, cardKind] = cardLink({ widgets: Y.widgets, cards: Y.cards || 0 });
+    const files = N ? N.files || [] : [];
+    const fileState = (name, tab) => {
+      const f = files.find((x) => x.file === name);
+      return f ? [chip("has a problem", "warn"), " ", f.problems[0], " ", actionButton(`Open ${navLabel(tab)}`, () => show(tab), "ghost small")]
+        : chip("checks out", "good");
+    };
     root.replaceChildren(
-      el("div", { class: "stats" },
-        stat("Version", Y.version, `up ${duration(Y.uptime_s)}`, true),
-        stat("State", Y.state, `${Y.widgets} widget(s) connected`, true),
-        stat("Gate", g.ready ? "ready" : g.starting ? "starting" : "not ready", g.disabled_reason || (emb.backend ? `embeds on ${emb.backend === "onnx" ? "ONNX (in-process)" : emb.backend}` : null), true),
-        stat("Head in use", head.version || (sc.in_use === "nearest" ? "nearest examples" : dash), head.source ? `source: ${head.source}` : null, true)),
-      el("div", { class: "grid" },
+      titlePanel("health", "what runs, and how each part is doing",
+        el("div", { class: "stats" },
+          stat("Version", Y.version, `up ${duration(Y.uptime_s)}`, true),
+          stat("She is", STATE_WORD[Y.state] || Y.state, `${Y.widgets} ${Y.widgets === 1 ? "body" : "bodies"} connected, ${Y.cards || 0} with her card`, true),
+          stat("Gate", g.ready ? "ready" : g.starting ? "starting" : "not ready", g.disabled_reason || (emb.backend ? `embeds on ${emb.backend === "onnx" ? "ONNX (in-process)" : emb.backend}` : null), true),
+          stat("Head in use", head.version || Y.head || dash,
+            sc.in_use && sc.in_use !== "head" ? `scorer: ${sc.in_use}` : head.source ? `source: ${head.source}` : g.ready ? null : "used once the gate is ready", true))),
+      el("div", { class: "cards" },
+        panel("Her parts", "the files she reads and the bodies she shows on", kv([
+          ["Her card", chip(cardText, cardKind)],
+          ["Bodies", Y.widget_versions && Y.widget_versions.length ? Y.widget_versions.join(", ") : "none connected"],
+          ["persona.md", fileState("persona.md", "persona")],
+          ["input.toml", fileState("input.toml", "input")],
+          ["apps.toml", fileState("apps.toml", "apps")],
+          ["Switched off", N && N.off.length ? N.off.map((o) => o.what).join(", ") : "nothing"]])),
         panel("Gate", null, kv([
           ["Embedder", emb.backend ? `${emb.backend}${emb.configured && emb.configured !== emb.backend ? ` (configured: ${emb.configured})` : ""}` : dash],
           emb.fallback ? ["Fallback", emb.fallback] : null,
@@ -905,33 +1203,31 @@
     const root = $("#persona");
     const P = state.persona;
     if (!P) {
-      root.replaceChildren(panel("Persona", null, el("p", { class: "empty", text: "Loading..." })));
+      root.replaceChildren(loadingPanel("persona"));
       return;
     }
     const s = P.status;
     const inUse = s.source === "file" ? chip("in use: your persona.md", "good") : chip("in use: the shipped persona", null);
     const notes = [];
     if (s.error && s.error.length) {
-      notes.push(el("div", { class: "note berry" }, el("b", { text: "Your persona.md is not used. " }),
-        "She keeps the shipped persona until it checks out:", el("ul", null, s.error.map((p) => el("li", { text: p })))));
+      notes.push(note("bad", el("b", { text: "Your persona.md is not used. " }),
+        "She keeps the shipped persona until it checks out:", list(s.error)));
     }
-    if (s.warnings && s.warnings.length) notes.push(el("div", { class: "note" }, s.warnings.map((w) => el("p", { text: w }))));
+    if (s.warnings && s.warnings.length) notes.push(note("warn", s.warnings.map((w) => el("p", { text: w }))));
     const area = el("textarea", { id: "persona-text", class: "editor", spellcheck: "false", "aria-label": "persona.md",
       on: { input: (ev) => { state.personaDraft = ev.target.value; scheduleCheck(); } } });
     area.value = personaText();
-    const save = confirmButton("Save persona.md", "Save it? She uses it at once", (b) => savePersona(b), "primary");
-    save.id = "persona-save";
     fill(root,
-      panel("Persona", "who she is, how she talks, the examples the small model copies and her fixed lines",
-        el("div", { class: "actions" }, inUse, el("span", { class: "dim mono", text: s.path })), notes,
-        el("div", { class: "editor-grid" },
-          el("div", { class: "editor-col" }, area,
-            el("div", { class: "actions" }, save,
+      titlePanel("persona", "who she is, how she talks, the examples the small model copies and her fixed lines",
+        el("div", { class: "actions" }, inUse, el("span", { class: "dim mono", text: s.path })), notes),
+      panel("persona.md", "checked as you type, as she would read it; she uses a saved one from her next line",
+        el("div", { class: "split" },
+          el("div", { class: "split-main" }, area,
+            el("div", { class: "actions" },
               actionButton("Try it", (b) => tryPersona(b)),
-              actionButton("Undo my edits", () => { state.personaDraft = null; state.personaCheck = null; renderPersona(); scheduleCheck(); }, "ghost"),
               confirmButton("Start from the shipped one", "Replace the draft?", () => {
                 state.personaDraft = P.shipped; renderPersona(); scheduleCheck(); }, "ghost"))),
-          el("div", { class: "editor-side", id: "persona-check" }))),
+          el("div", { class: "split-side", id: "persona-check" }))),
       el("div", { id: "persona-try" }));
     renderPersonaCheck();
     renderPersonaTry();
@@ -957,29 +1253,25 @@
       el("div", { class: "bar" }, el("i", { style: null, data: { share: share.toFixed(3) } })));
   }
 
-  function renderPersonaCheck() {
-    const node = document.getElementById("persona-check");
-    if (!node) return;
-    const C = state.personaCheck;
-    const save = document.getElementById("persona-save");
-    const dirty = state.personaDraft !== null && state.persona && state.personaDraft !== state.persona.text;
-    if (save) save.disabled = !(C && C.ok && dirty);
-    if (!C) { node.replaceChildren(el("p", { class: "faint", text: "Checking..." })); return; }
-    const sizes = PERSONA_SECTIONS.map((name) => meter(name, (C.sizes || {})[name], (C.caps || {})[name]));
-    const diff = (C.diff || []).map((line) => el("span", {
-      class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : null,
-      text: `${line}\n` }));
-    fill(node,
-      el("h3", { text: "Check" }),
-      C.ok ? el("p", null, chip("checks out", "good"), dirty ? " Save it to put it in use." : " Same as the file.")
-        : el("div", { class: "note berry" }, el("b", { text: "Not saved like this:" }), el("ul", null, (C.problems || []).map((p) => el("li", { text: p })))),
-      (C.warnings || []).length ? el("div", { class: "note" }, C.warnings.map((w) => el("p", { text: w }))) : null,
-      el("h3", { text: "Size per section" }), sizes,
-      el("h3", { text: "Changes against the file" }),
-      diff.length ? el("pre", { class: "diff" }, diff) : el("p", { class: "faint", text: "No changes." }));
+  function sizeBars(node) {
     for (const bar of node.querySelectorAll(".bar i")) bar.style.width = `${Math.round(Number(bar.dataset.share) * 100)}%`;
   }
 
+  function renderPersonaCheck() {
+    const node = document.getElementById("persona-check");
+    if (!node || !state.persona) return;
+    const C = state.personaCheck;
+    const dirty = state.personaDraft !== null && state.personaDraft !== state.persona.text;
+    fill(node,
+      C && (C.warnings || []).length ? note("warn", C.warnings.map((w) => el("p", { text: w }))) : null,
+      el("h3", { text: "Size per section" }),
+      PERSONA_SECTIONS.map((name) => meter(name, ((C && C.sizes) || {})[name], ((C && C.caps) || {})[name])),
+      saveBar({ path: state.persona.status.path, checking: !C, ok: C && C.ok, same: !dirty, problems: C && C.problems,
+        diff: C ? C.diff : [], canSave: Boolean(C && C.ok && dirty), edited: state.personaDraft !== null,
+        saveLabel: "Save persona.md", saveId: "persona-save", onSave: (b) => savePersona(b),
+        onUndo: () => { state.personaDraft = null; state.personaCheck = null; renderPersona(); scheduleCheck(); } }));
+    sizeBars(node);
+  }
   async function savePersona(button) {
     button.disabled = true;
     try {
@@ -1011,11 +1303,11 @@
     if (!T) { node.replaceChildren(); return; }
     let body;
     if (T.running) body = el("p", { class: "faint", text: "Asking the small model with the draft..." });
-    else if (T.error) body = el("p", { class: "note berry", text: T.error });
-    else body = el("div", { class: "samples" }, (T.samples || []).map((s) => el("div", { class: "sample" },
+    else if (T.error) body = note("bad", T.error);
+    else body = el("div", { class: "cards" }, (T.samples || []).map((s) => el("div", { class: "sample" },
       el("div", { class: "k", text: s.label }),
       el("pre", { class: "event", text: s.event }),
-      s.line ? el("p", { class: "line" }, chip(s.emotion, s.emotion === "angry" || s.emotion === "alert" ? "warn" : "good"), " ", s.line,
+      s.line ? el("p", { class: "line" }, chip(s.emotion), " ", s.line,
         el("span", { class: "faint", text: ` · ${num(s.s, 2)} s` }))
         : el("p", { class: "faint", text: `no line: ${s.error || "unknown"}` }))));
     fill(node, panel("Try it", "the draft on a few made-up events, through the small model; nothing is said or saved", body));
@@ -1023,7 +1315,6 @@
 
   async function refreshPersona() {
     try { state.persona = await api("persona"); } catch (e) { if (!state.ended) toast(e.message, true); }
-    renderAttention();
     if (state.personaDraft === null || state.section !== "persona") rerender("persona");
   }
 
@@ -1040,50 +1331,65 @@
     const root = $("#profile");
     const F = state.profile;
     if (!F) {
-      root.replaceChildren(panel("Profile", null, el("p", { class: "empty", text: "Loading..." })));
+      root.replaceChildren(loadingPanel("profile"));
       return;
     }
     const text = state.profileDraft !== null ? state.profileDraft : F.text;
-    const counter = el("span", { class: "mono", id: "profile-count" });
     const area = el("textarea", { id: "profile-text", class: "editor short", spellcheck: "true", "aria-label": "profile.md",
       placeholder: "- Call me Sam\n- I use 24-hour time\n- The left monitor is the work one",
-      on: { input: (ev) => { state.profileDraft = ev.target.value; countProfile(); } } });
+      on: { input: (ev) => { state.profileDraft = ev.target.value; renderProfileCheck(); } } });
     area.value = text;
-    const save = actionButton("Save profile.md", (b) => saveProfile(b), "primary");
-    save.id = "profile-save";
     const rows = (F.history || []).map((c) => el("tr", null,
-      td(when(c.at), "nowrap"),
-      td(chip(OPS[c.op] || c.op, c.by === "her" ? "berry" : null)),
+      timeCell(c.at),
+      td(chip(OPS[c.op] || c.op)),
       el("td", { class: "sentence" },
         (c.added || []).map((l) => el("span", { class: "change add", text: `+ ${l}` })),
         (c.removed || []).map((l) => el("span", { class: "change del", text: `- ${l}` })),
         !(c.added || []).length && !(c.removed || []).length ? el("span", { class: "faint", text: "layout only" }) : null),
       td(confirmButton("Revert to before this", "Put it back as it was?", (b) => revertProfile(b, c.id), "small"))));
     fill(root,
-      panel("Profile", "what she knows about you: your name, how to address you, standing preferences",
-        el("p", { class: "dim" }, "She reads it with every sentence. Say “remember …” and she adds a line in your own words and says it back; “forget that” undoes it. She never writes it from a notification, a song or a web page."),
-        el("div", { class: "actions" }, el("span", { class: "dim mono", text: F.status.path }), counter),
-        area,
-        el("div", { class: "actions" }, save,
-          actionButton("Undo my edits", () => { state.profileDraft = null; renderProfile(); }, "ghost"))),
-      panel("What she reads", "quoted as facts you stated, not as instructions; out of the prompt once a stranger's text is in",
+      titlePanel("profile", "what she knows about you: your name, how to address you, standing preferences",
+        el("p", { class: "dim" }, "She reads it with every sentence. Say “remember …” and she adds a line in your own words and says it back; “forget that” undoes it. She never writes it from a notification, a song or a web page.")),
+      panel("profile.md", "your own words, a line each",
+        el("div", { class: "split" },
+          el("div", { class: "split-main" }, area),
+          el("div", { class: "split-side", id: "profile-check" }))),
+      panel("What she reads", "quoted as facts you stated, not as instructions; out of the prompt once foreign text is in",
         F.prompt ? el("pre", { class: "config wrap", text: F.prompt }) : el("p", { class: "empty", text: "Nothing yet: the profile is empty." })),
       panel("Changes", "every change keeps the file as it was before it; newest first",
         table(["When", "What", "Lines", ""], rows, { empty: "No changes yet." })));
-    countProfile();
+    renderProfileCheck();
   }
 
-  function countProfile() {
-    const node = document.getElementById("profile-count");
+  // The lines added and removed (profile.md has no check route: a line is the unit the user writes in).
+  function lineDiff(before, after) {
+    const count = (lines) => lines.reduce((m, l) => m.set(l, (m.get(l) || 0) + 1), new Map());
+    const a = before.split("\n").filter((l) => l.trim());
+    const b = after.split("\n").filter((l) => l.trim());
+    const left = count(a), right = count(b);
+    const out = [];
+    for (const l of a) { if (right.get(l)) right.set(l, right.get(l) - 1); else out.push(`-${l}`); }
+    for (const l of b) { if (left.get(l)) left.set(l, left.get(l) - 1); else out.push(`+${l}`); }
+    return out;
+  }
+
+  function renderProfileCheck() {
+    const node = document.getElementById("profile-check");
     if (!node || !state.profile) return;
-    const text = state.profileDraft !== null ? state.profileDraft : state.profile.text;
+    const F = state.profile;
+    const text = state.profileDraft !== null ? state.profileDraft : F.text;
     const used = estimate(text);
-    node.textContent = `~${used} / ${state.profile.cap} tokens`;
-    node.classList.toggle("down", used > state.profile.cap);
-    const save = document.getElementById("profile-save");
-    if (save) save.disabled = state.profileDraft === null || state.profileDraft === state.profile.text || used > state.profile.cap;
+    const dirty = state.profileDraft !== null && state.profileDraft !== F.text;
+    const ok = used <= F.cap;
+    fill(node,
+      meter("Size", used, F.cap),
+      saveBar({ path: F.status.path, ok, same: !dirty, problems: ok ? [] : [`over the cap: ~${used} of ${F.cap} tokens`],
+        diff: lineDiff(F.text, text), diffTitle: "Lines added and removed", canSave: ok && dirty,
+        edited: state.profileDraft !== null, saveLabel: "Save profile.md", saveId: "profile-save",
+        confirmLabel: "Save it? She reads it with your next sentence", onSave: (b) => saveProfile(b),
+        onUndo: () => { state.profileDraft = null; renderProfile(); } }));
+    sizeBars(node);
   }
-
   async function saveProfile(button) {
     button.disabled = true;
     try {
@@ -1157,19 +1463,19 @@
   function renderApps() {
     const root = $("#apps");
     if (!apps.view) {
-      root.replaceChildren(panel("Apps", null, el("p", { class: "empty", text: "Loading..." })));
+      root.replaceChildren(loadingPanel("apps"));
       return;
     }
     if (!apps.edited || !apps.rows) apps.rows = appsRows(apps.view);
     const search = el("input", { type: "search", id: "apps-search", value: apps.search, placeholder: "Search installed apps",
       "aria-label": "Search installed apps", on: { input: (ev) => { apps.search = ev.target.value; renderAppsTable(); } } });
     fill(root,
-      panel("Apps", "which apps she may open or close when you ask; nothing else on the computer",
-        el("div", { id: "apps-head" })),
+      titlePanel("apps", "which apps she may open or close when you ask; nothing else on the computer",
+        el("div", { id: "apps-head", class: "stack" })),
       panel("Installed apps", "tick what she may do; you may say the app's name or one of its aliases",
-        el("div", { class: "actions" }, search), el("div", { id: "apps-table" })),
-      panel("apps.toml", "saved here, never in config.toml; she reads it again within a second",
-        el("div", { id: "apps-file" })));
+        el("div", { class: "split" },
+          el("div", { class: "split-main stack" }, el("div", { class: "actions" }, search), el("div", { id: "apps-table" })),
+          el("div", { class: "split-side", id: "apps-file" }))));
     renderAppsHead();
     renderAppsTable();
     renderAppsFile();
@@ -1181,8 +1487,8 @@
     if (!node || !apps.view) return;
     const f = apps.view.file || {};
     fill(node,
-      f.error ? el("div", { class: "note berry" }, el("b", { text: "Your apps.toml is not used. " }),
-        "She keeps the list she has until it checks out:", el("ul", null, el("li", { text: f.error }))) : null,
+      f.error ? note("bad", el("b", { text: "Your apps.toml is not used. " }),
+        "She keeps the list she has until it checks out:", list([f.error])) : null,
       el("div", { class: "actions" },
         chip(f.in_use ? "list from apps.toml" : "the default list: Spotify may open (no apps.toml yet)", f.in_use ? "good" : null),
         chip(`${apps.view.apps.filter((a) => a.open).length} may open`),
@@ -1194,7 +1500,6 @@
         + "volume to 30\", \"mute the computer\") and locking the screen (\"lock the screen\", or a gesture you map "
         + "to lock in the Input tab)." }));
   }
-
   function renderAppsTable() {
     const node = document.getElementById("apps-table");
     if (!node || !apps.rows) return;
@@ -1210,7 +1515,7 @@
         on: { change: (ev) => { r[key] = ev.target.checked; if (after) after(); appsEdited(); } } });
       return el("tr", null,
         el("td", null, el("b", { text: r.name }), " ", el("span", { class: "dim mono", text: r.id }),
-          r.installed ? null : [" ", chip("not installed", "berry", "No such .desktop file now; it stays on the list until you untick it")]),
+          r.installed ? null : [" ", chip("not installed", "warn", "No such .desktop file now; it stays on the list until you untick it")]),
         el("td", null, box("open", "May open")),
         el("td", null, box("close", "May close", () => { ask.disabled = !r.close; })),
         el("td", null, ask),
@@ -1228,24 +1533,13 @@
     if (!node || !apps.view) return;
     const C = apps.check;
     const f = apps.view.file || {};
-    const dirty = appsDirty();
-    const diff = ((C && C.diff) || []).map((line) => el("span", {
-      class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : null,
-      text: `${line}\n` }));
-    const save = confirmButton("Save apps.toml", "Save it? She uses it at once", (b) => saveApps(b), "primary");
-    save.disabled = !(C && C.ok && (dirty || !f.in_use));
-    fill(node,
-      el("div", { class: "actions" }, el("span", { class: "dim mono", text: f.path || "apps.toml" }),
-        f.exists ? null : chip("not written yet")),
-      !C ? el("p", { class: "faint", text: "Checking..." })
-        : C.ok ? el("p", null, chip("checks out", "good"), dirty ? " Save it to put it in use." : f.in_use ? " Same as the file." : " Save it to keep this list in apps.toml.")
-          : el("div", { class: "note berry" }, el("b", { text: "Not saved like this:" }), el("ul", null, (C.problems || []).map((p) => el("li", { text: p })))),
-      el("h3", { text: "Changes against the file" }),
-      diff.length ? el("pre", { class: "diff" }, diff) : el("p", { class: "faint", text: "No changes." }),
-      el("div", { class: "actions" }, save,
-        actionButton("Undo my edits", () => { apps.edited = false; apps.rows = null; apps.check = null; renderApps(); }, "ghost")));
+    const diff = (C && C.diff) || [];
+    fill(node, saveBar({ path: f.path || "apps.toml", exists: f.exists, checking: !C, ok: C && C.ok, problems: C && C.problems,
+      same: !diff.length, diff, canSave: Boolean(C && C.ok && diff.length), edited: apps.edited,
+      saveLabel: "Save apps.toml", onSave: (b) => saveApps(b),
+      notes: f.in_use ? null : el("p", { class: "faint", text: "No apps.toml yet: Save writes this list to it." }),
+      onUndo: () => { apps.edited = false; apps.rows = null; apps.check = null; renderApps(); } }));
   }
-
   async function saveApps(button) {
     button.disabled = true;
     try {
@@ -1340,19 +1634,19 @@
     const root = $("#config");
     const V = conf.view;
     if (!V) {
-      root.replaceChildren(panel("config.toml", null, el("p", { class: "empty", text: "Loading..." })));
+      root.replaceChildren(loadingPanel("config"));
       return;
     }
     fill(root,
-      panel("config.toml", "the settings file, edited here; comments and order are kept",
-        el("div", { id: "conf-head" })),
+      titlePanel("config", "the settings file, edited here; comments and order are kept",
+        el("div", { id: "conf-head", class: "stack" })),
       el("div", { id: "conf-pending" }),
       V.error ? null : panel("Settings", "a field set in the file shows ✎; the rest are the defaults",
-        el("div", { class: "actions" },
-          ["form", "raw"].map((m) => el("button", { type: "button", class: conf.mode === m ? "primary small" : "ghost small",
-            text: m === "form" ? "Form" : "Raw TOML", on: { click: () => { conf.mode = m; renderConfig(); } } }))),
-        el("div", { id: "conf-body" })),
-      V.error ? null : panel("Review and save", "checked as she checks it at start", el("div", { id: "conf-review" })));
+        el("div", { class: "split" },
+          el("div", { class: "split-main stack" },
+            toggle([["form", "Form"], ["raw", "Raw TOML"]], conf.mode, (m) => { conf.mode = m; renderConfig(); }, "Edit as"),
+            el("div", { id: "conf-body" })),
+          el("div", { class: "split-side", id: "conf-review" }))));
     renderConfHead();
     renderConfPending();
     renderConfBody();
@@ -1366,13 +1660,12 @@
     fill(node,
       el("div", { class: "actions" }, el("span", { class: "dim mono", text: V.path }),
         V.exists ? chip("in use", "good") : chip("no file yet: the draft starts from the commented template"),
-        chip(`loaded ${clock(Date.now() / 1000)}`, null, `as loaded: ${V.base.tag.slice(0, 12)}…`),
+        chip(`loaded ${when(Date.now() / 1000)}`, null, `as loaded: ${V.base.tag.slice(0, 12)}…`),
         actionButton("Reload from the file", () => refreshConfig(true), "ghost small")),
-      V.error ? el("div", { class: "note berry" }, el("b", { text: "Not shown: " }), V.error,
+      V.error ? note("bad", el("b", { text: "Not shown: " }), V.error,
         el("p", { text: "Fix it in a text editor (strawberry config). Nothing of the file is shown until it parses, so no secret in it can leak here." })) : null,
       el("p", { class: "dim", text: "Secrets in the file (a server's env, a token in its arguments or address, a key named like one) show as <hidden N: kept as is> and are kept as they are. Type a whole new value over one to change it." }));
   }
-
   function renderConfPending() {
     const node = document.getElementById("conf-pending");
     if (!node || !conf.view) return;
@@ -1447,19 +1740,19 @@
       return;
     }
     if (conf.check && !conf.check.values && conf.draft !== null) {
-      fill(node, el("div", { class: "note berry", text: "The raw text does not parse, so the form cannot show it. Fix it in Raw TOML, or Undo my edits." }));
+      fill(node, el("div", { class: "note bad", text: "The raw text does not parse, so the form cannot show it. Fix it in Raw TOML, or Undo my edits." }));
       return;
     }
     const values = confValues();
     fill(node, conf.view.schema.map((section) => {
       const set = values[section.name] || {};
       const count = Object.keys(set).length;
-      const details = el("details", { class: "conf-section", open: conf.open.has(section.name) },
+      const details = el("details", { class: "conf-section", id: `conf-section-${section.name}`, open: conf.open.has(section.name) },
         el("summary", null, el("span", { class: "mono", text: `[${section.name}]` }), " ",
           section.live ? chip("applies now", "good", section.live) : chip("needs a restart", null, "read when she starts"),
           count ? el("span", { class: "faint", text: ` ${count} set in the file` }) : null),
         section.doc ? el("p", { class: "dim", text: section.doc }) : null,
-        el("div", { class: "conf-fields" }, section.fields.map((f) => confField(section.name, f, set))));
+        el("div", { class: "cards fields" }, section.fields.map((f) => confField(section.name, f, set))));
       details.addEventListener("toggle", () => { if (details.open) conf.open.add(section.name); else conf.open.delete(section.name); });
       return details;
     }));
@@ -1531,32 +1824,25 @@
     const C = conf.check;
     const V = conf.view;
     if (!V) return null;
-    if (!C || conf.draft === null) return el("p", { class: "faint", text: "No changes yet." });
-    const diff = (C.diff || []).map((line) => el("span", {
-      class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : null,
-      text: `${line}\n` }));
-    const lowers = (C.lowering || []).length > 0;
+    const edited = conf.draft !== null;
+    const lowers = Boolean(C && edited && (C.lowering || []).length);
     const waiting = V.pending && V.pending.state === "waiting";
-    const save = confirmButton(lowers ? "Save: ask on her card" : "Save config.toml", lowers ? "Ask her now?" : "Save it now?", (b) => confSave(b), "primary");
-    save.disabled = !(C.ok && !C.same && !C.stale && !waiting);
-    return el("div", { class: "conf-review" },
-      C.stale ? el("div", { class: "note berry" }, el("b", { text: "config.toml changed since this page loaded it. " }),
+    const notes = !C || !edited ? null : [
+      C.stale ? note("bad", el("b", { text: "config.toml changed since this page loaded it. " }),
         "Saving would overwrite that change, so it is refused. Reload to see the file as it is now (your edits here are dropped).",
         el("div", { class: "actions" }, actionButton("Reload from the file", () => refreshConfig(true), "small"))) : null,
-      !C.ok ? el("div", { class: "note berry" }, el("b", { text: "Not saved like this:" }), el("ul", null, (C.problems || []).map((p) => el("li", { text: p }))))
-        : C.same ? el("p", null, chip("same as the file")) : el("p", null, chip("checks out", "good"), " as she would read it at start."),
-      lowers ? el("div", { class: "note berry" }, el("b", { text: "This loosens safety, so she asks first: " }),
+      lowers ? note("warn", el("b", { text: "This loosens safety, so she asks first: " }),
         "after Save, hold Yes on her card. Neither this page nor a spoken yes can say yes to it.",
         el("ul", null, C.lowering.map((f) => el("li", null, el("code", { text: f.key }), ` ${f.why}`)))) : null,
       (C.live || []).length ? el("p", null, chip(`applies now: ${C.live.map((s) => `[${s}]`).join(" ")}`, "good")) : null,
       (C.restart || []).length ? el("p", null, chip(`needs a restart: ${C.restart.map((s) => `[${s}]`).join(" ")}`, "warn"),
-        el("span", { class: "faint", text: " after saving, run strawberry restart (she never restarts herself)" })) : null,
-      el("h3", { text: "Changes against the file" }),
-      diff.length ? el("pre", { class: "diff" }, diff) : el("p", { class: "faint", text: "No changes." }),
-      el("div", { class: "actions" }, save,
-        actionButton("Undo my edits", () => { confReset(); renderConfig(); renderTools(); }, "ghost")));
+        el("span", { class: "faint", text: " after saving, run strawberry restart (she never restarts herself)" })) : null];
+    return saveBar({ path: V.path || "config.toml", exists: V.exists, checking: edited && !C, ok: !edited || !C || C.ok,
+      same: !edited || !C || C.same, problems: C && C.problems, notes, diff: edited && C ? C.diff : [],
+      canSave: Boolean(edited && C && C.ok && !C.same && !C.stale && !waiting), edited,
+      saveLabel: lowers ? "Save: ask on her card" : "Save config.toml", confirmLabel: lowers ? "Ask her now?" : "Save it now?",
+      onSave: (b) => confSave(b), onUndo: () => { confReset(); renderConfig(); renderTools(); } });
   }
-
   function renderConfReview() {
     const node = document.getElementById("conf-review");
     if (node) fill(node, reviewBlock());
@@ -1601,19 +1887,17 @@
 
   // --- the Tools page
 
-  const TIER_KIND = { read: "good", playback: "good", change: null, sends: "warn", destructive: "berry" };
-
-  function renderTools() {
+    function renderTools() {
     const root = $("#tools");
     const T = conf.tools;
     if (!T || !conf.view) {
-      root.replaceChildren(panel("Tools", null, el("p", { class: "empty", text: "Loading..." })));
+      root.replaceChildren(loadingPanel("tools"));
       return;
     }
     const rows = T.servers.map((s) => {
       const tools = el("details", null, el("summary", { text: s.tools.length ? `${s.tools.length} tool(s)` : (s.state === "not running" ? "not running yet" : "connects on first use") }),
         s.tools.length ? table(["Tool", "Tier", "Offered to the thinker", "Asks first", "Careful"], s.tools.map((t) => el("tr", null,
-          td(el("span", { class: "mono", text: t.name })), td(chip(t.tier, TIER_KIND[t.tier], t.destructive_hint ? "the server marks it destructive" : null)),
+          td(el("span", { class: "mono", text: t.name })), td(tierChip(t.tier, t.destructive_hint ? "the server marks it destructive" : null)),
           td(t.offered ? "yes" : "no"), td(t.confirm ? "yes" : dash), td(t.careful ? "only when you ask for such a change" : dash)))) : null);
       return el("tr", null,
         td([el("b", { text: s.name }), s.builtin ? el("span", { class: "sub", text: "built in" }) : null,
@@ -1621,25 +1905,26 @@
         td(s.kind), td(s.topic || dash), td(s.adapter || dash),
         td(s.flags && s.flags.length ? s.flags.map((f) => chip(f, f === "private" ? null : "warn")) : dash),
         td(s.offer || dash),
-        td([chip(s.state, s.state === "ready" ? "good" : s.error ? "berry" : null, s.error || ""), s.login ? loginBlock(s.login) : null]),
+        td([chip(s.state, s.state === "ready" ? "good" : s.error ? "warn" : null, s.error || ""), s.login ? loginBlock(s.login) : null]),
         el("td", null, tools),
         td(!s.builtin && T.file[s.name] ? actionButton("Edit", () => { conf.server = serverForm(s.name, T.file[s.name]); renderToolsForm(); document.getElementById("tools-form").scrollIntoView({ block: "start" }); }, "small") : null));
     });
     fill(root,
-      panel("Tools", "the MCP servers she acts through, and how each tool is treated",
+      titlePanel("tools", "the MCP servers she acts through, and how each tool is treated",
         el("div", { class: "actions" }, chip(T.enabled ? "tools on" : "tools off ([tools] enabled = false)", T.enabled ? "good" : "warn"),
           el("span", { class: "dim mono", text: T.path })),
-        el("p", { class: "dim", text: "Tier: read and playback go ahead; change asks once strangers' text is in the conversation; sends and destructive always ask. Flags: private (your own data), foreign (strangers' text), egress (sends things off this machine). A server with no adapter and no flags is all three." }),
+        el("p", { class: "dim", text: "Tier: read and playback go ahead; change asks once foreign text is in the conversation; sends and destructive always ask. Flags: private (your own data), foreign (foreign text: text others wrote), egress (sends things off this machine). A server with no adapter and no flags is all three." })),
+      panel("Servers", "built in and from config.toml; open a row's tools for each one's tier",
         table(["Server", "Kind", "Topic", "Adapter", "Flags", "Offered", "State", "Tools", ""], rows, { empty: "No tool servers." })),
       el("div", { id: "tools-pending" }),
-      panel("Add or edit a server", "saved to config.toml through the same review: a new or changed command or address asks on her card",
-        el("div", { id: "tools-form" })),
-      panel("Review and save", "checked as she checks it at start", el("div", { id: "tools-review" })));
+      panel("Add or edit a server", "saved to config.toml through the same check: a new or changed command or address asks on her card",
+        el("div", { class: "split" },
+          el("div", { class: "split-main", id: "tools-form" }),
+          el("div", { class: "split-side", id: "tools-review" }))));
     renderToolsPending();
     renderToolsForm();
     renderToolsReview();
   }
-
   function loginBlock(login) {
     const copy = actionButton("Copy", () => {
       (navigator.clipboard ? navigator.clipboard.writeText(login.command) : Promise.reject(new Error("no clipboard")))
@@ -1654,7 +1939,7 @@
     const node = document.getElementById("tools-pending");
     if (!node) return;
     const P = conf.view && conf.view.pending;
-    fill(node, P && P.state === "waiting" ? el("div", { class: "note berry" }, el("b", { text: "Waiting for your yes on her card. " }),
+    fill(node, P && P.state === "waiting" ? note("warn", el("b", { text: "Waiting for your yes on her card. " }),
       "Hold Yes there; this page cannot. The Config file tab shows the details.") : null);
   }
 
@@ -1706,7 +1991,7 @@
     const F = conf.server;
     if (!F) {
       fill(node, el("div", { class: "actions" },
-        actionButton("Add a server", () => { conf.server = serverForm("", null); renderToolsForm(); }, "primary"),
+        actionButton("Add a server", () => { conf.server = serverForm("", null); renderToolsForm(); }),
         el("span", { class: "faint", text: "or Edit one in the list above. Built-in servers are hers and are not edited here." })));
       return;
     }
@@ -1731,27 +2016,27 @@
         actionButton("Add", () => { const w = F.workspace.trim(); if (w && !F.workspaces.includes(w)) F.workspaces.push(w); F.workspace = ""; renderToolsForm(); }, "small")),
       el("span", { class: "s", text: "By name or id, typed here: the server's list is not read from this page. Adding one asks on her card." })) : null;
     fill(node,
-      el("div", { class: "fields" },
+      el("div", { class: "cards fields" },
         text("name", "Name", "letters, digits, - and _; recall, spotify or web get that adapter", { disabled: F.original ? true : null }),
         pick("transport", "Runs as", [["command", "a command on this machine (stdio)"], ["url", "a server at an address (https)"]]),
         pick("topic", "Topic", O.topics.map((t) => [t, t]), "the gate's topic its tools belong to"),
         pick("adapter", "Adapter", [["", "by its name (or none)"], ...O.adapters.map((a) => [a, a])]),
         pick("offer", "Offered to the thinker", [["", "the adapter's (else always)"], ...O.offers.map((o) => [o, o])])),
       F.transport === "url"
-        ? el("div", { class: "fields" }, text("url", "Address", "https, or http on this machine only; then sign in with strawberry tools login"))
-        : el("div", { class: "fields" }, text("command", "Command", "a full path is safest"), area("args", "Arguments", "one per line"),
+        ? el("div", { class: "cards fields" }, text("url", "Address", "https, or http on this machine only; then sign in with strawberry tools login"))
+        : el("div", { class: "cards fields" }, text("command", "Command", "a full path is safest"), area("args", "Arguments", "one per line"),
           area("env", "Environment", "NAME = value, one per line; hidden values stay as they are"), text("cwd", "Folder", "optional")),
       el("div", { class: "actions" }, el("span", { class: "k", text: "Flags" }),
         O.flags.map((f) => el("label", { class: "check" }, el("input", { type: "checkbox", checked: F.flags.has(f),
           on: { change: (ev) => { if (ev.target.checked) F.flags.add(f); else F.flags.delete(f); } } }), f)),
         el("span", { class: "faint", text: "none ticked and no adapter: all three. Taking one away asks on her card." })),
-      el("div", { class: "fields" }, text("careful", "Careful tools", "offered only when you ask for such a change; comma separated"),
+      el("div", { class: "cards fields" }, text("careful", "Careful tools", "offered only when you ask for such a change; comma separated"),
         el("label", { class: "field" }, el("span", { class: "k", text: "Asks first" }),
           el("label", { class: "check" }, el("input", { type: "checkbox", checked: F.confirmDefault, on: { change: (ev) => { F.confirmDefault = ev.target.checked; renderToolsForm(); } } }), "the adapter's own list"),
           F.confirmDefault ? null : el("input", { type: "text", id: "srv-confirm", value: F.confirm, placeholder: "none", on: { input: (ev) => { F.confirm = ev.target.value; } } }))),
       workspaces,
       el("div", { class: "actions" },
-        actionButton("Review this server", () => toolsReview(false), "primary"),
+        actionButton("Review this server", () => toolsReview(false)),
         F.original ? confirmButton("Remove from config.toml", "Remove it?", () => toolsReview(true), "danger") : null,
         actionButton("Close", () => { conf.server = null; renderToolsForm(); }, "ghost")));
   }
@@ -1852,11 +2137,6 @@
     return twice;
   }
 
-  function inputDirty() {
-    return Boolean(state.input && state.inputForm
-      && JSON.stringify(inputSettings(state.inputForm)) !== JSON.stringify(inputSettings(inputForm(state.input))));
-  }
-
   function edited() {
     state.inputEdited = true;
     scheduleInputCheck();
@@ -1878,7 +2158,7 @@
     const root = $("#input");
     const V = state.input;
     if (!V) {
-      root.replaceChildren(panel("Input", null, el("p", { class: "empty", text: "Loading..." })));
+      root.replaceChildren(loadingPanel("input"));
       return;
     }
     if (!state.inputEdited || !state.inputForm) state.inputForm = inputForm(V);
@@ -1887,26 +2167,33 @@
     const canvas = el("canvas", { id: "hand-canvas", class: "hand", width: 640, height: 480,
       "aria-label": "The hand as the watcher reports it: wrist, fingertips, the zone and the hold ring" });
     fill(root,
-      panel("Input", "hand gestures through the camera, and touch from the bodies",
+      titlePanel("input", "hand gestures through the camera, and touch from the bodies",
         cameraSwitch(),
-        el("div", { id: "input-head" }),
+        el("div", { id: "input-head", class: "stack" }),
         el("div", { class: "actions" },
           el("label", { class: "check", for: "input-practice" }, practice,
             el("b", { text: "Practice mode" }),
             el("span", { class: "dim", text: "Gestures and touches are recognised and shown here, and do nothing. Not saved; off again when she restarts." })))),
-      el("div", { class: "input-grid" },
-        panel("Live", "drawn from the hand's numbers; the camera's picture never leaves the watcher",
-          el("div", { class: "hand-wrap" }, canvas), el("div", { id: "hand-legend", class: "hand-legend" })),
-        el("div", { class: "input-side" },
-          panel("Status", null, el("div", { id: "input-status" })),
-          panel("Bodies", "what they draw, and what the user touches", el("div", { id: "input-bodies" })))),
-      panel("Mappings", "what a gesture or a touch does: only actions that need no yes (read and playback)",
-        el("div", { id: "input-maps" })),
-      panel("Tuning", "how a hand has to be held, and how the camera runs", el("div", { id: "input-tuning" })),
-      panel("Calibrate", "your hand's own numbers: each finger's curl and the thumb-index gap, never a picture",
-        el("div", { id: "input-calib" })),
-      panel("input.toml", "saved here, never in config.toml; she reads it again within a second",
-        el("div", { id: "input-file" })),
+      panel("Live", "drawn from the hand's numbers; the camera's picture never leaves the watcher",
+        el("div", { class: "split" },
+          el("div", { class: "split-main" }, el("div", { class: "hand-wrap" }, canvas), el("div", { id: "hand-legend", class: "hand-legend" })),
+          el("div", { class: "split-side" },
+            el("h3", { text: "Status" }), el("div", { id: "input-status", class: "stack" }),
+            el("h3", { text: "Bodies" }), el("p", { class: "faint", text: "what they draw, and what the user touches" }),
+            el("div", { id: "input-bodies", class: "stack" })))),
+      panel("Settings", "saved to input.toml, never config.toml; she reads it again within a second",
+        el("div", { class: "split" },
+          el("div", { class: "split-main" },
+            el("h3", { text: "Mappings" }),
+            el("p", { class: "faint", text: "what a gesture or a touch does: only actions that need no yes (read and playback)" }),
+            el("div", { id: "input-maps", class: "stack" }),
+            el("h3", { text: "Tuning" }),
+            el("p", { class: "faint", text: "how a hand has to be held, and how the camera runs" }),
+            el("div", { id: "input-tuning" }),
+            el("h3", { text: "Calibrate" }),
+            el("p", { class: "faint", text: "your hand's own numbers: each finger's curl and the thumb-index gap, never a picture" }),
+            el("div", { id: "input-calib", class: "stack" })),
+          el("div", { class: "split-side", id: "input-file" }))),
       panel("Recent", "the last gestures and touch actions, and what came of each", el("div", { id: "input-recent" })));
     renderInputCamera();
     renderInputHead();
@@ -1929,8 +2216,8 @@
     const f = V.file || {};
     const notes = [];
     if (f.error) {
-      notes.push(el("div", { class: "note berry" }, el("b", { text: "Your input.toml is not used. " }),
-        "She keeps the settings she has until it checks out:", el("ul", null, el("li", { text: f.error }))));
+      notes.push(note("bad", el("b", { text: "Your input.toml is not used. " }),
+        "She keeps the settings she has until it checks out:", list([f.error])));
     }
     fill(node, el("div", { class: "actions" },
       chip(f.in_use ? (f.error ? "settings: the last input.toml that checked out" : "settings from input.toml")
@@ -1955,7 +2242,7 @@
     const t = S.touch || {};
     fill(node,
       el("div", { class: "actions" },
-        chip(`camera ${camera}`, camera === "open" ? "berry" : null, "The camera's light is on while it is open"),
+        chip(`camera ${camera}`, camera === "open" ? "warn" : null, "The camera's light is on while it is open"),
         chip(`watch: ${S.watch}`), chip(`command mode ${armed.split(",")[0]}`, S.armed_s > 0 ? "good" : null)),
       kv([
         ["Watcher", watcher],
@@ -2031,20 +2318,20 @@
       td(removeButton(() => { F.tmap.splice(i, 1); edited(); renderInputMaps(); }))));
     const firstEntity = ((O.entities || [])[0] || {}).id || "";
     fill(node, entityList(),
-      el("div", { class: "grid" },
+      el("div", { class: "stack" },
         el("div", null,
-          el("h3", { text: "Gestures" }),
+          el("h4", { text: "Gestures" }),
           table(["When pointing at", "Gesture", "Does", ""], gRows, { empty: "No gesture does anything." }),
           el("div", { class: "actions" },
             actionButton("Add a gesture", () => { F.gmap.push({ target: "", gesture: O.gestures[0], action: gActions[0] }); edited(); renderInputMaps(); }, "small"),
             el("span", { class: "faint", text: "“When pointing at” names an entity: that row wins while the user points at it." }))),
         el("div", null,
-          el("h3", { text: "Touch" }),
+          el("h4", { text: "Touch" }),
           table(["Entity", "Touch", "Does", ""], tRows, { empty: "No touch does anything: touches are only shown to the other bodies." }),
           el("div", { class: "actions" },
             actionButton("Add a touch", () => { F.tmap.push({ entity: firstEntity, kind: O.touch_kinds[0], action: tActions[0] }); edited(); renderInputMaps(); }, "small"),
             el("span", { class: "faint", text: "Entities are the ids the bodies declare." })))),
-      el("p", { class: "note hidden", id: "input-dups", text: "Two rows map the same thing; only the last would count. Change or remove one." }));
+      el("p", { class: "note warn hidden", id: "input-dups", text: "Two rows map the same thing; only the last would count. Change or remove one." }));
     markDuplicates();
   }
 
@@ -2082,8 +2369,8 @@
       el("span", null, el("b", { text: label }), el("span", { class: "s", text: ` ${hint}` })));
     node.className = "tuning";
     fill(node,
-      el("h3", { text: "Gestures" }),
-      el("div", { class: "fields" },
+      el("h4", { text: "Gestures" }),
+      el("div", { class: "cards fields" },
         GESTURE_TUNING.map((f) => numberField(G, f)),
         el("label", { class: "field", for: "tune-watch" }, el("span", { class: "k", text: "Watch" }),
           (() => { const s = selectOf(state.input.options.watch, G.watch, null, (v) => { G.watch = v; edited(); }, "Watch"); s.id = "tune-watch"; return s; })(),
@@ -2103,8 +2390,8 @@
         box("arming", "Arming", "a held open palm turns command mode on first"),
         box("approvals", "A thumb or the head answers her card", "a held thumbs up or down, a nod or a shake, for a tier her card takes with a tap"),
         box("require_facing", "Only while I face the screen", "needs the face model; without it gestures count as before")),
-      el("h3", { text: "Touch" }),
-      el("div", { class: "fields" }, TOUCH_TUNING.map((f) => numberField(T, f))));
+      el("h4", { text: "Touch" }),
+      el("div", { class: "cards fields" }, TOUCH_TUNING.map((f) => numberField(T, f))));
     for (const input of node.querySelectorAll('input[type="number"]')) input.addEventListener("input", () => drawHand());
   }
 
@@ -2211,7 +2498,7 @@
       const [, title, how] = CALIB_STEPS[C.step];
       const left = Math.max(0, CALIB_SECONDS - (performance.now() - C.startedAt) / 1000);
       const seen = (C.samples[CALIB_STEPS[C.step][0]] || []).length;
-      head = el("div", { class: "note" },
+      head = note("info",
         el("b", { text: `Step ${C.step + 1} of ${CALIB_STEPS.length}: ${title}. ` }), `${how}. `,
         el("span", { class: "mono", text: `${left.toFixed(1)} s` }), seen ? ` (${seen} looks)` : "",
         el("div", { class: "actions" }, actionButton("Stop", () => finishCalibration(true), "small ghost")));
@@ -2219,7 +2506,7 @@
       const R = C.result;
       head = el("div", null,
         R.problems.length
-          ? el("div", { class: "note berry" }, el("b", { text: "Not usable as it is:" }), el("ul", null, R.problems.map((p) => el("li", { text: p }))))
+          ? note("bad", el("b", { text: "Not usable as it is:" }), list(R.problems))
           : el("p", null, chip("recorded", "good"), " Use it, then save input.toml."),
         table(["Key", "Recorded", "Now"], Object.entries(R.values).map(([k, v]) => el("tr", null,
           td(k, "mono"), td(num(v, 3)), td(num(saved[k] ?? state.input.options.calibration[k], 3))))),
@@ -2227,14 +2514,14 @@
           actionButton("Use these", () => {
             state.inputForm.g.calibration = Object.fromEntries(Object.entries(R.values).filter(([, v]) => v !== null));
             state.calib = null; edited(); renderCalibration();
-          }, R.problems.length ? "small" : "small primary"),
+          }, "small"),
           actionButton("Again", () => startCalibration(), "small ghost"),
-          actionButton("Discard", () => { state.calib = null; renderCalibration(); }, "small ghost")));
+          confirmButton("Discard", "Discard it?", () => { state.calib = null; renderCalibration(); }, "small ghost")));
     } else {
       head = el("div", null,
         el("p", null, `In use: ${using}. Hold a relaxed hand, then an open hand, a fist, pointing up and a pinch, about ${CALIB_SECONDS} s each, raised toward the camera. Practice mode is on while it records, so nothing is done.`),
         el("div", { class: "actions" },
-          actionButton("Calibrate", () => startCalibration(), "small primary"),
+          actionButton("Calibrate", () => startCalibration(), "small"),
           Object.keys(saved).length ? actionButton("Reset to defaults", () => { state.inputForm.g.calibration = {}; edited(); renderCalibration(); }, "small ghost") : null,
           el("span", { class: "faint", text: "Saved with input.toml as [gestures.calibration]." })));
     }
@@ -2298,34 +2585,23 @@
     if (!node || !state.input) return;
     const C = state.inputCheck;
     const f = state.input.file || {};
-    const dirty = inputDirty();
-    const diff = ((C && C.diff) || []).map((line) => el("span", {
-      class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : null,
-      text: `${line}\n` }));
-    const save = confirmButton("Save input.toml", "Save it? She uses it at once", (b) => saveInput(b), "primary");
-    save.id = "input-save";
-    fill(node,
-      el("div", { class: "actions" }, el("span", { class: "dim mono", text: f.path || "input.toml" }),
-        f.exists ? null : chip("not written yet")),
-      !C ? el("p", { class: "faint", text: "Checking..." })
-        : C.ok ? el("p", null, chip("checks out", "good"), dirty ? " Save it to put it in use." : f.in_use ? " Same as the file." : " Save it to keep these settings in input.toml.")
-          : el("div", { class: "note berry" }, el("b", { text: "Not saved like this:" }), el("ul", null, (C.problems || []).map((p) => el("li", { text: p })))),
-      el("h3", { text: "Changes against the file" }),
-      diff.length ? el("pre", { class: "diff" }, diff) : el("p", { class: "faint", text: "No changes." }),
-      el("div", { class: "actions" }, save,
-        actionButton("Undo my edits", () => { state.inputEdited = false; state.inputForm = null; state.inputCheck = null; renderInput(); }, "ghost")));
+    const diff = (C && C.diff) || [];
+    fill(node, saveBar({ path: f.path || "input.toml", exists: f.exists, checking: !C, ok: C && C.ok, problems: C && C.problems,
+      same: !diff.length, diff, edited: state.inputEdited, saveLabel: "Save input.toml", saveId: "input-save",
+      notes: f.in_use ? null : el("p", { class: "faint", text: "No input.toml yet: Save writes these settings to it." }),
+      onSave: (b) => saveInput(b),
+      onUndo: () => { state.inputEdited = false; state.inputForm = null; state.inputCheck = null; renderInput(); } }));
     renderInputSave();
   }
 
+  // Save is lit only when the draft checks out, changes the file and maps nothing twice.
   function renderInputSave() {
     const save = document.getElementById("input-save");
     if (!save) return;
     const C = state.inputCheck;
-    const f = (state.input && state.input.file) || {};
     const twice = state.inputForm ? inputDuplicates(state.inputForm) : [];
-    save.disabled = !(C && C.ok && !twice.length && (inputDirty() || !f.in_use || (C.diff || []).length));
+    save.disabled = !(C && C.ok && !twice.length && (C.diff || []).length);
   }
-
   async function saveInput(button) {
     button.disabled = true;
     try {
@@ -2368,7 +2644,7 @@
   // settings never does. Beside it, what the watcher last said of the camera, which is not the same as the switch.
 
   const CAMERA_STATE = {
-    open: ["camera open", "berry", "The watcher has the camera; its light is on."],
+    open: ["camera open", "warn", "The watcher has the camera; its light is on."],
     closed: ["camera closed", null, "The camera is not in use."],
     closing: ["camera closing", "warn", "Switched off: the watcher lets go of the camera within a second."],
     unknown: ["camera: no word from the watcher", "warn",
@@ -2414,13 +2690,13 @@
       .finally(() => { box.disabled = false; renderInputCamera(); renderInputHead(); renderInputStatus(); });
   }
 
-  const OUTCOME_KIND = { did: "good", practice: "warn", ignored: null, failed: "berry", running: "berry" };
+  const OUTCOME_KIND = { did: "good", practice: "warn", ignored: null, failed: "warn", running: null };
 
   function renderInputRecent() {
     const node = document.getElementById("input-recent");
     if (!node || !state.input) return;
     const rows = (state.input.recent || []).map((r) => el("tr", { class: state.freshInput.has(r.id) ? "fresh" : null },
-      td(clock(r.at), "nowrap"), td(r.source),
+      timeCell(r.at, true), td(r.source),
       td([el("span", { class: "mono", text: r.name.replace(/_/g, " ") }), r.count > 1 ? el("span", { class: "sub", text: `×${r.count}` }) : null]),
       td(chip(r.outcome === "practice" ? "practice: not done" : r.outcome, OUTCOME_KIND[r.outcome])),
       td(r.action ? (r.outcome === "practice" ? `would: ${r.action}` : r.action) : dash),
@@ -2635,7 +2911,7 @@
       fill(legend,
         chip(H.engaged ? "engaged: it counts" : "not engaged", H.engaged ? "good" : null,
           "Raised into the zone and near enough"),
-        chip(`seen: ${H.shape ? H.shape.replace(/_/g, " ") : "no shape"}`, H.shape ? "berry" : null),
+        chip(`seen: ${H.shape ? H.shape.replace(/_/g, " ") : "no shape"}`),
         typeof H.facing === "boolean" ? chip(H.facing ? "facing the screen" : H.face ? "not facing: gestures wait" : "no face seen",
           H.facing ? "good" : "warn", "The face model's yes or no; nothing else of the face leaves the watcher") : null,
         chip(`pinch ${num(H.pinch)}`), chip(`open ${num(H.open)}`), chip(`size ${num(H.size)}`),
@@ -2693,14 +2969,14 @@
       const level = `${Math.round((g.progress || 0) * 100)}%`;
       if (g.phase === "done") return chip(`slider: ${g.practice ? `practice, would set ${level}` : g.action ? `volume ${level}` : "nothing done"}`, g.action ? "good" : "warn");
       if (g.phase === "cancelled") return chip("slider: no volume to start from", "warn");
-      return chip(`slider: volume ${level}`, "berry");
+      return chip(`slider: volume ${level}`);
     }
     if (g.phase === "done") {
       const did = g.practice ? `practice: would ${g.practice}` : g.action ? `did ${g.action}` : "nothing done";
       return chip(`${name}: ${did}`, g.action ? "good" : "warn");
     }
     if (g.phase === "cancelled") return chip(`${name}: let go at ${Math.round((g.progress || 0) * 100)}%`);
-    return chip(`${name}: holding ${Math.round((g.progress || 0) * 100)}%`, "berry");
+    return chip(`${name}: holding ${Math.round((g.progress || 0) * 100)}%`);
   }
 
   function noHandWhy() {
@@ -2736,7 +3012,6 @@
     } catch (e) {
       if (!state.ended) toast(e.message, true);
     }
-    renderChips();
     rerender("learning");
   }
 
@@ -2746,7 +3021,7 @@
       state.logging = r.logging;
       state.routes = r.routes.slice().reverse().slice(0, MAX_ROUTES);
     } catch (e) { /* the stream will say */ }
-    rerender("router");
+    rerender("runs");
   }
 
   async function refreshRuns() {
@@ -2758,42 +3033,67 @@
       state.timeline = r.timeline || [];
       state.messages = r.messages || null;
     } catch (e) { /* the stream will say */ }
-    renderAttention();
     rerender("runs");
   }
 
   async function refreshData() {
     try { state.data = await api("data"); } catch (e) { if (!state.ended) toast(e.message, true); }
-    rerender("data");
+    rerender("learning");
   }
 
   async function refreshSettings() {
     try { state.settings = await api("settings"); } catch (e) { if (!state.ended) toast(e.message, true); }
-    rerender("settings");
+    rerender("privacy");
+    rerender("learning");
   }
 
   async function refreshSystem() {
     try { state.system = await api("system"); } catch (e) { /* shown as loading */ }
-    rerender("system");
+    rerender("health");
   }
 
-  const RENDER = { persona: renderPersona, profile: renderProfile, learning: renderLearning, router: renderRouter,
-                   runs: renderRuns, data: renderData, settings: renderSettings, config: renderConfig, tools: renderTools,
-                   input: renderInput, apps: renderApps, system: renderSystem };
-  const REFRESH = { persona: refreshPersona, profile: refreshProfile, learning: refreshLearning, router: refreshRoutes,
-                    runs: refreshRuns, data: refreshData, settings: refreshSettings, config: () => refreshConfig(false),
-                    tools: refreshTools, input: refreshInput, apps: refreshApps, system: refreshSystem };
+  const RENDER = { now: renderNow, persona: renderPersona, profile: renderProfile, runs: renderRuns, learning: renderLearning,
+                   privacy: renderPrivacy, config: renderConfig, tools: renderTools, input: renderInput, apps: renderApps,
+                   health: renderHealth };
+  const REFRESH = { now: refreshNow, persona: refreshPersona, profile: refreshProfile,
+                    runs: () => Promise.all([refreshRuns(), refreshRoutes()]),
+                    learning: () => Promise.all([refreshLearning(), refreshData(), refreshSettings()]),
+                    privacy: refreshSettings, config: () => refreshConfig(false), tools: refreshTools, input: refreshInput,
+                    apps: refreshApps, health: () => Promise.all([refreshSystem(), refreshNow()]) };
 
-  function show(section, anchor) {
-    if (!SECTIONS.includes(section)) section = "persona";
+  // A place in the page as the address says it: #section, or #section/sub (a view, or the id of a part to scroll
+  // to). The old tabs' addresses open where their content went.
+  function parseHash(hash) {
+    let [section, sub] = hash.replace(/^#/, "").split("/");
+    if (MOVED[section]) [section, sub] = [MOVED[section][0], sub || MOVED[section][1]];
+    return SECTIONS.includes(section) ? [section, sub || null] : ["now", null];
+  }
+
+  function setHash(section, sub) {
+    const hash = sub ? `#${section}/${sub}` : `#${section}`;
+    if (location.hash !== hash) history.replaceState(null, "", hash);
+  }
+
+  function show(section, sub) {
+    if (!SECTIONS.includes(section)) section = "now";
+    if (section === "runs") state.runsView = sub === "router" ? "router" : "runs";
+    const anchor = section === "runs" ? null : sub;
     state.section = section;
     for (const name of SECTIONS) $(`#${name}`).classList.toggle("hidden", name !== section);
-    for (const b of document.querySelectorAll("#nav button")) b.classList.toggle("on", b.dataset.section === section);
-    if (location.hash !== `#${section}`) history.replaceState(null, "", `#${section}`);
+    for (const b of document.querySelectorAll("#nav button")) {
+      b.classList.toggle("on", b.dataset.section === section);
+      if (b.dataset.section === section) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    }
+    setHash(section, section === "runs" ? (state.runsView === "router" ? "router" : null) : null);
     if (section === "input") startInputLive(); else stopInputLive();   // the live view only while the tab is open
     RENDER[section]();
+    window.scrollTo(0, 0);
     REFRESH[section]().then(() => {
-      if (anchor) { const node = document.getElementById(anchor); if (node) node.scrollIntoView({ block: "start" }); }
+      if (!anchor) return;
+      const node = document.getElementById(anchor);
+      if (!node) return;
+      node.scrollIntoView({ block: "start" });
+      if (node.matches("input, select, textarea")) node.focus({ preventScroll: true });
     });
   }
 
@@ -2805,18 +3105,18 @@
       state.routes.unshift(data);
       state.routes.length = Math.min(state.routes.length, MAX_ROUTES);
       state.fresh.add(data.id);
-      rerender("router");
+      rerender("runs");
     } else if (name === "run") {
       onRunStep(data);
     } else if (name === "learning") {
       clearTimeout(learningSoon);
       learningSoon = setTimeout(() => {
         refreshLearning();
-        if (state.section === "data") refreshData();
+        if (state.section === "learning") refreshData();
+        refreshNowSoon();
       }, 400);
     }
   }
-
   function parse(chunk) {
     parseWith(chunk, onEvent);
   }
@@ -2886,10 +3186,10 @@
       try { localStorage.setItem("strawberry-theme", theme); } catch (e) { /* private window */ }
     });
     for (const b of document.querySelectorAll("#nav button")) b.addEventListener("click", () => show(b.dataset.section));
-    const first = location.hash.slice(1);
-    show(SECTIONS.includes(first) ? first : "persona");
-    if (state.section !== "learning") refreshLearning();
-    if (state.section !== "persona") refreshPersona();     // the attention spot says when persona.md has a problem
+    $("#privacy-chip").addEventListener("click", () => show("privacy"));
+    show(...parseHash(location.hash));
+    window.addEventListener("hashchange", () => show(...parseHash(location.hash)));
+    if (state.section !== "now") refreshNow();     // the header: her state, her card, what needs the user
     stream();
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) stopInputLive();
@@ -2898,7 +3198,8 @@
     window.addEventListener("resize", () => { if (state.section === "input") requestDraw(); });
     setInterval(() => {
       if (state.ended || document.hidden) return;
-      if (state.section === "system") refreshSystem();
+      refreshNow();                                          // the header and the Now view
+      if (state.section === "health") refreshSystem();
       if (state.section === "learning") refreshLearning();   // the trainer's phase and wait
     }, 10000);
   }
@@ -2907,7 +3208,7 @@
   //
   // A view of its own under "Her": the two dials now, where they rest, a graph of the last hours and the
   // reasons (a source and two sizes each, never a sentence). Read-only but for "Reset to her baseline". It
-  // registers itself (its nav button, its section, SECTIONS, RENDER and REFRESH) before start() runs.
+  // registers its RENDER and REFRESH before start() runs.
 
   const mood = { view: null, timer: null };
   const MOOD_ODD = { "reset": "reset to her baseline (the Brain UI)", "baseline.time": "the hour moved where her energy rests",
@@ -2923,18 +3224,18 @@
     const root = $("#mood");
     const V = mood.view;
     if (!V) {
-      fill(root, panel("Mood", null, el("p", { class: "empty", text: "Loading..." })));
+      fill(root, loadingPanel("mood"));
       return;
     }
     if (!V.enabled) {
-      fill(root, panel("Mood", "her living mood", el("p", { class: "empty",
+      fill(root, titlePanel("mood", "her living mood", el("p", { class: "empty",
         text: "The mood is off ([mood] enabled = false in config.toml): she moves, speaks and words her lines as she always did." })));
       return;
     }
     const T = V.temperament || {};
     const reset = confirmButton("Reset to her baseline", "Reset now?", (b) => resetMood(b), "small");
     fill(root,
-      panel("Mood", "how lively and how pleased she is: it changes how she moves, how fast she speaks and her word choice, never what she does",
+      titlePanel("mood", "how lively and how pleased she is: it changes how she moves, how fast she speaks and her word choice, never what she does",
         el("div", { class: "stats" },
           stat("Energy", signed(V.energy), moodWord(V.energy, "calm", "even", "lively")),
           stat("Feeling", signed(V.feeling), moodWord(V.feeling, "grumpy", "even", "pleased")),
@@ -2946,7 +3247,7 @@
       panel("The last hours", "once a minute; the lines end at now", moodChart(V)),
       panel("Why", "each nudge: where it came from and how far it moved each dial (newest first)",
         table(["When", "Source", "What", { label: "Energy", num: true }, { label: "Feeling", num: true }],
-          (V.reasons || []).slice(0, 120).map((r) => el("tr", null, td(clock(r.t), "mono"), td(r.source, "mono"),
+          (V.reasons || []).slice(0, 120).map((r) => el("tr", null, timeCell(r.t, true), td(r.source, "mono"),
             td((V.nudges[r.source] || {}).what || MOOD_ODD[r.source] || dash),
             td(signed(r.energy), `num ${r.energy > 0 ? "up" : r.energy < 0 ? "down" : ""}`),
             td(signed(r.feeling), `num ${r.feeling > 0 ? "up" : r.feeling < 0 ? "down" : ""}`))),
@@ -2984,7 +3285,7 @@
     for (let i = 0; i < ticks; i++) {
       const t = t0 + ((t1 - t0) * i) / Math.max(ticks - 1, 1);
       chart.append(svg("text", { class: "label", x: x(t), y: H - 8, "text-anchor": i === 0 ? "start" : i === ticks - 1 ? "end" : "middle",
-                                 text: clock(t).slice(0, 5) }));
+                                 text: hhmm(t) }));
     }
     for (const [index, cls, name] of [[1, "mood-energy", "energy"], [2, "mood-feeling", "feeling"]]) {
       chart.append(svg("polyline", { class: cls, points: points.map((p) => `${x(p[0]).toFixed(1)},${y(p[index]).toFixed(1)}`).join(" ") }));
@@ -3006,7 +3307,7 @@
       cross.setAttribute("x1", x(best[0])); cross.setAttribute("x2", x(best[0]));
       dotE.setAttribute("cx", x(best[0])); dotE.setAttribute("cy", y(best[1]));
       dotF.setAttribute("cx", x(best[0])); dotF.setAttribute("cy", y(best[2]));
-      readout.textContent = `${clock(best[0])}: energy ${signed(best[1])} (${moodWord(best[1], "calm", "even", "lively")}), ` +
+      readout.textContent = `${when(best[0])}: energy ${signed(best[1])} (${moodWord(best[1], "calm", "even", "lively")}), ` +
         `feeling ${signed(best[2])} (${moodWord(best[2], "grumpy", "even", "pleased")})`;
     };
     hit.addEventListener("pointermove", at);
@@ -3040,12 +3341,7 @@
     rerender("mood");
   }
 
-  (function registerMood() {
-    const profileButton = document.querySelector('#nav button[data-section="profile"]');
-    const button = el("button", { type: "button", data: { section: "mood" }, text: "Mood" });
-    profileButton.after(button);
-    $("#profile").after(el("section", { id: "mood", class: "section hidden" }));
-    SECTIONS.splice(SECTIONS.indexOf("profile") + 1, 0, "mood");
+  (function registerMood() {     // its nav button and section are in index.html, under Her
     RENDER.mood = renderMood;
     REFRESH.mood = refreshMood;
     mood.timer = setInterval(() => {
@@ -3059,7 +3355,8 @@
   // A view of its own under "Activity": her history by day (each with its digest, or why it has none yet), a day's
   // rows on expand, the same search she uses, forgetting a row, a day or everything, the user's own digest, and the
   // reminders. Row text and digests are the user's own words: text nodes only, like everything else here. Settings
-  // (retention, sentences) are changed in the Config file tab, never here. It registers itself before start() runs.
+  // (retention, sentences) are changed in the Config file tab, never here. It registers its RENDER and REFRESH
+  // before start() runs.
 
   const hist = {
     view: null,             // GET history: retention, counts, reminders, the first page of days
@@ -3102,43 +3399,33 @@
     const word = day === today ? "Today, " : today && dayShift(today, -1) === day ? "Yesterday, " : "";
     return `${word}${WEEKDAY[date.getDay()]} ${d} ${MONTH[m - 1]} ${y}`;
   }
-  function hm(ts) {
-    if (!ts) return dash;
-    const d = new Date(ts * 1000);
-    return `${two(d.getHours())}:${two(d.getMinutes())}`;
-  }
-  function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
-
-  function openHistoryConfig() {
-    conf.mode = "form";
-    conf.open.add("history");
-    show("config", "conf-history-enabled");
-  }
 
   function renderHistory() {
     const root = $("#history");
     const V = hist.view;
     if (!V) {
-      fill(root, panel("History", null, el("p", { class: "empty", text: "Loading..." })));
+      fill(root, loadingPanel("history"));
       return;
     }
-    const toConfig = actionButton("Change in the Config file tab", openHistoryConfig, "ghost small");
+    const toConfig = changeButton("history", "enabled");
     if (!V.enabled) {
-      fill(root, panel("History", "what she remembers across restarts",
+      fill(root, titlePanel("history", "what she remembers across restarts",
         el("p", { class: "empty", text: "The history is off ([history] enabled = false in config.toml): she keeps nothing on disk and has no look-back tool." }),
         el("div", { class: "actions" }, toConfig)));
       return;
     }
     if (!V.open) {
-      fill(root, panel("History", "what she remembers across restarts",
-        el("div", { class: "note berry", text: `The history file could not be opened this run${V.error ? ` (${V.error})` : ""}. She keeps no history until she starts again; the log says why.` }),
+      fill(root, titlePanel("history", "what she remembers across restarts",
+        el("div", { class: "note bad", text: `The history file could not be opened this run${V.error ? ` (${V.error})` : ""}. She keeps no history until she starts again; the log says why.` }),
         el("div", { class: "actions" }, toConfig)));
       return;
     }
     const R = V.retention;
+    const reminders = panel("Reminders", "a waiting one can be deleted here", el("div", { id: "hist-timers", class: "stack" }));
+    reminders.id = "reminders";
     const C = V.counts || {};
     fill(root,
-      panel("History", "what she remembers across restarts; she reads it only when you ask about the past",
+      titlePanel("history", "what she remembers across restarts; she reads it only when you ask about the past",
         el("div", { class: "stats" },
           stat("Days", String(C.days ?? dash), "with raw rows"),
           stat("Rows", String(C.events ?? dash), "kept raw"),
@@ -3148,7 +3435,7 @@
           el("span", { text: `raw kept ${R.keep_days} days · digests ${R.digest_months} months · storing sentences: ${onOff(R.sentences)}` }),
           toConfig),
         el("p", { class: "faint", text: "Keeping more (a longer time, or sentences again) asks on her card there. Forgetting needs no card: it only ever makes her know less." })),
-      panel("Reminders", "a pending one can be cancelled here", el("div", { id: "hist-timers" })),
+      reminders,
       panel("Search", `the same search she uses (${V.fts ? "full text" : "plain words"}): rows and digests, by day`, el("div", { id: "hist-search" })),
       panel("Days", "newest first; open a day for its rows", el("div", { id: "hist-days" })),
       panel("Forget everything", "every row and every digest, for good", el("div", { id: "hist-all" })));
@@ -3164,13 +3451,13 @@
     const T = hist.view.timers || { pending: [], recent: [] };
     fill(node,
       table(["Due", "Reminder", ""], T.pending.map((t) => el("tr", null,
-        td(when(t.due), "nowrap mono"), td(t.text, "sentence"),
-        td(confirmButton("Cancel", "Cancel it?", (b) => histCancelTimer(b, t.id), "small"), "num"))),
+        timeCell(t.due), td([t.text, t.foreign ? [" ", foreignMark()] : null], "sentence"),
+        td(confirmButton("Delete", "Delete it?", (b) => histCancelTimer(b, t.id), "small"), "num"))),
         { empty: "No reminder is waiting." }),
       T.recent.length ? el("h3", { text: "Recent" }) : null,
       T.recent.length ? table(["Due", "Reminder", "State"], T.recent.map((t) => el("tr", null,
-        td(when(t.due), "nowrap mono"), td(t.text, "sentence"),
-        td(chip(t.state, t.state === "missed" ? "warn" : t.state === "fired" ? "good" : null,
+        timeCell(t.due), td(t.text, "sentence"),
+        td(chip(t.state === "cancelled" ? "deleted" : t.state, t.state === "missed" ? "warn" : t.state === "fired" ? "good" : null,
           t.state === "missed" ? "it fell due while she was off" : null))))) : null);
   }
 
@@ -3201,12 +3488,11 @@
 
   function histRow(r) {
     const [icon, word] = HIST_KIND[r.kind] || ["•", r.kind];
-    return el("tr", { class: r.foreign ? "hist-foreign" : null },
-      td(hm(r.at), "nowrap mono"),
+    return el("tr", null,
+      timeCell(r.at),
       td([el("span", { class: "hist-icon", "aria-hidden": "true", text: icon }), word,
         r.source && r.kind !== "approval" ? el("span", { class: "sub", text: r.source }) : null], "nowrap"),
-      td([r.foreign ? chip("foreign", "warn", "text others wrote (a sender, a track, a commit): she reports it, never follows it") : null,
-        r.foreign ? " " : null, histWhat(r)], "sentence"),
+      td([histWhat(r), r.foreign ? el("span", { class: "sub" }, foreignMark("text others wrote (a sender, a track, a commit): she reports it, never follows it")) : null], "sentence"),
       td(confirmButton("Forget", "Forget it?", (b) => histForgetRow(b, r), "ghost small"), "num"));
   }
 
@@ -3234,7 +3520,7 @@
     }
     fill(node,
       el("div", { class: "actions" }, box,
-        actionButton("Search", () => histSearch(), "primary small"),
+        actionButton("Search", () => histSearch(), "small"),
         S ? actionButton("Clear", () => { hist.search = null; hist.query = ""; renderHistSearch(); }, "ghost small") : null),
       results);
   }
@@ -3257,9 +3543,9 @@
       el("summary", null,
         el("span", { class: "hist-day-name", text: dayLabel(d.day) }),
         d.events ? chip(plural(d.events, "row")) : null,
-        d.foreign ? chip(`${d.foreign} foreign`, "warn", "rows with text others wrote") : null,
+        d.foreign ? el("span", { class: "foreign", text: `${d.foreign} foreign text`, title: "rows with text others wrote" }) : null,
         s ? chip(s[0], s[1], s[2]) : null,
-        d.edited_by_user ? chip("edited by you", "berry", "your own digest: the digester never overwrites it") : null,
+        d.edited_by_user ? chip("edited by you", null, "your own digest: the digester never overwrites it") : null,
         // The digest itself while the day is closed (opened, the body shows it with its buttons).
         d.digest !== null ? el("span", { class: "hist-preview", text: d.digest }) : null),
       body);
@@ -3331,18 +3617,13 @@
   function renderHistAll() {
     const node = document.getElementById("hist-all");
     if (!node || !hist.view) return;
-    const word = hist.view.limits.confirm;
-    const go = el("button", { type: "button", class: "danger", text: "Forget everything", disabled: hist.confirm.trim() !== word });
-    go.addEventListener("click", () => histForgetAll(go));
-    const box = el("input", { type: "text", id: "hist-confirm", value: hist.confirm, autocomplete: "off", spellcheck: "false" });
-    box.addEventListener("input", () => { hist.confirm = box.value; go.disabled = box.value.trim() !== word; });
     const timers = el("input", { type: "checkbox", checked: hist.withTimers,
                                  on: { change: (e) => { hist.withTimers = e.target.checked; } } });
     fill(node,
       el("p", { class: "dim", text: "Every row and every digest goes, the file is compacted and no copy is left. The reminders stay unless you tick the box. This cannot be undone." }),
-      el("div", { class: "actions" },
-        el("label", { for: "hist-confirm", text: `Type ${word} to confirm:` }), box,
-        el("label", { class: "check" }, timers, "the reminders too"), go));
+      typedConfirm({ id: "hist-confirm", word: hist.view.limits.confirm, label: "Forget everything", value: hist.confirm,
+        onType: (v) => { hist.confirm = v; }, extra: el("label", { class: "check" }, timers, "the reminders too"),
+        onGo: (go) => histForgetAll(go) }));
   }
 
   // --- talking to the daemon
@@ -3457,14 +3738,10 @@
   }
 
   async function histCancelTimer(button, id) {
-    if (await histPost(button, "history/timer/cancel", { id }, () => "Reminder cancelled.")) await histAfter();
+    if (await histPost(button, "history/timer/cancel", { id }, () => "Reminder deleted: it will not come.")) await histAfter();
   }
 
-  (function registerHistory() {
-    const routerButton = document.querySelector('#nav button[data-section="router"]');
-    routerButton.after(el("button", { type: "button", data: { section: "history" }, text: "History" }));
-    $("#router").after(el("section", { id: "history", class: "section hidden" }));
-    SECTIONS.splice(SECTIONS.indexOf("router") + 1, 0, "history");
+  (function registerHistory() {     // its nav button and section are in index.html, under Activity
     RENDER.history = renderHistory;
     REFRESH.history = refreshHistory;
     // Reminders fire and days roll over: read again now and then, but never under the user's hands (an open editor,

@@ -463,7 +463,8 @@ def test_the_page_has_config_and_tools_tabs_under_settings_and_puts_text_in_as_t
     page = (brainui.UI_DIR / "index.html").read_text(encoding="utf-8")
     for name in ("config", "tools"):
         assert f'data-section="{name}"' in page and f'<section id="{name}"' in page
-    assert page.index('data-section="settings"') < page.index('data-section="config"') < page.index('data-section="system"')
+    nav = page[page.index("<nav"):page.index("</nav>")]
+    assert nav.index('data-section="privacy"') < nav.index('data-section="config"') < nav.index('data-section="health"')
     script = (brainui.UI_DIR / "app.js").read_text(encoding="utf-8")
     assert "config/check" in script and "config/save" in script and '"tools"' in script
     assert "innerHTML" not in script and "insertAdjacentHTML" not in script and "eval(" not in script

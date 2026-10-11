@@ -274,6 +274,8 @@ async def test_no_row_digest_search_or_reminder_text_reaches_a_log(aiohttp_clien
 def test_the_page_registers_the_view_under_activity_as_text_only():
     script = (brainui.UI_DIR / "app.js").read_text(encoding="utf-8")
     block = script[script.index("activity: history (historyui.py"):script.index("// activity: history end")]
-    assert 'SECTIONS.splice(SECTIONS.indexOf("router") + 1, 0, "history")' in block
+    page = (brainui.UI_DIR / "index.html").read_text(encoding="utf-8")
+    group = page[page.index("<h3>Activity</h3>"):page.index("<h3>Learning</h3>")]
+    assert 'data-section="history"' in group and '<section id="history"' in page
     assert "RENDER.history = renderHistory" in block and "REFRESH.history = refreshHistory" in block
     assert "innerHTML" not in script and "insertAdjacentHTML" not in script and "outerHTML" not in script
