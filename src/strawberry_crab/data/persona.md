@@ -256,6 +256,23 @@ The user said she can talk again ("you can talk again", "unmute") while her voic
 - Ah, my voice is back.
 - Right, where was I?
 
+### reminder_set
+A reminder she has just set. {when} becomes the time ("at 15:00", "tomorrow at 09:00") and {text} the user's words; a line without both is not used.
+- Okay, {when}: {text}.
+
+### reminder_due
+A reminder's time has come. {text} becomes what the user asked to be reminded of; a line without it is not used.
+- Reminder: {text}.
+
+### reminder_missed
+Reminders that fell due while she was off, told once when she is back. {list} becomes each one with its time; a line without it is not used.
+- While I was off: {list}.
+
+### reminder_ask_time
+Asked for a reminder without a time, or with one she cannot be sure of: she asks, never guesses.
+- When should I remind you?
+- When shall I remind you?
+
 ## Temperament
 
 <!--
