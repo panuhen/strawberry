@@ -720,7 +720,7 @@ class History:
             self._recount()
             return done > 0
 
-    # --- timers (wave 2's reminders; no behaviour here)
+    # --- timers (the reminders, reminders.py)
 
     def add_timer(self, due: float, text: str) -> int:
         """A pending timer due at `due` (an epoch); its id."""
@@ -743,13 +743,17 @@ class History:
         found = self._query(sql + (" WHERE state = ?" if state else "") + " ORDER BY due, id", (state,) if state else ())
         return [{"id": i, "due": due, "text": text, "created_at": made, "state": s} for i, due, text, made, s in found]
 
-    def set_timer_state(self, timer_id: int, state: str) -> bool:
-        if state not in TIMER_STATES:
+    def set_timer_state(self, timer_id: int, state: str, expect: str | None = None) -> bool:
+        """`expect`: only from that state (one statement, so two checks that race cannot both fire a reminder)."""
+        if state not in TIMER_STATES or (expect is not None and expect not in TIMER_STATES):
             raise ValueError(f"state is one of {', '.join(TIMER_STATES)}")
         with self.lock:
             if self.conn is None:
                 return False
-            done = self.conn.execute("UPDATE timers SET state = ? WHERE id = ?", (state, int(timer_id))).rowcount > 0
+            sql, args = "UPDATE timers SET state = ? WHERE id = ?", (state, int(timer_id))
+            if expect is not None:
+                sql, args = sql + " AND state = ?", (*args, expect)
+            done = self.conn.execute(sql, args).rowcount > 0
             self._recount()
             return done
 
