@@ -3210,8 +3210,11 @@ a cancel (at most once: a crash between the claim and the line loses it rather t
   in reminders.py starts a program.
 
 **Privacy.** The words are the user's own and stay in the user's 0600 file. No log line carries them, nor the
-parsed time phrase: ids, counts, the seconds until due, fixed codes. A sentence about reminders, and, while her
-question is waiting, the next sentence, is a private sentence (`logtext.private_sentences`, as the profile's): the
+parsed time phrase: ids, counts, the seconds until due, fixed codes. A sentence about reminders is a private sentence
+(`ASKS`, `logtext.private_sentences`, as the profile's); so, while her question is waiting, is the next sentence, as
+that daemon's own state (`Daemon.answering`, asked as the sentence arrives and as its handling begins:
+`logtext.sentence(text, answering)`, `logtext.hearing(text, answering)`), never a process-wide pattern, which any
+daemon still waiting, another test's, would set for every sentence in the process. The
 sentence and her answer are logged as their lengths whatever `log_sentences` says, `/health`'s `actions.last` and
 `thinker.last` carry lengths only, and her history keeps that exchange without its words (the timers table has
 them). Her line when one fires is logged as its length (`logtext.from_private`). The server's calls are logged by
