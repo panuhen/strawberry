@@ -124,8 +124,9 @@ func _process(delta: float) -> void:
 ## Protocol v2 (PROTOCOL.md §9b): the v1 fields, then what this body is and what it wants. It
 ## asks for the run events its step chip shows and says it may send run.cancel (the chip's ✕); it
 ## shows approvals as a card and may answer them (approval_card.gd); it shows text (her bubble). She
-## names herself as an entity and reports each poke as a `touch` (PROTOCOL Part 1c, touch.gd `poke`).
+## names herself as an entity and reports each poke and pat as a `touch` (PROTOCOL Part 1c, touch.gd).
 ## It shows a held hand gesture as a filling ring (`gesture`, gesture_ring.gd), never the hand itself.
+## It takes her living mood (`mood`, mood.gd: how she sways, dances, stands and looks).
 ## The bus secret goes with it, read from the daemon's file at every connect (PROTOCOL §1.4): without
 ## it the brain sends only how she moves (no lines, no voice, no tool names), takes no typing, taps or
 ## answers, and sends no cards.
@@ -134,9 +135,9 @@ func hello() -> Dictionary:
 		"godot": Engine.get_version_info().string, "protocol": 2,
 		"body": {"id": "crab", "name": "Strawberry"},
 		"capabilities": {"phases": ["routing", "thinking", "tool", "speaking", "run"],
-			"approvals": true, "speech": {"bubble": true}, "gestures": ["gesture"],
+			"approvals": true, "speech": {"bubble": true}, "gestures": ["gesture"], "mood": true,
 			"entities": [{"id": "crab", "kind": "crab", "label": "Strawberry"}],
-			"sends": {"heard": true, "cancel": true, "approval": true, "touch": ["poke"]}}}
+			"sends": {"heard": true, "cancel": true, "approval": true, "touch": ["poke", "pat"]}}}
 	var secret := Paths.bus_secret()
 	if secret != "":
 		greeting["secret"] = secret

@@ -27,6 +27,7 @@ const Turn = preload("res://turn.gd")
 const Touch = preload("res://touch.gd")
 const Legs = preload("res://legs.gd")
 const Wander = preload("res://wander.gd")
+const Mood = preload("res://mood.gd")
 const Paths = preload("res://paths.gd")
 
 # Must match the GLB and strawberryd/contract.py (WIRING.md §9).
@@ -95,6 +96,7 @@ var turn: Node
 var touch: Node                 # touch reactions (touch.gd)
 var legs: Node                  # the procedural leg layer and the gait (legs.gd)
 var wander: Node                # walking: the drag's speed, wandering, scuttling (wander.gd)
+var mood: Node                  # her living mood: shapes the sway, dance, posture, eyes and gaze (mood.gd)
 var pending_hops := 0
 var one_shots_played := 0
 var window_hops := 0
@@ -138,6 +140,7 @@ func _ready() -> void:
 	setup_controllers()
 	setup_reactions()
 	setup_legs()
+	setup_mood()
 	setup_turn()
 	setup_touch()
 	setup_bubble()
@@ -567,6 +570,8 @@ func on_typed(data: Dictionary) -> void:
 		approval_card.on_refused(data)
 	elif kind == "gesture":
 		on_gesture(data)
+	elif kind == "mood":
+		mood.on_mood(data)
 	elif data.has("run_id"):
 		step_chip.on_phase(data)
 		approval_card.on_event(data)
@@ -762,6 +767,11 @@ func set_wander(value: bool) -> void:
 	if not value and wander.walking:
 		wander.stop("setting")
 	save_settings()
+
+func setup_mood() -> void:
+	mood = Mood.new()
+	add_child(mood)
+	mood.setup(self, model, blink_controller)
 
 func setup_turn() -> void:
 	turn = Turn.new()

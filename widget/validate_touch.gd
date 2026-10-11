@@ -253,9 +253,11 @@ func run() -> void:
 
 	# 10. Every poke is a `touch` on herself; "Talk when poked": off asks for no line; on, the third in a
 	# row always asks the daemon.
-	var touches: Array = widget.ws.sent.filter(func(m): return m.get("type") == "touch")
-	check(touches.size() == touch.pokes and touches.size() == widget.ws.sent.size(), "talk off: only a touch per poke should go to the daemon")
+	var touches: Array = widget.ws.sent.filter(func(m): return m.get("type") == "touch" and m.get("kind") == "poke")
+	var pats: Array = widget.ws.sent.filter(func(m): return m.get("type") == "touch" and m.get("kind") == "pat")
+	check(touches.size() == touch.pokes and touches.size() + pats.size() == widget.ws.sent.size(), "talk off: only a touch per poke (and a pat per hold) should go to the daemon")
 	check(touches.all(func(m): return m == {"type": "touch", "entity": "crab", "kind": "poke"}), "a poke is a touch on the crab")
+	check(pats.size() == touch.pats and touch.pats >= 1, "a hold she leans into is one pat on the crab (%d, %d)" % [pats.size(), touch.pats])
 	widget.set_touch_talk(true)
 	touch.talked_at = -100.0
 	for i in 2:
