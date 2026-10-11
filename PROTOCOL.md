@@ -521,7 +521,9 @@ open id and tier, counts per outcome; never a prompt or an argument).
 Every input the brain handles is a **run** (`runs.py`): a sentence the user says or types
 (`source` `voice` or `typed`; one at a time, the *foreground* run) or a notification it reacts to
 (`notification`, never foreground, never stopped), or a hand gesture's reflex (`gesture`, Part 1d; never
-foreground either). `job` is reserved. A run goes through
+foreground either), or a settings change from the Brain UI that loosens safety and waits on her card (`settings`,
+never foreground: its only steps are her question, `approval.request` with `hold: true`, and the answer;
+WIRING §28). `job` is reserved. A run goes through
 
 ```
 routing → thinking ⇄ tool → speaking → awaiting_approval → (tool) → speaking → completed | failed | cancelled

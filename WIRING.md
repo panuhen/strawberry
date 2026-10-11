@@ -931,7 +931,7 @@ A local web page, served by the daemon, that shows what the router decides and w
 
 **The layout (since the persona stage).** Ten sections in five groups, in the side bar: **Her** (Persona,
 Profile), **Activity** (Runs with its approvals and the shared timeline, Router live), **Learning** (Learning,
-Data and scores), **Settings** (Settings and privacy, Input, Apps) and **System**. The page opens on Persona. The header has
+Data and scores), **Settings** (Settings and privacy, Config file, Tools, Input, Apps) and **System**. The page opens on Persona. The header has
 the 🍓 mark (the page title too) and one "needs your attention" spot: the most urgent of an open approval
 ("She is waiting for your yes"), a persona.md that does not check out, and a candidate head waiting, with how
 many more there are; a click goes to its section. The new parts:
@@ -958,7 +958,8 @@ many more there are; a click goes to its section. The new parts:
   **Apply** (`POST /ui/api/apply`: `Daemon.reload_notifications`, as the tray's Message bodies rows; a file that
   does not load is a 409 and she keeps the settings she has), everything else at a restart) and the effective
   settings as config.toml text, read-only (`brainui.as_toml`, with the secret-looking values shown as `(set)`
-  as before). Editing config.toml from the page is a later stage.
+  as before, and since §28 the places the editor hides too). The *Config file* and *Tools* tabs edit config.toml
+  (§28).
 - *Input* (since the input stage; `inputs.py`, §25, §26): hand gestures and touch from bodies.
   - *Camera switch*, at the top: `[gestures] enabled` on or off (`POST /ui/api/input/camera {on}`), written
     exactly as the tray's *Hand gestures (camera)* row writes it: `configedit.set_value` into config.toml
@@ -1023,7 +1024,7 @@ many more there are; a click goes to its section. The new parts:
 2. *Router live*: each sentence as it is handled: kind and topic with confidence, the decision, the tool and its confidence, what handled it (the reflex, the thinker and its tool calls, no_catalogue, chat), the gate's ms and the whole sentence's ms. `routefeed.py` keeps the last 100 in memory (`Daemon.feed`, filled in `handle_voice` beside the outcome log) and the page gets them over a stream.
 3. *Data and scores*: the training and held-out set sizes, the learned examples, what review and the privacy check removed, what the last run trained on and left out, and the held-out score of every head the loop built, as an SVG chart drawn by the page (no library) with the shipped head as a line.
 4. *Settings and privacy*: outcome logging, `log_sentences` and the notification body modes, each with what it means now and the line in `config.toml` that changes it; the learning settings; the whole effective config (env values and anything named like a secret shown as `(set)`). Read-only in this version. **Forget** (`Learning.forget`, optionally with every head) is here, behind a second click.
-5. *Runs* (§18): each run, newest first, with its steps as a timeline (routing and its path, thinking and the model, each tool started and completed with its duration and code, speaking, the end and why), the tools by name, the outcome and the duration, and **Cancel** on a run that is going on (the widget's ✕ by another way: `RunBook.cancel(…, "stopped")`). The stream's `run` events fill it as they happen (a `token_rate` shows beside the run's state, not as a step); `GET /ui/api/runs` gives the last `[runs] keep`. Names and timings only: what the page gets is what `runs.emit` let through. Above it, while she waits for a yes (§19), **Waiting for a yes**: the card's line, the tier, the tool, the time left when loaded, and **Yes** and **No** (the fallback for her card and her question); below it, **Approvals**: each one asked about, with its id, run, tool, tier, outcome, who answered and how long it waited, never the call's arguments.
+5. *Runs* (§18): each run, newest first, with its steps as a timeline (routing and its path, thinking and the model, each tool started and completed with its duration and code, speaking, the end and why), the tools by name, the outcome and the duration, and **Cancel** on a run that is going on (the widget's ✕ by another way: `RunBook.cancel(…, "stopped")`). The stream's `run` events fill it as they happen (a `token_rate` shows beside the run's state, not as a step); `GET /ui/api/runs` gives the last `[runs] keep`. Names and timings only: what the page gets is what `runs.emit` let through. Above it, while she waits for a yes (§19), **Waiting for a yes**: the card's line, the tier, the tool, the time left when loaded, and **Yes** and **No** (the fallback for her card and her question; no Yes for a settings change the page itself asked for, §28); below it, **Approvals**: each one asked about, with its id, run, tool, tier, outcome, who answered and how long it waited, never the call's arguments.
 6. *System*: the version and uptime, where the gate embeds (ONNX or the Ollama fallback, and why), the scorer and the head in use with its thresholds, the reaction model, the thinker, speech, voice, the MCP servers and the trainer. `/health` has no VRAM or CPU figures, so neither does the page.
 
 **Routes.**
@@ -1044,6 +1045,7 @@ many more there are; a click goes to its section. The new parts:
 | `POST /ui/api/apply` | `[notifications]` read again from config.toml (`{"applied": "notifications", "body": …}`), else 409 | the page |
 | `GET /ui/api/input`; `GET /ui/api/input/live` (events); `POST /ui/api/input/check`, `input/save` (`{settings}`), `input/practice` (`{on}`), `input/camera` (`{on}`) | the Input tab: status (with `camera: {enabled, state}`), settings in use, the dropdowns' choices, bodies, the file and its status, recent; the live view; a draft checked (`ok`, `problems`, `text`, `diff`); saved as input.toml (400 when it does not check out); practice mode; the camera switch (`{enabled, status}`; 409 when config.toml cannot be written or does not load) | the page |
 | `GET /ui/api/apps`; `POST /ui/api/apps/check`, `apps/save` (`{apps: [{id, name, aliases, open, close, close_asks}]}`) | the Apps tab (§27): the list in use, the installed apps, the file and its status; a list checked (`ok`, `problems`, `text`, `diff`); saved as apps.toml (400 when it does not check out or names an id that is not installed) | the page |
+| `GET /ui/api/config`; `POST /ui/api/config/check` (`{text, edits?, base?}`), `config/save` (`{text, base}`); `GET /ui/api/tools` | the Config file and Tools tabs (§28): the schema, the file's text and values with secrets hidden, `base` (`tag`: an HMAC of the file under a per-start key, and the mtime), a change waiting on her card; a draft checked (`ok`, `problems`, `text`, `values`, `diff`, `lowering`, `changed`, `restart`, `live`, `stale`); saved (200), asked about on her card (202 `{pending}`), 400 with the problems, 409 when the file changed under the page or a change already waits; the tool servers with each tool's tier, flags and whether it is offered | the page |
 | `GET /ui/api/runs` | also carries `timeline` (above) | the page |
 
 **The security model.** Every other route refuses any request with an `Origin` header (§2), so no web page the user visits can make her talk, read `/health` or open `/ws`. `/ui` is the one place a browser is let in, on these terms (`brainui.checked`, one decorator on every UI handler; `server.local_only` lets a handler through only when it carries the decorator's mark, so a new route cannot open itself by accident, and an unmatched path such as `/ui/../health` still meets the Origin rule):
@@ -1110,8 +1112,9 @@ last good settings; light theme and a narrow window. The daemon's log had names,
 ## 18. Runs — `strawberry/runs.py` (brain step 6, stage 1)
 
 Every input she handles is a **run**: a sentence the user says or types, or a notification she
-reacts to. A run has an id (`r-<n>`), a `source` (`voice`, `typed`, `notification`; `job` is
-reserved for scheduled work), a sequence of events and one end. It goes
+reacts to. A run has an id (`r-<n>`), a `source` (`voice`, `typed`, `notification`, `gesture`, `settings`
+for a Brain UI settings change waiting on her card (§28); `job` is reserved for scheduled work), a sequence of
+events and one end. It goes
 
 ```
 routing → thinking ⇄ tool → (awaiting_approval, stage 2) → speaking → completed | failed | cancelled
@@ -1279,6 +1282,12 @@ listener or a noisy room cannot hold a question open.
   `not_open`, `resolved`, `bad_answer`, `hold_required`); a v1 body's is ignored. A body can only
   answer: no message asks for a call;
 - the Brain UI (§17): `POST /ui/api/approval`, with the session and the CSRF header.
+
+An approval may name who can say yes (`Approval.yes_by`, `ApprovalBook.request(..., yes_by=)`): a Brain UI settings
+change that loosens safety (§28) takes a held yes on her card only (`body`), never from the page that asked for it,
+a thumb, or a sentence (`not_here`: she says "That one needs a hold on Yes on my card."); a no from anyone. Its
+`hold` and `timeout_s` are set by the caller (a hold, 60 s), not by the tier, and a thumb never says yes to a hold
+(`GestureDesk.answerable`).
 
 Notifications, media and git events, tool results and web pages never answer: they have no path to
 any of the three.
@@ -2501,3 +2510,143 @@ it, an idle device here played on), `tests/test_apps.py` (desktop ids, the scan 
 the file's round trip and refusals, the tab's rules, the live store and a broken file, names and ids; the Apps tab
 behind the session, the CSRF header and the Origin, check and save with a backup, never config.toml),
 `tests/conftest.py` (`no_real_desktop_commands`).
+
+## 28. Settings from the page — `strawberry/configform.py`, `configui.py` (the Config file and Tools tabs)
+
+config.toml edited in the Brain UI (§17), under Settings: a **Config file** tab (a form and the raw TOML) and a
+**Tools** tab (the tool servers). The file stays the source of truth: the page is an editor over it, and a text
+editor keeps working.
+
+```
+page ──GET config──▶ the schema, the file's text with secrets hidden, base = (tag, mtime)
+     ──POST config/check {text, edits}──▶ unmask ─▶ edits (tomlkit) ─▶ config.load as at start ─▶ mask
+                                           ◀── text, values, diff, lowering, restart / live, stale
+     ──POST config/save {text, base}──▶ the same check; the file still at `base`?
+           loosens nothing ─▶ backup + one-step write ─▶ apply_live ─────────────────────────▶ 200
+           loosens safety  ─▶ a `settings` run: her line, approval.request (hold, 60 s, yes_by) ─▶ 202
+                                  a held Yes on her card, nothing else ─▶ the file still at `base`?
+                                  ─▶ backup + write exactly the text asked about ─▶ apply_live
+```
+
+**The form** (`configform.schema`) is generated from config.py's dataclasses: a section per table, a field per key,
+its kind from the default (bool, int, float, str, a list of strings, a name = value map, JSON for the rest, a choice
+where `_validate` takes a fixed set), the default, and as its hint the comments config.py has beside the key (above
+it, on its line, and the lines carrying it on: `field_hints` reads them with `tokenize`). Keys edited elsewhere say
+where: `[tools] servers` (the Tools tab), `[gestures] enabled` (the camera switch), `map`, `calibration` and `[touch]
+actions` (the Input tab). A field's edit goes to the daemon (`{key, value}` or `{key, reset}`), which writes it into
+the draft with **tomlkit** (`apply_edits`): every other line, comment and the order stay as written; the same value
+leaves its line untouched; a section that exists only as the parent of others (`[tools.servers.x]` with no `[tools]`)
+gets its own header at the end, because tomlkit would write one above the first child with that child's comment. A
+missing or empty file starts from the commented template (`default_toml`). The raw view edits the same masked text.
+
+**Checked as at start.** The draft is loaded with `config.load` (`configedit.check_config_text`: config.toml alone,
+no env, no input.toml), so every refusal is the startup one, word for word. The diff is the masked file against the
+masked draft. `changed` compares the loaded sections, so a comment or a key written with its default changes nothing.
+`[notifications]`, `[gestures]` and `[touch]` apply at once after a save (`configui.apply_live`: the Apply button's
+reload; the Input store's `apply` with input.toml over them, `enabled` kept); every other section says *needs a
+restart* (`strawberry restart`; she never restarts herself).
+
+**A file changed under the page** is never overwritten: the page sends back the `tag` it loaded (an HMAC of the file
+under a key made at each start: the plain sha256 of a small file with one unknown token in it could be tested against
+guesses, so it stays in the daemon), the check says `stale` when the file differs, the save answers 409, and the
+write compares the tag again just before it (`configform.write`, which raises `Stale`). The page offers *Reload from
+the file*. The write holds config.toml's lock (`configedit.locked`: a lock in the process and an flock in the state
+dir, which configedit's own writers, the camera switch, the tray and `strawberry setup`, take too) across the tag
+check, the backup and the replace; the backup (`config.toml.bak-<time>`) is created 0600 (O_EXCL) before a byte goes
+in, the new file is written to a fresh `mkstemp` file (0600) and renamed over it, so config.toml is the user's alone;
+the last ten backups are kept; a text with a placeholder in it is never written.
+
+**What loosens safety** (`configform.lowering(old, new)`, on the two files as loaded, whatever made the change: the
+form, the raw view or the Tools tab; a table of cases in the tests):
+
+| Setting | Loosens when |
+|---|---|
+| Kind (her card, most severe first) | Setting | Loosens when |
+|---|---|---|
+| runs | `[tools.servers.*]` | a server with a command is new; its `command`, `args`, `env` or `cwd` changes; its adapter changes |
+| egress | `[tools.servers.*]`, `[daemon] host`, `[brain] ollama_url` | a server with an address is new or its `url` changes; the daemon on every address (`0.0.0.0`, `::`, empty) or from this machine to beyond it; the models on another machine |
+| approvals | `[tools.servers.*]`, `[tools] enabled` | a trust flag goes (with the adapter's: trust.flags_for); a tool leaves its `confirm` list (absent: the adapter's) or its `careful` list; `offer` goes asked → topic → always; tools switched on |
+| approvals | `[approvals] risk` | a tool's **effective** tier goes down (`configform.tier`, with Server.risk's own precedence: a per-tool entry as written; a whole-server entry never under the adapter's tier or a destructiveHint the toolbox knows), for every server either file names, a tool the server lists, one an entry or the adapter names, and an ordinary one nothing names |
+| approvals | `[approvals] hold`, `change_s`, `sends_s`, `destructive_s`, `grace_s` | a tier taken off; a longer wait for a yes |
+| approvals | `[ledger]`, `[gestures] approvals` | `foreign_minutes` shorter, or the shorter of it and `window_minutes`; `notices` to 0 (strangers' text would leave her memory and stop making changes ask); a thumb answering her card |
+| privacy | `[notifications]` | an app's body mode goes off → react → glance; `max_body_chars` longer; an app off `ignore_apps`; `only_apps` wider or emptied |
+| privacy | `[daemon]`, `[learning]`, `[messages]`, recall `workspaces` | `log_sentences`, `log_outcomes`, the inbox switched on; `log_level` to DEBUG; a workspace added |
+| gestures | `[gestures]` | `watch` armed → always; `require_facing` or `arming` off; `hold_ms` shorter; `zone` lower on the picture (larger); `min_size` smaller; `armed_s` longer |
+
+Everything else is neutral or raises safety and saves after the diff. The draft is read twice, the file alone and
+with input.toml laid over `[gestures]` and `[touch]` as she runs it (`inputs.overlay`), and the findings of both are
+merged; a change that would make input.toml stop checking out (a server whose touch reflex would now ask first) is
+refused. A file broken under her is compared with the settings she runs, never with the defaults. `[gestures]
+enabled` is refused here outright (`configform.refused`): the camera goes on only by its explicit switches (the Input
+tab's, the tray's, the CLI); so is an Ollama address with a login part, a backslash or a space.
+
+A change that loosens anything waits for **her card**, and only when she is asking nothing else: while any approval
+is open the save answers 409 (`busy`; a new question would supersede that one, and a yes meant for it could land on
+this). A `settings` run (§18) says one line ("That settings change loosens my safety rules. Hold yes on my card if it
+was you.") and opens an approval (§19): a hold for a yes, 60 s, `yes_by` = body. Only a held Yes on her card takes it:
+not the page that asked (`not_here`; its Runs and Config file tabs show no Yes), not a thumb, and not a yes said or
+typed, which may have been meant for an earlier question; she answers that with "That one needs a hold on Yes on my
+card." A No may come from anywhere. Her card's line (`configui._card_line`) cannot be forged from the draft: fixed
+words first ("Settings change:"), then every kind of loosening there is, most severe first; what runs or connects by
+its command line or address (an app by its desktop id), each quoted, without quotes, semicolons or control
+characters of its own, cut so the fixed words always fit, at most two and then how many more; every other kind by
+its count. "Settings change: runs "notes-mcp --verbose"; fewer approvals ×2; less privacy ×1." The text written after
+the yes is the text checked at the save, kept in the daemon and bound to the approval by its sha256; the file must
+still be at `base`. One such change waits at a time; an unexpected error while she waits ends it as failed. The Input
+tab's input.toml replaces `[gestures]` whole, so its save goes through the same check against what she runs with (a
+thumb that answers her card, a camera always watching, an easier gesture: `brainui._input_asks`), and the Apps tab's
+apps.toml likewise (an app she may newly open or close, or close without asking: `appsui._apps_asks`), each with the
+same `Pending` and its own writer. Tightening and neutral lists save at once.
+
+**Secrets never reach the page** (`configform.Vault`, one per page session, in memory). Hidden as `<hidden N: kept
+as is>`: every value of a server's `env`; any value (a string, or a number) under a key named like a secret (token,
+secret, password, api_key, auth, credential, bearer, cookie, key, pin; config.py's own settings such as
+`thinker.tool_tokens` excepted); an argument that carries one (`--token=…`, the word after `--api-key`,
+`Authorization: …`) and a command that does; an address with a login part or a token in its query or path; any
+token-like value; and any string a hidden value is in (a value moved under a plain key). Where they are comes from
+the parsed document (tomllib, the daemon's own reader); they are replaced in tomlkit's. Comments are found by a lexer
+of TOML's strings and comments over the whole text (`comment_spans`: basic, literal and multi-line strings, escapes,
+quoted keys, CRLF); one that looks like it holds a secret (a commented-out key with a value, a flag and its value, an
+env table, an address with a login, a token-like word) or holds a hidden value is hidden whole as `# <hidden comment
+N: kept as is>`, and comes back only where it is still a comment. The shipped template's lines are never hidden.
+Before anything leaves the daemon the masked text is parsed again: every secret place must hold a placeholder and no
+hidden value or comment may be anywhere in it, else nothing is shown ("cannot be shown here safely; edit it in a text
+editor"). The page sends the masked text back and the vault puts the values in (a number as a number), each only at
+the path it was shown at; a placeholder it never gave out, one with text added, one moved to another key, or one in
+a key or moved out of a comment is refused. Messages for the page and her card (a startup refusal that quotes a
+value, a reason naming a command) are scrubbed of every hidden value, as written and as repr() and JSON quote it.
+No pattern runs over more than 4096 characters (`MAX_SCAN`; some backtrack, and a 200 000-character line must not
+stall the daemon): a longer comment or argument is hidden whole, so is the word after a longer flag and a longer query
+key, and a longer value counts as a token when it has no space; the token test itself is linear (`token_like`).
+Nothing here logs a value. The Settings tab's read-only view hides the same places (`secret_paths`).
+
+**The Tools tab** lists every server she has, configured and built in (`desktop`, `messages`, `profile`), with its
+kind (command, url, built in), topic, adapter, trust flags, `offer` and state, and per tool (once connected) its tier
+(`Toolbox.risk`), whether the thinker is offered it, whether it asks first and whether it is careful. A url server
+shows whether a login is saved and `strawberry tools login <name>` to copy: the login opens a browser and waits on a
+redirect to this machine, which stays a terminal command. *Add or edit a server* writes the server's whole table
+(`tools.servers.<name>` in the edits) through the same check, diff and card. Recall's `workspaces` is a list typed on
+the page: the server's own workspace list is not read from here (the adapter refuses every tool but search and
+read_note), and widening it asks on her card.
+
+**widget.cfg is left out.** The widget's own preferences (skin, window, sound, sleep) live in its file, written by the
+widget and read by the tray (§13, §14); config.toml has no section for them, so there is no clean path from this
+editor, and the page does not write the file behind the widget's back.
+
+**Not done here.** The OAuth login is not run from the daemon. Her card shows a settings change with the `change`
+tier's look: the widget has no wording of its own for it yet (the line's "Settings change:" says what it is).
+
+**The Input tab's second hand** (§26, PROTOCOL Part 1d): the live view draws `hands` as they come, the primary as
+before and the other thinner in a grey, each labelled L or R (`handedness`), a dotted line between the palms with the
+pair's distance and angle (green when both pinch), and chips for the primary's side and the pair. The tuning has
+*Hands* (one or two, `[gestures] hands`, saved to input.toml).
+
+Tests: `tests/test_configui.py` (the schema against config.py, hints from the code's comments; edits that keep
+comments and order, a parent-only section, a whole server, refusals; secrets in every TOML form and in random files
+of them, comments, trailing comments, numbers, addresses, commands, a placeholder never written, a hidden value moved
+into a plain key, a check's quoted value, a reason, the card, the Tools view; the classifier's table; the camera never
+switched; every write behind the session, the CSRF header and the Origin; a draft refused with the startup reason; a
+file changed under the page; a new file from the template, a safe change applied at once; a loosening change waiting
+for a held yes, never the page's, never a thumb's, a no, no answer, the file changed meanwhile, only the asked text
+written; a broken file compared with what she runs; the Input tab's card; the Tools listing), `tests/test_input.py`
+(both hands and the pair through the live view, the Hands setting).
