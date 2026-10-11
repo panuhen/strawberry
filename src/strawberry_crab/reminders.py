@@ -598,6 +598,11 @@ def matching(items: list[dict[str, Any]], match: str, now: float) -> list[dict[s
 # ----------------------------------------------------------------------------- the store and the scheduler
 
 
+def _origin(timer: dict[str, Any]) -> str:
+    """How a timeline entry marks a reminder set after text others wrote (through her card)."""
+    return " (set after text others wrote)" if timer.get("foreign") else ""
+
+
 class Unavailable(RuntimeError):
     """No history to keep reminders in (switched off, or the file could not be opened). The message is hers."""
 
@@ -615,7 +620,7 @@ class Reminders:
         self.monotonic = monotonic
         self.check_s = check_s
         self.hold_s = hold_s
-        self.say: Callable[[str, str], Awaitable[int]] | None = None
+        self.say: Callable[[str, str, bool], Awaitable[int]] | None = None
         self.busy: Callable[[], bool] = lambda: False
         self.bodies: Callable[[], int] = lambda: 1
         self.task: asyncio.Task | None = None
@@ -649,11 +654,11 @@ class Reminders:
         history = self.history()
         return await history.call(history.timers, "pending")
 
-    async def add(self, due: float, text: str) -> int:
+    async def add(self, due: float, text: str, foreign: bool = False) -> int:
         history = self.history()
         if len(await self.pending()) >= MAX_PENDING:
             raise ValueError(f"there are {MAX_PENDING} reminders already")
-        timer_id = await history.call(history.add_timer, due, text)
+        timer_id = await history.call(history.add_timer, due, text, foreign)
         self.counts["set"] += 1
         log.info("reminders: %d set, due in %.0f s", timer_id, due - self.clock())
         self.poke()
@@ -751,25 +756,30 @@ class Reminders:
                 log.info("reminders: %d missed while she was off; told as one line", len(claimed))
                 lines.append(missed_line(claimed, now))
                 about.append("reminders that fell due while you were off: " + "; ".join(
-                    f'{label(t["due"], now)}, "{t["text"]}"' for t in claimed[:MAX_TOLD]))
-            told = len(claimed)
+                    f'{label(t["due"], now)}{_origin(t)}, "{t["text"]}"' for t in claimed[:MAX_TOLD]))
+            told, told_ids = len(claimed), set()
             for item in fired:
                 if not await history.call(history.set_timer_state, item["id"], "fired", "pending"):
                     continue                # cancelled or told meanwhile: never twice
                 self.counts["fired"] += 1
                 told += 1
+                told_ids.add(item["id"])
                 log.info("reminders: %d due; saying it", item["id"])
                 lines.append(due_line(item["text"]))
-                about.append(f'a reminder the user set went off: "{item["text"]}"')
+                about.append(f'a reminder went off{_origin(item)}: "{item["text"]}"')
             if lines:
-                await self._say(" ".join(lines), "; ".join(about))
+                # Said as her words and quoted in the timeline, never handled as a sentence: a reminder's words are
+                # never routed or acted on. One set after text others wrote makes the timeline entry foreign.
+                foreign = any(t.get("foreign") for t in claimed) or any(
+                    t.get("foreign") for t in fired if t["id"] in told_ids)
+                await self._say(" ".join(lines), "; ".join(about), foreign)
             return told
 
-    async def _say(self, text: str, about: str) -> None:
+    async def _say(self, text: str, about: str, foreign: bool = False) -> None:
         if self.say is None:
             return
         try:
-            await self.say(text, about)
+            await self.say(text, about, foreign)
         except Exception as exc:   # noqa: BLE001 - it is marked already: never said twice
             log.warning("reminders: could not say one (%s)", type(exc).__name__)
 
@@ -831,7 +841,8 @@ class RemindersSession:
         arguments = arguments if isinstance(arguments, dict) else {}
         try:
             if name == "set_reminder":
-                return await self.set_reminder(arguments.get("due"), arguments.get("text"))
+                return await self.set_reminder(arguments.get("due"), arguments.get("text"),
+                                               arguments.get("foreign") is True)
             if name == "cancel_reminder":
                 return await self.cancel_reminder(arguments.get("id"), arguments.get("match"), arguments.get("all"))
             if name == "list_reminders":
@@ -841,7 +852,7 @@ class RemindersSession:
             return not_done(str(exc))
         return _result(f"no tool named {name!r}", True)
 
-    async def set_reminder(self, due: Any, text: Any) -> dict[str, Any]:
+    async def set_reminder(self, due: Any, text: Any, foreign: bool = False) -> dict[str, Any]:
         self.reminders.history()
         words = clean_text(text)
         if not words:
@@ -856,7 +867,7 @@ class RemindersSession:
             return not_done(f"the time is not certain ({when.why}). Ask the user exactly this: \"{ask_line(when)}\"")
         assert when.due is not None
         try:
-            timer_id = await self.reminders.add(when.due, words)
+            timer_id = await self.reminders.add(when.due, words, foreign)
         except ValueError as exc:
             return not_done(f"{exc}.")
         return _result({"id": timer_id, "due": iso(when.due), "when": label(when.due, now), "text": words,
@@ -1130,7 +1141,7 @@ class RemindersAdapter(Adapter):
             when = parse_when(str(arguments.get("due") or "")[:80], now)
             if when.ok and when.due is not None:
                 return (f"Set a reminder {label(when.due, now)}? Say yes.",
-                        {"due": iso(when.due), "text": arguments.get("text")})
+                        {"due": iso(when.due), "text": arguments.get("text"), "foreign": True})
             return "Set a reminder? Say yes.", dict(arguments)
         if name == "cancel_reminder" and isinstance(arguments, dict):
             try:

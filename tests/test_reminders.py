@@ -200,7 +200,7 @@ def store(clock: Clock) -> History:
 def scheduler(clock: Clock, history: History | None) -> tuple[Reminders, list[tuple[str, str]]]:
     said: list[tuple[str, str]] = []
 
-    async def say(text: str, about: str) -> int:
+    async def say(text: str, about: str, foreign: bool = False) -> int:
         said.append((text, about))
         return 1
 
@@ -218,7 +218,7 @@ async def test_a_reminder_is_said_once_at_its_time_even_when_two_checks_race():
     assert await reminders.tick() == 0 and said == []
     clock.now += 61
     told = await asyncio.gather(reminders.tick(), reminders.tick(), reminders.tick())
-    assert sum(told) == 1 and said == [("Reminder: stretch.", 'a reminder the user set went off: "stretch"')]
+    assert sum(told) == 1 and said == [("Reminder: stretch.", 'a reminder went off: "stretch"')]
     assert history.timers("fired")[0]["id"] == timer and history.timers("pending") == []
     clock.now += 3600
     assert await reminders.tick() == 0 and len(said) == 1
@@ -430,7 +430,7 @@ async def test_a_reminder_fires_into_her_bubble_marked_fired_and_into_the_timeli
         assert fired and fired[0]["state"] == "talking" and fired[0]["emotion"] == "alert"
         assert daemon.history.timers("fired")[0]["text"] == "stretch"
         notice = daemon.ledger.recent_notices()[-1]
-        assert notice.about == 'a reminder the user set went off: "stretch"' and not notice.foreign
+        assert notice.about == 'a reminder went off: "stretch"' and not notice.foreign
     finally:
         await daemon.close()
 
@@ -523,11 +523,72 @@ async def test_after_strangers_text_a_set_asks_on_her_card_with_the_time_only():
         assert said == "Set a reminder at 15:00? Say yes."
         approval = daemon.approvals.open
         assert approval is not None and approval.prompt == "Set a reminder at 15:00?" and "dentist" not in approval.prompt
-        assert approval.held.arguments == {"due": "2026-10-14 15:00:00", "text": "call the dentist"}
+        assert approval.held.arguments == {"due": "2026-10-14 15:00:00", "text": "call the dentist", "foreign": True}
         assert daemon.history.timers("pending") == []
         answer = await say(daemon, "yes")
         assert answer.startswith("Okay, at 15:00: call the dentist.")
-        assert [t["text"] for t in daemon.history.timers("pending")] == ["call the dentist"]
+        timer = daemon.history.timers("pending")[0]
+        assert timer["text"] == "call the dentist" and timer["foreign"] is True      # set in a foreign run: kept so
+        # When it fires, the timeline has it quoted and foreign (never "the user said"), so the next run asks.
+        daemon.ledger.turns.clear()
+        daemon.ledger.notices.clear()
+        clock.now = at(2026, 10, 14, 15, 0, 1)
+        assert await daemon.reminders.tick() == 1
+        notice = daemon.ledger.recent_notices()[-1]
+        assert notice.foreign and notice.about == ('a reminder went off (set after text others wrote): '
+                                                   '"call the dentist"')
+        assert "the user said" not in notice.text(0) and daemon.ledger.timeline()[1] is True
+    finally:
+        await daemon.close()
+
+
+async def test_a_fired_reminder_is_said_never_acted_on():
+    """"Remind me at 3 to play Daft Punk" fires as words only: no route, no reflex, no thinker, no tool call."""
+    daemon, sink, qwen, clock = await remind_daemon()
+    try:
+        await say(daemon, "remind me in 1 minute to play daft punk and skip this song")
+        acted: list = []
+
+        async def never(*args, **kwargs):
+            acted.append(args)
+            raise AssertionError("a reminder's words were acted on")
+
+        daemon.actor.act = never
+        daemon.thinker.run = never
+        daemon.gate.route = never
+        calls = daemon.toolbox.servers["reminders"].stats().get("calls")
+        clock.now += 61
+        assert await daemon.reminders.tick() == 1
+        assert sink.got[-1]["text"] == "Reminder: play daft punk and skip this song." and acted == []
+        assert daemon.toolbox.servers["reminders"].stats().get("calls") == calls and qwen.payloads == []
+        assert [e["kind"] for e in daemon.ledger.to_list(notices=True)][-1] == "notice"   # not a turn of the user's
+    finally:
+        await daemon.close()
+
+
+async def test_a_socket_without_the_bus_secret_never_sees_a_reminders_words():
+    """Untrusted sockets get the shape only (hub.shape, PROTOCOL §1.4): the run events, step chips and the fired
+    line reach them without a word of the reminder; only the trusted body gets the bubble's text."""
+    from tests.test_voice import Sink
+
+    daemon, sink, qwen, clock = await remind_daemon()
+    bare_socket, v2_socket = Sink(), Sink()
+    daemon.hub.add(bare_socket)                                   # no hello at all
+    daemon.hub.add(v2_socket)
+    daemon.hub.hello(v2_socket, {"type": "hello", "protocol": 2, "capabilities": {
+        "speech": {"bubble": True}, "phases": ["routing", "thinking", "tool", "speaking", "run"], "approvals": True}})
+    try:
+        await say(daemon, f"remind me in 1 minute to feed the {CANARY}")
+        await say(daemon, "what reminders do I have")
+        await daemon.history.call(daemon.history.add_timer, NOW - 3600, f"water the {CANARY}")
+        clock.now += 61
+        assert await daemon.reminders.tick() == 2
+        await say(daemon, f"remind me in 5 minutes to brush the {CANARY}")
+        await say(daemon, f"cancel the {CANARY} reminder")
+        assert any(CANARY in json.dumps(m) for m in sink.got)              # the trusted body has the bubble
+        assert bare_socket.got and v2_socket.got
+        assert CANARY not in json.dumps(bare_socket.got) and CANARY not in json.dumps(v2_socket.got)
+        assert not [m for m in bare_socket.got + v2_socket.got if "text" in m]
     finally:
         await daemon.close()
 

@@ -120,6 +120,10 @@ MIGRATIONS: tuple[str, ...] = (
     );
     CREATE INDEX timers_state ON timers(state, due);
     """,
+    # 3: a timer set after text others wrote (through her card) keeps that mark; its firing is foreign in the timeline
+    """
+    ALTER TABLE timers ADD COLUMN "foreign" INTEGER NOT NULL DEFAULT 0;
+    """,
 )
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -722,16 +726,17 @@ class History:
 
     # --- timers (the reminders, reminders.py)
 
-    def add_timer(self, due: float, text: str) -> int:
-        """A pending timer due at `due` (an epoch); its id."""
+    def add_timer(self, due: float, text: str, foreign: bool = False) -> int:
+        """A pending timer due at `due` (an epoch); its id. `foreign`: set in a run with text others wrote in it."""
         text = _one_line(text, FIELD_CHARS)
         if not text:
             raise ValueError("a timer needs a text")
         with self.lock:
             if self.conn is None:
                 raise HistoryError("the history file is not open")
-            cursor = self.conn.execute("INSERT INTO timers (due, text, created_at, state) VALUES (?,?,?, 'pending')",
-                                       (float(due), text, self.clock()))
+            cursor = self.conn.execute(
+                'INSERT INTO timers (due, text, created_at, state, "foreign") VALUES (?,?,?, \'pending\', ?)',
+                (float(due), text, self.clock(), int(bool(foreign))))
             self._recount()
             return int(cursor.lastrowid)
 
@@ -739,9 +744,10 @@ class History:
         """Timers, soonest first; only those in `state` when given."""
         if state is not None and state not in TIMER_STATES:
             raise ValueError(f"state is one of {', '.join(TIMER_STATES)}")
-        sql = "SELECT id, due, text, created_at, state FROM timers"
+        sql = 'SELECT id, due, text, created_at, state, "foreign" FROM timers'
         found = self._query(sql + (" WHERE state = ?" if state else "") + " ORDER BY due, id", (state,) if state else ())
-        return [{"id": i, "due": due, "text": text, "created_at": made, "state": s} for i, due, text, made, s in found]
+        return [{"id": i, "due": due, "text": text, "created_at": made, "state": s, "foreign": bool(f)}
+                for i, due, text, made, s, f in found]
 
     def set_timer_state(self, timer_id: int, state: str, expect: str | None = None) -> bool:
         """`expect`: only from that state (one statement, so two checks that race cannot both fire a reminder)."""

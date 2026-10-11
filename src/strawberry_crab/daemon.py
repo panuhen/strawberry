@@ -319,10 +319,12 @@ class Daemon:
         return (bool(getattr(self.listener, "busy", False)) or self.voice_handling > 0 or self.runs.busy() is not None
                 or self.approvals.open is not None)
 
-    async def say_reminder(self, text: str, about: str) -> int:
+    async def say_reminder(self, text: str, about: str, foreign: bool = False) -> int:
         """A reminder said (reminders.Reminders): her line in her bubble on the bodies, which wakes her if she is
         asleep (the widget's own wake), with no voice while she is quiet (shh, the Quiet row). Never through the OS's
-        notifications. The line is logged as its length only; the timeline gets what went off, as her own act."""
+        notifications, and never handled as a sentence: its words are said, never routed or acted on. The line is
+        logged as its length only; the timeline gets what went off as a notice (quoted, never "the user said"),
+        foreign when it was set after text others wrote, so the next run asks before changes."""
 
         async def say() -> int:
             logtext.from_private("her reminders")   # this task only: her line is logged as its length
@@ -330,7 +332,7 @@ class Daemon:
             return await self.perform(performance, voice=not self.quiet_now())
 
         sent = await asyncio.get_running_loop().create_task(say())
-        self.ledger.notice("reflex", about, "", foreign=False)
+        self.ledger.notice("reflex", about, "", foreign=foreign)
         return sent
 
     async def say_aside(self, text: str) -> None:

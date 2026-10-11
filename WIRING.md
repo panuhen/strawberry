@@ -2811,7 +2811,7 @@ the thinker's same 8K window. Detail fades on a schedule: raw rows for `keep_day
 **The file.** `<state>/strawberry.db` (`paths.history_db()`), stdlib `sqlite3`, WAL, `secure_delete` on. It is made
 empty with mode 0600 before SQLite writes a byte (its `-wal` and `-shm` take the same mode), in a 0700 directory, and
 set to 0600 again at each open. `PRAGMA user_version` counts the ordered `MIGRATIONS` that have run (1: events and
-digests; 2: timers); before an update of a file with data in it, a copy (`strawberry.db.pre-vN`, 0600) is made beside
+digests; 2: timers; 3: the timers' foreign mark); before an update of a file with data in it, a copy (`strawberry.db.pre-vN`, 0600) is made beside
 it and deleted after success; a failed update rolls back, keeps the copy and leaves her without a history for that run;
 a copy left by an update cut short after it committed goes at the next open; a file from a newer version is left
 alone. The daemon is the only writer, through one writer thread (`History.start`: a one-worker executor); hooks submit
@@ -2823,7 +2823,7 @@ open is one log line and no history; everything else goes on. Windows: the same,
 | `events` | `id`, `at` (UTC epoch), `day` (local, the day ends at 04:00), `kind`, `source`, `"foreign"` (0/1), `text` (null: structure only), `run_id`, `meta` (small JSON) | `keep_days` (14), and only once the day has a digest |
 | `events_fts` | FTS5 over `events.text` (external content, kept by triggers, `secure-delete` where SQLite has it) | with its rows |
 | `digests` | `day`, `text`, `edited_by_user`, `made_at` | `digest_months` (6) |
-| `timers` | `id`, `due`, `text`, `created_at`, `state` (pending, fired, missed, cancelled) | until said, missed or cancelled, then as that (the reminders, §31) |
+| `timers` | `id`, `due`, `text`, `created_at`, `state` (pending, fired, missed, cancelled), `"foreign"` (set through her card after strangers' text, §31) | until said, missed or cancelled, then as that (the reminders, §31) |
 
 Without FTS5 in the SQLite build (`fts5_available`), the triggers go, writing works as before and the search is a LIKE
 over the words; the index is made and filled from the rows once FTS5 is there.
@@ -3024,8 +3024,13 @@ are refused outright (§20). And whatever the run: the guard refuses a `set_remi
 the user's own sentence in that run (`profile.from_sentence`, `sentence_of_this_run`; only I/me/my may become
 you/your), so a reminder's words are always the user's. That is also why a reminder's turn in the timeline is not
 foreign (`own_facts`: its reflex facts and tool results are code's words around the user's own; the daemon keeps
-them as the user's), and why the line she says when it fires goes into the timeline as her own act (a `reflex`
-notice, not foreign).
+them as the user's), unless the run was foreign. A reminder set through her card (`ask` pins `foreign: true`: a set
+held for a yes, after strangers' text or under a raised tier) keeps that mark in its row (`timers."foreign"`,
+migration 3), and when it fires its timeline entry is foreign: a `reflex` notice quoting it ('a reminder went off
+(set after text others wrote): "…"'), never framed as something the user said, so the next run asks before any
+change. One set from the user's own sentence fires as a notice that is not foreign. Either way a fired reminder is
+only said: its words never go to the gate, a reflex, the thinker or a tool ("remind me to play Daft Punk" plays
+nothing).
 
 **The scheduler** (`Reminders`, started with the daemon when the history is open). Each look reads the pending
 timers from the table again (the Brain UI's History view cancels through the store itself), says the due ones, and sleeps until
@@ -3057,7 +3062,9 @@ sentence and her answer are logged as their lengths whatever `log_sentences` say
 them). Her line when one fires is logged as its length (`logtext.from_private`). The server's calls are logged by
 argument names and result size (private). `/health`'s `reminders` is counts: `available`, `running`, `holding`,
 `set`, `cancelled`, `fired`, `missed`, `held`, `next_in_s`. The in-memory timeline (`/health`'s `ledger`) has the
-exchanges, as for any other sentence.
+exchanges, as for any other sentence. On the bus the run events and step chips carry the reflex's or tool's name and
+label ("setting a reminder…"), never its words; the fired line is a performance like any other, so a socket without
+the bus secret gets its shape only (state, emotion), never the text (PROTOCOL §1.4).
 
 **Seen** (2026-10-11, a throwaway daemon on port 8793 with temp XDG dirs, the gate on Ollama, the thinker off, a
 websocket body): "remind me in 1 minute to stretch" → "Okay, at 12:17: stretch."; "remind me about that song" →
@@ -3076,6 +3083,8 @@ the read and the claim; missed at start and after a suspend, told once in one li
 it or after 60 s; waiting for a body; the loop on a wall-clock jump; unavailable without the history; in the daemon:
 set, list and cancel without a model, the question and a bare time as the answer, fired into her bubble and the
 timeline, asleep, quiet without audio, missed at start, history off, the thinker's words only from the user's sentence,
-a card with the time only after strangers' text and the yes, the server's flags, offer and tiers, no program started,
+a card with the time only after strangers' text and the yes, that reminder kept foreign and its firing a foreign
+notice, a fired reminder never acted on, a socket without the secret seeing no word of one, the server's flags,
+offer and tiers, no program started,
 and a canary in a reminder's words in no log record (any level, `log_sentences` off and on) and nowhere in `/health`
 but the timeline), `tests/golden/persona_before.json` (the four new lines).

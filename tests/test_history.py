@@ -75,7 +75,7 @@ def test_the_file_is_0600_from_its_first_byte_and_its_wal_too(monkeypatch):
 def test_an_empty_file_is_made_at_the_current_schema_with_wal():
     history, _ = store()
     conn = history.conn
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == hist.SCHEMA_VERSION == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == hist.SCHEMA_VERSION == 3
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     names = {n for (n,) in conn.execute("SELECT name FROM sqlite_master")}
     assert {"events", "digests", "timers", "events_fts"} <= names
@@ -92,7 +92,7 @@ def test_a_v1_file_is_migrated_keeping_its_rows_and_no_copy_is_left():
     conn.commit()
     conn.close()
     history, _ = store()
-    assert history.conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert history.conn.execute("PRAGMA user_version").fetchone()[0] == hist.SCHEMA_VERSION
     assert [r.text for r in history.rows("2026-10-09")] == ['the user said "old"; you said "yes"']
     assert history.timers() == [] and not list(path.parent.glob("strawberry.db.pre-v*"))
     assert [r.id for r in history.search("old")] == [1]          # the index was filled from the rows already there
@@ -116,7 +116,7 @@ def test_a_failed_migration_leaves_the_file_as_it_was_and_keeps_the_copy(monkeyp
     assert {n for (n,) in check.execute("SELECT name FROM sqlite_master")} >= {"events", "digests"}
     assert "timers" not in {n for (n,) in check.execute("SELECT name FROM sqlite_master")}
     check.close()
-    assert (path.parent / "strawberry.db.pre-v2").exists()
+    assert (path.parent / f"strawberry.db.pre-v{hist.SCHEMA_VERSION}").exists()
 
 
 def test_a_file_from_a_newer_version_is_left_alone():
