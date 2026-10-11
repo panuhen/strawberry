@@ -89,6 +89,9 @@ class ToolResult:
                                         # before the cut: what a later call of the sentence may be pinned to
     foreign: bool = False               # strangers' text: a foreign server's, or one its adapter says so of
                                         # (Adapter.view, reads_as_foreign); it taints the thinker's conversation
+    asks: bool = False                  # it carries timeline entries others wrote (her history's foreign rows,
+                                        # Adapter.timeline_foreign): from here the run asks before anything above
+                                        # `playback`, as a foreign timeline entry makes it (WIRING §23, §30)
 
     def to_dict(self) -> dict[str, Any]:
         return {"server": self.server, "name": self.name, "ok": self.ok, "text": self.text, "ms": round(self.ms, 1),
@@ -496,7 +499,20 @@ class Server:
         log.info("tools: %s.%s(%s) -> %s in %.0f ms: %s", self.name, name,
                  logtext.arguments(arguments) if detail else logtext.names(arguments), "ok" if ok else "error", ms,
                  summary)
-        return ToolResult(self.name, name, ok, text, ms, truncated, arguments, urls, foreign)
+        asks = shape and self._timeline_foreign(name, text)
+        return ToolResult(self.name, name, ok, text, ms, truncated, arguments, urls, foreign, asks)
+
+    def _timeline_foreign(self, name: str, text: str) -> bool:
+        """The adapter's `timeline_foreign` on the text the model gets; an exception counts as True."""
+        hook = getattr(self.adapter, "timeline_foreign", None)
+        if hook is None:
+            return False
+        try:
+            return hook(name, text) is not False
+        except Exception as exc:
+            log.warning("tools: %s: %s.timeline_foreign failed (%s); the run asks before changes", self.name,
+                        getattr(self.adapter, "name", "?"), type(exc).__name__)
+            return True
 
     async def close(self) -> None:
         if self.task and not self.task.done():
