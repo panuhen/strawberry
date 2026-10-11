@@ -990,7 +990,13 @@ added later read as one tool:
   or modes (`toggle`: Runs | Router, Form | Raw TOML) marks the selected one with `aria-pressed`, never as primary.
   Notes: `note("info" | "warn" | "bad", …)`.
 - One term each: *foreign text* (`foreignMark`, one quiet marker in History, the timeline and the reminders) and
-  *tier* (`tierChip`, read/playback/change information, sends/destructive warn).
+  *tier* (`tierChip`, read/playback/change information, sends/destructive warn; its title says what the tier means).
+- *Plain words first* (since the copy stage, 2026-10-11): a label is what the open-source user would say, and a term of
+  art that helps follows it small (`term`): the router's version (*head*), a new version (not "candidate"), the test
+  sentences (*held-out*), quick actions (*reflexes*), "sure when right, unsure when wrong" (*AUROC*), reading ms (not
+  "gate ms"). Raw ids (a run's, an approval's, an example's key) are in a time's or a sentence's title or in an *Ids*
+  fold, never a line of their own. A tab still loading says what it waits for ("Reading config.toml…"); an empty
+  table says what fills it. Prose keeps a measure (78ch); the targets of a link clear the sticky header.
 - Two time formats, both from `when(ts, recent)`: `YYYY-MM-DD HH:MM`, or for recent activity "40 s ago",
   "in 25 min" within a day (`timeCell` puts the absolute time in its title). Chart axes keep short labels.
 - `rerender` leaves a tab alone while a button there is armed or a field there has the focus, and gives the focus
@@ -1073,10 +1079,11 @@ The parts by tab:
     `bodylink.TOUCH_ACTIONS` (each with its tier: read or playback); the entity fields suggest the ids the
     bodies declared, and the ones already mapped. Two rows for the same key are marked (a "same as another row"
     chip as well as the colour, kept true as they are edited) and block Save.
-  - *Tuning*: `hold_ms`, `zone`, `min_size`, `arming`, `armed_s`, `approvals`, `require_facing`, `camera`,
-    `watch`, `idle_fps`, `fps`, `hand_hz`, `face_fps`, `shh_minutes`; `[touch] target_s`, `cooldown_s`. The zone
-    and the smallest hand redraw as they change.
-  - *Calibrate* (§26): five steps of three seconds (a relaxed hand, an open hand, a fist, pointing up, a pinch)
+  - *Tuning* (folded, `<details>`, until opened; a link into it, `#input/input-tuning`, opens it, as `show` opens
+    any fold round a link's target): `hold_ms`, `zone`, `min_size`, `arming`, `armed_s`, `approvals`,
+    `require_facing`, `camera`, `watch`, `idle_fps`, `fps`, `hand_hz`, `face_fps`, `shh_minutes`; `[touch]
+    target_s`, `cooldown_s`. The zone and the smallest hand redraw as they change.
+  - *Calibrate* (§26; folded like Tuning): five steps of three seconds (a relaxed hand, an open hand, a fist, pointing up, a pinch)
     recorded from the `hand` messages' `curl` and `gap` in practice mode, live bars with the thresholds marked,
     the result against what is in use, **Use these** (into the form's `calibration`, saved with input.toml) and
     **Reset to defaults** (an empty table). Under the bars the same reading in words ("index 0.82 curled · gap 0.31
@@ -1102,9 +1109,11 @@ The parts by tab:
 - *History* (`historyui.py`, §30): her history by day, a day's rows on opening it, the search she uses, forget a
   row, a day or everything, the user's own digest, the reminders, and the retention with a link to `[history]` in
   the Config file tab.
-- *Apps* (`appsui.py`, §27): which apps she may open or close. The installed apps (NoDisplay and Hidden ones left
-  out) in a table with a search box, the listed ones first, each with ticks for *may open*, *may close* and *ask
-  before closing* and a field for aliases; an app listed but no longer installed says so. The list is checked on
+- *Apps* (`appsui.py`, §27): which apps she may open or close. *Her list*: only the listed apps, each with ticks
+  for *may open*, *may close* and, while she may close it, *ask before closing*, a field for other names, and ✕ to
+  take it off; an app listed but no longer installed says so. *Add an app*: a word of a name or desktop id finds the
+  installed apps not on the list (NoDisplay and Hidden ones left out; at most 12 shown), and **Add: may open** puts
+  one on it. The list is checked on
   the server 0.4 s after an edit (`POST /ui/api/apps/check`: `apps.from_view`, then the file's text parsed back)
   with the diff against the file; **Save** (a second click) writes `apps.toml` (`POST /ui/api/apps/save`: atomic,
   the old file kept as `apps.toml.bak`, then `AppStore.check` so she uses it at once). Only an installed desktop
@@ -1112,7 +1121,7 @@ The parts by tab:
 
 **What it shows**, in the original sections (as they are now):
 
-1. *Router learning*: the head in use, the candidate, the labelled examples, the last run and the trainer, with **Train now** (`IdleTrainer.train_now`: the idle run's own path, the gate's embedder, stopped when the user speaks, the child process, without waiting for quiet; off, with the trainer's reason beside it, while `trainer.blocked` says it would be refused: a run going, the gate not ready) and **Roll back**. The candidate against the head it was compared with: fields, strict sentences, Finnish fields, privacy readings, wrong reflexes and AUROC on the held-out set, the per-field scores, how many sentences it learned and how many are new to it, with **Accept** and **Reject**. The learned examples with their labels, avoids, conflicts, signals and review state, each with **Approve** and **Reject** (`Learning.review`; reject deletes the sentence for good). The outcome log's last 60 records and its counts per signal. Every head with its status, held-out score, the score of the head it beat and **Use**, and the history of switches. The week's report. *Evaluation* (`GET /ui/api/data`): see 3. The `[learning]` settings in effect with
+1. *Router learning*: the head in use, the candidate, the labelled examples, the last run and the trainer, with **Train now** (`IdleTrainer.train_now`: the idle run's own path, the gate's embedder, stopped when the user speaks, the child process, without waiting for quiet; off, with the trainer's reason beside it, while `trainer.blocked` says it would be refused: a run going, the gate not ready) and **Roll back**. The candidate against the head it was compared with: fields, strict sentences, Finnish fields, privacy readings, wrong reflexes and AUROC on the held-out set, the per-field scores, how many sentences it learned and how many are new to it, with **Accept** and **Reject**. The learned examples with their labels, avoids, conflicts, signals and review state, each with **Approve** and **Reject** (`Learning.review`; reject deletes the sentence for good), and a box on each row (and one for every row shown) for **Approve selected** and **Reject selected**, which send the same `review` call for each selected example in turn (reject asks once more first). The outcome log's last 60 records and its counts per signal. Every head with its status, held-out score, the score of the head it beat and **Use**, and the history of switches. The week's report. *Evaluation* (`GET /ui/api/data`): see 3. The `[learning]` settings in effect with
    **Change…**, and **Forget what she learned** (`Learning.forget`, optionally with every head) after the word
    `forget` is typed.
 2. *Runs, Router view*: each sentence as it is handled: kind and topic with confidence, the decision, the tool and its confidence, what handled it (the reflex, the thinker and its tool calls, no_catalogue, chat), the gate's ms and the whole sentence's ms. `routefeed.py` keeps the last 100 in memory (`Daemon.feed`, filled in `handle_voice` beside the outcome log) and the page gets them over a stream.
@@ -2638,8 +2647,14 @@ page ──GET config──▶ the schema, the file's text with secrets hidden, 
 **The form** (`configform.schema`) is generated from config.py's dataclasses: a section per table, a field per key,
 its kind from the default (bool, int, float, str, a list of strings, a name = value map, JSON for the rest, a choice
 where `_validate` takes a fixed set), the default, and as its hint the comments config.py has beside the key (above
-it, on its line, and the lines carrying it on: `field_hints` reads them with `tokenize`). Keys edited elsewhere say
-where: `[tools] servers` (the Tools tab), `[gestures] enabled` (the camera switch), `map`, `calibration` and `[touch]
+it, on its line, and the lines carrying it on: `field_hints` reads them with `tokenize`), less the pointers that only
+help a developer (`plain`: "WIRING.md §…", "PROTOCOL Part …", "(Phase …)", a module's file name, a name in the code).
+Each section has a plain title (`TITLES`) and one of the side bar's groups (`GROUPS`: Her, Activity, Learning,
+Settings, System), each key a plain label (`LABELS`; the page shows the key itself under it, in mono). The page
+lists the sections under their groups, in each group the ones the file sets or the draft changes first, closed until
+opened (a **Change…** elsewhere opens its section at the field), with a box that finds a setting by a word of its
+label, key or section; **Use the default**, beside a label, takes the key out of the file. Keys edited
+elsewhere say where: `[tools] servers` (the Tools tab), `[gestures] enabled` (the camera switch), `map`, `calibration` and `[touch]
 actions` (the Input tab). A field's edit goes to the daemon (`{key, value}` or `{key, reset}`), which writes it into
 the draft with **tomlkit** (`apply_edits`): every other line, comment and the order stay as written; the same value
 leaves its line untouched; a section that exists only as the parent of others (`[tools.servers.x]` with no `[tools]`)
