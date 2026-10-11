@@ -898,6 +898,7 @@ src/strawberry_crab/profile.py  what she knows about the user (§22): profile.md
 src/strawberry_crab/ledger.py  her short memory (§23): the user's turns and System 1's notices, one timeline with trust labels
 src/strawberry_crab/inbox.py  her inbox (§24): the notifications she got, in memory only, and the read-only `messages` tools
 src/strawberry_crab/history.py  her history (§30): strawberry.db, the rows, retention, the catch-up digester, the `history` look-back tool
+src/strawberry_crab/reminders.py  one-off reminders (§31): the times, the `reminders` builtin and its said reflexes, the scheduler
 src/strawberry_crab/gestures.py  hand gestures (§26): the map and its tiers, /gesture and /hand, the runs; gesturecmd.py `strawberry gestures`
 src/strawberry_crab/inputs.py    input.toml (§26) laid over [gestures] and [touch], read live; the Input tab's recent list, live view and practice mode (§17)
 src/strawberry_crab/apps.py      the apps she may open or close (§27): the installed desktop entries, apps.toml read live; appsui.py the Apps tab's routes
@@ -1430,6 +1431,7 @@ for a server without one, from its config (`[tools.servers.<name>] flags = [...]
 | Spotify (`adapters/spotify.py`) | ✓ | every result with a name | ✓ | its results are the user's library and listening; its calls reach Spotify, where a playlist's name or description can be seen by others. Track, artist, album and playlist names are written by others ("Ignore previous instructions, remove …" is a possible public playlist name, in any language and any wording), so every result that carries one is strangers' text, whatever it says (`Adapter.view`, below). What that text can steer is bounded by the tiers: play, pause, skip, volume and the queue are `playback` and go ahead; a like, a save or a playlist change asks |
 | messages (`inbox.py`, §24) | ✓ | ✓ | | the user's inbox, written by others; read-only, and nothing in it leaves the machine |
 | history (`history.py`, §30) | ✓ | a record marked foreign | | the user's own past; a foreign record makes the run ask as a foreign timeline entry does (`timeline_foreign`), without taking the context out |
+| reminders (`reminders.py`, §31) | ✓ | | | the user's own words (a reminder's words must be a span of the user's sentence); set and cancel are `change` |
 | recall (stage 4) | ✓ | ✓ | ✓ | the user's notes, partly from elsewhere, on a server off the machine |
 | a server with no adapter and no `flags` | ✓ | ✓ | ✓ | nobody has said what it is: the safe default |
 
@@ -2813,7 +2815,7 @@ the thinker's same 8K window. Detail fades on a schedule: raw rows for `keep_day
 **The file.** `<state>/strawberry.db` (`paths.history_db()`), stdlib `sqlite3`, WAL, `secure_delete` on. It is made
 empty with mode 0600 before SQLite writes a byte (its `-wal` and `-shm` take the same mode), in a 0700 directory, and
 set to 0600 again at each open. `PRAGMA user_version` counts the ordered `MIGRATIONS` that have run (1: events and
-digests; 2: timers); before an update of a file with data in it, a copy (`strawberry.db.pre-vN`, 0600) is made beside
+digests; 2: timers; 3: the timers' foreign mark); before an update of a file with data in it, a copy (`strawberry.db.pre-vN`, 0600) is made beside
 it and deleted after success; a failed update rolls back, keeps the copy and leaves her without a history for that run;
 a copy left by an update cut short after it committed goes at the next open; a file from a newer version is left
 alone. The daemon is the only writer, through one writer thread (`History.start`: a one-worker executor); hooks submit
@@ -2825,7 +2827,7 @@ open is one log line and no history; everything else goes on. Windows: the same,
 | `events` | `id`, `at` (UTC epoch), `day` (local, the day ends at 04:00), `kind`, `source`, `"foreign"` (0/1), `text` (null: structure only), `run_id`, `meta` (small JSON) | `keep_days` (14), and only once the day has a digest |
 | `events_fts` | FTS5 over `events.text` (external content, kept by triggers, `secure-delete` where SQLite has it) | with its rows |
 | `digests` | `day`, `text`, `edited_by_user`, `made_at` | `digest_months` (6) |
-| `timers` | `id`, `due`, `text`, `created_at`, `state` (pending, fired, missed, cancelled) | until wave 2 decides; no behaviour here |
+| `timers` | `id`, `due`, `text`, `created_at`, `state` (pending, fired, missed, cancelled), `"foreign"` (set through her card after strangers' text, §31) | until said, missed or cancelled, then as that (the reminders, §31) |
 
 Without FTS5 in the SQLite build (`fts5_available`), the triggers go, writing works as before and the search is a LIKE
 over the words; the index is made and filled from the rows once FTS5 is there.
@@ -2981,7 +2983,7 @@ and two digests over three days; a digest saved as the user's; a row forgotten, 
 everything forgotten with the reminders kept; the link opened `[history]` in the Config file tab; with
 `enabled = false` the view said so. The log had ids and counts only.
 
-**Not done.** The reminders (M2) build on this. Digest quality from the thinker
+**Not done.** The reminders are §31. Digest quality from the thinker
 on a short prompt wants a week of real digests before it is trusted. A turn where she used any tool but her profile's
 is foreign in the timeline (§23), so her answer from a look-back of only trusted rows is still kept as foreign.
 
@@ -2999,3 +3001,141 @@ forgetting a row, a day and everything with the reminders kept, the user's diges
 pending reminder, every route behind the session, the CSRF header and the Origin, the history off and its file not
 open, no text in any log line with the daemon's own access log), `tests/test_configui.py` (the classifier rows),
 `tests/test_messages.py` (no message text in any file, the history's included).
+
+## 31. Reminders — `strawberry/reminders.py` (one-off, said when it is time)
+
+**Why.** "Remind me in 20 minutes to stretch" is the first thing the user asks her to do later. One-off only; repeating
+reminders come later.
+
+```
+"remind me at 15:00 to call the dentist" ─gate─▶ Actor.act ─said reflex (any topic)─▶ set_reminder ──▶ timers row
+"what reminders do I have" / "cancel the dentist reminder" / "cancel my reminders"      (whole sentences, no model)
+"remind me about that song" ─▶ "When should I remind you?" ─▶ "at 16:00" (read even as a fragment) ─▶ set
+anything else about reminders ─▶ the thinker, offered the `reminders` server (offer = "asked")
+Reminders.run: every ≤ 30 s by the wall clock ─ due? ─ claim pending→fired ─▶ "Reminder: call the dentist." (bubble)
+```
+
+**Where they live.** Her history's `timers` table (§30: `id`, `due` as a UTC epoch, `text`, `created_at`, `state`),
+through `History.add_timer`, `timers` and `set_timer_state(id, state, expect)` on its writer thread. With
+`[history] enabled = false`, or a file that could not be opened, there is nowhere to keep them: the reflexes say so
+("I can't keep reminders while my history is switched off; the Config file tab in the Brain UI can turn it on.") and
+the tools answer `Not done: …`. At most 100 pending; a reminder's words at most 120 characters.
+
+**The times** (`parse_when`, the local timezone, against the wall clock):
+
+| said | read as |
+|---|---|
+| in 20 minutes, in an hour, in 1h30, in 1 h 30 min, in half an hour, in an hour and a half, in twenty five minutes, in 2 hours and 15 minutes, in 90 seconds, … from now | now plus that |
+| at 15:00, at 15.30, at 09:30, at 3 pm, at 3 p.m., at quarter past three, at ten to four, half three (British: 3:30), at noon, at midnight (the coming one) | that time today |
+| tomorrow at 9, at 9 tomorrow morning, tonight at 9, on Friday at 10, this Wednesday at 16:00, 2026-10-14 15:00 | that day |
+| a bare hour (1–12, no am or pm) | today: the one of its two readings still ahead; when both are ahead, and on a named day, 7–11 is the morning, 12 noon, 1–5 the afternoon |
+
+Anything else is a question, never a guess (`When.why`, and her line, `ask_line`): no time at all ("remind me about
+that song", "tomorrow", "later", "in a bit", "in a few minutes"); a bare 6 when both readings are ahead ("6 in the
+morning or in the evening?"); "next Friday" or a weekday said on that weekday ("I'm not sure which day you mean.");
+midnight on a named day; a time already gone ("13:00 has already gone today."); more than a year ahead; nothing
+to wait. In a sentence a time must look like one (start with at, in, on, tomorrow, a weekday…, or carry am/pm or
+"15:00"), so "remind me to read chapter 9" or "to book a table for 8" is a reminder with no time, which she asks
+about. Her question leaves the adapter waiting (`RemindersAdapter.waiting`, 2 minutes): the user's next sentence,
+if it is a time ("at 16:00", "in the evening", "6 pm", "tomorrow at 9", with the day or the hour she asked about), sets
+it. The gate reads a bare time as a fragment (kind `other`, seen live), so an adapter that is waiting
+(`expecting()`) is asked even then (`Actor.said_reflex_for`); any other sentence ends the wait.
+
+**Whole sentences** (`read`, the said reflexes `remind`, `remind_ask`, `reminders_list`, `reminder_cancel`, `any_topic`):
+"(can you) remind me <time> to <words>", "remind me to <words> <time>", "<time> remind me to <words>", "set a reminder
+for <time> to <words>" (with the desktop's polite wrappers); "what reminders do I have", "list my reminders", "do I
+have any reminders"; "cancel / delete / remove the dentist reminder", "… the reminder about the dentist", "… my 3 pm
+reminder", "… that reminder" (the last one set), "cancel my reminders" (all). A cancel that matches several asks
+which ("Which one? at 15:00, call the dentist; at 16:00, dentist bill."); one that matches none says so and lists them.
+"Remind me" alone, or a sentence these do not read, is the thinker's. The gate reads the reminder sentences as
+`request`/`question` with topic `calendar` (seen live): `any_topic` makes the topic not matter.
+
+**Her lines** (persona.md, §21): `reminder_set` ("Okay, {when}: {text}."), `reminder_due` ("Reminder: {text}."),
+`reminder_missed` ("While I was off: {list}."), `reminder_ask_time` ("When should I remind you?"). A user's line
+that leaves out a placeholder is not used (the shipped one is): the time and the words are what the line is for.
+`{when}` is "at 15:00", "tomorrow at 09:00", "on Friday at 10:00", "on 2 November at 10:00"; the user's words are
+said with the person turned ("call my mum" → "call your mum").
+
+**The server** (`reminders`, `Toolbox.add_builtin`, topic `other`, added before the actor so its said reflexes are
+known; a configured server of that name keeps it and these are not added):
+
+| tool | does | tier |
+|---|---|---|
+| `set_reminder {due, text}` | `due` in the user's time words (or the pinned `YYYY-MM-DD HH:MM:SS`), `text` the user's words; a time that is not certain is `Not done:` with the exact question to ask, and leaves the adapter waiting | `change` |
+| `cancel_reminder {id? , match?, all?}` | by id, by words in it or its time, or all; several matching is `Not done:` with them listed | `change` |
+| `list_reminders` | the pending ones, soonest first, as JSON (`id`, `when`, `text`) | `read` |
+
+Its flags: `private` (the user's own words), not foreign, not egress. Offered only when a sentence is about reminders
+(`ASKS`: "remind me", "reminder(s)") or her question is waiting (`offer = "asked"`). Trust: from the user's own
+sentence a set or a cancel goes ahead; once strangers' text is in the run (a foreign situation line or timeline
+entry: §20, §23) it asks on her card, in code's words with the time only ("Set a reminder at 15:00? Say yes.",
+"Cancel the reminder at 15:00? Say yes.", `asks_after_foreign`), never the words as they came, with the call pinned
+(the due time as an absolute local time, the one id); after a foreign *result* (a web page) a private server's tools
+are refused outright (§20). And whatever the run: the guard refuses a `set_reminder` whose words are not a span of
+the user's own sentence in that run (`profile.from_sentence`, `sentence_of_this_run`; only I/me/my may become
+you/your), so a reminder's words are always the user's. That is also why a reminder's turn in the timeline is not
+foreign (`own_facts`: its reflex facts and tool results are code's words around the user's own; the daemon keeps
+them as the user's), unless the run was foreign. A reminder set through her card (`ask` pins `foreign: true`: a set
+held for a yes, after strangers' text or under a raised tier) keeps that mark in its row (`timers."foreign"`,
+migration 3), and when it fires its timeline entry is foreign: a `reflex` notice quoting it ('a reminder went off
+(set after text others wrote): "…"'), never framed as something the user said, so the next run asks before any
+change. One set from the user's own sentence fires as a notice that is not foreign. Either way a fired reminder is
+only said: its words never go to the gate, a reflex, the thinker or a tool ("remind me to play Daft Punk" plays
+nothing).
+
+**The scheduler** (`Reminders`, started with the daemon when the history is open). Each look reads the pending
+timers from the table again (the Brain UI's History view cancels through the store itself), says the due ones, and sleeps until
+the next due time, at most 30 s (`CHECK_S`): the wait runs on the monotonic clock, which stops during a suspend, so
+the wall clock is read again within 30 s of a resume; a resume (`Daemon.on_wake`), a set or a cancel looks at once.
+A clock jump forward fires what it passed; one back delays. A due reminder is claimed with one statement,
+`UPDATE … SET state = 'fired' WHERE id = ? AND state = 'pending'`, before it is said, so two looks that race, a
+second scheduler, or a cancel that lands between the read and the claim can never make it said twice or said after
+a cancel (at most once: a crash between the claim and the line loses it rather than repeating it).
+
+- *During a run, an open approval, a sentence being handled or the user talking or recording* (`Daemon._busy_for_reminder`)
+  it waits until that ends, looking every second, for at most 60 s (`HOLD_S`), then is said anyway.
+- *With no body connected* it waits for one (looking every 2 s), however long: the line is never dropped unseen.
+- *Several due at once* are said as one line ("Reminder: stretch. Reminder: drink water.").
+- *Missed:* one still pending from before this start, or first seen more than 5 minutes after its time (a suspend), is
+  marked `missed` and told once, all of them in one line before any due one: "While I was off: at 15:00, call the
+  dentist; at 16:00, stretch." (five named, then "and N more").
+- *Said:* `Daemon.say_reminder`: a `talking` performance with the line, emotion `alert`, on every body. Asleep, the
+  widget wakes for it as for any line (sleep_controller.gd `defer_performance`, checked by validate_sleep.gd) and
+  plays it after the stand-up. In quiet (shh, the tray's Quiet row, the widget's quiet: `Daemon.quiet_now`) the line
+  goes without audio (`perform(voice=False)`): the bubble only. Never `notify-send` or any OS notification: nothing
+  in reminders.py starts a program.
+
+**Privacy.** The words are the user's own and stay in the user's 0600 file. No log line carries them, nor the
+parsed time phrase: ids, counts, the seconds until due, fixed codes. A sentence about reminders, and, while her
+question is waiting, the next sentence, is a private sentence (`logtext.private_sentences`, as the profile's): the
+sentence and her answer are logged as their lengths whatever `log_sentences` says, `/health`'s `actions.last` and
+`thinker.last` carry lengths only, and her history keeps that exchange without its words (the timers table has
+them). Her line when one fires is logged as its length (`logtext.from_private`). The server's calls are logged by
+argument names and result size (private). `/health`'s `reminders` is counts: `available`, `running`, `holding`,
+`set`, `cancelled`, `fired`, `missed`, `held`, `next_in_s`. The in-memory timeline (`/health`'s `ledger`) has the
+exchanges, as for any other sentence. On the bus the run events and step chips carry the reflex's or tool's name and
+label ("setting a reminder…"), never its words; the fired line is a performance like any other, so a socket without
+the bus secret gets its shape only (state, emotion), never the text (PROTOCOL §1.4).
+
+**Seen** (2026-10-11, a throwaway daemon on port 8793 with temp XDG dirs, the gate on Ollama, the thinker off, a
+websocket body): "remind me in 1 minute to stretch" → "Okay, at 12:17: stretch."; "remind me about that song" →
+"When should I remind you?"; "at 23:59" → "Okay, at 23:59: that song."; the list, a set for tomorrow at 03:00 and
+its cancel by a word; "Reminder: stretch." came 53 s after the set (the next due look); the file was 0600. Started
+again with a pending one ten minutes past due: "While I was off: at 12:07, call the dentist." and it was `missed`.
+
+**Not done.** Repeating reminders; snoozing ("remind me again in 5 minutes" is a new reminder); dates by name
+("on 12 October"); the History view's timers list is M3's. A reminder set by the thinker that is held for a yes
+pins the time when it asks, so "in 20 minutes" means 20 minutes from the question.
+
+Tests: `tests/test_reminders.py` (a table of times, the ones asked about included; whole sentences to set, list and
+cancel, and ones that are not, "remind me about that song" and "to read chapter 9" among them; the labels and the
+persona lines; said once when three looks race and a second scheduler looks; a cancel through the store, also between
+the read and the claim; missed at start and after a suspend, told once in one line; held during a run, said after
+it or after 60 s; waiting for a body; the loop on a wall-clock jump; unavailable without the history; in the daemon:
+set, list and cancel without a model, the question and a bare time as the answer, fired into her bubble and the
+timeline, asleep, quiet without audio, missed at start, history off, the thinker's words only from the user's sentence,
+a card with the time only after strangers' text and the yes, that reminder kept foreign and its firing a foreign
+notice, a fired reminder never acted on, a socket without the secret seeing no word of one, the server's flags,
+offer and tiers, no program started,
+and a canary in a reminder's words in no log record (any level, `log_sentences` off and on) and nowhere in `/health`
+but the timeline), `tests/golden/persona_before.json` (the four new lines).

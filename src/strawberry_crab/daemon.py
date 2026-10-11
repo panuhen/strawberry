@@ -35,6 +35,8 @@ from .inputs import InputDesk
 from .mood import Mood
 from .apps import AppStore, apps_file
 from .desktop import SERVER, TOPIC as DESKTOP_TOPIC, Desktop, DesktopAdapter, DesktopSession, SpotifyWake
+from . import reminders as reminding
+from .reminders import Reminders, RemindersAdapter, RemindersSession
 from .outcomes import OutcomeLog
 from .pokes import Pokes
 from .reactions import decorate, is_burst
@@ -70,6 +72,7 @@ class Daemon:
         self.listener = listener or Listener(self.config.voice)
         self.toolbox = toolbox or Toolbox(self.config.tools)
         self._desktop_controls()
+        self._reminders()
         # A configured server with an adapter brings its own phrases for the gate ("save this song"
         # only means something with a library behind it) and its own reflexes; the bare music
         # commands no server covers go to the desktop's media controls, which every player
@@ -289,6 +292,49 @@ class Daemon:
         self.toolbox.add_builtin(SERVER, DESKTOP_TOPIC, open_desktop, adapter=DesktopAdapter(self.apps))
         self.toolbox.recover = SpotifyWake(self.apps, self.desktop, say=self.say_aside)
 
+    def _reminders(self) -> None:
+        """One-off reminders (reminders.py, WIRING §31): kept in her history's file (made later in __init__, hence the
+        callable), a builtin server whose whole sentences are said reflexes (added before the actor so it knows them),
+        and the scheduler that says them, started with the daemon."""
+        self.reminders = Reminders(lambda: getattr(self, "history", None))
+        self.reminders.say = self.say_reminder
+        self.reminders.busy = self._busy_for_reminder
+        self.reminders.bodies = lambda: self.hub.count
+        if not hasattr(self.toolbox, "add_builtin"):
+            return
+        if reminding.SERVER in self.toolbox.servers:
+            log.warning("tools: a configured server is called %s; her own reminders are not added", reminding.SERVER)
+            return
+        adapter = RemindersAdapter(self.reminders)
+        session = RemindersSession(self.reminders, adapter)
+
+        async def open_reminders() -> RemindersSession:
+            return session
+
+        self.toolbox.add_builtin(reminding.SERVER, reminding.TOPIC, open_reminders, adapter=adapter)
+
+    def _busy_for_reminder(self) -> bool:
+        """A due reminder waits (at most reminders.HOLD_S): the user is talking or recording, a sentence is being
+        handled, a run is going or her question is open."""
+        return (bool(getattr(self.listener, "busy", False)) or self.voice_handling > 0 or self.runs.busy() is not None
+                or self.approvals.open is not None)
+
+    async def say_reminder(self, text: str, about: str, foreign: bool = False) -> int:
+        """A reminder said (reminders.Reminders): her line in her bubble on the bodies, which wakes her if she is
+        asleep (the widget's own wake), with no voice while she is quiet (shh, the Quiet row). Never through the OS's
+        notifications, and never handled as a sentence: its words are said, never routed or acted on. The line is
+        logged as its length only; the timeline gets what went off as a notice (quoted, never "the user said"),
+        foreign when it was set after text others wrote, so the next run asks before changes."""
+
+        async def say() -> int:
+            logtext.from_private("her reminders")   # this task only: her line is logged as its length
+            performance = Performance(state="talking", text=text, emotion="alert")
+            return await self.perform(performance, voice=not self.quiet_now())
+
+        sent = await asyncio.get_running_loop().create_task(say())
+        self.ledger.notice("reflex", about, "", foreign=foreign)
+        return sent
+
     async def say_aside(self, text: str) -> None:
         """A short line while a run goes on ("Opening Spotify…", desktop.SpotifyWake): in her thinking pose."""
         await self.perform(Performance(state="thinking", text=text))
@@ -342,6 +388,7 @@ class Daemon:
         self.trainer.start()
         if self.history is not None and await self.history.start() and self.digester is not None:
             self.digester.start()
+        self.reminders.start()
         self.input.store.start()
         self.apps.start()
         self.mood.start(self.runs)
@@ -352,6 +399,7 @@ class Daemon:
 
     def on_wake(self) -> None:
         self.warm_models("on resume")
+        self.reminders.poke()    # what fell due while the computer slept is looked at now, not in up to 30 s
 
     def warm_models(self, reason: str) -> list[asyncio.Task]:
         """Load the gate's model and the reaction model in the background (a one-word embedding, an
@@ -402,6 +450,7 @@ class Daemon:
         await self.mood.close()
         await self.trainer.close()
         self.outcomes.close()
+        await self.reminders.close()
         if self.digester is not None:
             await self.digester.close()
         if self.history is not None:
@@ -482,19 +531,20 @@ class Daemon:
         stats = getattr(self.reactor, "stats", None)
         return stats() if stats else {"model": None, "canned": True}
 
-    async def perform(self, performance: Performance, to: Any = None) -> int:
+    async def perform(self, performance: Performance, to: Any = None, voice: bool = True) -> int:
         """Send one performance to the widget, voicing the line first when speech is on (§6).
 
         A caller that already supplies `audio` keeps it; a line with no audio gets Piper's wav,
         or stays silent when speech is off, quiet, or failing. The bubble shows either way.
         `to`: only these sockets (the first-run note goes to the body that can show it); else all.
+        `voice`: False makes no audio for the line (a reminder while she is quiet: the bubble only).
         """
         # A line that answers the run going on in this task (runs.active): its `speaking` event, and
         # the run's id on the performance for v2 bodies. Cover lines ("On it.") are `thinking`.
         run = runs.active.get()
         answering = (run is not None and not run.done and performance.state == "talking"
                      and bool(performance.text or performance.audio))
-        if performance.text and not performance.audio:
+        if performance.text and not performance.audio and voice:
             audio = await self.speaker.say(performance.text)
             if audio:
                 performance = replace(performance, audio=audio)
@@ -971,8 +1021,10 @@ class Daemon:
             self.acted(record, live, "reflex", outcome.ok,
                        reflex=f"{last.get('server', '')}.{last.get('tool') or route.tool}")
             performance, sent = await self.report(outcome.event(text), outcome.ok, preface)
-            # A reflex's fact is written from what a server or the player said (a track's name): foreign.
-            self.ledger.record(text, performance.text or "", did=outcome.did, foreign=True)
+            # A reflex's fact is written from what a server or the player said (a track's name): foreign. Unless its
+            # adapter says its facts are code's words and the user's own (her reminders: `own_facts`).
+            own = getattr(self.toolbox.adapters.get(last.get("server", "")), "own_facts", False) is True
+            self.ledger.record(text, performance.text or "", did=outcome.did, foreign=not own)
             return performance, sent
         if route is not None and self.actor.needs_catalogue(route):
             routing("fixed")
@@ -1013,9 +1065,11 @@ class Daemon:
         # Her question before a held call is not kept in her words either: with it in the ledger, Qwen
         # asked "Remove Blue Monday from your Liked Songs? Say yes." itself, with no call held (confirm.py).
         said = WEB_REPLY if web else confirm.LEDGER_HELD if outcome.held is not None else performance.text or ""
-        # Her answer from a tool's result can carry its names (a playlist, a track): foreign in the timeline.
+        # Her answer from a tool's result can carry its names (a playlist, a track): foreign in the timeline. Not the
+        # results of her profile's tools or her reminders' (the user's own words: `own_words_only`, `own_facts`).
         named = said == performance.text and (getattr(outcome, "foreign", False) or any(
-            not getattr(self.toolbox.adapters.get(c.server), "own_words_only", False) for c in outcome.calls))
+            not (getattr(self.toolbox.adapters.get(c.server), "own_words_only", False)
+                 or getattr(self.toolbox.adapters.get(c.server), "own_facts", False) is True) for c in outcome.calls))
         self.ledger.record(text, said, did=outcome.did, foreign=named)
         return performance, sent
 

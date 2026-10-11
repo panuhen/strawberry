@@ -164,6 +164,19 @@
   "talk_again": [
    "Ah, my voice is back.",
    "Right, where was I?"
+  ],
+  "reminder_set": [
+   "Okay, {when}: {text}."
+  ],
+  "reminder_due": [
+   "Reminder: {text}."
+  ],
+  "reminder_missed": [
+   "While I was off: {list}."
+  ],
+  "reminder_ask_time": [
+   "When should I remind you?",
+   "When shall I remind you?"
   ]
  }
 }

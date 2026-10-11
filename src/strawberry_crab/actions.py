@@ -38,6 +38,7 @@ from typing import Any, Awaitable, Callable
 
 from .config import ActionsConfig
 from .events import Event
+from . import logtext
 from .logtext import line, sentence
 from .systemone import Route
 from .tools import Toolbox, ToolResult
@@ -96,6 +97,14 @@ class Guarded:
 
     def __getattr__(self, attr: str) -> Any:
         return getattr(self._toolbox, attr)
+
+
+def _expecting(adapter: Any) -> bool:
+    expecting = getattr(adapter, "expecting", None)
+    try:
+        return bool(expecting()) if callable(expecting) else False
+    except Exception:   # noqa: BLE001 - an adapter must never cost the sentence its answer
+        return False
 
 
 # Words a bare "start the music again" sentence is made of. Anything else in a `resume` sentence
@@ -174,11 +183,13 @@ class Actor:
         """A whole sentence a configured server's adapter knows by its words ("I like this": the gate
         has no option for liking), for a server of the sentence's topic that lists the tool it
         needs: (server, name, reflex), or None. Asked before the gate's decision, which reads "I like
-        this" as chat; never for a sentence the gate reads as not aimed at her."""
-        if route.kind == "other":
-            return None
+        this" as chat; never for a sentence the gate reads as not aimed at her, unless an adapter is waiting
+        for the answer to her own question (`expecting`: the reminders' "when?", which a bare "at 16:00" answers,
+        and the gate reads a bare time as a fragment)."""
         for name, server in self.toolbox.servers.items():
             adapter = self.adapters.get(name)
+            if route.kind == "other" and not _expecting(adapter):
+                continue
             # An adapter of `any_topic` (the desktop's: "open spotify", "lock the screen") knows its sentences
             # whatever topic the gate reads in them.
             topical = server.topic == route.topic or getattr(adapter, "any_topic", False) is True
@@ -319,8 +330,11 @@ class Actor:
         self.acted += 1
         if not outcome.ok:
             self.failed += 1
+        # A sentence for the profile or her reminders (as its handling began: logtext.hearing): lengths only in /health.
+        private = logtext.private(text) or logtext.withheld() == "profile"
         self.last = {
-            "asked": text, "tool": tool, "server": server, "did": outcome.did, "fact": outcome.fact,
+            "asked": sentence(text) if private else text, "tool": tool, "server": server, "did": outcome.did,
+            "fact": f"<{len(outcome.fact)} chars>" if private else outcome.fact,
             "ok": outcome.ok, "ms": round(ms, 1),
             "calls": [self.toolbox.shown(c) if hasattr(self.toolbox, "shown") else c.to_dict() | {"text": c.text[:200]}
                       for c in outcome.calls],

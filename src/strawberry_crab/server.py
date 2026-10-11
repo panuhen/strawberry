@@ -254,6 +254,7 @@ async def health(request: web.Request) -> web.Response:
             "messages": daemon.inbox.stats() if daemon.inbox is not None else {"enabled": False},
             # her history (history.py): counts only, never a sentence, a row or a digest
             "history": daemon.history_stats(),
+            "reminders": daemon.reminders.stats(),
             "state": daemon.current_state(),
             "rest_state": daemon.rest_state,
             "tempo": daemon.fresh_tempo(),

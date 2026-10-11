@@ -58,6 +58,16 @@ model runs on your own computer through [Ollama](https://ollama.com); nothing is
   computer" locks it at once, and so can a gesture you map to *lock* in the Input tab. Nothing else on
   the computer: no GPU, brightness or other settings. Closing a window needs `wmctrl` (or an xdotool
   from 2021 on); without it only a media player that can quit itself closes.
+- **Reminders.** "Remind me in 20 minutes to stretch", "remind me at 15:00 to call the dentist",
+  "remind me tomorrow at 9 to water the plants", "remind me on Friday at 10 to pay the rent": she says
+  it back with the time ("Okay, at 15:00: call the dentist.") and, when it is time, says "Reminder: call
+  the dentist." in her bubble, waking up if she was asleep, without her voice while she is quiet. A
+  time she cannot be sure of ("at 6", "next Friday", one already gone, no time at all) makes her ask
+  ("When should I remind you?"), and a bare "at 16:00" answers her. "What reminders do I have",
+  "cancel the dentist reminder" and "cancel my reminders" do what they say. One that fell due while
+  she was off is told once when she is back ("While I was off: at 15:00, call the dentist."). They are
+  kept in her history's file, so they need `[history]` on; one-off only for now. They never go
+  through the system's notifications.
 - **Tools.** You can give her MCP servers (a calendar, notes, Spotify) in the config. None is
   configured out of the box. See [ADAPTERS.md](ADAPTERS.md).
 - **Web search (optional).** With a local SearXNG and its MCP server configured, she searches
@@ -324,6 +334,11 @@ write a day's digest yourself, and lists and cancels reminders.
 `[history] sentences = false` keeps no sentences or replies, only what happened; `keep_days`,
 `digest_months` and `lookback_tokens` change the lengths; `enabled = false` turns it off (the file
 stays until you delete it). Making any of these keep more asks on her card first.
+
+Your reminders are kept in the same file until they are said, missed or cancelled (then as that).
+Their words are only ever your own: she takes them from your sentence, and a notification, a song
+or a web page can neither set nor cancel one without your yes on her card. A sentence about
+reminders and her answer are logged as their lengths only.
 
 Nothing else is kept,
 unless you turn on the learning log (`[learning] log_outcomes = true`, off by default). Then each
