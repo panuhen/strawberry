@@ -565,8 +565,8 @@
       const gone = cardsOnScreen === 0;
       const [tab, part] = a.where === "config" ? FILE_TAB[a.file] || FILE_TAB["config.toml"] : ["runs", "runs-waiting"];
       items.push([a.where === "config"
-        ? (gone ? "A settings change will lapse: her card isn't on screen" : "A settings change waits for your yes on her card")
-        : (gone ? "She is waiting for your yes, and her card isn't on screen" : "She is waiting for your yes"),
+        ? (gone ? "A settings change will lapse: no card on screen" : "A settings change waits for your yes on her card")
+        : (gone ? "She is waiting for your yes: no card on screen" : "She is waiting for your yes"),
       tab, part, asked(a), "approval"]);
     }
     const soon = (N.reminders && N.reminders.soon) || [];
