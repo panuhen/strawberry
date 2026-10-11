@@ -289,6 +289,7 @@ class LearningConfig:
     silence_s: float = 30.0        # nothing said for this long after a sentence: the weak "that was right"
     rephrase_similarity: float = 0.8   # cosine of the gate's two embeddings from which a sentence is a rephrase
     # The second half (learning.py, §8d): a candidate head from the labels, held to the held-out set.
+
     idle_train: bool = True        # the daemon trains a candidate on its own when idle (strawberry learning train by hand)
     idle_minutes: float = 20.0     # …once nobody has spoken for this long…
     min_new_labels: int = 10       # …and at least this many labelled sentences are new since the last run
@@ -1024,7 +1025,7 @@ def default_toml() -> str:
         'think = false                  # false | "low" | "medium" | true; off is fine, the gate already routed',
         'keep_alive = "30m"             # a cold load is 7-17 s; she says an acknowledgement while it happens',
         "stream = true                  # read the reply as it is written (tokens per second for the widget)",
-        "max_tools = 30                 # more tool schemas than this and the least likely are cut (§8b)",
+        "max_tools = 30                 # more tool schemas than this and the least likely are cut",
         f"tool_tokens = {th.tool_tokens}             # …and at most this many prompt tokens of them; 0 = no budget",
         "",
         "[ledger]",

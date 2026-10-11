@@ -531,7 +531,7 @@ SOON_S = 3600.0                # a reminder due within this counts as "soon"
 # What can be switched off, as (section, key, what it is), for the Now view's "switched off" list.
 SWITCHES = (("brain", "enabled", "the reaction model (canned lines only)"), ("speech", "enabled", "her voice"),
             ("voice", "enabled", "listening"), ("gate", "enabled", "the gate (router)"),
-            ("actions", "enabled", "reflexes"), ("thinker", "enabled", "the thinker"), ("tools", "enabled", "tools"),
+            ("actions", "enabled", "quick actions (reflexes)"), ("thinker", "enabled", "the thinker"), ("tools", "enabled", "tools"),
             ("beat", "enabled", "dancing to the beat"), ("messages", "enabled", "the messages inbox"),
             ("history", "enabled", "history"), ("mood", "enabled", "mood"), ("gestures", "enabled", "hand gestures"),
             ("learning", "log_outcomes", "router learning (outcome logging)"))

@@ -116,9 +116,9 @@ body {
 code, .mono { font-family: var(--mono); font-size: 0.92em; }
 
 h1, h2, h3, h4 { margin: 0; font-weight: 650; letter-spacing: 0.01em; }
-h2 { font-size: 1.05rem; }
+h2 { font-size: 1.15rem; }
 h3 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); font-weight: 600; }
-h4 { font-size: 0.8rem; color: var(--ink); font-weight: 600; }
+h4 { font-size: 0.72rem; color: var(--ink-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 p { margin: 0.4rem 0; }
 
 .hidden { display: none !important; }
@@ -160,7 +160,7 @@ button.chip { font: inherit; font-size: 0.82rem; color: var(--ink); cursor: poin
 
 .nav { display: flex; flex-direction: column; gap: var(--space-4); position: sticky; top: var(--sticky-top); align-self: start; }
 .nav .group { display: flex; flex-direction: column; gap: 2px; }
-.nav .group h3 { font-size: 0.7rem; color: var(--ink-faint); padding: 0 var(--space-3) var(--space-1); }
+.nav .group h3 { font-size: 0.74rem; color: var(--ink-faint); padding: 0 var(--space-3) var(--space-1); }
 .nav button {
   text-align: left; padding: 9px var(--space-3); background: transparent; color: var(--ink-dim);
   border: 1px solid transparent; border-left: 3px solid transparent; font: inherit; cursor: pointer;
@@ -171,6 +171,7 @@ button.chip { font: inherit; font-size: 0.82rem; color: var(--ink); cursor: poin
 main { min-width: 0; }
 .section { display: flex; flex-direction: column; gap: var(--space-5); }
 .section > :empty { display: none; }      /* a slot with nothing in it (a change waiting, a try) takes no gap */
+.section [id], .section .conf-field, .section .field { scroll-margin-top: calc(var(--sticky-top) + var(--space-2)); }   /* a link's target clears the header */
 
 /* --- the page template: a title panel (the tab's name, a hint, one row of stats), then section panels ------- */
 
@@ -199,6 +200,7 @@ main { min-width: 0; }
 /* cards: equal parts side by side, as many as fit (tables, samples, health panels, form fields). */
 .cards { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(min(var(--card-min, var(--recipe-card)), 100%), 1fr)); align-items: start; }
 .cards.fields { --card-min: var(--field-m); gap: var(--space-3) var(--space-5); }
+.cards.wide { --card-min: 420px; }
 
 /* stats: one row of a few numbers or states, each with its reason under it. */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--recipe-stat), 1fr)); gap: var(--space-3); }
@@ -305,6 +307,7 @@ label.check { display: inline-flex; align-items: center; gap: var(--space-2); cu
 input[type="checkbox"] { accent-color: var(--berry); width: 16px; height: 16px; }
 
 .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.actions.nowrap { flex-wrap: nowrap; }
 
 .stat { border: 1px solid var(--line); padding: 10px var(--space-3); background: var(--glass); min-width: 0; }
 .stat .k { color: var(--ink-dim); font-size: 0.8rem; }
@@ -315,8 +318,8 @@ input[type="checkbox"] { accent-color: var(--berry); width: 16px; height: 16px; 
 .privacy-card { display: flex; flex-direction: column; gap: var(--space-1); }
 .privacy-card .actions { margin-top: auto; padding-top: var(--space-2); }
 
-dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-1) 14px; margin: 0; }
-dl.kv dt { color: var(--ink-dim); font-size: 0.88rem; }
+dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-2) var(--space-5); margin: 0; }
+dl.kv dt { color: var(--ink-dim); font-size: 0.88rem; padding-top: 1px; }
 dl.kv dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 dl.kv dd .chip { white-space: normal; }
 
@@ -328,6 +331,10 @@ ul.rows > li > button { margin-left: auto; }
 ul.rows > li > .dim { flex-basis: 100%; order: 3; font-size: 0.88rem; }
 
 .empty { color: var(--ink-faint); padding: 10px 0; }
+/* Prose reads at a measure; tables and forms keep the panel's width. */
+.panel > p, .stack > p, .split-main > p, p.dim, p.faint { max-width: 64ch; }
+/* A term of art after the plain words: small, never louder than them. */
+.term { color: var(--ink-faint); font-size: 0.75rem; font-weight: 500; letter-spacing: 0; text-transform: none; }
 td.empty { padding: var(--space-3); }
 
 /* Notes: information (neutral), attention (amber) and something that does not work (berry ink), in a full rim. */
@@ -378,6 +385,7 @@ tr.fresh { animation: fresh 1.6s ease-out; }
 .chart .axis { stroke: var(--rim-strong); stroke-width: 1; }
 .chart .gridline { stroke: var(--line); stroke-width: 1; }
 .chart .label { fill: var(--ink-dim); font-size: 11px; font-family: system-ui, sans-serif; }
+.chart .label.faint { fill: var(--ink-faint); }
 .chart .series { fill: none; stroke: var(--berry); stroke-width: 2; }
 .chart .shipped { stroke: var(--ink-faint); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .chart .dot { fill: var(--ground); stroke: var(--berry); stroke-width: 2; }
@@ -464,11 +472,21 @@ tr.dup .dup-mark { display: inline-flex; }
 
 details.conf-section { border: 1px solid var(--line); background: var(--glass); padding: var(--space-2) var(--space-3); }
 details.conf-section + details.conf-section { margin-top: var(--space-2); }
-details.conf-section > summary { color: var(--ink); font-weight: 600; }
+details.conf-section > summary { color: var(--ink); }
 details.conf-section[open] > summary { margin-bottom: var(--space-2); }
 .conf-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.88rem; min-width: 0; }
-.conf-field .k { color: var(--ink-dim); }
+.conf-field .k { color: var(--ink); }
+.conf-field .k .label { font-weight: 550; }
 .conf-field .k .set { color: var(--berry-ink); }
+.conf-label { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.conf-label button { flex: none; }
+.conf-field code.key { font-size: 0.76rem; color: var(--ink-faint); overflow-wrap: anywhere; margin-top: -2px; }
+.conf-group + .conf-group { margin-top: var(--space-6); }
+.conf-group > h3 { margin-bottom: var(--space-2); }
+.conf-group > h3 .hint { margin-left: var(--space-2); color: var(--ink-faint); font-size: 0.86rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
+details.conf-section > summary > * + * { margin-left: var(--space-2); }
+.conf-title { font-weight: 600; }
+#conf-filter { max-width: var(--field-m); }
 .unsaved { color: var(--warn); font-size: 0.8rem; font-weight: 600; }
 .conf-field .s { color: var(--ink-faint); font-size: 0.78rem; overflow-wrap: anywhere; }
 .conf-field .s.bad, .field .s.bad { color: var(--berry-ink); }
@@ -482,6 +500,24 @@ textarea.small {
 textarea.small.mono { font-family: var(--mono); font-size: 0.8rem; }
 .login { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 #tools-form > * + * { margin-top: var(--space-3); }
+
+/* --- folded parts, selections -------------------------------------------------------------------------------- */
+
+/* A part that is seldom needed (Input's Tuning and Calibrate): a line with its name and what it is, open on a click. */
+details.fold { border-top: 1px solid var(--line); padding-top: var(--space-3); }
+.split-main > details.fold { margin-top: var(--space-5); }
+details.fold > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); }
+details.fold > summary { list-style: none; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::before { content: "▸"; color: var(--ink-faint); width: 1em; }
+details.fold[open] > summary::before { content: "▾"; }
+details.fold > summary .fold-title { color: var(--ink-dim); font-size: 0.82rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+details.fold > summary .hint { color: var(--ink-faint); font-size: 0.86rem; }
+details.fold[open] > summary { margin-bottom: var(--space-3); }
+
+/* Learned examples: the selection's line and its boxes. */
+.bulk { padding: var(--space-2) var(--space-3); border: 1px solid var(--line); background: var(--glass); }
+td.pick, th:has(> input[type="checkbox"]) { width: 1px; }
 
 /* --- her mood (the Mood view, WIRING §29): two series, their colours checked for colour-blind separation --- */
 

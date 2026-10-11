@@ -22,6 +22,7 @@
     section: "now",
     now: null,              // GET now: her state and mood, her card, what needs the user, the last runs, what is off
     runsView: "runs",       // the Runs tab's view: "runs" or "router"
+    picked: new Set(),      // Router learning: the examples selected for Approve or Reject selected
     forgetWord: "",         // Forget what she learned: the word typed so far, and its box
     forgetAll: false,
     persona: null,          // GET persona: the text in use, the shipped one, its status
@@ -57,6 +58,7 @@
     gesture: null,          // the latest gesture event, with when it came
     freshInput: new Set(),
     calib: null,            // a calibration under way or done: its step, the samples (curl numbers), the result
+    inputOpen: new Set(),   // the Input tab's folded parts opened: "tuning", "calib"
   };
 
   // --------------------------------------------------------------------------- DOM, as text
@@ -132,9 +134,11 @@
     const d = new Date(ts * 1000);
     return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
   }
-  // A table cell with a time: a relative one carries the absolute one as its title.
-  function timeCell(ts, recent, sub) {
-    return el("td", { class: "nowrap", title: recent && ts ? when(ts) : null }, when(ts, recent),
+  // A table cell with a time: a relative one carries the absolute one as its title, and so do raw ids (a run's, an
+  // approval's), which are for a bug report, not for reading.
+  function timeCell(ts, recent, sub, ids) {
+    const title = [recent && ts ? when(ts) : null, ids || null].filter(Boolean).join("\n");
+    return el("td", { class: "nowrap", title: title || null }, when(ts, recent),
       sub ? el("span", { class: "sub", text: sub }) : null);
   }
   function hhmm(ts) {      // a chart's axis labels only
@@ -179,15 +183,26 @@
     return node;
   }
 
+  // What a tab is waiting for while its first answer is on the way.
+  const LOADING = { now: "Asking her what she is doing…", persona: "Reading persona.md…", profile: "Reading profile.md…",
+                    mood: "Reading her mood…", history: "Reading her history…", learning: "Reading what the router learned…",
+                    privacy: "Reading the settings in use…", config: "Reading config.toml…", tools: "Asking the tool servers…",
+                    input: "Reading the gesture and touch settings…", apps: "Reading the installed apps…",
+                    health: "Asking each part how it is…" };
   function loadingPanel(section) {
-    return titlePanel(section, null, el("p", { class: "empty", text: "Loading..." }));
+    return titlePanel(section, null, el("p", { class: "empty", role: "status", text: LOADING[section] || "Loading…" }));
   }
 
   function stat(key, value, sub, small) {
     return el("div", { class: "stat" },
-      el("div", { class: "k", text: key }),
+      el("div", { class: "k" }, key),
       el("div", { class: small ? "v small" : "v" }, value),
       sub ? el("div", { class: "s", text: sub }) : null);
+  }
+
+  // Plain words first, the term of art after them, small (the router's "head", the test score's "held-out").
+  function term(words, art) {
+    return [words, " ", el("span", { class: "term", text: art })];
   }
 
   // The chip map: good = healthy or in use; warn = privacy loosened, or something wants the user; none =
@@ -197,8 +212,13 @@
   }
 
   // A tier, the same everywhere: read, playback and change are information; sends and destructive want attention.
+  // Its title says what the tier means.
   const TIER_KIND = { read: null, playback: null, change: null, sends: "warn", destructive: "warn" };
-  function tierChip(tier, title) { return chip(tier || dash, TIER_KIND[tier] || null, title); }
+  const TIER_WHY = { read: "read: only looks; goes ahead", playback: "playback: changes what plays; goes ahead",
+                     change: "change: changes something; asks first once foreign text is in the conversation",
+                     sends: "sends: sends something to someone; always asks first",
+                     destructive: "destructive: deletes, or cannot be undone; always asks first" };
+  function tierChip(tier, title) { return chip(tier || dash, TIER_KIND[tier] || null, title || TIER_WHY[tier] || null); }
 
   // Text others wrote (a sender, a track, a commit, a web page): one quiet marker, the same everywhere.
   function foreignMark(title) {
@@ -221,7 +241,8 @@
 
   // A table. With no rows, the empty line sits in a row of its own, padded like the cells.
   function table(headers, rows, opts = {}) {
-    const head = el("tr", null, headers.map((h) => el("th", { class: h.num ? "num" : null, text: h.label || h })));
+    const head = el("tr", null, headers.map((h) => (h instanceof Node ? el("th", null, h)
+      : el("th", { class: h.num ? "num" : null, text: h.label || h }))));
     const body = rows.length ? rows
       : el("tr", { class: "none" }, el("td", { class: "empty", colspan: String(headers.length), text: opts.empty || "Nothing yet." }));
     return el("div", { class: "table-wrap" }, el("table", null, el("thead", null, head), el("tbody", null, body)));
@@ -261,6 +282,7 @@
 
   function openConfigAt(section, key) {
     conf.mode = "form";
+    conf.filter = "";
     conf.open.add(section);
     show("config", key ? `conf-${section}-${key}` : `conf-section-${section}`);
   }
@@ -276,7 +298,7 @@
     save.disabled = !o.canSave;
     const undo = actionButton("Undo my edits", o.onUndo, "ghost");
     undo.disabled = !o.edited;
-    const status = o.checking ? chip("checking...")
+    const status = o.checking ? chip("checking…")
       : !o.ok ? chip("does not check out", "warn")
         : o.same ? chip("same as the file") : chip("checks out", "good");
     return el("div", { class: "savebar" },
@@ -581,7 +603,7 @@
         "history", "reminders", soon, "reminders"]);
     }
     for (const f of N.files || []) items.push([`Your ${f.file} has a problem: ${FILE_FALLBACK[f.file] || "it is not used"}`, f.tab, null, f, "file"]);
-    if (N.candidate) items.push([`A new router head (${N.candidate}) waits for you`, "learning", null, null, "candidate"]);
+    if (N.candidate) items.push([`A new router version (${N.candidate}) waits for your Accept or Reject`, "learning", "candidate", null, "candidate"]);
     return items;
   }
 
@@ -709,7 +731,7 @@
     const t = L.trainer || {};
     const e = s.examples;
     const last = s.last_train;
-    const lastLine = last ? `${last.result || dash}${last.heldout ? `, held-out ${pct(last.heldout[0])} to ${pct(last.heldout[1])}` : ""}` : null;
+    const lastLine = last ? `${last.result || dash}${last.heldout ? `, test score ${pct(last.heldout[0])} to ${pct(last.heldout[1])}` : ""}` : null;
     const notes = [];
     if (!L.logging) {
       notes.push(note("info", "Outcome logging is off: nothing new is learned, and sentences are hidden here. ",
@@ -726,35 +748,37 @@
       ? confirmButton(`Roll back to ${s.rollback_to}`, "Roll back now?", (b) => act(b, "rollback", {}, (r) => `Rolled back: ${r.switched.to} is in use (was ${r.switched.from}).`))
       : el("button", { type: "button", disabled: true, text: "Nothing to roll back to" });
     const trainerSub = [t.waiting_for ? `waiting: ${t.waiting_for}` : null,
-      last ? `last run ${when(last.at)}: ${last.trigger ? `${last.trigger}, ` : ""}${lastLine}${last.why ? ` (${last.why})` : ""}` : "no run yet"]
+      last ? `last training ${when(last.at)}: ${last.trigger ? `${last.trigger}, ` : ""}${lastLine}${last.why ? ` (${last.why})` : ""}` : "not trained yet"]
       .filter(Boolean).join("; ");
-    return titlePanel("learning", "the head the gate routes with, what it learns from what you say, and how each head scores",
+    return titlePanel("learning", "the version of the router she reads your sentences with, what it learns from what came after each, and how each version scored",
       notes,
       el("div", { class: "stats" },
-        stat("Head in use", s.in_use.version, s.in_use.source ? `source: ${s.in_use.source}` : null, true),
-        stat("Candidate", s.candidate ? s.candidate.version : "none waiting",
-          s.candidate ? `held-out ${pct(s.candidate.heldout.current)} to ${pct(s.candidate.heldout.candidate)}` : null, true),
-        stat("Labelled examples", String(e.usable), `${e.new} new since the last run, ${e.conflicts} with a conflict`),
+        stat(term("Router version in use", "head"), s.in_use.version, s.in_use.source ? `from: ${s.in_use.source}` : null, true),
+        stat("New version", s.candidate ? s.candidate.version : "none waiting",
+          s.candidate ? `test score ${pct(s.candidate.heldout.current)} to ${pct(s.candidate.heldout.candidate)}` : "trained when she is idle, or with Train now", true),
+        stat("Examples learned", String(e.usable), `${e.new} new since the last training, ${e.conflicts} with a conflict`),
         stat("Trainer", t.phase || dash, trainerSub, true)),
       el("div", { class: "actions" }, train, trainWhy, rollback,
         chip(`outcome logging ${onOff(L.logging)}`, L.logging ? "warn" : null,
           L.logging ? "Your sentences are kept on this machine for the learning loop (the Privacy tab)" : "Nothing you say is kept for learning"),
-        actionButton("Forget...", () => show("learning", "forget"), "ghost")));
+        actionButton("Forget…", () => show("learning", "forget"), "ghost")));
   }
 
+  // A version's scores on the test sentences, in words: each sentence is read as several fields (kind, topic, tool…).
   const SCORE_ROWS = [
-    ["Fields right", "fields", true],
-    ["Sentences strictly right", "strict", true],
-    ["Finnish fields", "fields_fi", true],
-    ["Privacy readings", "sensitive", true],
+    ["Fields read right", "fields", true],
+    ["Sentences right in every field", "strict", true],
+    ["Finnish fields read right", "fields_fi", true],
+    ["Private or not, read right", "sensitive", true],
   ];
 
   function candidatePanel(L) {
     const c = L.candidate;
     const st = L.status.settings;
     if (!c) {
-      return panel("Candidate", "a new head waits here until you accept or reject it",
-        el("p", { class: "empty", text: `No candidate waiting. One is built when she has been idle ${st.idle_minutes} min and ${st.min_new_labels} new labels wait${st.idle_train ? "" : " (idle training is off)"}, or now with Train now.` }));
+      return Object.assign(panel("New version", "a newly trained router version waits here until you accept or reject it",
+        el("p", { class: "empty", text: `No new version waiting. One is trained when she has been idle ${st.idle_minutes} min and ${st.min_new_labels} new examples wait${st.idle_train ? "" : " (idle training is off)"}, or now with Train now above.` })),
+        { id: "candidate" });
     }
     const cur = c.current || {};
     const cand = c.candidate || {};
@@ -763,26 +787,28 @@
       const b = pctOf(cand[key]);
       return el("tr", null, td(label), td(ratio(cur[key]), "num"), td(ratio(cand[key]), "num"), delta(a, b, false, "%"));
     });
-    rows.push(el("tr", null, td("Wrong reflexes (fewer is better)"), td(`${cur.reflexes_wrong ?? dash} of ${cur.reflexes ?? dash}`, "num"),
+    rows.push(el("tr", null, td([term("Quick actions fired wrongly", "reflexes"), el("span", { class: "sub", text: "fewer is better" })]), td(`${cur.reflexes_wrong ?? dash} of ${cur.reflexes ?? dash}`, "num"),
       td(`${cand.reflexes_wrong ?? dash} of ${cand.reflexes ?? dash}`, "num"), delta(cur.reflexes_wrong, cand.reflexes_wrong, true, "")));
-    rows.push(el("tr", null, td("AUROC"), td(num(cur.auroc, 3), "num"), td(num(cand.auroc, 3), "num"), delta(cur.auroc, cand.auroc, false, "", 3)));
+    rows.push(el("tr", null, td([term("Sure when right, unsure when wrong", "AUROC"), el("span", { class: "sub", text: "1 is best" })]), td(num(cur.auroc, 3), "num"), td(num(cand.auroc, 3), "num"), delta(cur.auroc, cand.auroc, false, "", 3)));
     const perField = Object.keys(Object.assign({}, cur.per_field || {}, cand.per_field || {})).map((name) => {
       const a = (cur.per_field || {})[name];
       const b = (cand.per_field || {})[name];
       return el("tr", null, td(name), td(ratio(a), "num"), td(ratio(b), "num"), delta(a && a[0], b && b[0], false, ""));
     });
     const counts = c.counts || {};
-    const status = c.passed ? chip("passed the held-out check", "good") : chip("did not pass", "warn");
-    return panel(`Candidate ${c.version}`, `built ${c.created || dash} (${c.trigger || dash}), compared with ${c.compared_with || c.parent || dash}`,
+    const status = c.passed ? chip("passed on the test sentences", "good") : chip("did not pass", "warn");
+    const node = panel(`New version ${c.version}`, `trained ${c.created || dash} (${c.trigger || dash}), compared with ${c.compared_with || c.parent || dash}`,
       el("div", { class: "actions" }, status, c.why ? el("span", { class: "dim", text: c.why }) : null),
-      el("p", { class: "dim", text: `Trained on ${counts.base ?? dash} data-set rows and ${c.learned} of your sentences, ${c.new_to_it} of them new since the head in use. Left out: ${tally(c.left_out)}.` }),
+      el("p", { class: "dim", text: `Trained on ${counts.base ?? dash} shipped sentences and ${c.learned} of yours, ${c.new_to_it} of them new since the version in use. Left out: ${tally(c.left_out)}. Each version is judged on test sentences it never trained on.` }),
       el("div", { class: "cards" },
-        table([{ label: "Held-out set" }, { label: "In use", num: true }, { label: "Candidate", num: true }, { label: "Change", num: true }], rows),
-        table([{ label: "Per field" }, { label: "In use", num: true }, { label: "Candidate", num: true }, { label: "Change", num: true }], perField,
-          { empty: "No per-field scores in this manifest." })),
+        table([{ label: "On the test sentences" }, { label: "In use", num: true }, { label: "New", num: true }, { label: "Change", num: true }], rows),
+        table([{ label: "Each field" }, { label: "In use", num: true }, { label: "New", num: true }, { label: "Change", num: true }], perField,
+          { empty: "This version has no scores per field." })),
       el("div", { class: "actions" },
         actionButton("Accept: put it in use", (b) => act(b, "accept", { version: c.version }, (r) => `${r.switched.to} is in use (was ${r.switched.from}).`), "primary"),
-        confirmButton("Reject", "Reject this candidate?", (b) => act(b, "reject", { version: c.version }, (r) => `${r.rejected} rejected; the head in use stays.`), "danger")));
+        confirmButton("Reject", "Reject this version?", (b) => act(b, "reject", { version: c.version }, (r) => `${r.rejected} rejected; the version in use stays.`), "danger")));
+    node.id = "candidate";
+    return node;
   }
 
   function delta(a, b, lowerIsBetter, unit, digits = 1) {
@@ -811,28 +837,70 @@
       if (state.filter === "unusable") return !e.usable;
       return true;
     });
+    // The selection keeps only examples that are still there, and acts only on the ones shown.
+    const known = new Set(all.map((e) => e.key));
+    for (const key of [...state.picked]) if (!known.has(key)) state.picked.delete(key);
+    const picked = () => shown.filter((e) => state.picked.has(e.key));
     const select = el("select", { "aria-label": "Show", on: { change: (ev) => { state.filter = ev.target.value; renderLearning(); } } },
       FILTERS.map(([value, label]) => el("option", { value, selected: state.filter === value, text: label })));
+    const count = el("span", { class: "dim", "aria-live": "polite" });
+    const approveMany = actionButton("Approve selected", (b) => reviewMany(b, picked().filter((e) => e.review !== "approved"), "approve"), "small");
+    const rejectMany = confirmButton("Reject selected", "Delete them for good?",
+      (b) => reviewMany(b, picked(), "reject"), "small danger");
+    const boxes = [];
+    const allBox = el("input", { type: "checkbox", id: "ex-pick-all", "aria-label": "Select every example shown",
+      on: { change: (ev) => { for (const e of shown) { if (ev.target.checked) state.picked.add(e.key); else state.picked.delete(e.key); }
+        for (const box of boxes) box.checked = ev.target.checked; tick(); } } });
+    // The bar says how many are selected; the buttons are lit only with a selection (no redraw: the focus stays).
+    const tick = () => {
+      const n = picked().length;
+      count.textContent = n ? `${n} selected` : "Select examples to approve or reject them together.";
+      approveMany.disabled = !picked().some((e) => e.review !== "approved");
+      rejectMany.disabled = !n;
+      allBox.checked = Boolean(shown.length) && n === shown.length;
+      allBox.indeterminate = n > 0 && n < shown.length;
+    };
     const rows = shown.map((e) => {
       const labels = [
         Object.entries(e.labels || {}).map(([q, o]) => el("span", { class: "tag good", text: `${q} = ${o}` })),
         Object.entries(e.avoid || {}).map(([q, o]) => el("span", { class: "tag avoid", text: `${q} not ${o}` })),
         (e.conflicts || []).map((q) => el("span", { class: "tag", text: `conflict: ${q}` })),
       ];
-      const sentence = el("td", { class: "sentence" }, typeof e.text === "string" ? e.text : hiddenText(),
-        el("span", { class: "sub mono", text: e.key }));
+      const box = el("input", { type: "checkbox", id: `ex-pick-${e.key}`, checked: state.picked.has(e.key), "aria-label": "Select this example",
+        on: { change: (ev) => { if (ev.target.checked) state.picked.add(e.key); else state.picked.delete(e.key); tick(); } } });
+      boxes.push(box);
+      const sentence = el("td", { class: "sentence", title: `key ${e.key}` }, typeof e.text === "string" ? e.text : hiddenText());
       const approve = actionButton("Approve", (b) => act(b, "review", { key: e.key, verdict: "approve" }, () => "Approved."), "small");
       approve.disabled = e.review === "approved";
       const reject = confirmButton("Reject", "Delete for good?", (b) => act(b, "review", { key: e.key, verdict: "reject" }, () => "Rejected: the sentence is deleted and will not be learned again."), "small");
-      return el("tr", null, sentence, td(labels), td(tally(e.signals)), timeCell(e.last),
+      return el("tr", null, el("td", { class: "pick" }, box), sentence, td(labels), td(tally(e.signals)), timeCell(e.last),
         td(chip(e.review === "auto" ? "not looked at" : e.review, e.review === "approved" ? "good" : null)),
-        el("td", null, el("div", { class: "actions" }, approve, reject)));
+        el("td", { class: "nowrap" }, el("div", { class: "actions nowrap" }, approve, reject)));
     });
+    tick();
     return panel("Learned examples", `${shown.length} of ${L.examples_total} shown, newest first`,
       el("div", { class: "actions" }, el("span", { class: "dim", text: "Show" }), select,
         el("span", { class: "faint", text: "Approve keeps an example as it is; reject deletes its sentence for good." })),
-      table(["Sentence", "Labels", "Signals", "Last seen", "Review", ""], rows,
+      shown.length ? el("div", { class: "actions bulk" }, count, approveMany, rejectMany) : null,
+      table([allBox, "Sentence", "Labels", "Signals", "Last seen", "Review", ""], rows,
         { empty: L.logging ? "No labelled sentences yet: they come from what happens after she routes one." : "No labelled sentences. Outcome logging is off." }));
+  }
+
+  // Approve or reject the selected examples, one by one through the same route as a row's buttons.
+  async function reviewMany(button, examples, verdict) {
+    if (!examples.length) return;
+    button.disabled = true;
+    let done = 0;
+    const failed = [];
+    for (const e of examples) {
+      try { await api("review", { key: e.key, verdict }); done += 1; state.picked.delete(e.key); }
+      catch (err) { failed.push(err.message); }
+    }
+    toast(`${verdict === "approve" ? "Approved" : "Rejected"} ${plural(done, "example")}${verdict === "reject" && done ? ": their sentences are deleted and will not be learned again" : ""}.`
+      + (failed.length ? ` ${failed.length} did not go through: ${failed[0]}` : ""), Boolean(failed.length));
+    await refreshLearning();
+    if (state.section === "learning") await refreshData();
+    refreshNowSoon();
   }
 
   function outcomesPanel(L) {
@@ -842,13 +910,14 @@
       el("td", { class: "sentence" }, typeof r.text === "string" ? r.text
         : r.private ? el("span", { class: "faint", text: "not shown: it reads as private" }) : hiddenText()),
       td([`${r.kind || dash} / ${r.topic || dash}`, el("span", { class: "sub", text: `${r.decision || dash}, ${r.tool || "no tool"} ${num(r.tool_confidence)}` })]),
-      td([r.reflex || r.path || dash, r.teacher ? el("span", { class: "sub", text: `teacher: ${r.teacher}` }) : null]),
+      td([r.reflex ? `quick action: ${r.reflex}` : r.path ? PATH_WORD[r.path] || r.path : dash,
+        r.teacher ? el("span", { class: "sub", text: `the thinker chose ${r.teacher}` }) : null]),
       td([chip(r.outcome || dash, r.outcome === "undo" || r.outcome === "correction" ? "warn" : r.outcome === "silence" ? "good" : null),
         r.follows ? el("span", { class: "sub", text: `this one ${r.follows} the one before` }) : null])));
-    return panel("Outcome log", `${o.records} record(s); what came of each routed sentence`,
+    return panel("Outcome log", `${plural(o.records, "record")}: what came after each sentence she routed, which is what she learns from`,
       el("div", { class: "actions" }, Object.entries(o.signals || {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => chip(`${k} ${n}`))),
       table(["When", "Sentence", "Read as", "Handled by", "Outcome"], rows,
-        { empty: L.logging ? "No records yet." : "Outcome logging is off: nothing is recorded." }));
+        { empty: L.logging ? "No records yet: each sentence she routes adds one." : "Outcome logging is off: nothing is recorded." }));
   }
 
   function versionsPanel(L) {
@@ -862,8 +931,9 @@
     });
     const history = (L.history || []).slice().reverse().map((h) => el("tr", null, timeCell(h.at),
       td(el("span", { class: "mono", text: h.from })), td(el("span", { class: "mono", text: h.to })), td(h.by)));
-    return panel("Head versions", "every head is kept; any one can be put back",
-      table(["Version", "Status", { label: "Held-out", num: true }, { label: "Head it beat", num: true }, { label: "Learned", num: true }, "Built", "Decided by", ""], rows),
+    return panel("Router versions", "every version is kept; any one can be put back",
+      table(["Version", "Status", { label: "Test score", num: true }, { label: "Score before it", num: true }, { label: "Your sentences", num: true }, "Trained", "Decided by", ""], rows,
+        { empty: "No version trained yet: Train now makes one." }),
       el("h3", { text: "Switches" }),
       table(["When", "From", "To", "By"], history, { empty: "No switches yet." }));
   }
@@ -875,8 +945,10 @@
       el("div", { class: "stats" },
         stat("Learned", String(r.learned), "new usable examples"),
         stat("Rejected", String(r.rejected), "by review, privacy or a conflict"),
-        stat("Candidates", String(r.candidates), `${r.accepted} put in use, ${r.heads_rejected} rejected, ${r.rollbacks} rolled back`),
-        stat("Head", `${r.head_before} to ${r.head_now}`, `held-out ${pct(r.heldout_before)} to ${pct(r.heldout_now)}`, true)),
+        stat("New versions", String(r.candidates), `${r.accepted} put in use, ${r.heads_rejected} rejected, ${r.rollbacks} rolled back`),
+        r.head_before === r.head_now
+          ? stat("Router version", r.head_now, "the same all week", true)
+          : stat("Router version", `${r.head_before} to ${r.head_now}`, `test score ${pct(r.heldout_before)} to ${pct(r.heldout_now)}`, true)),
       el("p", { class: "dim", text: `Signals: ${tally(r.signals)}` }));
   }
 
@@ -884,21 +956,21 @@
 
   function evaluationPanel(D) {
     let node;
-    if (!D) node = panel("Evaluation", null, el("p", { class: "empty", text: "Loading..." }));
+    if (!D) node = panel("Evaluation", null, el("p", { class: "empty", role: "status", text: "Reading the training and test sets…" }));
     else {
       const st = D.store;
       const gone = st.gone || {};
       const last = D.last_train || {};
       const counts = last.counts || {};
-      node = panel("Evaluation", "what a head is trained and judged on, and how each head scored",
+      node = panel("Evaluation", "what a version is trained and judged on, and how each version scored",
         el("div", { class: "stats" },
-          stat("Training set", String(D.sets.train), "shipped sentences"),
-          stat("Held-out set", String(D.sets.heldout_sentences), `${D.sets.heldout_notifications} notifications too; never trained on`),
+          stat("Training sentences", String(D.sets.train), "shipped with her"),
+          stat(term("Test sentences", "held-out"), String(D.sets.heldout_sentences), `${D.sets.heldout_notifications} notifications too; never trained on`),
           stat("Removed in review", String(gone.rejected || 0), "sentences deleted for good"),
           stat("Removed as private", String(gone.private || 0), "read as private by the trainer")),
         el("p", { class: "dim", text: `${st.usable} learned examples usable (${st.examples} kept, ${st.conflicts} with a conflict).`
-          + (last.at ? ` The last run, ${when(last.at)}, trained on ${counts.base ?? dash} + ${counts.learned ?? dash} rows; left out: ${tally(last.left_out)}.` : "") }),
-        el("h3", { text: "Held-out accuracy per head" }),
+          + (last.at ? ` The last training, ${when(last.at)}, used ${counts.base ?? dash} shipped and ${counts.learned ?? dash} learned sentences; left out: ${tally(last.left_out)}.` : "") }),
+        el("h3", { text: "Test score of each version" }),
         heldoutChart(D),
         el("h3", { text: "Scores by version" }),
         scoresTable(D));
@@ -911,14 +983,14 @@
     const points = (D.chart || []).filter((p) => typeof p.heldout === "number");
     const W = 760, H = 280, L = 48, R = 16, T = 16, B = 44;
     const values = points.map((p) => p.heldout).concat(typeof D.shipped === "number" ? [D.shipped] : []);
-    if (!values.length) return el("p", { class: "empty", text: "No heads built yet. Each candidate's held-out score shows here." });
+    if (!values.length) return el("p", { class: "empty", text: "No version trained yet. Each new version's test score shows here; Train now makes one." });
     let lo = Math.min(...values), hi = Math.max(...values);
     const pad = Math.max(0.5, (hi - lo) * 0.25);
     lo = Math.max(0, Math.floor(lo - pad)); hi = Math.min(100, Math.ceil(hi + pad));
     if (hi - lo < 2) { lo = Math.max(0, lo - 1); hi = Math.min(100, hi + 1); }
     const x = (i) => L + (points.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (points.length - 1));
     const y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
-    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Held-out accuracy per head version" });
+    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "The test score of each router version" });
     const step = (hi - lo) / 4;
     for (let k = 0; k <= 4; k++) {
       const v = lo + k * step;
@@ -946,29 +1018,29 @@
     return el("div", null, chart,
       el("div", { class: "legend" },
         el("span", null, el("i", { class: "filled" }), "accepted"),
-        el("span", null, el("i"), "candidate or superseded"),
+        el("span", null, el("i"), "new or replaced"),
         el("span", null, el("i", { class: "grey" }), "rejected"),
-        el("span", null, el("i", { class: "dash" }), `shipped head ${pct(D.shipped)}`),
-        el("span", null, "larger dot: the head in use")));
+        el("span", null, el("i", { class: "dash" }), `the shipped version ${pct(D.shipped)}`),
+        el("span", null, "larger dot: the version in use")));
   }
 
   function scoresTable(D) {
     const rows = (D.chart || []).slice().reverse().map((p) => el("tr", { class: p.version === D.in_use ? "current" : null },
       td(el("span", { class: "mono", text: p.version })), timeCell(p.at), td(p.status || dash), td(pct(p.heldout), "num"),
       td(pct(p.strict), "num"), td(pct(p.compared), "num"), td(el("span", { class: "mono", text: p.compared_with || dash }))));
-    return table(["Version", "Built", "Status", { label: "Fields", num: true }, { label: "Strict", num: true }, { label: "Head it was compared with", num: true }, "That head"], rows,
-      { empty: "No heads built yet." });
+    return table(["Version", "Trained", "Status", { label: "Fields right", num: true }, { label: "Every field right", num: true }, { label: "Score it was compared with", num: true }, "Compared with"], rows,
+      { empty: "No version trained yet: Train now makes one." });
   }
 
   // --- the loop's settings (GET settings: [learning] as in effect), changed in the Config file tab
 
   function learningSettingsPanel() {
     const S = state.settings;
-    if (!S) return panel("Learning settings", null, el("p", { class: "empty", text: "Loading..." }));
+    if (!S) return panel("Learning settings", null, el("p", { class: "empty", role: "status", text: "Reading the settings in use…" }));
     const l = S.config.learning || {};
     return panel("Learning settings", "[learning] in config.toml, as in effect",
       kv([["Idle training", `${onOff(l.idle_train)}: after ${l.idle_minutes} min of quiet and ${l.min_new_labels} new labels`],
-        ["Switch at once", `${onOff(l.auto_switch)} (auto_switch; off: a candidate waits for Accept)`],
+        ["Use a new version at once", `${onOff(l.auto_switch)} (auto_switch; off: a new version waits for Accept)`],
         ["Weekly line", onOff(l.weekly_line)],
         ["Your labels' weight", `at most ${Math.round((l.max_share || 0) * 100)}% of the data set's, per option (max_share)`],
         ["Records kept", `${l.max_days} days, ${l.max_records} records at most`]]),
@@ -980,15 +1052,15 @@
     const everything = el("input", { type: "checkbox", id: "forget-all", checked: state.forgetAll,
       on: { change: (ev) => { state.forgetAll = ev.target.checked; } } });
     const node = panel("Forget what she learned", "every learned sentence, for good; it cannot be undone",
-      el("p", { text: "Deletes the learned sentences and their cached vectors, drops the candidate waiting, and ignores every outcome record written before now. Heads already built stay unless you tick the box." }),
+      el("p", { text: "Deletes the learned sentences and their cached vectors, drops the new version waiting, and ignores every outcome record written before now. Router versions already trained stay unless you tick the box." }),
       typedConfirm({ id: "forget-word", word: "forget", label: "Forget what she learned", value: state.forgetWord,
         onType: (v) => { state.forgetWord = v; },
-        extra: el("label", { class: "check", for: "forget-all" }, everything, "every head the loop made too (the shipped head is in use again)"),
+        extra: el("label", { class: "check", for: "forget-all" }, everything, "every version it trained too (the shipped one is in use again)"),
         onGo: (b, box) => {
           const all = everything.checked;
           state.forgetWord = ""; state.forgetAll = false;
           act(b, "forget", { confirm: box.value.trim(), everything: all },
-            (r) => `Forgot ${r.examples} example(s)${all ? ` and ${r.heads} head(s)` : ""}. Outcome records written before now are ignored.`);
+            (r) => `Forgot ${plural(r.examples, "example")}${all ? ` and ${plural(r.heads, "version")}` : ""}. Outcome records written before now are ignored.`);
         } }));
     node.id = "forget";
     return node;
@@ -1005,7 +1077,7 @@
     const root = $("#runs");
     const router = state.runsView === "router";
     root.replaceChildren(...[
-      titlePanel("runs", router ? "each sentence as the gate routed it; newest first" : "each sentence she handles, step by step; newest first",
+      titlePanel("runs", router ? "each sentence as the router read it; newest first" : "each sentence she handles, step by step; newest first",
         el("div", { class: "actions" },
           toggle([["runs", "Runs"], ["router", "Router"]], state.runsView, (v) => { state.runsView = v; setHash("runs", v === "router" ? "router" : null); renderRuns(); }, "Show"),
           state.logging ? null : el("span", { class: "faint", text: "Sentences are hidden while outcome logging is off." }))),
@@ -1014,15 +1086,14 @@
       router ? routerPanel() : runsPanel(),
       timelinePanel(),
       panel("Approvals", "the calls she asked about first and how each was answered; never what they carried",
-        table(["When", "Run", "Tool", "Tier", "Outcome", "By", { label: "Waited", num: true }], (state.approvals.history || []).map((a) => el("tr", null,
-          timeCell(a.at, true, a.approval_id),
-          td(a.run_id || dash),
+        table(["When", "Tool", "Tier", "Outcome", "By", { label: "Waited", num: true }], (state.approvals.history || []).map((a) => el("tr", null,
+          timeCell(a.at, true, null, [a.approval_id && `approval ${a.approval_id}`, a.run_id && `run ${a.run_id}`].filter(Boolean).join(", ")),
           td(a.tool),
           td(tierChip(a.risk)),
           td(chip(a.outcome || "open", a.outcome === "yes" ? "good" : a.outcome ? null : "warn")),
           td(a.by || dash),
           td(`${num(a.waited, 1)} s`, "num"))),
-          { empty: "Nothing asked about since the daemon started." }))].filter(Boolean));
+          { empty: "Nothing asked about since the daemon started. A call that needs a yes first shows here, with its answer." }))].filter(Boolean));
     state.freshRuns.clear();
     state.fresh.clear();
   }
@@ -1031,9 +1102,9 @@
     const rows = state.routes.map((r) => {
       const route = r.route || {};
       const calls = (r.calls || []).map((c) => `${c.server}.${c.name}${c.ok ? "" : " (failed)"}`).join(", ");
-      const handled = r.path === "reflex" ? (r.reflex || "reflex") : r.path === "thinker" ? (calls ? `thinker: ${calls}` : "thinker, no tools") : r.path;
+      const handled = r.path === "reflex" ? `quick action: ${r.reflex || dash}` : r.path === "thinker" ? (calls ? `the thinker: ${calls}` : "the thinker, no tools") : PATH_WORD[r.path] || r.path;
       return el("tr", { class: state.fresh.has(r.id) ? "fresh" : null },
-        timeCell(r.at, true, r.run_id || null),
+        timeCell(r.at, true, null, r.run_id ? `run ${r.run_id}` : null),
         el("td", { class: "sentence" }, typeof r.text === "string" ? r.text
           : el("span", { class: "faint", text: state.logging ? "not kept (private or not for her)" : "hidden" })),
         td(r.source),
@@ -1045,18 +1116,29 @@
         td(route.gate_ms != null ? `${route.gate_ms}` : dash, "num"),
         td(`${r.ms}`, "num"));
     });
-    return panel(RUNS_VIEWS[1][1], "the gate's reading of each sentence and what handled it",
-      table(["When", "Sentence", "From", "Kind", "Topic", "Decision", "Tool", "Handled by", { label: "Gate ms", num: true }, { label: "Total ms", num: true }], rows,
+    return panel(RUNS_VIEWS[1][1], "how the router read each sentence (kind, topic, tool, each with its confidence) and what handled it",
+      table(["When", "Sentence", "From", "Kind", "Topic", "Decision", "Tool", "Handled by", { label: "Reading, ms", num: true }, { label: "In all, ms", num: true }], rows,
         { empty: "Nothing routed since the daemon started. Say something, or type to her." }));
   }
 
-  // One step of a run as a chip: its name, what it was about (a path, a tool) and when, counted
-  // from the run's first step. Only what runs.emit lets through reaches the page: names and timings.
+  // How a sentence was handled, in words: a quick action (a reflex), the thinker, a fixed line, chat.
+  const PATH_WORD = { reflex: "quick action", thinker: "the thinker", fixed: "a fixed line", chat: "chat",
+                      no_catalogue: "no music add-on for it" };
+
+  // Whether she speaks aloud ([speech] enabled, as GET now says); off, a line is only in her bubble.
+  function speechOn() {
+    return !((state.now && state.now.off) || []).some((o) => o.key === "speech.enabled");
+  }
+
+  // One step of a run as a chip: its name, what it was about (a path, a tool) and when, counted from the run's first
+  // step (the first step itself, at +0, says no time). The end is the Outcome column's, not a step. Only what
+  // runs.emit lets through reaches the page: names and timings.
   function stepChip(e, t0) {
-    const at = typeof e.t === "number" && typeof t0 === "number" ? `+${(e.t - t0).toFixed(2)} s` : "";
+    const dt = typeof e.t === "number" && typeof t0 === "number" ? e.t - t0 : null;
+    const at = dt !== null && dt >= 0.005 ? `+${dt < 10 ? dt.toFixed(2) : dt.toFixed(1)} s` : "";
     let text = e.type;
     let kind = null;
-    if (e.type === "routing") text = `routing: ${e.path || dash}${e.tool ? ` (${e.tool})` : ""}`;
+    if (e.type === "routing") text = `routing: ${PATH_WORD[e.path] || e.path || dash}${e.tool ? ` (${e.tool})` : ""}`;
     else if (e.type === "thinking") text = `thinking${e.model ? `: ${e.model}` : ""}`;
     else if (e.type === "tool.started") text = `${e.tool || "tool"} started`;
     else if (e.type === "tool.completed") {
@@ -1066,7 +1148,7 @@
     else if (e.type === "approval.resolved") {
       text = `answer: ${e.answer || dash}${e.by ? ` by ${e.by}` : ""}`;
       kind = e.answer === "yes" ? "good" : "warn";
-    } else if (e.type === "speaking") text = `speaking ${num(e.duration, 1)} s`;
+    } else if (e.type === "speaking") text = speechOn() ? `speaking ${num(e.duration, 1)} s` : "her line, in the bubble";
     else if (TERMINAL[e.type]) {
       text = `${TERMINAL[e.type]}: ${e.outcome || e.error || e.reason || dash}`;
       kind = e.type === "run.completed" ? "good" : "warn";
@@ -1115,9 +1197,9 @@
       const going = !r.outcome;
       const rate = going && typeof r.rate === "number" ? el("span", { class: "sub", text: `${r.rate.toFixed(0)} tokens/s` }) : null;
       return el("tr", { class: state.freshRuns.has(r.run_id) ? "fresh" : null },
-        timeCell(r.at, true, r.run_id),
+        timeCell(r.at, true, null, `run ${r.run_id}`),
         td(r.source || dash),
-        el("td", null, el("div", { class: "steps" }, events.map((e) => stepChip(e, t0)))),
+        el("td", null, el("div", { class: "steps" }, events.filter((e) => !TERMINAL[e.type]).map((e) => stepChip(e, t0)))),
         td((r.tools || []).length ? r.tools.join(", ") : dash),
         td([runOutcome(r), rate]),
         td(runDuration(r), "num"),
@@ -1253,6 +1335,9 @@
   // What runs and how it is doing: GET system (the parts /health reads, minus anything that can hold a sentence)
   // and GET now (the files, the bodies, what is switched off).
 
+  // How a sentence is scored, in words: the trained router version (its head), or the nearest examples.
+  const SCORER_WORD = { head: "the router version", nearest: "the nearest examples" };
+
   function renderHealth() {
     const root = $("#health");
     const Y = state.system;
@@ -1267,6 +1352,8 @@
     const head = sc.head || {};
     const tr = (Y.learning || {}).trainer || {};
     const tools = Object.entries(Y.tools || {});
+    // The router off in config.toml: nothing of it runs, so its panel says that once instead of a column of dashes.
+    const gateOff = !g.embedder && !g.scorer;
     const [cardText, cardKind] = cardLink({ widgets: Y.widgets, cards: Y.cards || 0 });
     const files = N ? N.files || [] : [];
     const fileState = (name, tab) => {
@@ -1279,10 +1366,11 @@
         el("div", { class: "stats" },
           stat("Version", Y.version, `up ${duration(Y.uptime_s)}`, true),
           stat("She is", STATE_WORD[Y.state] || Y.state, `${Y.widgets} ${Y.widgets === 1 ? "body" : "bodies"} connected, ${Y.cards || 0} with her card`, true),
-          stat("Gate", g.ready ? "ready" : g.starting ? "starting" : "not ready", g.disabled_reason || (emb.backend ? `embeds on ${emb.backend === "onnx" ? "ONNX (in-process)" : emb.backend}` : null), true),
-          stat("Head in use", head.version || Y.head || dash,
-            sc.in_use && sc.in_use !== "head" ? `scorer: ${sc.in_use}` : head.source ? `source: ${head.source}` : g.ready ? null : "used once the gate is ready", true))),
-      el("div", { class: "cards" },
+          stat(term("Router", "gate"), gateOff ? "off" : g.ready ? "ready" : g.starting ? "starting" : "not ready",
+            gateOff ? "off in config" : g.disabled_reason || (emb.backend ? `reads sentences with ${emb.backend === "onnx" ? "ONNX, in the daemon" : emb.backend}` : null), true),
+          stat(term("Router version", "head"), head.version || Y.head || dash,
+            sc.in_use && sc.in_use !== "head" ? `scored by: ${SCORER_WORD[sc.in_use] || sc.in_use}` : head.source ? `from: ${head.source}` : gateOff ? "used while the router is on" : g.ready ? null : "used once the router is ready", true))),
+      el("div", { class: "cards wide" },
         panel("Her parts", "the files she reads and the bodies she shows on", kv([
           ["Her card", chip(cardText, cardKind)],
           ["Bodies", Y.widget_versions && Y.widget_versions.length ? Y.widget_versions.join(", ") : "none connected"],
@@ -1290,17 +1378,20 @@
           ["input.toml", fileState("input.toml", "input")],
           ["apps.toml", fileState("apps.toml", "apps")],
           ["Switched off", N && N.off.length ? N.off.map((o) => o.what).join(", ") : "nothing"]])),
-        panel("Gate", null, kv([
-          ["Embedder", emb.backend ? `${emb.backend}${emb.configured && emb.configured !== emb.backend ? ` (configured: ${emb.configured})` : ""}` : dash],
-          emb.fallback ? ["Fallback", emb.fallback] : null,
-          emb.threads ? ["Threads", String(emb.threads)] : null,
-          emb.load_s != null ? ["Load", `${num(emb.load_s, 1)} s`] : null,
-          ["Ollama model", `${g.model || dash}${emb.backend === "onnx" ? " (the fallback)" : ""}`],
-          ["Scorer", `${sc.in_use || dash} (configured: ${sc.configured || dash})`],
-          ["Thresholds", `act ${num(sc.act)}, offer ${num(sc.offer)}`],
-          sc.fallback ? ["Head fallback", sc.fallback] : null,
-          ["Last route", g.last_ms != null ? `${g.last_ms} ms` : dash],
-          ["Routes", `${g.calls ?? 0}, ${g.failures ?? 0} failed`]])),
+        panel("Router", "reads each sentence: what kind, which topic, which tool", gateOff
+          ? el("div", { class: "actions" }, el("span", { text: "Gate off in config: every sentence goes to the thinker, or to chat." }),
+            changeButton("gate", "enabled"))
+          : kv([
+            ["Sentence model", emb.backend ? `${emb.backend}${emb.configured && emb.configured !== emb.backend ? ` (set to ${emb.configured})` : ""}` : dash],
+            emb.fallback ? ["Why not ONNX", emb.fallback] : null,
+            emb.threads ? ["Threads", String(emb.threads)] : null,
+            emb.load_s != null ? ["Loaded in", `${num(emb.load_s, 1)} s`] : null,
+            ["Ollama model", `${g.model || dash}${emb.backend === "onnx" ? " (if ONNX fails)" : ""}`],
+            ["Scored by", `${SCORER_WORD[sc.in_use] || sc.in_use || dash}${sc.configured && sc.configured !== sc.in_use ? ` (set to ${SCORER_WORD[sc.configured] || sc.configured})` : ""}`],
+            ["Confidence needed", `${num(sc.act)} to act, ${num(sc.offer)} to note a label`],
+            sc.fallback ? ["Why not the router version", sc.fallback] : null,
+            ["Last reading", g.last_ms != null ? `${g.last_ms} ms` : dash],
+            ["Sentences read", `${g.calls ?? 0}, ${g.failures ?? 0} failed`]])),
         panel("Models", null, kv([
           ["Reaction model", `${(Y.brain || {}).model || "canned lines"}${(Y.brain || {}).loaded ? ", loaded" : (Y.brain || {}).model ? ", not loaded" : ""}`],
           ["Reaction latency", (Y.brain || {}).last_latency_s != null ? `${num(Y.brain.last_latency_s, 2)} s` : dash],
@@ -1309,14 +1400,14 @@
           ["Speech", (Y.speech || {}).enabled ? `${Y.speech.voice}${Y.speech.ready ? ", ready" : Y.speech.loading ? ", loading" : ", not ready"}` : "off"],
           ["Voice", (Y.voice || {}).enabled ? `${Y.voice.model} on ${Y.voice.device}, ${Y.voice.phase}` : "off"]])),
         panel("Learning loop", null, kv([
-          ["Outcome log", (Y.learning || {}).enabled ? `on, ${Y.learning.records} record(s)` : "off"],
+          ["Outcome log", (Y.learning || {}).enabled ? `on, ${plural(Y.learning.records, "record")}` : "off"],
           ["Trainer", `${tr.phase || dash}${tr.waiting_for ? `, waiting: ${tr.waiting_for}` : ""}`],
-          ["Runs", `${tr.runs ?? 0}, ${tr.interrupted ?? 0} interrupted, ${tr.errors ?? 0} failed${tr.last_error ? ` (${tr.last_error})` : ""}`],
-          ["Heads", String((Y.learning || {}).versions ?? dash)],
+          ["Trainings", `${tr.runs ?? 0}, ${tr.interrupted ?? 0} interrupted, ${tr.errors ?? 0} failed${tr.last_error ? ` (${tr.last_error})` : ""}`],
+          ["Router versions", String((Y.learning || {}).versions ?? dash)],
           ["Config", Y.config_path || "defaults"]])),
         panel("Tools", null, tools.length
-          ? kv(tools.map(([name, t]) => [name, `${t.state}, ${t.tools} tool(s)${t.error ? `: ${t.error}` : ""}`]))
-          : el("p", { class: "empty", text: "No MCP servers configured." }))));
+          ? kv(tools.map(([name, t]) => [name, `${t.state}, ${plural(t.tools, "tool")}${t.error ? `: ${t.error}` : ""}`]))
+          : el("p", { class: "empty", text: "No tool servers in config.toml. The Tools tab adds one." }))));
   }
 
   // --------------------------------------------------------------------------- her: persona
@@ -1431,7 +1522,7 @@
     const T = state.personaTry;
     if (!T) { node.replaceChildren(); return; }
     let body;
-    if (T.running) body = el("p", { class: "faint", text: "Asking the small model with the draft..." });
+    if (T.running) body = el("p", { class: "faint", text: "Asking the small model with the draft…" });
     else if (T.error) body = note("bad", T.error);
     else body = el("div", { class: "cards" }, (T.samples || []).map((s) => el("div", { class: "sample" },
       el("div", { class: "k", text: s.label }),
@@ -1486,7 +1577,7 @@
       panel("What she reads", "quoted as facts you stated, not as instructions; out of the prompt once foreign text is in",
         F.prompt ? el("pre", { class: "config wrap", text: F.prompt }) : el("p", { class: "empty", text: "Nothing yet: the profile is empty." })),
       panel("Changes", "every change keeps the file as it was before it; newest first",
-        table(["When", "What", "Lines", ""], rows, { empty: "No changes yet." })));
+        table(["When", "What", "Lines", ""], rows, { empty: "No changes yet: say “remember …” to her, or edit and save above." })));
     renderProfileCheck();
   }
 
@@ -1550,7 +1641,7 @@
   // file), never by a command line. The list is saved to apps.toml, never config.toml.
 
   const apps = { view: null, rows: null, edited: false, check: null, search: "", timer: null };
-  const APPS_SHOWN = 150;      // rows drawn without a search (the listed ones always)
+  const APPS_FOUND = 12;       // installed apps a search offers to add, at most
 
   function appsRows(view) {
     const rows = new Map();
@@ -1596,18 +1687,23 @@
       return;
     }
     if (!apps.edited || !apps.rows) apps.rows = appsRows(apps.view);
-    const search = el("input", { type: "search", id: "apps-search", value: apps.search, placeholder: "Search installed apps",
-      "aria-label": "Search installed apps", on: { input: (ev) => { apps.search = ev.target.value; renderAppsTable(); } } });
+    const search = el("input", { type: "search", id: "apps-search", value: apps.search, placeholder: "Find an installed app",
+      "aria-label": "Find an installed app to add", on: { input: (ev) => { apps.search = ev.target.value; renderAppsFound(); } } });
     fill(root,
       titlePanel("apps", "which apps she may open or close when you ask; nothing else on the computer",
         el("div", { id: "apps-head", class: "stack" })),
       el("div", { id: "apps-pending" }),
-      panel("Installed apps", "tick what she may do; you may say the app's name or one of its aliases",
+      panel("Her list", "tick what she may do with each; you may say the app's name or one of its other names",
         el("div", { class: "split" },
-          el("div", { class: "split-main stack" }, el("div", { class: "actions" }, search), el("div", { id: "apps-table" })),
+          el("div", { class: "split-main stack" },
+            el("div", { id: "apps-table" }),
+            el("h3", { text: "Add an app" }),
+            el("div", { class: "actions" }, search),
+            el("div", { id: "apps-found" })),
           el("div", { class: "split-side", id: "apps-file" }))));
     renderAppsHead();
     renderAppsTable();
+    renderAppsFound();
     renderAppsFile();
     renderConfPending();
     if (!apps.check) { clearTimeout(apps.timer); apps.timer = setTimeout(checkApps, 0); }
@@ -1631,32 +1727,56 @@
         + "volume to 30\", \"mute the computer\") and locking the screen (\"lock the screen\", or a gesture you map "
         + "to lock in the Input tab)." }));
   }
+  // Her list: the listed apps only, each with what she may do. "Ask before closing" is there only while she may
+  // close it (unticked, it would mean nothing).
   function renderAppsTable() {
     const node = document.getElementById("apps-table");
     if (!node || !apps.rows) return;
-    const q = apps.search.trim().toLowerCase();
-    let rows = apps.rows.filter((r) => !q || r.name.toLowerCase().includes(q) || r.id.toLowerCase().includes(q)
-      || r.aliases.toLowerCase().includes(q));
-    const hidden = q ? 0 : Math.max(rows.filter((r) => !r.listed).length - APPS_SHOWN, 0);
-    if (hidden) rows = rows.filter((r, i) => r.listed || i < APPS_SHOWN);
-    const lines = rows.map((r) => {
-      const ask = el("input", { type: "checkbox", checked: r.close_asks, disabled: !r.close,
+    const lines = apps.rows.filter((r) => r.listed).map((r) => {
+      const ask = el("input", { type: "checkbox", checked: r.close_asks, class: r.close ? null : "hidden",
         "aria-label": `Ask before closing ${r.name}`, on: { change: (ev) => { r.close_asks = ev.target.checked; appsEdited(); } } });
+      const noAsk = el("span", { class: r.close ? "faint hidden" : "faint", text: dash, title: "Only for an app she may close" });
       const box = (key, label, after) => el("input", { type: "checkbox", checked: r[key], "aria-label": `${label} ${r.name}`,
         on: { change: (ev) => { r[key] = ev.target.checked; if (after) after(); appsEdited(); } } });
+      const remove = removeButton(() => { r.open = false; r.close = false; r.listed = false; appsEdited(); renderAppsTable(); renderAppsFound(); });
+      remove.setAttribute("aria-label", `Take ${r.name} off her list`);
+      remove.title = "Take it off her list";
       return el("tr", null,
-        el("td", null, el("b", { text: r.name }), " ", el("span", { class: "dim mono", text: r.id }),
-          r.installed ? null : [" ", chip("not installed", "warn", "No such .desktop file now; it stays on the list until you untick it")]),
+        el("td", null, el("b", { text: r.name }), el("span", { class: "sub mono", text: r.id }),
+          r.installed ? null : chip("not installed", "warn", "No such .desktop file now; it stays on the list until you take it off")),
         el("td", null, box("open", "May open")),
-        el("td", null, box("close", "May close", () => { ask.disabled = !r.close; })),
-        el("td", null, ask),
-        el("td", null, el("input", { type: "text", value: r.aliases, placeholder: "other names, comma separated",
-          "aria-label": `Other names for ${r.name}`, on: { input: (ev) => { r.aliases = ev.target.value; appsEdited(); } } })));
+        el("td", null, box("close", "May close", () => { ask.classList.toggle("hidden", !r.close); noAsk.classList.toggle("hidden", r.close); })),
+        el("td", null, ask, noAsk),
+        el("td", null, el("input", { type: "text", value: r.aliases, placeholder: "e.g. music, tunes",
+          "aria-label": `Other names for ${r.name}, comma separated`, on: { input: (ev) => { r.aliases = ev.target.value; appsEdited(); } } })),
+        el("td", { class: "num" }, remove));
     });
-    fill(node,
-      table(["App", "May open", "May close", "Ask before closing", "Aliases"], lines,
-        { empty: q ? "No installed app matches." : "No installed apps found in the application folders." }),
-      hidden ? el("p", { class: "faint", text: `${hidden} more installed apps: search to find them.` }) : null);
+    fill(node, table(["App", "May open", "May close", "Ask before closing", { label: "Other names, comma separated" }, ""], lines,
+      { empty: "No app on her list: she opens and closes none. Find one below to add it." }));
+  }
+
+  // Add an app: the installed apps that are not on her list, found by a word of their name or desktop id.
+  function renderAppsFound() {
+    const node = document.getElementById("apps-found");
+    if (!node || !apps.rows) return;
+    const q = apps.search.trim().toLowerCase();
+    const rest = apps.rows.filter((r) => !r.listed && r.installed);
+    if (!q) {
+      fill(node, el("p", { class: "faint", text: `${plural(rest.length, "installed app")} not on her list. Type a word of a name to find one.` }));
+      return;
+    }
+    const hits = rest.filter((r) => r.name.toLowerCase().includes(q) || r.id.toLowerCase().includes(q));
+    fill(node, hits.length ? el("ul", { class: "rows" }, hits.slice(0, APPS_FOUND).map((r) => el("li", null,
+      el("b", { text: r.name }), el("span", { class: "faint mono", text: r.id }),
+      actionButton("Add: may open", () => {
+        r.listed = true; r.open = true; apps.search = ""; appsEdited();
+        const box = document.getElementById("apps-search");
+        if (box) box.value = "";
+        renderAppsTable(); renderAppsFound();
+        toast(`${r.name} is on her list: she may open it once you save. Tick May close to let her close it too.`);
+      }, "small"))))
+      : el("p", { class: "empty", text: `No installed app matches “${apps.search.trim()}”. Apps without a desktop entry cannot be added.` }),
+    hits.length > APPS_FOUND ? el("p", { class: "faint", text: `${hits.length - APPS_FOUND} more match: type more of the name.` }) : null);
   }
 
   function renderAppsFile() {
@@ -1718,7 +1838,8 @@
     edits: [],              // the form's edits not yet sent
     timer: null,
     busy: false,
-    open: new Set(["notifications", "speech"]),
+    open: new Set(),        // the sections opened by hand (a filter opens the ones it finds without keeping them)
+    filter: "",             // the form's filter: a word of a key, a label or a section
     poll: null,
     tools: null,            // GET tools
     server: null,           // the Tools page's server form (null: none open)
@@ -1799,7 +1920,11 @@
       V.error ? null : panel("Settings", "a field set in the file shows ✎; the rest are the defaults",
         el("div", { class: "split" },
           el("div", { class: "split-main stack" },
-            toggle([["form", "Form"], ["raw", "Raw TOML"]], conf.mode, (m) => { conf.mode = m; renderConfig(); }, "Edit as"),
+            el("div", { class: "actions" },
+              toggle([["form", "Form"], ["raw", "Raw TOML"]], conf.mode, (m) => { conf.mode = m; renderConfig(); }, "Edit as"),
+              conf.mode === "form" ? el("input", { type: "search", id: "conf-filter", value: conf.filter, placeholder: "Find a setting",
+                "aria-label": "Find a setting by a word of its label, its key or its section",
+                on: { input: (ev) => { conf.filter = ev.target.value; renderConfBody(); } } }) : null),
             el("div", { id: "conf-body" })),
           el("div", { class: "split-side", id: "conf-review" }))));
     renderConfHead();
@@ -1958,27 +2083,50 @@
       return;
     }
     // The fields show the draft; what is "set in the file" (✎, the counts) is the file's as read, and a field the
-    // draft changes says so on its own, until it is saved or undone.
+    // draft changes says so on its own, until it is saved or undone. The sections sit under the side bar's groups,
+    // in each group the ones the file sets or the draft changes first; the filter keeps what it finds, opened.
     const values = confValues();
     const file = conf.view.values || {};
     const edited = conf.draft !== null;
-    fill(node, conf.view.schema.map((section) => {
+    const q = conf.filter.trim().toLowerCase();
+    const found = (...texts) => texts.some((text) => String(text || "").toLowerCase().includes(q));
+    const groups = new Map(CONF_GROUPS.map(([name]) => [name, []]));
+    for (const section of conf.view.schema) {
       const set = values[section.name] || {};
       const inFile = file[section.name] || {};
       const count = Object.keys(inFile).length;
       const changed = edited ? section.fields.filter((f) => !f.elsewhere && differs(inFile, set, f.key)).length : 0;
-      const details = el("details", { class: "conf-section", id: `conf-section-${section.name}`, open: conf.open.has(section.name) },
-        el("summary", null, el("span", { class: "mono", text: `[${section.name}]` }), " ",
-          section.live ? chip("applies now", "good", section.live) : chip("needs a restart", null, "read when she starts"),
-          count ? el("span", { class: "faint", text: ` ${count} set in the file` }) : null,
+      const fields = !q || found(section.name, section.title) ? section.fields
+        : section.fields.filter((f) => found(f.key, f.label, `${section.name}.${f.key}`));
+      if (!fields.length) continue;
+      const details = el("details", { class: "conf-section", id: `conf-section-${section.name}`, open: Boolean(q) || conf.open.has(section.name) },
+        el("summary", null, el("span", { class: "conf-title", text: section.title || section.name }), " ",
+          el("code", { class: "faint", text: `[${section.name}]` }),
+          section.live ? chip("applies now", "good", section.live) : null,
+          count ? chip(`${count} set in the file`) : null,
           el("span", { class: changed ? "unsaved" : "unsaved hidden", id: `conf-section-${section.name}-unsaved`,
-            text: ` ${changed} changed, not saved` })),
-        section.doc ? el("p", { class: "dim", text: section.doc }) : null,
-        el("div", { class: "cards fields" }, section.fields.map((f) => confField(section.name, f, set, inFile, edited))));
-      details.addEventListener("toggle", () => { if (details.open) conf.open.add(section.name); else conf.open.delete(section.name); });
-      return details;
-    }));
+            text: `${changed} changed, not saved` })),
+        el("p", { class: "dim" }, section.doc || null, section.live ? null : `${section.doc ? " " : ""}Read when she starts: a change needs strawberry restart.`),
+        el("div", { class: "cards fields" }, fields.map((f) => confField(section.name, f, set, inFile, edited))));
+      // Opened or closed by hand, it stays so; what a filter opened is not kept.
+      details.addEventListener("toggle", () => {
+        if (conf.filter.trim()) return;
+        if (details.open) conf.open.add(section.name); else conf.open.delete(section.name);
+      });
+      const group = groups.has(section.group) ? section.group : "Settings";
+      groups.get(group).push([count || changed ? 0 : 1, details]);
+    }
+    const shownGroups = CONF_GROUPS.filter(([name]) => groups.get(name).length);
+    fill(node, shownGroups.length ? shownGroups.map(([name, about]) => el("div", { class: "conf-group" },
+      el("h3", null, name, el("span", { class: "hint", text: about })),
+      groups.get(name).sort((a, b) => a[0] - b[0]).map(([, details]) => details)))
+      : el("p", { class: "empty", text: `No setting matches “${conf.filter.trim()}”. Try a word of its label, or its key (log_sentences).` }));
   }
+
+  // The form's groups: the side bar's, each with what its sections are about.
+  const CONF_GROUPS = [["Her", "how she speaks, thinks and feels"], ["Activity", "what she keeps of what happens, and what asks first"],
+                       ["Learning", "the router and what it learns"], ["Settings", "what she listens to, watches and acts on"],
+                       ["System", "the daemon itself"]];
 
   // After a check, the "changed, not saved" marks follow the draft in place (drawing the form again would take the
   // focus from the field being typed in).
@@ -2014,11 +2162,12 @@
     const has = own(set, f.key);                                  // in the draft: the field shows it
     const value = has ? set[f.key] : f.default;
     const changed = edited && !f.elsewhere && differs(inFile, set, f.key);
-    const label = el("label", { class: "k", for: id }, el("span", { class: "mono", text: f.key }),
+    // A plain label, and the key itself under it (what the file and the docs call it).
+    const label = el("label", { class: "k", for: id }, el("span", { class: "label", text: f.label || f.key }),
       own(inFile, f.key) ? el("span", { class: "set", title: "set in the file" },
         el("span", { "aria-hidden": "true", text: " ✎" }), el("span", { class: "sr-only", text: " (set in the file)" })) : null,
       el("span", { class: changed ? "unsaved" : "unsaved hidden", id: `${id}-unsaved`, text: " changed, not saved" }),
-      f.deprecated ? chip("deprecated", "warn") : null);
+      f.deprecated ? [" ", chip("deprecated", "warn", "it still works here, with a warning at start; the hint says where it lives now")] : null);
     const bad = el("span", { class: "s bad hidden" });
     const send = (v) => { bad.classList.add("hidden"); confEdit({ key, value: v }); };
     const fail = (why) => { bad.textContent = why; bad.classList.remove("hidden"); };
@@ -2067,8 +2216,11 @@
     } else {
       input = el("input", { type: "text", id, value: value === null || value === undefined ? "" : String(value), on: { input: (ev) => send(ev.target.value) } });
     }
-    const reset = has && !f.elsewhere ? actionButton("Default", () => { confEdit({ key, reset: true }); setTimeout(() => renderConfBody(), 450); }, "ghost small") : null;
-    return el("div", { class: "conf-field" }, label, el("div", { class: "conf-input" }, input, reset),
+    // Back to the default: the key leaves the file. Beside the label, never beside a box it could be read as.
+    const reset = has && !f.elsewhere ? actionButton("Use the default", () => { confEdit({ key, reset: true }); setTimeout(() => renderConfBody(), 450); }, "ghost small") : null;
+    if (reset) reset.setAttribute("aria-label", `${f.label || f.key}: use the default, ${shown(f.default)}`);
+    return el("div", { class: "conf-field" }, el("div", { class: "conf-label" }, label, reset), el("code", { class: "key", text: f.key }),
+      el("div", { class: "conf-input" }, input),
       el("span", { class: "s" }, `default ${shown(f.default)}`, f.hint ? ` · ${f.hint}` : ""), bad);
   }
 
@@ -2168,12 +2320,12 @@
         td(!s.builtin && T.file[s.name] ? actionButton("Edit", () => { conf.server = serverForm(s.name, T.file[s.name]); renderToolsForm(); document.getElementById("tools-form").scrollIntoView({ block: "start" }); }, "small") : null));
     });
     fill(root,
-      titlePanel("tools", "the MCP servers she acts through, and how each tool is treated",
+      titlePanel("tools", "the tool servers (MCP) she acts through, and how each tool is treated",
         el("div", { class: "actions" }, chip(T.enabled ? "tools on" : "tools off ([tools] enabled = false)", T.enabled ? "good" : "warn"),
           el("span", { class: "dim mono", text: T.path })),
         el("p", { class: "dim", text: "Tier: read and playback go ahead; change asks once foreign text is in the conversation; sends and destructive always ask. Flags: private (your own data), foreign (foreign text: text others wrote), egress (sends things off this machine). A server with no adapter and no flags is all three." })),
       panel("Servers", "built in and from config.toml; open a row's tools for each one's tier",
-        table(["Server", "Kind", "Topic", "Adapter", "Flags", "Offered", "State", "Tools", ""], rows, { empty: "No tool servers." })),
+        table(["Server", "Kind", "Topic", "Adapter", "Flags", "Offered", "State", "Tools", ""], rows, { empty: "No tool servers yet: Add a server below." })),
       el("div", { id: "tools-pending" }),
       panel("Add or edit a server", "saved to config.toml through the same check: a new or changed command or address asks on her card",
         el("div", { class: "split" },
@@ -2441,12 +2593,9 @@
             el("h3", { text: "Mappings" }),
             el("p", { class: "faint", text: "what a gesture or a touch does: only actions that need no yes (read and playback)" }),
             el("div", { id: "input-maps", class: "stack" }),
-            el("h3", { text: "Tuning" }),
-            el("p", { class: "faint", text: "how a hand has to be held, and how the camera runs" }),
-            el("div", { id: "input-tuning" }),
-            el("h3", { text: "Calibrate" }),
-            el("p", { class: "faint", text: "your hand's own numbers: each finger's curl and the thumb-index gap, never a picture" }),
-            el("div", { id: "input-calib", class: "stack" })),
+            folded("tuning", "Tuning", "how a hand has to be held, and how the camera runs", el("div", { id: "input-tuning" })),
+            folded("calib", "Calibrate", "your hand's own numbers: each finger's curl and the thumb-index gap, never a picture",
+              el("div", { id: "input-calib", class: "stack" }))),
           el("div", { class: "split-side", id: "input-file" }))),
       panel("Recent", "the last gestures and touch actions, and what came of each", el("div", { id: "input-recent" })));
     renderInputCamera();
@@ -2461,6 +2610,17 @@
     renderConfPending();
     drawHand();
     if (!state.inputCheck) scheduleInputCheck(0);
+  }
+
+  // A part of the Input tab that is seldom needed (Tuning, Calibrate): closed until opened, and open again after a
+  // redraw once opened. A link to a part inside it opens it (show).
+  function folded(name, title, about, body) {
+    const details = el("details", { class: "fold", id: `input-${name}-fold`, open: state.inputOpen.has(name) },
+      el("summary", null, el("span", { class: "fold-title", text: title }), el("span", { class: "hint", text: about })), body);
+    details.addEventListener("toggle", () => {
+      if (details.open) { state.inputOpen.add(name); requestDraw(); } else state.inputOpen.delete(name);
+    });
+    return details;
   }
 
   function renderInputHead() {
@@ -3377,7 +3537,8 @@
       if (!anchor) return;
       const node = document.getElementById(anchor);
       if (!node) return;
-      node.scrollIntoView({ block: "start" });
+      for (let fold = node.closest("details"); fold; fold = fold.parentElement && fold.parentElement.closest("details")) fold.open = true;
+      (node.closest(".conf-field, .field") || node).scrollIntoView({ block: "start" });     // a field with its label
       if (node.matches("input, select, textarea")) node.focus({ preventScroll: true });
     });
   }
@@ -3527,7 +3688,7 @@
           stat("Feeling", signed(V.feeling), moodWord(V.feeling, "grumpy", "even", "pleased")),
           stat("Where she rests", `${signed(V.baseline.energy)} / ${signed(V.baseline.feeling)}`,
                "her temperament, energy lower late at night and after a quiet while"),
-          stat("Voice pace", `×${num(V.pace, 3)}`, "Piper's length scale: under 1 is faster")),
+          stat("Voice pace", `×${num(V.pace, 3)}`, "how long she takes over a line: under ×1 is faster")),
         el("p", { class: "dim" }, "What the reaction model is told: ", el("q", { text: V.line })),
         el("div", { class: "actions" }, reset)),
       panel("The last hours", "once a minute; the lines end at now", moodChart(V)),
@@ -3566,18 +3727,28 @@
       chart.append(svg("line", { class: v === 0 ? "axis" : "gridline", x1: L, x2: W - R, y1: y(v), y2: y(v) }),
         svg("text", { class: "label", x: L - 8, y: y(v) + 4, "text-anchor": "end", text: v > 0 ? `+${v}` : `${v}` }));
     }
-    chart.append(svg("line", { class: "mood-rest", x1: L, x2: W - R, y1: y(V.baseline.energy), y2: y(V.baseline.energy) },
-      svg("title", { text: "where her energy rests now" })));
     const ticks = Math.min(6, points.length);
     for (let i = 0; i < ticks; i++) {
       const t = t0 + ((t1 - t0) * i) / Math.max(ticks - 1, 1);
       chart.append(svg("text", { class: "label", x: x(t), y: H - 8, "text-anchor": i === 0 ? "start" : i === ticks - 1 ? "end" : "middle",
                                  text: hhmm(t) }));
     }
-    for (const [index, cls, name] of [[1, "mood-energy", "energy"], [2, "mood-feeling", "feeling"]]) {
+    for (const [index, cls] of [[1, "mood-energy"], [2, "mood-feeling"]]) {
       chart.append(svg("polyline", { class: cls, points: points.map((p) => `${x(p[0]).toFixed(1)},${y(p[index]).toFixed(1)}`).join(" ") }));
-      const last = points[points.length - 1];
-      chart.append(svg("text", { class: "label", x: W - R + 6, y: y(last[index]) + (index === 1 ? -4 : 12), text: name }));
+    }
+    // Where her energy rests, over the lines (under them it hid when energy sat at its rest).
+    chart.append(svg("line", { class: "mood-rest", x1: L, x2: W - R, y1: y(V.baseline.energy), y2: y(V.baseline.energy) },
+      svg("title", { text: "where her energy rests now" })));
+    // The end labels, each at its line's last value, pushed apart when the values are close so none covers another.
+    const last = points[points.length - 1];
+    const ends = [[y(last[1]), "energy"], [y(last[2]), "feeling"], [y(V.baseline.energy), "rests"]].sort((a, b) => a[0] - b[0]);
+    const GAP = 13;
+    for (let i = 1; i < ends.length; i++) ends[i][0] = Math.max(ends[i][0], ends[i - 1][0] + GAP);
+    const over = ends[ends.length - 1][0] - (H - B);
+    if (over > 0) for (const end of ends) end[0] -= over;
+    for (let i = ends.length - 2; i >= 0; i--) ends[i][0] = Math.min(ends[i][0], ends[i + 1][0] - GAP);
+    for (const [at, name] of ends) {
+      chart.append(svg("text", { class: name === "rests" ? "label faint" : "label", x: W - R + 6, y: at + 4, text: name }));
     }
     const cross = svg("line", { class: "mood-cross", x1: 0, x2: 0, y1: TOP, y2: H - B, visibility: "hidden" });
     const dotE = svg("circle", { class: "mood-dot-energy", r: 4, cx: 0, cy: 0, visibility: "hidden" });
@@ -3930,7 +4101,7 @@
     const R = hist.rows[d.day];
     let rows;
     if (!d.events) rows = el("p", { class: "faint", text: "Digest only: the raw rows of this day have expired or were forgotten." });
-    else if (!R) rows = hist.open.has(d.day) ? el("p", { class: "empty", text: "Loading..." }) : null;
+    else if (!R) rows = hist.open.has(d.day) ? el("p", { class: "empty", role: "status", text: "Reading the day's rows…" }) : null;
     else {
       rows = [histRowsTable(R.rows, "No rows."),
         R.more !== null ? el("div", { class: "actions" },

@@ -407,6 +407,21 @@ package and the widget binary.
 
 ### Changed
 
+- **The Brain UI in plain words, with shorter walls of options.** Labels say what an open-source user would:
+  the router's *version* (its head), a *new version* waiting (not a candidate), the *test sentences* it never
+  trained on (held-out), *quick actions* (reflexes), "sure when right, unsure when wrong" (AUROC), with the term
+  of art small after the words where it helps; a tier's chip says what the tier means. Every setting in the
+  Config file tab has a plain label with its key under it, the sections sit under the side bar's groups (those
+  your file sets or your edit changes first), a box finds a setting by a word, and **Use the default** sits beside
+  the label instead of beside a box. Hints, and the comment at the top of a written apps.toml or input.toml, no
+  longer point at WIRING.md sections or phases. Raw run and approval ids moved into the time's title; a run's
+  steps no longer say "+0.00 s" or repeat the outcome, and say "her line, in the bubble" while speech is off.
+  Health says "Gate off in config" instead of a column of dashes. The Apps tab shows her list only, with **Add an
+  app** to find an installed one (no wall of every installed app, no greyed boxes that look ticked). Input's
+  Tuning and Calibrate are folded until opened (a link into them opens them). Learned examples can be approved or
+  rejected several at a time (reject asks once more). The mood chart's end labels no longer overlap, and the line
+  where her energy rests is drawn over the others. A tab still loading says what it reads.
+
 - **The Brain UI opens on Now, and its tabs read as one tool.** A new **Now** view (the default) says what
   she is doing and her mood, whether her approval card is on a screen, what needs you (a question waiting
   for a yes and where it is answered, a reminder due within the hour, a persona.md, input.toml or apps.toml

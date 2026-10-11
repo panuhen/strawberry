@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import tomllib
 from pathlib import Path
 
@@ -70,6 +71,31 @@ def test_the_form_has_every_section_and_key_of_config_py_with_its_default_kind_a
     assert by[("brain", "persona")]["deprecated"] is True
     live = {s["name"]: s["live"] for s in sections}
     assert live["notifications"] and live["gestures"] and live["daemon"] is None
+
+
+def test_the_form_speaks_plainly_a_label_per_key_a_title_and_group_per_section_no_pointers_into_the_docs():
+    """For someone who did not write the code: every key has a plain label (its key goes under it), every section a
+    title and one of the side bar's groups, and no hint or section text points at WIRING.md, a phase or a module.
+    The files the page writes say nothing of WIRING.md either."""
+    sections = configform.schema()
+    groups = [name for name, _ in configform.GROUPS]
+    assert groups == ["Her", "Activity", "Learning", "Settings", "System"]
+    assert sorted(n for _, names in configform.GROUPS for n in names) == sorted(_SECTIONS)
+    by = {(s["name"], f["key"]): f for s in sections for f in s["fields"]}
+    assert set(configform.LABELS) == {f"{s}.{k}" for s, k in by}
+    assert by[("daemon", "log_sentences")]["label"] == "Log my sentences"
+    for s in sections:
+        assert s["group"] in groups and s["title"]
+        for text in [s["doc"]] + [f["hint"] for f in s["fields"]]:
+            assert not re.search(r"WIRING|\(Phase \d|§|PROTOCOL|\b\w+\.py\b", text), (s["name"], text)
+    assert configform.plain("Her short memory (ledger.py, WIRING.md §23): one timeline") == "Her short memory: one timeline"
+    assert configform.plain("Input from bodies (WIRING.md §25, PROTOCOL Part 1c): what") == "Input from bodies: what"
+    assert configform.plain("on the CPU (embedder.py, ~20 ms a sentence); then") == "on the CPU (~20 ms a sentence); then"
+    assert configform.plain("her temperament (persona.md). Expression") == "her temperament (persona.md). Expression"
+    assert by[("learning", "idle_train")]["hint"].startswith("the daemon trains a candidate on its own when idle")
+    from strawberry_crab import apps, inputs
+    for text in (apps.HEADER, inputs.HEADER, default_toml()):
+        assert "WIRING" not in text and "§" not in text and "(Phase" not in text
 
 
 # ----------------------------------------------------------------------------- edits keep the file

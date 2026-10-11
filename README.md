@@ -405,8 +405,9 @@ It opens on **Now**, then five groups: **Her**, **Activity**, **Learning**, **Se
 **System**. The header says what she is doing and her mood, whether her approval card is on a screen
 ("no widget: approvals can't be answered" when it is not), one spot for whatever needs you now (her
 question waiting for a yes, a reminder due within the hour, a persona.md, input.toml or apps.toml with
-a problem, a new router head waiting; a click goes where it is answered), and a privacy chip only while
-a privacy setting is looser than its default.
+a problem, a new router version waiting; a click goes where it is answered), and a privacy chip only
+while a privacy setting is looser than its default. Labels are plain words; where a term of art helps
+(the router's *head*, the *held-out* test sentences, *AUROC*) it follows them, small.
 
 - **Now**: what she is doing and her mood, whether her card is on a screen, what needs you, the last
   runs, the next reminder, and what is switched off, each with a way to where it is changed.
@@ -420,11 +421,13 @@ a privacy setting is looser than its default.
 - **Mood**: how lively and how pleased she is now and where that rests, a graph of the last hours, and
   what moved it (a pat, a thanks, a drop in the music; never what you said), with **Reset to her
   baseline**.
-- **Router learning**: the head in use and the one waiting, side by side on the test set (fields right,
-  wrong reflexes, each question), with Accept, Reject, Train now and Roll back; the sentences she
-  learned from, each with Approve and Reject; the learning log; every head, with Use; the week;
-  **Evaluation** (what a head is trained and tested on, and each head's test score over time); the
-  learning settings; and **Forget what she learned** (type `forget` to confirm).
+- **Router learning**: the router version in use (its *head*) and a new one waiting, side by side on
+  the test sentences it never trained on (fields read right, quick actions fired wrongly, each field),
+  with Accept, Reject, Train now and Roll back; the sentences she learned from, each with Approve and
+  Reject, or several at once (tick them, then **Approve selected** or **Reject selected**, which asks
+  once more); the learning log; every version, with Use; the week; **Evaluation** (what a version is
+  trained and tested on, and each version's test score over time); the learning settings; and
+  **Forget what she learned** (type `forget` to confirm).
 - **History** (under Activity): her history (see [Privacy](#privacy)) day by day, newest first, each
   day with its digest or why it has none yet ("no digest yet" while the day lasts, "digest pending"
   until she is idle, "digest only" once the raw rows are gone); open a day for its rows, with text
@@ -444,8 +447,11 @@ a privacy setting is looser than its default.
 - **Privacy**: what is kept and logged (outcome logging, sentences in the log, notification bodies),
   each with what it means now and a **Change…** that opens the Config file tab at its setting; what
   applies at once and what needs a restart, and **Apply** for the notification settings.
-- **Config file** (under Settings): `config.toml` itself, as a form (a section per table, each key
-  with its default and what it does) or as raw TOML. Your comments and the order of the file are kept.
+- **Config file** (under Settings): `config.toml` itself, as a form or as raw TOML. The form has a
+  section per table under the side bar's groups (Her, Activity, Learning, Settings, System), the
+  sections your file sets or your edit changes first in each, and a box that finds a setting by a word
+  of its label or its key; each setting has a plain label with its key under it, its default and what
+  it does. Your comments and the order of the file are kept.
   Each change is checked as she checks the file at start, and you see the changes against the file
   and which sections apply at once and which need `strawberry restart`. A change that loosens
   safety (a new or changed tool server, a lower approval tier, message bodies read more, sentences
@@ -471,19 +477,21 @@ a privacy setting is looser than its default.
   the zone line, what it recognises now, whether you face the screen, and the hold ring filling (or the
   pinch slider's level), and with two hands up the other one too, greyer, each marked L or R, with
   the distance and angle between them; the gesture and touch mappings (only actions that need no yes are offered); the
-  tuning (hold time, zone, smallest hand, frame rates, the camera, one hand or two, facing, shh's
-  minutes; a thumb that answers her card, or a camera watching all the time, asks on her card first); **Calibrate**,
+  tuning, folded away until you open it (hold time, zone, smallest hand, frame rates, the camera, one
+  hand or two, facing, shh's minutes; a thumb that answers her card, or a camera watching all the time,
+  asks on her card first); **Calibrate**, folded away too,
   which records your own hand (each finger's curl and the thumb-index gap, as numbers) and sets where a
   finger counts as straight or curled; the last twenty gestures and touches with what each did or why it
   did nothing; and **Practice mode**, under which gestures and touches are shown and do nothing (not
   saved). **Save** writes
   `~/.config/strawberry/input.toml` (see [Hand gestures](#hand-gestures-optional)), never `config.toml`.
-- **Apps** (under Settings): which apps she may open or close. Every installed app with a search box,
-  ticks for *may open*, *may close* and *ask before closing*, and other names you may say for it.
+- **Apps** (under Settings): which apps she may open or close. Her list only, each app with ticks for
+  *may open*, *may close* and (for one she may close) *ask before closing*, other names you may say for
+  it, and a way to take it off; **Add an app** finds an installed one by a word of its name.
   **Save** writes `~/.config/strawberry/apps.toml` (the changes shown first, the old file kept as
   `apps.toml.bak`), never `config.toml`, and she uses it at once.
-- **Health**: the version, her state and her card, the gate, the head in use, the files she reads,
-  the models, the learning loop and the tool servers.
+- **Health**: the version, her state and her card, the router (or "Gate off in config"), the router
+  version in use, the files she reads, the models, the learning loop and the tool servers.
 
 The old addresses still work: `#router` opens the Runs tab's Router view, `#data` Router learning's
 Evaluation, `#settings` Privacy and `#system` Health.
