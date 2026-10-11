@@ -401,9 +401,15 @@ strawberry ui
 opens a page in your browser, served by her own daemon, that shows what she does with what you
 say and what she has learned from it:
 
-The page has five groups: **Her**, **Activity**, **Learning**, **Settings** and **System**, and a
-spot in the header for whatever needs you now (her question waiting for a yes, a persona.md with a
-problem, a new router head waiting).
+It opens on **Now**, then five groups: **Her**, **Activity**, **Learning**, **Settings** and
+**System**. The header says what she is doing and her mood, whether her approval card is on a screen
+("no widget: approvals can't be answered" when it is not), one spot for whatever needs you now (her
+question waiting for a yes, a reminder due within the hour, a persona.md, input.toml or apps.toml with
+a problem, a new router head waiting; a click goes where it is answered), and a privacy chip only while
+a privacy setting is looser than its default.
+
+- **Now**: what she is doing and her mood, whether her card is on a screen, what needs you, the last
+  runs, the next reminder, and what is switched off, each with a way to where it is changed.
 
 - **Persona**: her persona.md in an editor, checked as you type (each section's size against its
   limit, what is wrong, the changes against the file), **Save** (the old file kept as
@@ -414,29 +420,30 @@ problem, a new router head waiting).
 - **Mood**: how lively and how pleased she is now and where that rests, a graph of the last hours, and
   what moved it (a pat, a thanks, a drop in the music; never what you said), with **Reset to her
   baseline**.
-- **Learning**: the head in use and the one waiting, side by side on the test set (fields right,
+- **Router learning**: the head in use and the one waiting, side by side on the test set (fields right,
   wrong reflexes, each question), with Accept, Reject, Train now and Roll back; the sentences she
-  learned from, each with Approve and Reject; the learning log; every head, with Use; the week.
-- **Router live**: each sentence as she routes it: what she read it as, how sure she was, what
-  handled it and how long it took.
+  learned from, each with Approve and Reject; the learning log; every head, with Use; the week;
+  **Evaluation** (what a head is trained and tested on, and each head's test score over time); the
+  learning settings; and **Forget what she learned** (type `forget` to confirm).
 - **History** (under Activity): her history (see [Privacy](#privacy)) day by day, newest first, each
   day with its digest or why it has none yet ("no digest yet" while the day lasts, "digest pending"
   until she is idle, "digest only" once the raw rows are gone); open a day for its rows, with text
   others wrote marked *foreign*. A search box uses the same search she does, and shows the rows and
   digests it finds by day. **Forget** a row or a day, or everything (type `forget` to confirm; your
   reminders stay unless you tick them too); forgetting needs no card. **Edit digest** writes your
-  own digest of a day, which her digester never overwrites. Pending reminders with **Cancel**, and
-  the recent ones (fired, missed, cancelled). How long she keeps things and whether she keeps
+  own digest of a day, which her digester never overwrites. Pending reminders with **Delete**, and
+  the recent ones (fired, missed, deleted). How long she keeps things and whether she keeps
   sentences is shown with a link to `[history]` in the Config file tab, where keeping more asks on
   her card.
-- **Runs**: the timeline (what the big model is told happened lately, and which of it was written
-  by others), and each thing she did, step by step (how she read it, thinking, each tool and how long it
-  took, what she said, how it ended), with Cancel on the one going on. Tool names and timings
-  only: never what you said, what a tool was given or what it found.
-- **Data and scores**: what a head is trained and tested on, and each head's test score over time.
-- **Settings and privacy**: what is kept and logged, and the line in `config.toml` that changes
-  it, what applies at once and what needs a restart, **Apply** for the notification settings, the
-  whole effective `config.toml` (read-only here), and Forget.
+- **Runs**: each thing she did, step by step (how she read it, thinking, each tool and how long it
+  took, what she said, how it ended), with Stop on the one going on; or, with the **Router** view,
+  each sentence as she routes it (what she read it as, how sure she was, what handled it and how long
+  it took). Below either, the timeline (what the big model is told happened lately, with text others
+  wrote marked *foreign text*) and the approvals. Tool names and timings only: never what you said,
+  what a tool was given or what it found.
+- **Privacy**: what is kept and logged (outcome logging, sentences in the log, notification bodies),
+  each with what it means now and a **Change…** that opens the Config file tab at its setting; what
+  applies at once and what needs a restart, and **Apply** for the notification settings.
 - **Config file** (under Settings): `config.toml` itself, as a form (a section per table, each key
   with its default and what it does) or as raw TOML. Your comments and the order of the file are kept.
   Each change is checked as she checks the file at start, and you see the changes against the file
@@ -473,7 +480,11 @@ problem, a new router head waiting).
   ticks for *may open*, *may close* and *ask before closing*, and other names you may say for it.
   **Save** writes `~/.config/strawberry/apps.toml` (the changes shown first, the old file kept as
   `apps.toml.bak`), never `config.toml`, and she uses it at once.
-- **System**: the models, where the gate runs, the head in use.
+- **Health**: the version, her state and her card, the gate, the head in use, the files she reads,
+  the models, the learning loop and the tool servers.
+
+The old addresses still work: `#router` opens the Runs tab's Router view, `#data` Router learning's
+Evaluation, `#settings` Privacy and `#system` Health.
 
 The link works once, within a minute; the page then runs on a cookie that ends after 12 hours
 without use or when she restarts. Everything stays on this machine and the page loads nothing

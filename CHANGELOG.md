@@ -407,6 +407,22 @@ package and the widget binary.
 
 ### Changed
 
+- **The Brain UI opens on Now, and its tabs read as one tool.** A new **Now** view (the default) says what
+  she is doing and her mood, whether her approval card is on a screen, what needs you (a question waiting
+  for a yes and where it is answered, a reminder due within the hour, a persona.md, input.toml or apps.toml
+  with a problem, a router head waiting), the last runs, the next reminder and what is switched off. The
+  header says the same in brief: her state and mood, "card on screen" or "no widget: approvals can't be
+  answered", the one thing that needs you, and a privacy chip only while a privacy setting is looser than
+  its default; the learning chips moved into the learning tab. Tabs are renamed so none shares its group's
+  name: *Router live* is a view of **Runs**, *Data and scores* is the **Evaluation** part of **Router
+  learning**, *Settings and privacy* is **Privacy** (each setting with **Change…**, which opens the Config
+  file tab at it; the learning settings and Forget moved to Router learning, the read-only config.toml
+  went), *System* is **Health**. Old links (`#router`, `#data`, `#settings`, `#system`) still work. Every tab
+  opens the same way (its name, a hint, at most one row of numbers), editors keep their check and **Save**
+  beside them in one save bar (lit only when there is a change), forgetting a whole store asks for the word
+  typed, a run is **Stop**ped and a reminder **Delete**d, text others wrote is "foreign text" everywhere,
+  and times are either `YYYY-MM-DD HH:MM` or "12 min ago". New read: `GET /ui/api/now`.
+
 - **She goes to sleep with a tuck and a spin.** A small crouch and a hop; in the air her legs and claws
   fold in under the shell and her eye stalks droop over the rim; she lands with a squash and turns once
   around while the shell wobbles like a settling coin, ending facing you. Asleep only the shell and the

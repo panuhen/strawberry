@@ -939,12 +939,62 @@ Or press play in any media player: the MPRIS watcher (§4b) does the rest.
 
 A local web page, served by the daemon, that shows what the router decides and what the learning loop learns (§8a–8d), and lets the user act on it. `strawberry ui` opens it. It calls `learning.py` and reads the daemon's parts; it decides nothing itself.
 
-**The layout (since the persona stage).** Ten sections in five groups, in the side bar: **Her** (Persona,
-Profile, Mood), **Activity** (Runs with its approvals and the shared timeline, Router live, History), **Learning** (Learning,
-Data and scores), **Settings** (Settings and privacy, Config file, Tools, Input, Apps) and **System**. The page opens on Persona. The header has
-the 🍓 mark (the page title too) and one "needs your attention" spot: the most urgent of an open approval
-("She is waiting for your yes"), a persona.md that does not check out, and a candidate head waiting, with how
-many more there are; a click goes to its section. The new parts:
+**The layout (since the frame stage, 2026-10-11).** Thirteen tabs: **Now** first, then five groups in the side
+bar: **Her** (Persona, Profile, Mood), **Activity** (Runs, History), **Learning** (Router learning), **Settings**
+(Privacy, Config file, Tools, Input, Apps) and **System** (Health). No tab shares its group's name. The page opens
+on Now. Router live became the Runs tab's *Router* view, Data and scores Router learning's *Evaluation* section,
+Settings and privacy *Privacy* (its learning settings and Forget moved to Router learning, its read-only copy of
+config.toml went: the Config file tab shows the file), System *Health*. The old addresses still open where their
+content went (`MOVED` in app.js): `#router` → `#runs/router`, `#data` → `#learning/evaluation`, `#settings` →
+`#privacy`, `#system` → `#health`; an address is `#tab` or `#tab/part` (a view, or the id of a part to scroll to).
+
+*The header*, from `GET /ui/api/now` (every 10 s, and soon after a run step or a learning change): the 🍓 mark (the
+page title too), her state (idle, listening, thinking, speaking, dancing: `Daemon.current_state`) and her mood in a
+word or two (as `mood.words` puts it), her card ("card on screen" while a connected body accepted `approvals` and
+`approval`, `brainui.card_count`; else "no widget: approvals can't be answered", or "no card: …" when a body that
+cannot show the card is connected), one "needs you" spot (the most urgent of: an open approval, which goes to the
+Config file tab when it is a settings change waiting on her card and to Runs otherwise; reminders due within the
+hour; a persona.md, input.toml or apps.toml that does not check out; a candidate head waiting; with how many more
+there are, a click goes where it is answered), a privacy chip only while a privacy setting is looser than its default
+(`[learning] log_outcomes`, `[daemon] log_sentences`, `[notifications] body` or a `body_apps` mode other than off;
+`brainui.privacy_loosened`), live or offline, and the theme. The learning pills it used to carry (head, candidate,
+outcome logging, trainer) are Router learning's first panel.
+
+*Now*: the same summary as a page: her state and mood, her card, what needs the user (each with the button that
+goes there), the last five runs, the next reminder and what is switched off (`brainui.SWITCHES`: a section's
+`enabled` or `log_outcomes`, each with **Change…** to its field). Read-only.
+
+*One page template and shared parts* (app.js "pieces", style.css "the scales" and "the layout recipes"), so tabs
+added later read as one tool:
+
+- Every tab opens with `titlePanel(section, hint, …)`: its h2 is the nav button's own text, then a hint and at
+  most one `.stats` row; then section panels (`panel`). A slot with nothing in it (a change waiting, a try) takes
+  no gap (`.section > :empty`).
+- Three layout recipes: `.cards` (equal parts side by side, `--card-min`, default `--recipe-card`; `.cards.fields`
+  for form fields), `.stats` (`--recipe-stat`) and `.split` (an editor and its live check: `.split-main`, and
+  `.split-side`, which stays in view while the editor scrolls; Persona, Profile, Config file, Tools, Input's live
+  view and settings, Apps). One spacing scale (`--space-1` 4 px … `--space-7` 28 px) and one field-width scale
+  (`--field-xs`, `-s`, `-m`, `-l`).
+- One save bar, `saveBar({…})`: the file's path, the check (checking, does not check out with its problems, same
+  as the file, checks out), notes, the diff against the file, then **Save** (asks once more) and **Undo my
+  edits**. Save is lit only when the draft checks out and changes the file, Undo only after an edit. Each tab keeps
+  its own routes and what asks on her card (a settings change that loosens safety still says "Save: ask on her
+  card"). Profile, which has no check route, shows the lines added and removed.
+- One destructive rule: a whole store is deleted after the word is typed (`typedConfirm`: Forget what she learned,
+  Forget everything in History; both routes want `confirm: "forget"`); one item asks with a second click
+  (`confirmButton`: an example, a row, a day, a reminder, a head to use). "Cancel" only closes; a run is
+  **Stop**ped, a reminder **Delete**d.
+- One chip map: good = healthy or in use; warn = privacy loosened, or something wants the user; none =
+  information. Berry is the brand's and the one primary button's of a view, never a chip's. A toggle between views
+  or modes (`toggle`: Runs | Router, Form | Raw TOML) marks the selected one with `aria-pressed`, never as primary.
+  Notes: `note("info" | "warn" | "bad", …)`.
+- One term each: *foreign text* (`foreignMark`, one quiet marker in History, the timeline and the reminders) and
+  *tier* (`tierChip`, read/playback/change information, sends/destructive warn).
+- Two time formats, both from `when(ts, recent)`: `YYYY-MM-DD HH:MM`, or for recent activity "40 s ago",
+  "in 25 min" within a day (`timeCell` puts the absolute time in its title). Chart axes keep short labels.
+- `rerender` leaves a tab alone while a button there is armed or a field there has the focus.
+
+The parts by tab:
 
 - *Persona* (§21): the user's persona.md (the shipped one when there is none) in an editor. While typing, the
   draft is checked as the daemon would read it (`POST /ui/api/persona/check`, 0.4 s after the last key): its
@@ -960,16 +1010,17 @@ many more there are; a click goes to its section. The new parts:
   who made it, the lines added and removed and **Revert to before this** (itself a change).
 - *Runs* gains the *Timeline* (§23; since stage 6 with one line of the inbox's counts above it, §24, never a
   sender or a text): what the thinker's next sentence gets, newest first, each entry's age,
-  kind, what it was, her line, and its trust ("strangers' text: a change asks first", "past its time" when it
-  no longer counts and is left out of the prompt). Turns' sentences and her replies only while outcome
+  kind, what it was, her line, and its trust (a *foreign text* marker with "a change asks first", or "past its
+  time" when it no longer counts and is left out of the prompt). Turns' sentences and her replies only while outcome
   logging is on, as everywhere on the page (otherwise their lengths); a notice's app, sender, commit or track
   and her line always (what she said aloud; the ledger never holds a message's body).
-- *Settings and privacy* gains *What applies when* (persona.md and profile.md live, `[notifications]` on
-  **Apply** (`POST /ui/api/apply`: `Daemon.reload_notifications`, as the tray's Message bodies rows; a file that
-  does not load is a 409 and she keeps the settings she has), everything else at a restart) and the effective
-  settings as config.toml text, read-only (`brainui.as_toml`, with the secret-looking values shown as `(set)`
-  as before, and since §28 the places the editor hides too). The *Config file* and *Tools* tabs edit config.toml
-  (§28).
+- *Privacy*: outcome logging, `log_sentences` and the notification body modes, each with what it means now and
+  **Change…**, which opens the Config file tab at that field (loosening one asks on her card there, §28); then
+  *What applies when* (persona.md and profile.md live, `[notifications]` on **Apply** (`POST /ui/api/apply`:
+  `Daemon.reload_notifications`, as the tray's Message bodies rows; a file that does not load is a 409 and she
+  keeps the settings she has), everything else at a restart). `GET /ui/api/settings` still carries the effective
+  settings as config.toml text (`brainui.as_toml`, secrets as `(set)`); the page no longer shows it. The *Config
+  file* and *Tools* tabs edit config.toml (§28).
 - *Input* (since the input stage; `inputs.py`, §25, §26): hand gestures and touch from bodies.
   - *Camera switch*, at the top: `[gestures] enabled` on or off (`POST /ui/api/input/camera {on}`), written
     exactly as the tray's *Hand gestures (camera)* row writes it: `configedit.set_value` into config.toml
@@ -1033,14 +1084,16 @@ many more there are; a click goes to its section. The new parts:
   the old file kept as `apps.toml.bak`, then `AppStore.check` so she uses it at once). Only an installed desktop
   id can be added; a row with nothing ticked is left out. Never config.toml.
 
-**What it shows**, in six sections (the original ones):
+**What it shows**, in the original sections (as they are now):
 
-1. *Learning*: the head in use, the candidate, the labelled examples, the last run and the trainer, with **Train now** (`IdleTrainer.train_now`: the idle run's own path, the gate's embedder, stopped when the user speaks, the child process, without waiting for quiet) and **Roll back**. The candidate against the head it was compared with: fields, strict sentences, Finnish fields, privacy readings, wrong reflexes and AUROC on the held-out set, the per-field scores, how many sentences it learned and how many are new to it, with **Accept** and **Reject**. The learned examples with their labels, avoids, conflicts, signals and review state, each with **Approve** and **Reject** (`Learning.review`; reject deletes the sentence for good). The outcome log's last 60 records and its counts per signal. Every head with its status, held-out score, the score of the head it beat and **Use**, and the history of switches. The week's report.
-2. *Router live*: each sentence as it is handled: kind and topic with confidence, the decision, the tool and its confidence, what handled it (the reflex, the thinker and its tool calls, no_catalogue, chat), the gate's ms and the whole sentence's ms. `routefeed.py` keeps the last 100 in memory (`Daemon.feed`, filled in `handle_voice` beside the outcome log) and the page gets them over a stream.
-3. *Data and scores*: the training and held-out set sizes, the learned examples, what review and the privacy check removed, what the last run trained on and left out, and the held-out score of every head the loop built, as an SVG chart drawn by the page (no library) with the shipped head as a line.
-4. *Settings and privacy*: outcome logging, `log_sentences` and the notification body modes, each with what it means now and the line in `config.toml` that changes it; the learning settings; the whole effective config (env values and anything named like a secret shown as `(set)`). Read-only in this version. **Forget** (`Learning.forget`, optionally with every head) is here, behind a second click.
-5. *Runs* (§18): each run, newest first, with its steps as a timeline (routing and its path, thinking and the model, each tool started and completed with its duration and code, speaking, the end and why), the tools by name, the outcome and the duration, and **Cancel** on a run that is going on (the widget's ✕ by another way: `RunBook.cancel(…, "stopped")`). The stream's `run` events fill it as they happen (a `token_rate` shows beside the run's state, not as a step); `GET /ui/api/runs` gives the last `[runs] keep`. Names and timings only: what the page gets is what `runs.emit` let through. Above it, while she waits for a yes (§19), **Waiting for a yes**: the card's line, the tier, the tool, the time left when loaded, and **Yes** and **No** (the fallback for her card and her question; no Yes for a settings change the page itself asked for, §28); below it, **Approvals**: each one asked about, with its id, run, tool, tier, outcome, who answered and how long it waited, never the call's arguments.
-6. *System*: the version and uptime, where the gate embeds (ONNX or the Ollama fallback, and why), the scorer and the head in use with its thresholds, the reaction model, the thinker, speech, voice, the MCP servers and the trainer. `/health` has no VRAM or CPU figures, so neither does the page.
+1. *Router learning*: the head in use, the candidate, the labelled examples, the last run and the trainer, with **Train now** (`IdleTrainer.train_now`: the idle run's own path, the gate's embedder, stopped when the user speaks, the child process, without waiting for quiet) and **Roll back**. The candidate against the head it was compared with: fields, strict sentences, Finnish fields, privacy readings, wrong reflexes and AUROC on the held-out set, the per-field scores, how many sentences it learned and how many are new to it, with **Accept** and **Reject**. The learned examples with their labels, avoids, conflicts, signals and review state, each with **Approve** and **Reject** (`Learning.review`; reject deletes the sentence for good). The outcome log's last 60 records and its counts per signal. Every head with its status, held-out score, the score of the head it beat and **Use**, and the history of switches. The week's report. *Evaluation* (`GET /ui/api/data`): see 3. The `[learning]` settings in effect with
+   **Change…**, and **Forget what she learned** (`Learning.forget`, optionally with every head) after the word
+   `forget` is typed.
+2. *Runs, Router view*: each sentence as it is handled: kind and topic with confidence, the decision, the tool and its confidence, what handled it (the reflex, the thinker and its tool calls, no_catalogue, chat), the gate's ms and the whole sentence's ms. `routefeed.py` keeps the last 100 in memory (`Daemon.feed`, filled in `handle_voice` beside the outcome log) and the page gets them over a stream.
+3. *Router learning, Evaluation*: the training and held-out set sizes, the learned examples, what review and the privacy check removed, what the last run trained on and left out, and the held-out score of every head the loop built, as an SVG chart drawn by the page (no library) with the shipped head as a line.
+4. *Privacy*: above.
+5. *Runs* (§18): each run, newest first, with its steps as a timeline (routing and its path, thinking and the model, each tool started and completed with its duration and code, speaking, the end and why), the tools by name, the outcome and the duration, and **Stop** on a run that is going on (the widget's ✕ by another way: `RunBook.cancel(…, "stopped")`). The stream's `run` events fill it as they happen (a `token_rate` shows beside the run's state, not as a step); `GET /ui/api/runs` gives the last `[runs] keep`. Names and timings only: what the page gets is what `runs.emit` let through. Above it, while she waits for a yes (§19), **Waiting for a yes**: the card's line, the tier, the tool, the time left when loaded, and **Yes** and **No** (the fallback for her card and her question; no Yes for a settings change the page itself asked for, §28); below it, **Approvals**: each one asked about, with its id, run, tool, tier, outcome, who answered and how long it waited, never the call's arguments.
+6. *Health*: the version and uptime, her state and her card (`GET /ui/api/system` carries `cards`, and `head`, the learning loop's head in use, so it shows with the gate off), where the gate embeds (ONNX or the Ollama fallback, and why), the scorer and the head in use with its thresholds, the files she reads (persona.md, input.toml, apps.toml: checks out or the problem, from `GET now`), what is switched off, the reaction model, the thinker, speech, voice, the MCP servers and the trainer. `/health` has no VRAM or CPU figures, so neither does the page.
 
 **Routes.**
 
@@ -1051,6 +1104,7 @@ many more there are; a click goes to its section. The new parts:
 | `GET /ui` | the page, with the session's CSRF token in `<meta name="csrf">` | the browser |
 | `GET /ui/app.js`, `style.css`, `icon.svg` | the page's files (no data in them; no session needed, so the sign-in page is styled) | the browser |
 | `GET /ui/api/learning`, `routes`, `runs`, `data`, `settings`, `system` | JSON for each section | the page |
+| `GET /ui/api/now` | the header and the Now view: `state`, `mood` (`enabled`, `energy`, `feeling`), `bodies` (`widgets`, `cards`), `approval` (the open one's id, tool, tier, card line, time left and `where`: `config` or `runs`), `reminders` (`enabled`, `next`, `soon`: due within the hour, `pending`), `files` (persona.md, input.toml, apps.toml that do not check out, with their tab and problems), `candidate`, `runs` (the last five, as `GET runs`), `off` and `privacy` (`{key, what}` each). Reminder words are the user's own: shown on the page, never logged | the page |
 | `GET /ui/api/events` | server-sent events: `route` (one entry, with its `run_id`), `run` (one run event, §18, with the run's `source`), `learning` (a file of the loop changed; the page asks again), a keep-alive comment every 15 s | the page |
 | `POST /ui/api/cancel` (`{run_id}`) | stops that run if it is going on (`{"cancelled": id}`), else 409 | the page |
 | `POST /ui/api/approval` (`{approval_id, answer}`) | a yes or no to the open approval (`{"answered": id, "answer": …}`); 409 with `reason` (`not_open`, `resolved`) when it is not open; `GET /ui/api/runs` carries `approvals` (`open`, with its line, and `history`) | the page |
@@ -1172,7 +1226,7 @@ supersedes: it waits its turn with her voice already back on. A notification's r
 foreground one: a sentence does not stop it.
 
 **Cancel.** From the widget's ✕ (`run.cancel`, only from a v2 body that declared it, only for the
-foreground run going on), the Brain UI's Cancel, "stop", supersede, and the daemon's shutdown
+foreground run going on), the Brain UI's Stop, "stop", supersede, and the daemon's shutdown
 (`Daemon.close`: `shutdown`). `RunBook.cancel` cancels the run's own task (`Daemon._in_run` runs
 the sentence in a task of its own, so the request handler or the typed sentence's background task
 is not the one cancelled). A call already in flight decides what happens next:
@@ -1258,7 +1312,7 @@ one `RunBook.cancel` stops, and it ends the run:
 | `no` | "Okay, I've left it." |
 | `timeout` | "No answer, so I've left it.", also in the ledger as `(no answer)` |
 | `superseded` | nothing; the newer sentence's line starts "I've left that, then." (`run.cancelled`, `superseded`) |
-| `cancelled` | the ✕, the Brain UI's Cancel or the daemon stopping: nothing is made (`run.cancelled`, `stopped` or `shutdown`) |
+| `cancelled` | the ✕, the Brain UI's Stop or the daemon stopping: nothing is made (`run.cancelled`, `stopped` or `shutdown`) |
 
 **A stop between the yes and the call.** A ✕, a "stop" or a newer sentence can land after the yes
 and before the call starts. Then nothing is made: the approval keeps `yes` (it was the user's
@@ -2961,7 +3015,7 @@ self-contained block in `app.js` with its own state, its nav button after Router
 - *Edit a digest*: an inline editor, checked on the page and again on the server (some text, no line over
   `DIGEST_LINE_CHARS`, at most `DIGEST_CHARS`; the store would cut a longer one silently, so the route refuses it),
   only for a day the history has; `edit_digest` sets `edited_by_user`, which the digester never overwrites.
-- *Reminders*: the pending ones (due, text) with **Cancel** (`set_timer_state(id, "cancelled")`, only from
+- *Reminders*: the pending ones (due, text) with **Delete** (`set_timer_state(id, "cancelled")`, only from
   pending, checked under the store's lock), and the last 20 fired, missed or cancelled ones. It reads the
   `timers` table directly.
 - *Retention*: "raw kept N days · digests M months · storing sentences: on/off" from the `[history]` she runs
