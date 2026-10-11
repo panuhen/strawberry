@@ -418,7 +418,13 @@
     if (typeof n !== "number") return;
     const changed = cardsOnScreen !== null && n !== cardsOnScreen;
     cardsOnScreen = n;
-    if (changed) refreshNowSoon();      // the header's card chip and Now say so too, not only the tab that heard it
+    if (!changed) return;
+    // Everything that says whether her card is there says it again: the header and Now, a waiting yes, Save.
+    refreshNowSoon();
+    renderConfPending();
+    renderConfReview();
+    renderToolsReview();
+    rerender("runs");
   }
 
   // --- a waiting yes, the same everywhere. It comes from the open approval (GET runs, GET now) or from a settings
@@ -1833,7 +1839,7 @@
                    changed: ["Not saved: the file changed while she waited", "warn"], failed: ["Not saved", "warn"] }[P.state] || [P.state, null];
     const kept = setAside[P.file];
     return panel("The last change she asked about", P.file,
-      el("div", { class: "actions" }, chip(said[0], said[1]), P.detail ? el("span", { class: "dim", text: P.detail }) : null,
+      el("div", { class: "actions" }, chip(said[0], said[1]), P.detail ? el("span", { class: "dim", text: endedWhy(P) }) : null,
         P.by ? el("span", { class: "faint", text: `answered ${ANSWERED_BY[P.by] || `by ${P.by}`}` }) : null,
         P.restart && P.restart.length && P.state === "saved" ? chip(`needs a restart: ${P.restart.map((s) => `[${s}]`).join(" ")}`, "warn") : null),
       P.prompt ? el("p", { class: "dim" }, "Her card said: ", el("q", { text: P.prompt })) : null,
@@ -1841,6 +1847,11 @@
       kept ? el("div", { class: "actions" },
         el("span", { class: "dim", text: `The form shows ${P.file} as it is; your edits are set aside.` }),
         actionButton("Put my edits back", () => putBack(P.file), "small")) : null);
+  }
+
+  // Why a change she asked about ended as it did, in words ("no" is a No someone gave).
+  function endedWhy(P) {
+    return P.detail === "no" ? "answered No" : P.detail || P.state;
   }
 
   function renderConfPending() {
@@ -1884,7 +1895,7 @@
   function settled(r) {
     const P = r.pending;
     const saved = P.state === "saved";
-    toast(saved ? "Saved after your yes on her card." : `Not saved (${P.detail || P.state}): the form shows the file as it is.`,
+    toast(saved ? "Saved after your yes on her card." : `Not saved (${endedWhy(P)}): the form shows the file as it is.`,
       P.state === "failed" || P.state === "changed");
     if (!saved) setAsideEdits(P.file);
     if (P.file === "input.toml") {
