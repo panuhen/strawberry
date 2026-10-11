@@ -867,15 +867,23 @@ class IdleTrainer:
             self.run_task = asyncio.get_running_loop().create_task(self.run())
         await self.maybe_weekly_line()
 
+    def blocked(self) -> str | None:
+        """Why "train now" would be refused now (a run going, the gate not ready), for the page to say beside a
+        disabled button; None when it would start."""
+        if self.run_task is not None and not self.run_task.done():
+            return "a run is going already"
+        gate = self.daemon.gate
+        if not getattr(gate, "ready", False) or getattr(gate, "embedder", None) is None:
+            return "the gate is not ready"
+        return None
+
     def train_now(self) -> tuple[bool, str]:
         """The Brain UI's "train now": one run in the background, as the idle one runs (the gate's own
         embedder, stopped when the user speaks, the child process), without waiting for quiet or
         new labels. (False, why) when one is running or the gate is not ready."""
-        if self.run_task is not None and not self.run_task.done():
-            return False, "a run is going already"
-        gate = self.daemon.gate
-        if not getattr(gate, "ready", False) or getattr(gate, "embedder", None) is None:
-            return False, "the gate is not ready"
+        why = self.blocked()
+        if why is not None:
+            return False, why
         self.run_task = asyncio.get_running_loop().create_task(self.run(trigger="by hand"))
         return True, ""
 
@@ -991,6 +999,6 @@ class IdleTrainer:
                 return {"error": type(exc).__name__}
         due, why = self.due()
         return self._health[1] | {"trainer": {"phase": self.phase, "idle_train": self.config.idle_train,
-                                              "waiting_for": None if due else why, "runs": self.runs,
-                                              "interrupted": self.interrupted, "errors": self.errors,
+                                              "waiting_for": None if due else why, "blocked": self.blocked(),
+                                              "runs": self.runs, "interrupted": self.interrupted, "errors": self.errors,
                                               "last_error": self.last_error or None}}

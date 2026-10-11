@@ -423,6 +423,24 @@ package and the widget binary.
   typed, a run is **Stop**ped and a reminder **Delete**d, text others wrote is "foreign text" everywhere,
   and times are either `YYYY-MM-DD HH:MM` or "12 min ago". New read: `GET /ui/api/now`.
 
+- **The Brain UI tells the truth about a change waiting on her card.** A settings change that loosens safety
+  is asked about only while a body shows her card: with none on screen the save is refused with what to do
+  ("start the crab, then save"), since only a held Yes there takes it and the question could only lapse. A
+  change already waiting when the card goes away says "Her card isn't on screen: start the crab, or press
+  No. This change will lapse." Every time left counts down live. The waiting change looks the same in the
+  header, Now, Runs and the tab of the file it changes (Config file, Tools, Input or Apps), which is where
+  "needs you" goes; its ids are folded away. After a No, no answer or "Not saved" the form shows the file
+  again: the ✎ marks and "N set in the file" are the file's, a draft's own changes say "changed, not saved",
+  and **Put my edits back** returns what was set aside. The Config file tab says when it read the file.
+  **Train now** is off, with the reason, while the trainer cannot train; Apps and Input save only a change
+  you made. README *Brain UI*, WIRING §17, §28.
+- **The Brain UI is easier to read and to use from the keyboard.** Faint and dim text, placeholders, the
+  light theme's green and amber, and the dark theme's primary button reach 4.5:1 contrast on every ground
+  (the light theme keeps its cream). Every focusable part shows the focus ring, including each `summary`; a
+  button that asks for a second click is announced to screen readers and keeps the focus across a refresh.
+  The mood graph answers the arrow keys and lists its readings as a table, the calibration bars say their
+  state in words, and a doubled mapping in Input says so in words, not only in colour.
+
 - **She goes to sleep with a tuck and a spin.** A small crouch and a hop; in the air her legs and claws
   fold in under the shell and her eye stalks droop over the rim; she lands with a squash and turns once
   around while the shell wobbles like a settling coin, ending facing you. Asleep only the shell and the

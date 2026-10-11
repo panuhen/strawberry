@@ -33,7 +33,7 @@ from aiohttp import web
 
 from . import configform, inputs, runs
 from .approvals import Approval
-from .brainui import BrainUI, Session, _diff, _payload, checked
+from .brainui import BrainUI, Session, _diff, _payload, card_count, checked
 from .config import OFFERS, TRUST_FLAGS, ConfigError, default_path, default_toml, load
 from .confirm import LEFT_CHANGED, Held
 from .contract import Performance
@@ -46,6 +46,8 @@ CONFIRM_S = 60.0                       # how long her card waits for the user's 
 # question of hers, superseded by this one).
 YES_BY = frozenset({"body"})
 BUSY = "she is asking something else on her card; answer that first"
+NO_CARD = ("her card isn't on screen, so nobody could hold Yes on it: start the crab (or another body that shows her "
+           "card), then save again")
 ASK_LINE = "That settings change loosens my safety rules. Hold yes on my card if it was you."
 SAVED_LINE = "Okay, the settings are saved."
 LEFT_LINE = "Okay, I've left the settings as they were."
@@ -75,8 +77,13 @@ class Pending:
     apply: Callable[[], list[str]] | None = None
 
     def view(self) -> dict[str, Any]:
+        """For the page: how it went, what it loosens, and the approval as her card shows it (its line, which
+        _card_line built from fixed words and scrubbed names, and the time left), so every place on the page that
+        shows this change shows it the same way."""
         a = self.approval
-        return {"approval_id": a.approval_id, "file": self.file, "state": self.state, "detail": self.detail or None,
+        return {"approval_id": a.approval_id, "run_id": a.run_id, "risk": a.risk, "prompt": a.prompt, "hold": a.hold,
+                "yes_by": sorted(a.yes_by) if a.yes_by is not None else None,
+                "file": self.file, "state": self.state, "detail": self.detail or None,
                 "lowering": [f.view() for f in self.findings], "at": round(self.at, 3), "backup": self.backup,
                 "restart": [s for s in self.changed if s not in configform.LIVE_SECTIONS], "applied": self.applied,
                 "expires_in": round(max(a.expires - time.monotonic(), 0.0), 1) if a.open else None,
@@ -108,6 +115,16 @@ class ConfigDesk:
             return BUSY
         return None
 
+    def refusal(self, ui: BrainUI) -> web.Response | None:
+        """The 409 for a loosening save that cannot ask now: busy (above), or no body shows her card, so the
+        question could only lapse (only a held Yes there takes it). None: she may ask."""
+        why = self.busy(ui)
+        if why is not None:
+            return web.json_response({"error": why, "busy": True}, status=409)
+        if card_count(ui.daemon) == 0:
+            return web.json_response({"error": NO_CARD, "no_card": True}, status=409)
+        return None
+
 
 DESK = web.AppKey("configdesk", ConfigDesk)
 
@@ -133,7 +150,7 @@ def config_view(ui: BrainUI, desk: ConfigDesk, session: Session) -> dict[str, An
         text, values, error = None, {}, str(exc)
     return {"path": str(path), "exists": base["exists"], "base": {"tag": base["tag"], "mtime_ns": base["mtime_ns"]},
             "text": text, "values": values, "error": error, "schema": configform.schema(),
-            "live": dict(configform.LIVE_SECTIONS),
+            "live": dict(configform.LIVE_SECTIONS), "cards": card_count(ui.daemon),
             "pending": desk.pending.view() if desk.pending is not None else None}
 
 
@@ -391,8 +408,9 @@ async def api_config_save(request: web.Request, ui: BrainUI, session: Session) -
         return web.json_response({"saved": False, "same": True})
     real = checked_["_real"]
     findings = [configform.Finding(**f) for f in checked_["lowering"]]
-    if findings and desk.busy(ui) is not None:
-        return web.json_response({"error": desk.busy(ui), "busy": True}, status=409)
+    refused = desk.refusal(ui) if findings else None
+    if refused is not None:
+        return refused
     if findings:
         pending = ask(ui, desk, real, base_tag, findings, checked_["changed"])
         return web.json_response({"pending": pending.view()}, status=202)

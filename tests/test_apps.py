@@ -15,6 +15,7 @@ from strawberry_crab.daemon import Daemon
 from strawberry_crab.events import CannedReactor
 from strawberry_crab.server import create_app
 from tests.test_brainui import quiet_config, sign_in
+from tests.test_configui import with_card
 from tests.test_runs import until
 
 CANARY = "zanzibarq"     # an alias: it may be in apps.toml and the page, never in a log line
@@ -189,7 +190,7 @@ def test_names_aliases_and_ids_find_their_own_app_only(tmp_path):
 @pytest.fixture
 async def client(aiohttp_client):
     standard()
-    return await aiohttp_client(create_app(Daemon(reactor=CannedReactor(), config=quiet_config())))
+    return await aiohttp_client(create_app(with_card(Daemon(reactor=CannedReactor(), config=quiet_config()))))
 
 
 def daemon_of(client) -> Daemon:
@@ -208,6 +209,19 @@ async def test_every_apps_write_needs_the_session_the_csrf_header_and_the_origin
     assert (await signed.get("/ui/api/apps", origin="https://evil.example")).status == 403
     assert (await signed.get("/ui/api/apps", csrf=False)).status == 403
     assert not apps.apps_file().exists()
+
+
+async def test_a_list_that_lets_her_do_more_is_refused_while_no_body_shows_her_card(aiohttp_client):
+    standard()
+    daemon = Daemon(reactor=CannedReactor(), config=quiet_config())
+    client = await aiohttp_client(create_app(daemon))
+    signed = await sign_in(client)
+    rows = [{"id": "firefox_firefox.desktop", "name": "Firefox", "aliases": [], "open": True, "close": False,
+             "close_asks": True}]
+    refused = await signed.post("/ui/api/apps/save", {"apps": rows})
+    body = await refused.json()
+    assert refused.status == 409 and body["no_card"] and "her card isn't on screen" in body["error"]
+    assert daemon.approvals.open is None and not apps.apps_file().exists()
 
 
 async def test_the_apps_tab_lists_checks_and_saves_apps_toml_never_config_toml(client, caplog):

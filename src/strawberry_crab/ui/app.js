@@ -293,15 +293,31 @@
   // One item (a row, a day, an example, a reminder) asks with a second click instead (confirmButton).
   //   o: {id, word, label, onGo(button), extra}
   function typedConfirm(o) {
-    const go = el("button", { type: "button", class: "danger", text: o.label, disabled: true });
+    const go = el("button", { type: "button", class: "danger", text: o.label, disabled: true,
+      "aria-describedby": `${o.id}-how` });
     const box = el("input", { type: "text", id: o.id, class: "confirm-word", autocomplete: "off", spellcheck: "false",
-      value: o.value || "" });
+      value: o.value || "", "aria-describedby": `${o.id}-how` });
     const ready = () => box.value.trim() === o.word;
     go.disabled = !ready();
-    box.addEventListener("input", () => { if (o.onType) o.onType(box.value); go.disabled = !ready(); });
+    // The armed state is said as well as shown: a screen reader hears when the button is ready, and when it is not.
+    box.addEventListener("input", () => {
+      const was = !go.disabled;
+      if (o.onType) o.onType(box.value);
+      go.disabled = !ready();
+      if (ready() && !was) announce(`${o.label} is ready: the next button press does it.`);
+      else if (!ready() && was) announce(`${o.label} is off again.`);
+    });
     go.addEventListener("click", () => { if (ready()) o.onGo(go, box); });
     return el("div", { class: "actions" },
-      el("label", { for: o.id, text: `Type ${o.word} to confirm:` }), box, o.extra || null, go);
+      el("label", { for: o.id, text: `Type ${o.word} to confirm:` }), box, o.extra || null, go,
+      el("span", { id: `${o.id}-how`, class: "sr-only", text: `${o.label} stays off until the word ${o.word} is typed.` }));
+  }
+
+  // Words for a screen reader only (#announce, a polite live region): an armed confirm, a confirm that lapsed.
+  function announce(text) {
+    const node = $("#announce");
+    node.textContent = "";
+    setTimeout(() => { node.textContent = text; }, 30);    // a change it will notice even when the words repeat
   }
 
   // A button that asks once more before it acts: the first click arms it for four seconds. While
@@ -323,9 +339,11 @@
         button.textContent = confirmLabel;
         button.classList.add("danger");
         armedButtons += 1;
+        announce(`${confirmLabel} Press again within 4 seconds to confirm.`);
         armed = setTimeout(() => {
           button.textContent = label;
           if (!(cls || "").includes("danger")) button.classList.remove("danger");
+          announce(`${label}: not confirmed.`);
           disarm();
         }, 4000);
         return;
@@ -337,19 +355,126 @@
   }
 
   // A section drawn again with fresh data, unless the user is in the middle of something there: an armed button
-  // (drawn again once it disarms), or the focus in a field they type into (the next refresh draws it).
+  // (drawn again once it disarms), or the focus in a field they type into (the next refresh draws it). A button,
+  // a box or a summary that had the focus has it again afterwards, so a refresh never drops the keyboard user.
   function rerender(section) {
     if (section === "router") section = "runs";
     if (state.section !== section) return;
     if (armedButtons) { deferred.add(section); return; }
+    const root = $(`#${section}`);
     const focus = document.activeElement;
     if (focus && focus.matches && focus.matches('input[type="text"], input[type="search"], input[type="number"], textarea')
-        && $(`#${section}`).contains(focus)) return;
+        && root.contains(focus)) return;
+    const key = focus && focus !== document.body && root.contains(focus) ? focusKey(root, focus) : null;
     RENDER[section]();
+    if (key && !root.contains(document.activeElement)) refocus(root, key);
+  }
+
+  // Where the focus was, in words that survive a redraw: the element's id, or its tag, text and place among its likes.
+  function focusKey(root, node) {
+    if (node.id) return { id: node.id };
+    const likes = [...root.querySelectorAll(node.tagName)].filter((n) => n.textContent === node.textContent);
+    return { tag: node.tagName, text: node.textContent, at: likes.indexOf(node) };
+  }
+  function refocus(root, key) {
+    const node = key.id ? document.getElementById(key.id)
+      : [...root.querySelectorAll(key.tag)].filter((n) => n.textContent === key.text)[Math.max(key.at, 0)];
+    if (node && root.contains(node)) node.focus({ preventScroll: true });
   }
 
   function actionButton(label, action, cls) {
     return el("button", { type: "button", class: cls || null, text: label, on: { click: (e) => action(e.currentTarget) } });
+  }
+
+  // --- live times: a time left counts down, a "read 2 min ago" stays true. The deadline is taken from `expires_in`
+  // when the answer arrived (stamp), and one ticker (start) redraws every [data-deadline] and [data-since] each
+  // second, without drawing the tab again.
+
+  function stamp(a) {
+    if (a && typeof a.expires_in === "number") a.deadline = Date.now() / 1000 + a.expires_in;
+    return a;
+  }
+  function leftText(deadline) {
+    const s = Math.ceil(deadline - Date.now() / 1000);
+    return s > 0 ? `${s} s left` : "time is up";
+  }
+  function countdown(deadline) {
+    return el("span", { class: "countdown", role: "timer", data: { deadline }, text: leftText(deadline) });
+  }
+  function since(ts, prefix, title) {
+    return el("span", { class: "chip", data: { since: ts, prefix }, title, text: `${prefix}${when(ts, true)}` });
+  }
+  function tickTimes() {
+    for (const node of document.querySelectorAll("[data-deadline]")) node.textContent = leftText(Number(node.dataset.deadline));
+    for (const node of document.querySelectorAll("[data-since]")) {
+      node.textContent = `${node.dataset.prefix || ""}${when(Number(node.dataset.since), true)}`;
+    }
+  }
+
+  // --- her card: how many connected bodies show it, from whichever answer came last (GET now, config or system);
+  // null until one has come. With none, a question only her card takes can only lapse.
+  let cardsOnScreen = null;
+  function noteCards(n) {
+    if (typeof n !== "number") return;
+    const changed = cardsOnScreen !== null && n !== cardsOnScreen;
+    cardsOnScreen = n;
+    if (!changed) return;
+    // Everything that says whether her card is there says it again: the header and Now, a waiting yes, Save.
+    refreshNowSoon();
+    renderConfPending();
+    renderConfReview();
+    renderToolsReview();
+    rerender("runs");
+  }
+
+  // --- a waiting yes, the same everywhere. It comes from the open approval (GET runs, GET now) or from a settings
+  // change waiting on her card (GET config's pending, which adds what it loosens and its file). The header, Now, Runs
+  // and the tab that holds the change all draw it with approvalLine or approvalBlock.
+
+  const FILE_TAB = { "config.toml": ["config", "conf-pending"], "input.toml": ["input", "input-pending"],
+                     "apps.toml": ["apps", "apps-pending"] };
+
+  function asked(a, P) {
+    const p = P && P.approval_id === a.approval_id ? P : null;
+    return { id: a.approval_id, run: a.run_id, tool: a.tool, risk: a.risk, prompt: a.prompt, deadline: a.deadline,
+             hold: a.hold, file: (p && p.file) || a.file || null, lowering: p ? p.lowering : null,
+             // A settings change takes its yes as a hold on her card alone (yes_by), never from here.
+             cardOnly: Boolean(a.yes_by && !a.yes_by.includes("ui")) };
+  }
+
+  function cardMissing(m) {
+    if (cardsOnScreen !== 0) return null;
+    return note("warn", m.cardOnly ? "Her card isn't on screen: start the crab, or press No. This change will lapse."
+      : "Her card isn't on screen: answer here, or it lapses as a no.");
+  }
+
+  function loweringList(lowering) {
+    return el("ul", null, (lowering || []).map((f) => el("li", null, el("code", { text: f.key }), ` ${f.why}`)));
+  }
+
+  // One line (Now, the header's spot): the tier, her card's words, the time left, and whether her card is there.
+  function approvalLine(m) {
+    return el("span", { class: "dim" }, tierChip(m.risk), " ", m.prompt || m.tool,
+      m.deadline ? [" · ", countdown(m.deadline)] : null,
+      cardsOnScreen === 0 ? [" ", chip("her card isn't on screen", "warn")] : null);
+  }
+
+  // The whole of it (Runs, and the tab that holds a settings change): her card's words, what it is, the time left,
+  // whether her card is there, what it loosens, Yes (only where this page may say it) and No; the ids folded away.
+  function approvalBlock(m) {
+    const what = m.file ? `settings in ${m.file}` : m.tool || "a tool call";
+    const hold = m.cardOnly
+      ? (cardsOnScreen === 0 ? null : el("span", { class: "dim", text: "Hold Yes on her card: a yes from this page or said aloud does not count for this one." }))
+      : actionButton("Yes", (b) => answerApproval(b, m.id, "yes"), "primary");
+    return el("div", { class: "approval" },
+      el("p", { class: "prompt", text: m.prompt || m.tool }),
+      el("p", { class: "dim" }, tierChip(m.risk), ` ${what}`, m.deadline ? [" · ", countdown(m.deadline)] : null,
+        m.hold ? " · a hold on her card" : null),
+      cardMissing(m),
+      m.lowering && m.lowering.length ? [el("p", { class: "dim", text: "It loosens safety:" }), loweringList(m.lowering)] : null,
+      el("div", { class: "actions" }, hold, actionButton(m.cardOnly ? "No, leave it" : "No", (b) => answerApproval(b, m.id, "no"), "danger")),
+      el("details", { class: "ids" }, el("summary", { text: "Ids" }),
+        el("span", { class: "mono", text: `approval ${m.id}${m.run ? `, run ${m.run}` : ""}` })));
   }
 
   // --------------------------------------------------------------------------- the API
@@ -436,23 +561,27 @@
   const FILE_FALLBACK = { "persona.md": "she uses the shipped one", "input.toml": "she keeps the settings she has",
                           "apps.toml": "she keeps the list she has" };
 
-  // What needs the user, most urgent first: [text, section, sub, detail].
+  // What needs the user, most urgent first: [text, section, sub, detail, kind]. A waiting yes goes where it is
+  // answered: the tab of the file a settings change is for, else Runs.
   function needsYou(N) {
     if (!N) return [];
     const items = [];
     const a = N.approval;
     if (a) {
-      items.push(a.where === "config"
-        ? ["A settings change waits for your yes on her card", "config", "conf-pending", a]
-        : ["She is waiting for your yes", "runs", "runs", a]);
+      const gone = cardsOnScreen === 0;
+      const [tab, part] = a.where === "config" ? FILE_TAB[a.file] || FILE_TAB["config.toml"] : ["runs", "runs-waiting"];
+      items.push([a.where === "config"
+        ? (gone ? "A settings change will lapse: no card on screen" : "A settings change waits for your yes on her card")
+        : (gone ? "She is waiting for your yes: no card on screen" : "She is waiting for your yes"),
+      tab, part, asked(a), "approval"]);
     }
     const soon = (N.reminders && N.reminders.soon) || [];
     if (soon.length) {
       items.push([soon.length === 1 ? `A reminder is due ${when(soon[0].due, true)}` : `${soon.length} reminders are due within the hour`,
-        "history", "reminders", soon]);
+        "history", "reminders", soon, "reminders"]);
     }
-    for (const f of N.files || []) items.push([`Your ${f.file} has a problem: ${FILE_FALLBACK[f.file] || "it is not used"}`, f.tab, null, f]);
-    if (N.candidate) items.push([`A new router head (${N.candidate}) waits for you`, "learning", null, null]);
+    for (const f of N.files || []) items.push([`Your ${f.file} has a problem: ${FILE_FALLBACK[f.file] || "it is not used"}`, f.tab, null, f, "file"]);
+    if (N.candidate) items.push([`A new router head (${N.candidate}) waits for you`, "learning", null, null, "candidate"]);
     return items;
   }
 
@@ -531,12 +660,12 @@
         })) : el("p", { class: "empty", text: "Everything is on." })));
   }
 
-  function needsRow([text, section, sub, detail]) {
-    const go = actionButton(section === "config" ? "Open Config file" : `Open ${navLabel(section)}`, () => show(section, sub), "ghost small");
+  function needsRow([text, section, sub, detail, kind]) {
+    const go = actionButton(`Open ${navLabel(section)}`, () => show(section, sub), "ghost small");
     let more = null;
-    if (section === "runs" || (section === "config" && detail && detail.tool)) {
-      more = el("span", { class: "dim" }, tierChip(detail.risk), " ", detail.prompt || detail.tool);
-    } else if (section === "history" && Array.isArray(detail)) {
+    if (kind === "approval") {
+      more = approvalLine(detail);
+    } else if (kind === "reminders") {
       more = el("span", { class: "dim" }, detail.map((t, i) => [i ? "; " : "", `${when(t.due)}: `, t.text,
         t.foreign ? [" ", foreignMark()] : null]));
     } else if (detail && detail.problems) {
@@ -546,7 +675,11 @@
   }
 
   async function refreshNow() {
-    try { state.now = await api("now"); } catch (e) { /* the header keeps what it has */ }
+    try {
+      state.now = await api("now");
+      stamp(state.now.approval);
+      noteCards(state.now.bodies.cards);
+    } catch (e) { /* the header keeps what it has */ }
     renderHeader();
     rerender("now");
     rerender("health");
@@ -584,7 +717,11 @@
     }
     if (s.in_use.note) notes.push(note("info", s.in_use.note));
     const train = actionButton("Train now", (b) => act(b, "train", {}, () => "Training started. A run takes a minute or so."));
-    train.disabled = t.phase && t.phase !== "idle";
+    // Off, with the trainer's own reason beside it, while it would be refused (a run going, the gate not ready).
+    const blocked = t.phase && t.phase !== "idle" ? `the trainer is ${t.phase}` : t.blocked || null;
+    train.disabled = Boolean(blocked);
+    if (blocked) train.setAttribute("aria-describedby", "train-why");
+    const trainWhy = blocked ? el("span", { class: "faint", id: "train-why", text: `Train now waits: ${blocked}.` }) : null;
     const rollback = s.rollback_to
       ? confirmButton(`Roll back to ${s.rollback_to}`, "Roll back now?", (b) => act(b, "rollback", {}, (r) => `Rolled back: ${r.switched.to} is in use (was ${r.switched.from}).`))
       : el("button", { type: "button", disabled: true, text: "Nothing to roll back to" });
@@ -599,7 +736,7 @@
           s.candidate ? `held-out ${pct(s.candidate.heldout.current)} to ${pct(s.candidate.heldout.candidate)}` : null, true),
         stat("Labelled examples", String(e.usable), `${e.new} new since the last run, ${e.conflicts} with a conflict`),
         stat("Trainer", t.phase || dash, trainerSub, true)),
-      el("div", { class: "actions" }, train, rollback,
+      el("div", { class: "actions" }, train, trainWhy, rollback,
         chip(`outcome logging ${onOff(L.logging)}`, L.logging ? "warn" : null,
           L.logging ? "Your sentences are kept on this machine for the learning loop (the Privacy tab)" : "Nothing you say is kept for learning"),
         actionButton("Forget...", () => show("learning", "forget"), "ghost")));
@@ -872,8 +1009,8 @@
         el("div", { class: "actions" },
           toggle([["runs", "Runs"], ["router", "Router"]], state.runsView, (v) => { state.runsView = v; setHash("runs", v === "router" ? "router" : null); renderRuns(); }, "Show"),
           state.logging ? null : el("span", { class: "faint", text: "Sentences are hidden while outcome logging is off." }))),
-      state.approvals.open ? panel("Waiting for a yes", "she asked first; answer here if her card and her question are out of reach",
-        pendingApproval()) : null,
+      state.approvals.open ? Object.assign(panel("Waiting for a yes", "she asked first; answer here if her card and her question are out of reach",
+        pendingApproval()), { id: "runs-waiting" }) : null,
       router ? routerPanel() : runsPanel(),
       timelinePanel(),
       panel("Approvals", "the calls she asked about first and how each was answered; never what they carried",
@@ -956,27 +1093,19 @@
       .catch((e) => { toast(e.message, true); button.disabled = false; });
   }
 
-  // The approval she is waiting on, with Yes and No: the fallback for her card and her question.
+  // The approval she is waiting on, with Yes and No: the fallback for her card and her question. Whichever tab
+  // answered, every place that shows it looks again (Runs, the header, a settings change's tab).
   function answerApproval(button, approvalId, answer) {
     button.disabled = true;
     api("approval", { approval_id: approvalId, answer })
-      .then(() => { toast(answer === "yes" ? "Yes sent." : "No sent."); refreshRuns(); refreshNowSoon(); })
+      .then(() => { toast(answer === "yes" ? "Yes sent." : "No sent."); refreshRuns(); refreshNowSoon(); confPoll(); })
       .catch((e) => { toast(e.message, true); refreshRuns(); });
   }
 
+  // Runs' "Waiting for a yes": the shared block, with what a settings change loosens when the page knows it.
   function pendingApproval() {
     const a = state.approvals.open;
-    if (!a) return null;
-    const left = typeof a.expires_in === "number" ? `${Math.ceil(a.expires_in)} s left when loaded` : null;
-    return el("div", { class: "approval" },
-      el("p", { class: "prompt", text: a.prompt || a.tool }),
-      el("p", { class: "dim" }, tierChip(a.risk), ` ${a.tool} · ${a.approval_id} for ${a.run_id}`,
-        left ? ` · ${left}` : null, a.hold ? " · a hold on her card" : null),
-      el("div", { class: "actions" },
-        // A settings change takes its yes as a hold on her card alone (yes_by), never from here.
-        a.yes_by && !a.yes_by.includes("ui") ? el("span", { class: "dim", text: "Hold Yes on her card: a yes from this page or said aloud does not count for this one." })
-          : actionButton("Yes", (b) => answerApproval(b, a.approval_id, "yes"), "primary"),
-        actionButton("No", (b) => answerApproval(b, a.approval_id, "no"), "danger")));
+    return a ? approvalBlock(asked(a, conf.view && conf.view.pending)) : null;
   }
 
   function runsPanel() {
@@ -1472,6 +1601,7 @@
     fill(root,
       titlePanel("apps", "which apps she may open or close when you ask; nothing else on the computer",
         el("div", { id: "apps-head", class: "stack" })),
+      el("div", { id: "apps-pending" }),
       panel("Installed apps", "tick what she may do; you may say the app's name or one of its aliases",
         el("div", { class: "split" },
           el("div", { class: "split-main stack" }, el("div", { class: "actions" }, search), el("div", { id: "apps-table" })),
@@ -1479,6 +1609,7 @@
     renderAppsHead();
     renderAppsTable();
     renderAppsFile();
+    renderConfPending();
     if (!apps.check) { clearTimeout(apps.timer); apps.timer = setTimeout(checkApps, 0); }
   }
 
@@ -1534,8 +1665,10 @@
     const C = apps.check;
     const f = apps.view.file || {};
     const diff = (C && C.diff) || [];
+    // Save only with a real change to the list: with no apps.toml yet the diff is the whole default list, which is
+    // not something the user changed.
     fill(node, saveBar({ path: f.path || "apps.toml", exists: f.exists, checking: !C, ok: C && C.ok, problems: C && C.problems,
-      same: !diff.length, diff, canSave: Boolean(C && C.ok && diff.length), edited: apps.edited,
+      same: !diff.length, diff, canSave: Boolean(C && C.ok && diff.length && appsDirty() && !waitingOnCard()), edited: apps.edited,
       saveLabel: "Save apps.toml", onSave: (b) => saveApps(b),
       notes: f.in_use ? null : el("p", { class: "faint", text: "No apps.toml yet: Save writes this list to it." }),
       onUndo: () => { apps.edited = false; apps.rows = null; apps.check = null; renderApps(); } }));
@@ -1546,10 +1679,9 @@
       const r = await api("apps/save", { apps: appsList(apps.rows) });
       if (r.pending) {
         // A newly allowed app, or a close without asking: she asks on her card first (WIRING.md §28).
-        toast("That lets her do more, so she asks on her card: hold Yes there. The Config file tab shows how it went.");
-        if (conf.view) conf.view.pending = r.pending;
-        confPoll();
-        button.disabled = false;
+        toast("That lets her do more, so she asks on her card: hold Yes there. The time left counts down above.");
+        await pendingFrom(r.pending, "apps.toml");
+        renderAppsFile();
         return;
       }
       toast(r.backup ? "Saved. The old one is kept as apps.toml.bak." : "Saved. She uses it at once.");
@@ -1590,7 +1722,29 @@
     poll: null,
     tools: null,            // GET tools
     server: null,           // the Tools page's server form (null: none open)
+    loadedAt: null,         // when the page last read the file (GET config, or a save's answer)
   };
+
+  // GET config's answer (or a save's): the file as read now, when it was read, the cards on screen, the change
+  // waiting on her card with its deadline.
+  function takeView(r) {
+    conf.view = r;
+    conf.loadedAt = Date.now() / 1000;
+    noteCards(r.cards);
+    stamp(r.pending);
+  }
+  function takePending(P) {
+    if (conf.view) conf.view.pending = stamp(P);
+  }
+  function waitingOnCard() { return Boolean(conf.view && conf.view.pending && conf.view.pending.state === "waiting"); }
+
+  // A save of input.toml or apps.toml that asks on her card (202): shown in that tab and in Config file, polled.
+  async function pendingFrom(P, file) {
+    delete setAside[file];
+    if (conf.view) takePending(P); else await refreshConfig(false);
+    renderConfPending();
+    confPoll();
+  }
 
   function confText() { return conf.draft !== null ? conf.draft : (conf.view ? conf.view.text : ""); }
   function confValues() { return conf.values || (conf.view ? conf.view.values : {}) || {}; }
@@ -1623,6 +1777,7 @@
     if (conf.edits.length) { confCheck(); return; }
     renderConfReview();
     renderToolsReview();
+    markConfChanges();
     if (conf.mode === "raw" && document.getElementById("conf-raw") === null) renderConfBody();
   }
 
@@ -1660,59 +1815,118 @@
     fill(node,
       el("div", { class: "actions" }, el("span", { class: "dim mono", text: V.path }),
         V.exists ? chip("in use", "good") : chip("no file yet: the draft starts from the commented template"),
-        chip(`loaded ${when(Date.now() / 1000)}`, null, `as loaded: ${V.base.tag.slice(0, 12)}…`),
+        conf.loadedAt ? since(conf.loadedAt, "read ", `This page read the file at ${when(conf.loadedAt)}`
+          + `${V.exists && V.base.mtime_ns ? `; the file last changed at ${when(V.base.mtime_ns / 1e9)}` : ""}.`) : null,
         actionButton("Reload from the file", () => refreshConfig(true), "ghost small")),
       V.error ? note("bad", el("b", { text: "Not shown: " }), V.error,
         el("p", { text: "Fix it in a text editor (strawberry config). Nothing of the file is shown until it parses, so no secret in it can leak here." })) : null,
       el("p", { class: "dim", text: "Secrets in the file (a server's env, a token in its arguments or address, a key named like one) show as <hidden N: kept as is> and are kept as they are. Type a whole new value over one to change it." }));
   }
-  function renderConfPending() {
-    const node = document.getElementById("conf-pending");
-    if (!node || !conf.view) return;
-    const P = conf.view.pending;
-    if (!P) { node.replaceChildren(); return; }
-    const reasons = el("ul", null, (P.lowering || []).map((f) => el("li", null, el("code", { text: f.key }), ` ${f.why}`)));
+  // The change waiting on her card, or the last one she asked about, in each tab that holds it: Config file (any of
+  // the three files), Tools (config.toml), Input (input.toml) and Apps (apps.toml). Waiting, it is the shared
+  // approvalBlock; once it ended, how it went, and "Put my edits back" when the edits were set aside.
+  const PENDING_SLOTS = [["conf-pending", ["config.toml", "input.toml", "apps.toml"]], ["tools-pending", ["config.toml"]],
+                         ["input-pending", ["input.toml"]], ["apps-pending", ["apps.toml"]]];
+  const ANSWERED_BY = { body: "on her card", ui: "on this page", voice: "aloud", typed: "typed", gesture: "by a gesture" };
+
+  function pendingPanel(files) {
+    const P = conf.view && conf.view.pending;
+    if (!P || !files.includes(P.file)) return null;
     if (P.state === "waiting") {
-      fill(node, panel("Waiting for your yes on her card", "this page cannot say yes to its own change",
-        el("div", { class: "approval" },
-          el("p", { class: "prompt", text: "Hold Yes on her card to save this change." }),
-          el("p", { class: "dim", text: typeof P.expires_in === "number" ? `About ${Math.ceil(P.expires_in)} s left when loaded. No answer is a no.` : "" }),
-          el("p", { class: "dim", text: "It loosens safety:" }), reasons,
-          el("div", { class: "actions" }, actionButton("No, leave it", (b) => {
-            b.disabled = true;
-            api("approval", { approval_id: P.approval_id, answer: "no" }).then(() => confPoll()).catch((e) => toast(e.message, true));
-          }, "danger")))));
-      return;
+      return panel("Waiting for your yes on her card", "this page cannot say yes to its own change", approvalBlock(asked(P, P)));
     }
-    const said = { saved: ["Saved after your yes.", "good"], left: ["Not saved: left as it was.", "warn"],
-                   changed: ["Not saved: the file changed while she waited.", "warn"], failed: ["Not saved.", "warn"] }[P.state] || [P.state, null];
-    fill(node, panel("The last change she asked about", null,
-      el("div", { class: "actions" }, chip(said[0], said[1]), P.detail ? el("span", { class: "dim", text: P.detail }) : null,
-        P.by ? el("span", { class: "faint", text: `answered by ${P.by}` }) : null,
+    const said = { saved: ["Saved after your yes", "good"], left: ["Not saved: left as it was", null],
+                   changed: ["Not saved: the file changed while she waited", "warn"], failed: ["Not saved", "warn"] }[P.state] || [P.state, null];
+    const kept = setAside[P.file];
+    return panel("The last change she asked about", P.file,
+      el("div", { class: "actions" }, chip(said[0], said[1]), P.detail ? el("span", { class: "dim", text: endedWhy(P) }) : null,
+        P.by ? el("span", { class: "faint", text: `answered ${ANSWERED_BY[P.by] || `by ${P.by}`}` }) : null,
         P.restart && P.restart.length && P.state === "saved" ? chip(`needs a restart: ${P.restart.map((s) => `[${s}]`).join(" ")}`, "warn") : null),
-      reasons));
+      P.prompt ? el("p", { class: "dim" }, "Her card said: ", el("q", { text: P.prompt })) : null,
+      loweringList(P.lowering),
+      kept ? el("div", { class: "actions" },
+        el("span", { class: "dim", text: `The form shows ${P.file} as it is; your edits are set aside.` }),
+        actionButton("Put my edits back", () => putBack(P.file), "small")) : null);
   }
 
+  // Why a change she asked about ended as it did, in words ("no" is a No someone gave).
+  function endedWhy(P) {
+    return P.detail === "no" ? "answered No" : P.detail || P.state;
+  }
+
+  function renderConfPending() {
+    for (const [id, files] of PENDING_SLOTS) {
+      const node = document.getElementById(id);
+      if (node) fill(node, pendingPanel(files));
+    }
+  }
+
+  // Edits set aside when a change she asked about was not saved (a No, no answer, the file changed meanwhile): the
+  // form shows the file again, so what it marks as set is the file's; "Put my edits back" returns them. One a file.
+  const setAside = {};
+
+  function setAsideEdits(file) {
+    if (file === "config.toml" && conf.draft !== null) setAside[file] = conf.draft;
+    else if (file === "input.toml" && state.inputEdited && state.inputForm) setAside[file] = JSON.parse(JSON.stringify(state.inputForm));
+    else if (file === "apps.toml" && apps.edited && apps.rows) setAside[file] = apps.rows.map((r) => Object.assign({}, r));
+  }
+
+  function putBack(file) {
+    const kept = setAside[file];
+    delete setAside[file];
+    if (!kept) return;
+    if (file === "config.toml") {
+      confReset();
+      conf.draft = kept;
+      if (state.section !== "config" && state.section !== "tools") show("config");
+      confCheck().then(() => { rerender("config"); rerender("tools"); });
+      renderConfPending();
+    } else if (file === "input.toml") {
+      state.inputForm = kept; state.inputEdited = true; state.inputCheck = null;
+      show("input");
+    } else {
+      apps.rows = kept; apps.edited = true; apps.check = null;
+      show("apps");
+    }
+  }
+
+  // A change she asked about has ended. Saved: the tab shows the file with it. Not saved: the tab's form shows the
+  // file as it is (its ✎ marks are the file's again), the edits set aside.
+  function settled(r) {
+    const P = r.pending;
+    const saved = P.state === "saved";
+    toast(saved ? "Saved after your yes on her card." : `Not saved (${endedWhy(P)}): the form shows the file as it is.`,
+      P.state === "failed" || P.state === "changed");
+    if (!saved) setAsideEdits(P.file);
+    if (P.file === "input.toml") {
+      state.inputEdited = false; state.inputForm = null; state.inputCheck = null;
+      refreshInput();
+    } else if (P.file === "apps.toml") {
+      apps.edited = false; apps.rows = null; apps.check = null;
+      refreshApps();
+    } else {
+      takeView(r);
+      confReset();
+      rerender("config");
+      if (state.section === "tools") refreshTools();
+    }
+    refreshNowSoon();
+  }
+
+  // While a change waits on her card, GET config once a second: the time left, the cards on screen, how it ended.
   function confPoll() {
     clearTimeout(conf.poll);
     conf.poll = setTimeout(async () => {
+      let waiting = Boolean(conf.view && conf.view.pending && conf.view.pending.state === "waiting");
       try {
         const r = await api("config");
         const was = conf.view && conf.view.pending;
-        if (conf.view) conf.view.pending = r.pending; else conf.view = r;
-        if (r.pending && r.pending.state !== "waiting" && was && was.state === "waiting") {
-          toast(r.pending.state === "saved" ? "Saved after your yes on her card." : `Not saved (${r.pending.detail || r.pending.state}).`,
-            r.pending.state !== "saved");
-          if (r.pending.state === "saved") {
-            if (r.pending.file === "input.toml") { if (state.section === "input") refreshInput(); }
-            else if (r.pending.file === "apps.toml") { apps.edited = false; if (state.section === "apps") refreshApps(); }
-            else { conf.view = r; confReset(); rerender("config"); if (state.section === "tools") refreshTools(); return; }
-          }
-        }
+        if (conf.view) { takePending(r.pending); noteCards(r.cards); } else takeView(r);
+        if (r.pending && r.pending.state !== "waiting" && was && was.state === "waiting") settled(r);
         renderConfPending();
-        renderToolsPending();
-        if (r.pending && r.pending.state === "waiting") confPoll();
-      } catch (e) { /* the next look */ }
+        waiting = Boolean(r.pending && r.pending.state === "waiting");
+      } catch (e) { /* looked again below while it waits */ }
+      if (waiting) confPoll();
     }, 1000);
   }
 
@@ -1743,27 +1957,67 @@
       fill(node, el("div", { class: "note bad", text: "The raw text does not parse, so the form cannot show it. Fix it in Raw TOML, or Undo my edits." }));
       return;
     }
+    // The fields show the draft; what is "set in the file" (✎, the counts) is the file's as read, and a field the
+    // draft changes says so on its own, until it is saved or undone.
     const values = confValues();
+    const file = conf.view.values || {};
+    const edited = conf.draft !== null;
     fill(node, conf.view.schema.map((section) => {
       const set = values[section.name] || {};
-      const count = Object.keys(set).length;
+      const inFile = file[section.name] || {};
+      const count = Object.keys(inFile).length;
+      const changed = edited ? section.fields.filter((f) => !f.elsewhere && differs(inFile, set, f.key)).length : 0;
       const details = el("details", { class: "conf-section", id: `conf-section-${section.name}`, open: conf.open.has(section.name) },
         el("summary", null, el("span", { class: "mono", text: `[${section.name}]` }), " ",
           section.live ? chip("applies now", "good", section.live) : chip("needs a restart", null, "read when she starts"),
-          count ? el("span", { class: "faint", text: ` ${count} set in the file` }) : null),
+          count ? el("span", { class: "faint", text: ` ${count} set in the file` }) : null,
+          el("span", { class: changed ? "unsaved" : "unsaved hidden", id: `conf-section-${section.name}-unsaved`,
+            text: ` ${changed} changed, not saved` })),
         section.doc ? el("p", { class: "dim", text: section.doc }) : null,
-        el("div", { class: "cards fields" }, section.fields.map((f) => confField(section.name, f, set))));
+        el("div", { class: "cards fields" }, section.fields.map((f) => confField(section.name, f, set, inFile, edited))));
       details.addEventListener("toggle", () => { if (details.open) conf.open.add(section.name); else conf.open.delete(section.name); });
       return details;
     }));
   }
 
-  function confField(section, f, set) {
+  // After a check, the "changed, not saved" marks follow the draft in place (drawing the form again would take the
+  // focus from the field being typed in).
+  function markConfChanges() {
+    if (!conf.view || conf.mode !== "form" || !document.getElementById("conf-body")) return;
+    const values = confValues();
+    const file = conf.view.values || {};
+    const edited = conf.draft !== null;
+    for (const section of conf.view.schema) {
+      const set = values[section.name] || {};
+      const inFile = file[section.name] || {};
+      let n = 0;
+      for (const f of section.fields) {
+        const changed = edited && !f.elsewhere && differs(inFile, set, f.key);
+        if (changed) n += 1;
+        const mark = document.getElementById(`conf-${section.name}-${f.key}-unsaved`);
+        if (mark) mark.classList.toggle("hidden", !changed);
+      }
+      const sum = document.getElementById(`conf-section-${section.name}-unsaved`);
+      if (sum) { sum.textContent = ` ${n} changed, not saved`; sum.classList.toggle("hidden", !n); }
+    }
+  }
+
+  function own(obj, key) { return Object.prototype.hasOwnProperty.call(obj, key); }
+  // Whether the draft's table says something else about `key` than the file's: set, unset, or another value.
+  function differs(inFile, draft, key) {
+    return own(inFile, key) !== own(draft, key) || (own(draft, key) && JSON.stringify(inFile[key]) !== JSON.stringify(draft[key]));
+  }
+
+  function confField(section, f, set, inFile, edited) {
     const key = `${section}.${f.key}`;
     const id = `conf-${section}-${f.key}`;
-    const has = Object.prototype.hasOwnProperty.call(set, f.key);
+    const has = own(set, f.key);                                  // in the draft: the field shows it
     const value = has ? set[f.key] : f.default;
-    const label = el("label", { class: "k", for: id }, el("span", { class: "mono", text: f.key }), has ? el("span", { class: "set", text: " ✎", title: "set in the file" }) : null,
+    const changed = edited && !f.elsewhere && differs(inFile, set, f.key);
+    const label = el("label", { class: "k", for: id }, el("span", { class: "mono", text: f.key }),
+      own(inFile, f.key) ? el("span", { class: "set", title: "set in the file" },
+        el("span", { "aria-hidden": "true", text: " ✎" }), el("span", { class: "sr-only", text: " (set in the file)" })) : null,
+      el("span", { class: changed ? "unsaved" : "unsaved hidden", id: `${id}-unsaved`, text: " changed, not saved" }),
       f.deprecated ? chip("deprecated", "warn") : null);
     const bad = el("span", { class: "s bad hidden" });
     const send = (v) => { bad.classList.add("hidden"); confEdit({ key, value: v }); };
@@ -1827,19 +2081,21 @@
     const edited = conf.draft !== null;
     const lowers = Boolean(C && edited && (C.lowering || []).length);
     const waiting = V.pending && V.pending.state === "waiting";
+    const noCard = lowers && cardsOnScreen === 0;      // she could not ask: the daemon refuses it too
     const notes = !C || !edited ? null : [
       C.stale ? note("bad", el("b", { text: "config.toml changed since this page loaded it. " }),
         "Saving would overwrite that change, so it is refused. Reload to see the file as it is now (your edits here are dropped).",
         el("div", { class: "actions" }, actionButton("Reload from the file", () => refreshConfig(true), "small"))) : null,
       lowers ? note("warn", el("b", { text: "This loosens safety, so she asks first: " }),
-        "after Save, hold Yes on her card. Neither this page nor a spoken yes can say yes to it.",
-        el("ul", null, C.lowering.map((f) => el("li", null, el("code", { text: f.key }), ` ${f.why}`)))) : null,
+        noCard ? "her card isn't on screen, so she cannot ask now. Start the crab, then save."
+          : "after Save, hold Yes on her card. Neither this page nor a spoken yes can say yes to it.",
+        loweringList(C.lowering)) : null,
       (C.live || []).length ? el("p", null, chip(`applies now: ${C.live.map((s) => `[${s}]`).join(" ")}`, "good")) : null,
       (C.restart || []).length ? el("p", null, chip(`needs a restart: ${C.restart.map((s) => `[${s}]`).join(" ")}`, "warn"),
         el("span", { class: "faint", text: " after saving, run strawberry restart (she never restarts herself)" })) : null];
     return saveBar({ path: V.path || "config.toml", exists: V.exists, checking: edited && !C, ok: !edited || !C || C.ok,
       same: !edited || !C || C.same, problems: C && C.problems, notes, diff: edited && C ? C.diff : [],
-      canSave: Boolean(edited && C && C.ok && !C.same && !C.stale && !waiting), edited,
+      canSave: Boolean(edited && C && C.ok && !C.same && !C.stale && !waiting && !noCard), edited,
       saveLabel: lowers ? "Save: ask on her card" : "Save config.toml", confirmLabel: lowers ? "Ask her now?" : "Save it now?",
       onSave: (b) => confSave(b), onUndo: () => { confReset(); renderConfig(); renderTools(); } });
   }
@@ -1853,17 +2109,18 @@
     try {
       const r = await api("config/save", { text: confText(), base: conf.view.base.tag });
       if (r.pending) {
-        conf.view.pending = r.pending;
-        toast("She asks on her card now: hold Yes there.");
+        takePending(r.pending);
+        delete setAside["config.toml"];
+        toast("She asks on her card now: hold Yes there. The time left counts down here.");
         renderConfPending();
         renderConfReview();
-        renderToolsPending();
+        renderToolsReview();
         confPoll();
         return;
       }
       if (r.same) { toast("Nothing to save: the same as the file."); return; }
       toast(`Saved.${r.backup ? " The old one is kept beside it." : ""}${(r.restart || []).length ? ` ${r.restart.map((s) => `[${s}]`).join(" ")} need(s) strawberry restart.` : ""}`);
-      conf.view = r;
+      takeView(r);
       confReset();
       renderConfig();
       if (state.section === "tools") refreshTools();
@@ -1877,12 +2134,13 @@
   async function refreshConfig(force) {
     try {
       const r = await api("config");
-      if (force || conf.draft === null) { conf.view = r; if (force) confReset(); }
-      else conf.view.pending = r.pending;
+      if (force || conf.draft === null || !conf.view) { takeView(r); if (force) confReset(); }
+      else { takePending(r.pending); noteCards(r.cards); }
     } catch (e) { if (!state.ended) toast(e.message, true); }
     if (conf.view && conf.view.pending && conf.view.pending.state === "waiting") confPoll();
     rerender("config");
     if (force) rerender("tools");
+    renderConfPending();
   }
 
   // --- the Tools page
@@ -1921,7 +2179,7 @@
         el("div", { class: "split" },
           el("div", { class: "split-main", id: "tools-form" }),
           el("div", { class: "split-side", id: "tools-review" }))));
-    renderToolsPending();
+    renderConfPending();
     renderToolsForm();
     renderToolsReview();
   }
@@ -1933,14 +2191,6 @@
     }, "ghost small");
     return el("div", { class: "login" }, chip(login.saved ? "signed in" : "needs a login", login.saved ? "good" : "warn"),
       " ", el("code", { text: login.command }), " ", copy);
-  }
-
-  function renderToolsPending() {
-    const node = document.getElementById("tools-pending");
-    if (!node) return;
-    const P = conf.view && conf.view.pending;
-    fill(node, P && P.state === "waiting" ? note("warn", el("b", { text: "Waiting for your yes on her card. " }),
-      "Hold Yes there; this page cannot. The Config file tab shows the details.") : null);
   }
 
   function serverForm(name, table) {
@@ -2061,7 +2311,7 @@
     try {
       const [tools, view] = await Promise.all([api("tools"), conf.view ? Promise.resolve(null) : api("config")]);
       conf.tools = tools;
-      if (view) conf.view = view;
+      if (view) takeView(view);
     } catch (e) { if (!state.ended) toast(e.message, true); }
     if (conf.server && document.getElementById("tools-form")) { renderToolsReview(); return; }
     rerender("tools");
@@ -2123,16 +2373,19 @@
     return { gestures: Object.assign({}, form.g, { map }), touch: Object.assign({}, form.t, { actions }) };
   }
 
+  // What a mapping row maps: a gesture (with the entity pointed at) or an entity's touch.
+  function mapKey(kind, r) {
+    return kind === "g" ? (r.target ? `${r.target}:${r.gesture}` : r.gesture) : `${r.entity}.${r.kind}`;
+  }
+
   function inputDuplicates(form) {
     const seen = new Set();
     const twice = [];
-    for (const r of form.gmap) {
-      const key = r.target ? `${r.target}:${r.gesture}` : r.gesture;
-      if (seen.has(key)) twice.push(key); else seen.add(key);
-    }
-    for (const r of form.tmap) {
-      const key = `${r.entity}.${r.kind}`;
-      if (seen.has(key)) twice.push(key); else seen.add(key);
+    for (const [kind, rows] of [["g", form.gmap], ["t", form.tmap]]) {
+      for (const r of rows) {
+        const key = mapKey(kind, r);
+        if (seen.has(key)) twice.push(key); else seen.add(key);
+      }
     }
     return twice;
   }
@@ -2174,6 +2427,7 @@
           el("label", { class: "check", for: "input-practice" }, practice,
             el("b", { text: "Practice mode" }),
             el("span", { class: "dim", text: "Gestures and touches are recognised and shown here, and do nothing. Not saved; off again when she restarts." })))),
+      el("div", { id: "input-pending" }),
       panel("Live", "drawn from the hand's numbers; the camera's picture never leaves the watcher",
         el("div", { class: "split" },
           el("div", { class: "split-main" }, el("div", { class: "hand-wrap" }, canvas), el("div", { id: "hand-legend", class: "hand-legend" })),
@@ -2204,6 +2458,7 @@
     renderCalibration();
     renderInputCheck();
     renderInputRecent();
+    renderConfPending();
     drawHand();
     if (!state.inputCheck) scheduleInputCheck(0);
   }
@@ -2302,17 +2557,19 @@
     const gActions = Object.keys(O.gesture_actions);
     const tActions = Object.keys(O.touch_actions);
     const tier = (map) => (a) => `${a} (${map[a]})`;
-    const gRows = F.gmap.map((r, i) => el("tr", { class: twice.has(r.target ? `${r.target}:${r.gesture}` : r.gesture) ? "dup" : null },
+    // A row that maps the same thing as another says so in words, not only in colour (markDuplicates keeps it true).
+    const twiceMark = () => el("span", { class: "dup-mark" }, chip("same as another row", "warn"));
+    const gRows = F.gmap.map((r, i) => el("tr", { class: twice.has(mapKey("g", r)) ? "dup" : null, data: { map: `g:${i}` } },
       el("td", null, el("input", { type: "text", list: "input-entities", value: r.target, placeholder: "anything",
         "aria-label": "When pointing at", class: "short",
-        on: { input: (ev) => { r.target = ev.target.value.trim(); edited(); markDuplicates(); } } })),
+        on: { input: (ev) => { r.target = ev.target.value.trim(); edited(); markDuplicates(); } } }), twiceMark()),
       td(selectOf(O.gestures, r.gesture, (v) => v.replace(/_/g, " "), (v) => { r.gesture = v; edited(); markDuplicates(); }, "Gesture")),
       td(selectOf(gActions, r.action, tier(O.gesture_actions), (v) => { r.action = v; edited(); }, "Action")),
       td(removeButton(() => { F.gmap.splice(i, 1); edited(); renderInputMaps(); }))));
-    const tRows = F.tmap.map((r, i) => el("tr", { class: twice.has(`${r.entity}.${r.kind}`) ? "dup" : null },
+    const tRows = F.tmap.map((r, i) => el("tr", { class: twice.has(mapKey("t", r)) ? "dup" : null, data: { map: `t:${i}` } },
       el("td", null, el("input", { type: "text", list: "input-entities", value: r.entity, placeholder: "music",
         "aria-label": "Entity", class: "short",
-        on: { input: (ev) => { r.entity = ev.target.value.trim(); edited(); markDuplicates(); } } })),
+        on: { input: (ev) => { r.entity = ev.target.value.trim(); edited(); markDuplicates(); } } }), twiceMark()),
       td(selectOf(O.touch_kinds, r.kind, null, (v) => { r.kind = v; edited(); markDuplicates(); }, "Touch")),
       td(selectOf(tActions, r.action, tier(O.touch_actions), (v) => { r.action = v; edited(); }, "Action")),
       td(removeButton(() => { F.tmap.splice(i, 1); edited(); renderInputMaps(); }))));
@@ -2347,6 +2604,12 @@
     if (!node || !state.inputForm) return;
     const twice = inputDuplicates(state.inputForm);
     node.classList.toggle("hidden", !twice.length);
+    const both = new Set(twice);
+    for (const tr of document.querySelectorAll("#input-maps tr[data-map]")) {
+      const [kind, i] = tr.dataset.map.split(":");
+      const r = (kind === "g" ? state.inputForm.gmap : state.inputForm.tmap)[Number(i)];
+      tr.classList.toggle("dup", Boolean(r && both.has(mapKey(kind, r))));
+    }
     renderInputSave();
   }
 
@@ -2491,7 +2754,7 @@
     const C = state.calib;
     const saved = state.inputForm.g.calibration || {};
     const using = Object.keys(saved).length ? "your calibration" : "the defaults";
-    const canvas = el("canvas", { id: "calib-canvas", class: "calib", width: 480, height: 150,
+    const canvas = el("canvas", { id: "calib-canvas", class: "calib", width: 480, height: 150, "aria-describedby": "calib-text",
       "aria-label": "Each finger's curl and the thumb-index gap now, with where they count as extended, curled or pinched" });
     let head;
     if (C && C.running) {
@@ -2525,7 +2788,7 @@
           Object.keys(saved).length ? actionButton("Reset to defaults", () => { state.inputForm.g.calibration = {}; edited(); renderCalibration(); }, "small ghost") : null,
           el("span", { class: "faint", text: "Saved with input.toml as [gestures.calibration]." })));
     }
-    fill(node, head, el("div", { class: "hand-wrap" }, canvas));
+    fill(node, head, el("div", { class: "hand-wrap" }, canvas), el("p", { id: "calib-text", class: "calib-text" }));
     drawCalibration();
   }
 
@@ -2578,6 +2841,15 @@
     });
     ctx.fillStyle = cssVar("--ink-faint");
     ctx.fillText(H ? "curl: green extended, berry curled, amber neither; gap: green pinched" : "No hand: raise one toward the camera", left, height - 6);
+    // The same reading in words, for a screen reader and for anyone who cannot tell the bars' colours apart.
+    const words = document.getElementById("calib-text");
+    if (words) {
+      words.textContent = rows.some(([, value]) => typeof value === "number")
+        ? `Now: ${rows.map(([name, value, mark]) => (typeof value !== "number" ? `${name} not seen`
+          : `${name} ${num(value)} ${name === "gap" ? (value <= mark.pinch ? "pinched" : "apart")
+            : value <= mark.ext ? "extended" : value >= mark.curl ? "curled" : "in between"}`)).join(" · ")}`
+        : "Now: no hand. Raise one toward the camera.";
+    }
   }
 
   function renderInputCheck() {
@@ -2594,13 +2866,18 @@
     renderInputSave();
   }
 
-  // Save is lit only when the draft checks out, changes the file and maps nothing twice.
+  // Save is lit only when the draft checks out, changes the file, maps nothing twice and is a change the user made
+  // (with no input.toml yet the diff is the whole file even before an edit).
+  function inputDirty() {
+    return Boolean(state.inputEdited && state.inputForm && state.input
+      && JSON.stringify(inputSettings(state.inputForm)) !== JSON.stringify(inputSettings(inputForm(state.input))));
+  }
   function renderInputSave() {
     const save = document.getElementById("input-save");
     if (!save) return;
     const C = state.inputCheck;
     const twice = state.inputForm ? inputDuplicates(state.inputForm) : [];
-    save.disabled = !(C && C.ok && !twice.length && (C.diff || []).length);
+    save.disabled = !(C && C.ok && !twice.length && (C.diff || []).length && inputDirty() && !waitingOnCard());
   }
   async function saveInput(button) {
     button.disabled = true;
@@ -2608,10 +2885,9 @@
       const r = await api("input/save", { settings: inputSettings(state.inputForm) });
       if (r.pending) {
         // A thumb that answers her card, or a camera always watching: she asks on her card first (WIRING.md §28).
-        toast("That loosens safety, so she asks on her card: hold Yes there. The Config file tab shows how it went.");
-        if (conf.view) conf.view.pending = r.pending;
-        confPoll();
-        button.disabled = false;
+        toast("That loosens safety, so she asks on her card: hold Yes there. The time left counts down above.");
+        await pendingFrom(r.pending, "input.toml");
+        renderInputSave();
         return;
       }
       toast(r.backup ? "Saved. The old one is kept as input.toml.bak." : "Saved. She uses it at once.");
@@ -3030,10 +3306,16 @@
       state.runEvents = r.events;
       state.runs = r.runs.slice(0, MAX_RUNS);
       state.approvals = r.approvals || { open: null, history: [] };
+      stamp(state.approvals.open);
       state.timeline = r.timeline || [];
       state.messages = r.messages || null;
     } catch (e) { /* the stream will say */ }
     rerender("runs");
+    // A settings change waiting on her card: its details (what it loosens, its file) are GET config's.
+    const open = state.approvals.open;
+    if (open && asked(open).cardOnly && !(conf.view && conf.view.pending && conf.view.pending.approval_id === open.approval_id)) {
+      refreshConfig(false).then(() => rerender("runs"));
+    }
   }
 
   async function refreshData() {
@@ -3048,7 +3330,7 @@
   }
 
   async function refreshSystem() {
-    try { state.system = await api("system"); } catch (e) { /* shown as loading */ }
+    try { state.system = await api("system"); noteCards(state.system.cards); } catch (e) { /* shown as loading */ }
     rerender("health");
   }
 
@@ -3058,8 +3340,11 @@
   const REFRESH = { now: refreshNow, persona: refreshPersona, profile: refreshProfile,
                     runs: () => Promise.all([refreshRuns(), refreshRoutes()]),
                     learning: () => Promise.all([refreshLearning(), refreshData(), refreshSettings()]),
-                    privacy: refreshSettings, config: () => refreshConfig(false), tools: refreshTools, input: refreshInput,
-                    apps: refreshApps, health: () => Promise.all([refreshSystem(), refreshNow()]) };
+                    privacy: refreshSettings, config: () => refreshConfig(false), tools: refreshTools,
+                    // Input and Apps show a change of theirs waiting on her card: GET config has it.
+                    input: () => Promise.all([refreshInput(), refreshConfig(false)]),
+                    apps: () => Promise.all([refreshApps(), refreshConfig(false)]),
+                    health: () => Promise.all([refreshSystem(), refreshNow()]) };
 
   // A place in the page as the address says it: #section, or #section/sub (a view, or the id of a part to scroll
   // to). The old tabs' addresses open where their content went.
@@ -3077,7 +3362,7 @@
   function show(section, sub) {
     if (!SECTIONS.includes(section)) section = "now";
     if (section === "runs") state.runsView = sub === "router" ? "router" : "runs";
-    const anchor = section === "runs" ? null : sub;
+    const anchor = section === "runs" && sub === "router" ? null : sub;
     state.section = section;
     for (const name of SECTIONS) $(`#${name}`).classList.toggle("hidden", name !== section);
     for (const b of document.querySelectorAll("#nav button")) {
@@ -3196,6 +3481,7 @@
       else if (state.section === "input") startInputLive();
     });
     window.addEventListener("resize", () => { if (state.section === "input") requestDraw(); });
+    setInterval(tickTimes, 1000);                              // every time left and "read … ago" on the page
     setInterval(() => {
       if (state.ended || document.hidden) return;
       refreshNow();                                          // the header and the Now view
@@ -3210,7 +3496,7 @@
   // reasons (a source and two sizes each, never a sentence). Read-only but for "Reset to her baseline". It
   // registers its RENDER and REFRESH before start() runs.
 
-  const mood = { view: null, timer: null };
+  const mood = { view: null, timer: null, at: null, readingsOpen: false };   // at: the reading the crosshair is on
   const MOOD_ODD = { "reset": "reset to her baseline (the Brain UI)", "baseline.time": "the hour moved where her energy rests",
                      "baseline.idle": "nothing happening moved where her energy rests" };
 
@@ -3273,8 +3559,9 @@
     const t0 = points[0][0], t1 = points[points.length - 1][0];
     const x = (t) => L + ((t - t0) / Math.max(t1 - t0, 1)) * (W - L - R);
     const y = (v) => TOP + ((1 - v) / 2) * (H - TOP - B);
-    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img",
-                               "aria-label": "Her energy and feeling over the last hours, from -1 to 1" });
+    const chart = svg("svg", { class: "chart", id: "mood-chart", viewBox: `0 0 ${W} ${H}`, role: "img", tabindex: "0",
+                               "aria-label": "Her energy and feeling over the last hours, from -1 to 1. The arrow keys "
+                                 + "move the reading; the readings are also in a table below the graph." });
     for (const v of [1, 0.5, 0, -0.5, -1]) {
       chart.append(svg("line", { class: v === 0 ? "axis" : "gridline", x1: L, x2: W - R, y1: y(v), y2: y(v) }),
         svg("text", { class: "label", x: L - 8, y: y(v) + 4, "text-anchor": "end", text: v > 0 ? `+${v}` : `${v}` }));
@@ -3297,29 +3584,67 @@
     const dotF = svg("circle", { class: "mood-dot-feeling", r: 4, cx: 0, cy: 0, visibility: "hidden" });
     const hit = svg("rect", { class: "mood-hit", x: L, y: TOP, width: W - L - R, height: H - TOP - B });
     chart.append(cross, dotE, dotF, hit);
-    const readout = el("div", { class: "mood-readout", text: "Point at the graph for a reading." });
-    const at = (event) => {
-      const box = chart.getBoundingClientRect();
-      const px = ((event.clientX - box.left) / box.width) * W;
-      let best = points[0];
-      for (const p of points) if (Math.abs(x(p[0]) - px) < Math.abs(x(best[0]) - px)) best = p;
+    const idle = "Point at the graph, or focus it and use the arrow keys, for a reading.";
+    const readout = el("div", { class: "mood-readout", text: idle });
+    const reading = (p) => `${when(p[0])}: energy ${signed(p[1])} (${moodWord(p[1], "calm", "even", "lively")}), `
+      + `feeling ${signed(p[2])} (${moodWord(p[2], "grumpy", "even", "pleased")})`;
+    // The crosshair at one reading, by the pointer or the keys (←/→ a reading, Page Up/Down ten, Home/End the ends).
+    // The reading kept is its time, so a refresh that adds a point keeps the crosshair where it was.
+    let index = null;
+    const showAt = (i) => {
+      index = Math.max(0, Math.min(points.length - 1, i));
+      const best = points[index];
+      mood.at = best[0];
       for (const node of [cross, dotE, dotF]) node.setAttribute("visibility", "visible");
       cross.setAttribute("x1", x(best[0])); cross.setAttribute("x2", x(best[0]));
       dotE.setAttribute("cx", x(best[0])); dotE.setAttribute("cy", y(best[1]));
       dotF.setAttribute("cx", x(best[0])); dotF.setAttribute("cy", y(best[2]));
-      readout.textContent = `${when(best[0])}: energy ${signed(best[1])} (${moodWord(best[1], "calm", "even", "lively")}), ` +
-        `feeling ${signed(best[2])} (${moodWord(best[2], "grumpy", "even", "pleased")})`;
+      readout.textContent = reading(best);
     };
-    hit.addEventListener("pointermove", at);
-    hit.addEventListener("pointerleave", () => {
+    const hide = () => {
       for (const node of [cross, dotE, dotF]) node.setAttribute("visibility", "hidden");
-      readout.textContent = "Point at the graph for a reading.";
+      readout.textContent = idle;
+    };
+    const kept = () => {
+      if (mood.at === null) return points.length - 1;
+      let best = 0;
+      points.forEach((p, i) => { if (Math.abs(p[0] - mood.at) < Math.abs(points[best][0] - mood.at)) best = i; });
+      return best;
+    };
+    hit.addEventListener("pointermove", (event) => {
+      const box = chart.getBoundingClientRect();
+      const px = ((event.clientX - box.left) / box.width) * W;
+      let best = 0;
+      points.forEach((p, i) => { if (Math.abs(x(p[0]) - px) < Math.abs(x(points[best][0]) - px)) best = i; });
+      showAt(best);
     });
+    hit.addEventListener("pointerleave", () => { if (document.activeElement !== chart) hide(); });
+    // Spoken while the chart has the focus (a live region that follows the pointer would talk all the time).
+    chart.addEventListener("focus", () => { readout.setAttribute("aria-live", "polite"); showAt(index ?? kept()); });
+    chart.addEventListener("blur", () => { readout.removeAttribute("aria-live"); hide(); });
+    chart.addEventListener("keydown", (event) => {
+      const step = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -1, ArrowUp: 1, PageUp: -10, PageDown: 10 }[event.key];
+      if (step) showAt((index ?? kept()) + step);
+      else if (event.key === "Home") showAt(0);
+      else if (event.key === "End") showAt(points.length - 1);
+      else return;
+      event.preventDefault();
+    });
+    // The text alternative: the readings as a table, newest first, at most about sixty rows.
+    const every = Math.max(1, Math.ceil(points.length / 60));
+    const rows = points.filter((p, i) => i % every === 0 || i === points.length - 1).reverse();
+    const readings = el("details", { class: "readings", open: mood.readingsOpen },
+      el("summary", { text: `The readings as a table (${every === 1 ? "each one" : `one in ${every}`}, newest first)` }),
+      table(["When", { label: "Energy", num: true }, { label: "Feeling", num: true }], rows.map((p) => el("tr", null,
+        timeCell(p[0]), td(`${signed(p[1])} ${moodWord(p[1], "calm", "even", "lively")}`, "num"),
+        td(`${signed(p[2])} ${moodWord(p[2], "grumpy", "even", "pleased")}`, "num")))));
+    readings.addEventListener("toggle", () => { mood.readingsOpen = readings.open; });
     add(wrap, [chart, readout,
       el("div", { class: "legend" },
         el("span", null, el("i", { class: "mood-energy" }), "Energy: calm (-1) to lively (+1)"),
         el("span", null, el("i", { class: "mood-feeling" }), "Feeling: grumpy (-1) to pleased (+1)"),
-        el("span", null, el("i", { class: "dash" }), "where her energy rests now"))]);
+        el("span", null, el("i", { class: "dash" }), "where her energy rests now")),
+      readings]);
     return wrap;
   }
 

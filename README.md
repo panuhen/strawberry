@@ -450,8 +450,10 @@ a privacy setting is looser than its default.
   and which sections apply at once and which need `strawberry restart`. A change that loosens
   safety (a new or changed tool server, a lower approval tier, message bodies read more, sentences
   kept in a log, the daemon or the models reached from another machine, and the like) is saved only
-  after you hold **Yes** on her card (not a spoken yes, and not the page), and only while she asks
-  nothing else. Turning the camera on
+  after you hold **Yes** on her card (not a spoken yes, and not the page), only while she asks
+  nothing else, and only while her card is on a screen (start the crab first). The time left counts
+  down on the page; if no yes comes, the form shows the file as it is and **Put my edits back**
+  returns your edits. Turning the camera on
   stays the camera switch's. Tokens and keys in the file show as `<hidden N: kept as is>` and stay as
   they are. If the file changed since the page loaded it (another editor, the tray), the save is
   refused and the page offers to reload. Every save keeps the old file beside it

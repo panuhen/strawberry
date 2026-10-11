@@ -558,7 +558,7 @@ The reflex labels of R: `kind` request (question for `now_playing`, as the data 
 
 **When it trains** (`IdleTrainer`, in the daemon). With `idle_train` on (the default) and outcome logging on: once nobody has spoken for `idle_minutes` (20) and at least `min_new_labels` (10) labelled sentences are new since the last run, at most once in 15 minutes. "Spoken" is a sentence being handled (`Daemon.voice_handling`, `voice_at`) or the listener recording or transcribing. The run never holds up a sentence: the embedding goes through the gate's own embedder (a worker thread, as a route's does) 16 sentences a call, and between two calls it stops as soon as the user speaks (`gatecmd.EmbedInterrupted`; what was embedded stays in the cache); the fit and the scoring run in a child process (`python -m strawberry_crab.learnfit`, the job and its sentences through a pipe, never a file) at nice 19 (below normal on Windows) with two BLAS threads. Measured on a throwaway daemon with the real model: a run with the vectors cached took 30 s; routes during the child's fit took 22–26 ms against 21 ms idle. A first run embeds ~2500 sentences (the data set, the held-out set, the examples), about a minute. `strawberry learning train` does the same in the foreground with no idle check.
 
-**Reporting.** `strawberry learning report` (and `Learning.report`): "learned 7 new examples, 5 rejected, held-out 94.9% → 94.9%", the signals, the candidates built, accepted and rejected, rollbacks, and the head in use then and now. With `weekly_line = true` she says one line a week in her voice ("Learned three new things this week. I've got better at pausing the music."), written by code from the report: only when something was learned, never in quiet hours (`[speech] quiet_hours`), with a widget connected and two minutes of quiet; the first week starts when it is turned on. `/health.learning` adds, to §8c's counts: `head` (the version in use), `candidate` (version, passed, held-out before and after), `examples`, `new`, `last_train`, `rollback` (where a rollback would go, or null), `auto_switch`, `versions` and `trainer` (`phase`, `waiting_for`, runs, interruptions, errors); counts and versions only, re-read only when a file changed. The tray shows **Router: roll back to previous** while `rollback` is set (§14).
+**Reporting.** `strawberry learning report` (and `Learning.report`): "learned 7 new examples, 5 rejected, held-out 94.9% → 94.9%", the signals, the candidates built, accepted and rejected, rollbacks, and the head in use then and now. With `weekly_line = true` she says one line a week in her voice ("Learned three new things this week. I've got better at pausing the music."), written by code from the report: only when something was learned, never in quiet hours (`[speech] quiet_hours`), with a widget connected and two minutes of quiet; the first week starts when it is turned on. `/health.learning` adds, to §8c's counts: `head` (the version in use), `candidate` (version, passed, held-out before and after), `examples`, `new`, `last_train`, `rollback` (where a rollback would go, or null), `auto_switch`, `versions` and `trainer` (`phase`, `waiting_for`, `blocked`: why **Train now** would be refused now, runs, interruptions, errors); counts and versions only, re-read only when a file changed. The tray shows **Router: roll back to previous** while `rollback` is set (§14).
 
 **Privacy.** Sentences live in two files only, both 0600 in the user's dirs: `outcomes.jsonl` (§8c) and `learned.json`. Everything else names a sentence by its store key (a hash). What is derived from them is the user's alone too: the vector cache (`<cache>/gate/`, embeddings keyed by a hash of the text), the heads, their manifests and the `current` pointer are written 0600 (`paths.open_private`) in directories made 0700 (`paths.private_dir`: `gate/`, `gate/heads/`, the cache's `gate/`). Damaged files never switch anything off: a head that does not load (an empty file, a broken zip, a meta of another shape) is a `HeadError` and the gate falls back to the shipped head; a `current` pointer naming anything but a `head-*.npz` in the heads dir is ignored; a broken vector cache is made again; an outcome line or store entry of another shape is skipped (and a sentence over 500 characters is never an example); version names are checked (`[A-Za-z0-9._-]`, no `..`) before any path is built. The locks (`labels.file_lock`) hold a token (pid and a random part); one whose holder is gone is taken over by renaming it aside first, a live holder keeps its lock however long it runs, and on the way out a process removes the lock only while it still holds its own token. The child has 30 minutes and is killed after that. `/health.learning.trainer.last_error`, the child's reported error and the tick's log line carry an exception's type only, never its message, and the child's stderr is never read back. The log says counts, signals, versions and scores; `tests/test_learning.py` runs a canary sentence through extraction, a real training run, accept, rollback, the report, the status and `/health` with every logger at DEBUG and fails if it is in any record, in `learning.json` or in a manifest. `strawberry learning forget` first marks the outcome records written so far as ignored and drops the candidate waiting, then (holding the training lock when it comes within 5 s) deletes the store and the vector caches; `--all` also deletes the heads the loop made (the shipped head is in use again). A run that started before the forget is discarded when it ends, head file and all, so nothing trained on forgotten sentences is ever offered or switched to, `auto_switch` or not. `strawberry outcomes --clear` is separate.
 
@@ -953,7 +953,8 @@ page title too), her state (idle, listening, thinking, speaking, dancing: `Daemo
 word or two (as `mood.words` puts it), her card ("card on screen" while a connected body accepted `approvals` and
 `approval`, `brainui.card_count`; else "no widget: approvals can't be answered", or "no card: …" when a body that
 cannot show the card is connected), one "needs you" spot (the most urgent of: an open approval, which goes to the
-Config file tab when it is a settings change waiting on her card and to Runs otherwise; reminders due within the
+tab of the file a settings change waiting on her card is for (Config file, Input or Apps: `approval.file`) and to
+Runs otherwise, and says "no card on screen" while no card is; reminders due within the
 hour; a persona.md, input.toml or apps.toml that does not check out; a candidate head waiting; with how many more
 there are, a click goes where it is answered), a privacy chip only while a privacy setting is looser than its default
 (`[learning] log_outcomes`, `[daemon] log_sentences`, `[notifications] body` or a `body_apps` mode other than off;
@@ -992,7 +993,28 @@ added later read as one tool:
   *tier* (`tierChip`, read/playback/change information, sends/destructive warn).
 - Two time formats, both from `when(ts, recent)`: `YYYY-MM-DD HH:MM`, or for recent activity "40 s ago",
   "in 25 min" within a day (`timeCell` puts the absolute time in its title). Chart axes keep short labels.
-- `rerender` leaves a tab alone while a button there is armed or a field there has the focus.
+- `rerender` leaves a tab alone while a button there is armed or a field there has the focus, and gives the focus
+  back to the button, box or summary that had it (`focusKey`, `refocus`), so a refresh never drops the keyboard.
+- *One waiting yes* (since the card-approval stage, 2026-10-11): the open approval (GET runs, GET now) or a settings
+  change waiting on her card (GET config's `pending`, which adds what it loosens and its file) becomes one model
+  (`asked`), drawn by `approvalLine` (the header's spot, Now) and `approvalBlock` (Runs' *Waiting for a yes*, and
+  the pending slot of the tab that holds a settings change: Config file for any of the three files, Tools for
+  config.toml, Input for input.toml, Apps for apps.toml): her card's words, the tier, what it is, the time left, a
+  hold or not, what it loosens, **Yes** only where the page may say it (`yes_by`), **No**, and the approval and run
+  ids folded in a *details*. With no card on screen (`cardsOnScreen`, from whichever of GET now, config and system
+  answered last; a change makes the header look again) it says so: "Her card isn't on screen: start the crab, or
+  press No. This change will lapse." for a change only her card takes, "answer here" for one the page may answer.
+- *Live times*: a time left is a deadline taken from `expires_in` when the answer arrived (`stamp`), and one ticker
+  (`tickTimes`, once a second) redraws every `[data-deadline]` ("42 s left", role `timer`) and every `[data-since]`
+  (the Config file tab's "read 2 min ago", from when the page read the file) without drawing the tab again.
+- *Announced*: `#announce`, a polite live region, says when a `confirmButton` is armed ("Delete it? Press again
+  within 4 seconds to confirm.") and when it lapses, and when a `typedConfirm`'s button turns on or off (its box
+  and button are described by a hidden line saying what turns it on).
+- *Contrast and focus*: the colour tokens, not their uses, carry the contrast: `--ink-faint` and `--ink-dim`, the
+  light theme's `--good` and `--warn` reach 4.5:1 on the ground, a panel and the glass in a panel in both themes
+  (`tests/test_brainui_her.py` computes it from style.css), `::placeholder` takes `--ink-faint`, and the primary
+  button fills with `--berry-fill` (darker than the brand's `--berry` in the dark theme). One focus ring for every
+  focusable element (`:where(button, select, input, textarea, summary, a, [tabindex]):focus-visible`).
 
 The parts by tab:
 
@@ -1049,14 +1071,16 @@ The parts by tab:
   - *Mappings*: a gesture table (when pointing at an entity, or anything; the gesture; the action) and a touch
     table (entity, touch kind, action). The dropdowns offer only `gestures.ACTIONS` and
     `bodylink.TOUCH_ACTIONS` (each with its tier: read or playback); the entity fields suggest the ids the
-    bodies declared, and the ones already mapped. Two rows for the same key are marked and block Save.
+    bodies declared, and the ones already mapped. Two rows for the same key are marked (a "same as another row"
+    chip as well as the colour, kept true as they are edited) and block Save.
   - *Tuning*: `hold_ms`, `zone`, `min_size`, `arming`, `armed_s`, `approvals`, `require_facing`, `camera`,
     `watch`, `idle_fps`, `fps`, `hand_hz`, `face_fps`, `shh_minutes`; `[touch] target_s`, `cooldown_s`. The zone
     and the smallest hand redraw as they change.
   - *Calibrate* (§26): five steps of three seconds (a relaxed hand, an open hand, a fist, pointing up, a pinch)
     recorded from the `hand` messages' `curl` and `gap` in practice mode, live bars with the thresholds marked,
     the result against what is in use, **Use these** (into the form's `calibration`, saved with input.toml) and
-    **Reset to defaults** (an empty table).
+    **Reset to defaults** (an empty table). Under the bars the same reading in words ("index 0.82 curled · gap 0.31
+    apart"), which the canvas is described by.
   - *input.toml*: the draft checked on the server (`POST /ui/api/input/check`, 0.4 s after an edit:
     `inputs.from_view` renders it as the file's text and parses that with the loader's own functions,
     `config._apply`, `_validate_touch`, `_validate_gestures`) with the problems and the diff against the file;
@@ -1072,7 +1096,9 @@ The parts by tab:
     start): a gesture's `done` and a mapped touch are shown (to the page, to the bodies) and do nothing: no
     reflex, no approval answered, no arming; the recent row says what it would have done.
 - *Mood* (`moodui.py`, §29): her two dials now, where they rest, a graph of the last hours and the reasons (each
-  nudge's source and size, never a sentence), with **Reset to her baseline**.
+  nudge's source and size, never a sentence), with **Reset to her baseline**. The graph takes the focus and its
+  crosshair follows the arrow keys (Page Up/Down ten readings, Home/End the ends; the reading is spoken while it has
+  the focus), and *The readings as a table* below it lists them, newest first, at most about sixty rows.
 - *History* (`historyui.py`, §30): her history by day, a day's rows on opening it, the search she uses, forget a
   row, a day or everything, the user's own digest, the reminders, and the retention with a link to `[history]` in
   the Config file tab.
@@ -1086,13 +1112,13 @@ The parts by tab:
 
 **What it shows**, in the original sections (as they are now):
 
-1. *Router learning*: the head in use, the candidate, the labelled examples, the last run and the trainer, with **Train now** (`IdleTrainer.train_now`: the idle run's own path, the gate's embedder, stopped when the user speaks, the child process, without waiting for quiet) and **Roll back**. The candidate against the head it was compared with: fields, strict sentences, Finnish fields, privacy readings, wrong reflexes and AUROC on the held-out set, the per-field scores, how many sentences it learned and how many are new to it, with **Accept** and **Reject**. The learned examples with their labels, avoids, conflicts, signals and review state, each with **Approve** and **Reject** (`Learning.review`; reject deletes the sentence for good). The outcome log's last 60 records and its counts per signal. Every head with its status, held-out score, the score of the head it beat and **Use**, and the history of switches. The week's report. *Evaluation* (`GET /ui/api/data`): see 3. The `[learning]` settings in effect with
+1. *Router learning*: the head in use, the candidate, the labelled examples, the last run and the trainer, with **Train now** (`IdleTrainer.train_now`: the idle run's own path, the gate's embedder, stopped when the user speaks, the child process, without waiting for quiet; off, with the trainer's reason beside it, while `trainer.blocked` says it would be refused: a run going, the gate not ready) and **Roll back**. The candidate against the head it was compared with: fields, strict sentences, Finnish fields, privacy readings, wrong reflexes and AUROC on the held-out set, the per-field scores, how many sentences it learned and how many are new to it, with **Accept** and **Reject**. The learned examples with their labels, avoids, conflicts, signals and review state, each with **Approve** and **Reject** (`Learning.review`; reject deletes the sentence for good). The outcome log's last 60 records and its counts per signal. Every head with its status, held-out score, the score of the head it beat and **Use**, and the history of switches. The week's report. *Evaluation* (`GET /ui/api/data`): see 3. The `[learning]` settings in effect with
    **Change…**, and **Forget what she learned** (`Learning.forget`, optionally with every head) after the word
    `forget` is typed.
 2. *Runs, Router view*: each sentence as it is handled: kind and topic with confidence, the decision, the tool and its confidence, what handled it (the reflex, the thinker and its tool calls, no_catalogue, chat), the gate's ms and the whole sentence's ms. `routefeed.py` keeps the last 100 in memory (`Daemon.feed`, filled in `handle_voice` beside the outcome log) and the page gets them over a stream.
 3. *Router learning, Evaluation*: the training and held-out set sizes, the learned examples, what review and the privacy check removed, what the last run trained on and left out, and the held-out score of every head the loop built, as an SVG chart drawn by the page (no library) with the shipped head as a line.
 4. *Privacy*: above.
-5. *Runs* (§18): each run, newest first, with its steps as a timeline (routing and its path, thinking and the model, each tool started and completed with its duration and code, speaking, the end and why), the tools by name, the outcome and the duration, and **Stop** on a run that is going on (the widget's ✕ by another way: `RunBook.cancel(…, "stopped")`). The stream's `run` events fill it as they happen (a `token_rate` shows beside the run's state, not as a step); `GET /ui/api/runs` gives the last `[runs] keep`. Names and timings only: what the page gets is what `runs.emit` let through. Above it, while she waits for a yes (§19), **Waiting for a yes**: the card's line, the tier, the tool, the time left when loaded, and **Yes** and **No** (the fallback for her card and her question; no Yes for a settings change the page itself asked for, §28); below it, **Approvals**: each one asked about, with its id, run, tool, tier, outcome, who answered and how long it waited, never the call's arguments.
+5. *Runs* (§18): each run, newest first, with its steps as a timeline (routing and its path, thinking and the model, each tool started and completed with its duration and code, speaking, the end and why), the tools by name, the outcome and the duration, and **Stop** on a run that is going on (the widget's ✕ by another way: `RunBook.cancel(…, "stopped")`). The stream's `run` events fill it as they happen (a `token_rate` shows beside the run's state, not as a step); `GET /ui/api/runs` gives the last `[runs] keep`. Names and timings only: what the page gets is what `runs.emit` let through. Above it, while she waits for a yes (§19), **Waiting for a yes** (`approvalBlock`, as above): the card's line, the tier, the tool, the time left counting down, whether her card is on screen, and **Yes** and **No** (the fallback for her card and her question; no Yes for a settings change the page itself asked for, §28), the ids folded away; below it, **Approvals**: each one asked about, with its id, run, tool, tier, outcome, who answered and how long it waited, never the call's arguments.
 6. *Health*: the version and uptime, her state and her card (`GET /ui/api/system` carries `cards`, and `head`, the learning loop's head in use, so it shows with the gate off), where the gate embeds (ONNX or the Ollama fallback, and why), the scorer and the head in use with its thresholds, the files she reads (persona.md, input.toml, apps.toml: checks out or the problem, from `GET now`), what is switched off, the reaction model, the thinker, speech, voice, the MCP servers and the trainer. `/health` has no VRAM or CPU figures, so neither does the page.
 
 **Routes.**
@@ -1104,7 +1130,7 @@ The parts by tab:
 | `GET /ui` | the page, with the session's CSRF token in `<meta name="csrf">` | the browser |
 | `GET /ui/app.js`, `style.css`, `icon.svg` | the page's files (no data in them; no session needed, so the sign-in page is styled) | the browser |
 | `GET /ui/api/learning`, `routes`, `runs`, `data`, `settings`, `system` | JSON for each section | the page |
-| `GET /ui/api/now` | the header and the Now view: `state`, `mood` (`enabled`, `energy`, `feeling`), `bodies` (`widgets`, `cards`), `approval` (the open one's id, tool, tier, card line, time left and `where`: `config` or `runs`), `reminders` (`enabled`, `next`, `soon`: due within the hour, `pending`), `files` (persona.md, input.toml, apps.toml that do not check out, with their tab and problems), `candidate`, `runs` (the last five, as `GET runs`), `off` and `privacy` (`{key, what}` each). Reminder words are the user's own: shown on the page, never logged | the page |
+| `GET /ui/api/now` | the header and the Now view: `state`, `mood` (`enabled`, `energy`, `feeling`), `bodies` (`widgets`, `cards`), `approval` (the open one's id, run id, tool, tier, card line, time left, `hold`, `yes_by`, `where`: `config` or `runs`, and `file` for a settings change: config.toml, input.toml or apps.toml), `reminders` (`enabled`, `next`, `soon`: due within the hour, `pending`), `files` (persona.md, input.toml, apps.toml that do not check out, with their tab and problems), `candidate`, `runs` (the last five, as `GET runs`), `off` and `privacy` (`{key, what}` each). Reminder words are the user's own: shown on the page, never logged | the page |
 | `GET /ui/api/events` | server-sent events: `route` (one entry, with its `run_id`), `run` (one run event, §18, with the run's `source`), `learning` (a file of the loop changed; the page asks again), a keep-alive comment every 15 s | the page |
 | `POST /ui/api/cancel` (`{run_id}`) | stops that run if it is going on (`{"cancelled": id}`), else 409 | the page |
 | `POST /ui/api/approval` (`{approval_id, answer}`) | a yes or no to the open approval (`{"answered": id, "answer": …}`); 409 with `reason` (`not_open`, `resolved`) when it is not open; `GET /ui/api/runs` carries `approvals` (`open`, with its line, and `history`) | the page |
@@ -1114,7 +1140,7 @@ The parts by tab:
 | `POST /ui/api/apply` | `[notifications]` read again from config.toml (`{"applied": "notifications", "body": …}`), else 409 | the page |
 | `GET /ui/api/input`; `GET /ui/api/input/live` (events); `POST /ui/api/input/check`, `input/save` (`{settings}`), `input/practice` (`{on}`), `input/camera` (`{on}`) | the Input tab: status (with `camera: {enabled, state}`), settings in use, the dropdowns' choices, bodies, the file and its status, recent; the live view; a draft checked (`ok`, `problems`, `text`, `diff`); saved as input.toml (400 when it does not check out); practice mode; the camera switch (`{enabled, status}`; 409 when config.toml cannot be written or does not load) | the page |
 | `GET /ui/api/apps`; `POST /ui/api/apps/check`, `apps/save` (`{apps: [{id, name, aliases, open, close, close_asks}]}`) | the Apps tab (§27): the list in use, the installed apps, the file and its status; a list checked (`ok`, `problems`, `text`, `diff`); saved as apps.toml (400 when it does not check out or names an id that is not installed) | the page |
-| `GET /ui/api/config`; `POST /ui/api/config/check` (`{text, edits?, base?}`), `config/save` (`{text, base}`); `GET /ui/api/tools` | the Config file and Tools tabs (§28): the schema, the file's text and values with secrets hidden, `base` (`tag`: an HMAC of the file under a per-start key, and the mtime), a change waiting on her card; a draft checked (`ok`, `problems`, `text`, `values`, `diff`, `lowering`, `changed`, `restart`, `live`, `stale`); saved (200), asked about on her card (202 `{pending}`), 400 with the problems, 409 when the file changed under the page or a change already waits; the tool servers with each tool's tier, flags and whether it is offered | the page |
+| `GET /ui/api/config`; `POST /ui/api/config/check` (`{text, edits?, base?}`), `config/save` (`{text, base}`); `GET /ui/api/tools` | the Config file and Tools tabs (§28): the schema, the file's text and values with secrets hidden, `base` (`tag`: an HMAC of the file under a per-start key, and the mtime), `cards` (how many bodies show her card), a change waiting on her card (`pending`: its state, file, what it loosens, and the approval as her card shows it: id, run id, tier, card line, hold, `yes_by`, time left); a draft checked (`ok`, `problems`, `text`, `values`, `diff`, `lowering`, `changed`, `restart`, `live`, `stale`); saved (200), asked about on her card (202 `{pending}`), 400 with the problems, 409 when the file changed under the page, a change already waits (`busy`) or no body shows her card (`no_card`); the tool servers with each tool's tier, flags and whether it is offered | the page |
 | `GET /ui/api/history` (`?before=DAY`), `history/day` (`?day=DAY&offset=N`), `history/search` (`?q=`); `POST /ui/api/history/forget/row` (`{id}`), `forget/day` (`{day}`), `forget/all` (`{confirm: "forget", timers}`), `history/digest` (`{day, text}`), `history/timer/cancel` (`{id}`) | the History view (§30): the retention, counts, reminders and a page of 30 days (each with `state`: `digest`, `digest_only`, `pending`, `open`); a day's rows, 200 a page; rows and digests found, by day; forgotten (404 for a row already gone); the user's digest (400 for an empty or too long one, 404 for a day the history has nothing of); a pending reminder cancelled (409 when it is not pending). 409 with the history off or its file not open | the page |
 | `GET /ui/api/runs` | also carries `timeline` (above) | the page |
 
@@ -1140,7 +1166,8 @@ read, checked, refused when it does not check out, saved with its backup and use
 Try it through a stand-in reactor and the real reactor's call on a fake Ollama, never an unload, nothing saved;
 the profile saved, its history and a revert, the cap; the timeline beside the runs, sentences only with logging
 on; the effective config.toml, what applies when, Apply and its refusal; the page's groups and its text-only
-rule).
+rule; one waiting change drawn by the same pieces everywhere, and the colour tokens' contrast in both themes,
+computed from style.css).
 
 Seen end to end (2026-10-10, a throwaway daemon on port 8797 with temp XDG dirs, the shared Ollama's
 `gemma3:1b`, headless Chrome over the DevTools protocol; screenshots kept outside the repo): a persona.md with
@@ -2663,7 +2690,10 @@ tab's, the tray's, the CLI); so is an Ollama address with a login part, a backsl
 
 A change that loosens anything waits for **her card**, and only when she is asking nothing else: while any approval
 is open the save answers 409 (`busy`; a new question would supersede that one, and a yes meant for it could land on
-this). A `settings` run (§18) says one line ("That settings change loosens my safety rules. Hold yes on my card if it
+this). It asks only while a connected body shows her card (`brainui.card_count`, as the header counts it): with
+none the save answers 409 (`no_card`, "her card isn't on screen, …: start the crab …, then save again"), since only
+a held Yes there takes it and the question could only lapse; `ConfigDesk.refusal` gives both answers for config.toml,
+input.toml and apps.toml alike, and the Config file tab's Save is off with the same reason before it is pressed. A `settings` run (§18) says one line ("That settings change loosens my safety rules. Hold yes on my card if it
 was you.") and opens an approval (§19): a hold for a yes, 60 s, `yes_by` = body. Only a held Yes on her card takes it:
 not the page that asked (`not_here`; its Runs and Config file tabs show no Yes), not a thumb, and not a yes said or
 typed, which may have been meant for an earlier question; she answers that with "That one needs a hold on Yes on my
@@ -2678,6 +2708,25 @@ tab's input.toml replaces `[gestures]` whole, so its save goes through the same 
 thumb that answers her card, a camera always watching, an easier gesture: `brainui._input_asks`), and the Apps tab's
 apps.toml likewise (an app she may newly open or close, or close without asking: `appsui._apps_asks`), each with the
 same `Pending` and its own writer. Tightening and neutral lists save at once.
+
+**On the page while it waits, and after.** The waiting change shows in the tab of its file (and Config file shows
+any of the three) as §17's shared block, the time left counting down; the page asks GET config once a second while
+it waits, which also says how many cards are on screen. When it ends without a save (a No, no answer, the file
+changed, failed), that tab's form shows the file again: its draft is set aside (`setAside`, one per file) and the
+form redrawn from the file, so the ✎ beside a field and a section's "N set in the file" are the file's; *The last
+change she asked about* says how it went, what her card said and what it loosened, with **Put my edits back**. The
+form marks a draft's own changes apart ("changed, not saved", per field and per section), kept true in place after
+each check. Apps and Input light Save only for a change the user made (with no file yet the diff is the whole file
+before any edit).
+
+Seen end to end (2026-10-11, a throwaway daemon on port 8797 with temp XDG dirs, headless Chrome over the DevTools
+protocol, a fake card body over the websocket; screenshots kept outside the repo): with no body, `[notifications]
+body` off → glance in the form marked the field "changed, not saved", said she cannot ask and kept Save off; with
+the fake card connected Save asked, and the time left read 59 s, then 57 s two seconds later, in Config file, Runs
+and Now alike; the card's socket closed, the header's spot turned to "A settings change will lapse: no card on
+screen" and went to Config file, whose panel said "Her card isn't on screen: start the crab, or press No. This change
+will lapse."; after the 60 s the form showed `body = "off"` with the file's ✎ and nothing marked unsaved, and **Put
+my edits back** brought "glance" back, marked.
 
 **Secrets never reach the page** (`configform.Vault`, one per page session, in memory). Hidden as `<hidden N: kept
 as is>`: every value of a server's `env`; any value (a string, or a number) under a key named like a secret (token,
@@ -2729,7 +2778,8 @@ into a plain key, a check's quoted value, a reason, the card, the Tools view; th
 switched; every write behind the session, the CSRF header and the Origin; a draft refused with the startup reason; a
 file changed under the page; a new file from the template, a safe change applied at once; a loosening change waiting
 for a held yes, never the page's, never a thumb's, a no, no answer, the file changed meanwhile, only the asked text
-written; a broken file compared with what she runs; the Input tab's card; the Tools listing), `tests/test_input.py`
+written; no asking while no body shows her card, for all three files; the waiting change as her card shows it, and
+its file in GET now; a broken file compared with what she runs; the Input tab's card; the Tools listing), `tests/test_input.py`
 (both hands and the pair through the live view, the Hands setting).
 
 ## 29. Her living mood — `strawberry/mood.py`, `moodui.py`, `widget/mood.gd`

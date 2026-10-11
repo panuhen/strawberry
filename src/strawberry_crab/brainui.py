@@ -558,8 +558,10 @@ def now_view(ui: BrainUI, pending: Any) -> dict[str, Any]:
     approval = d.approvals.views()["open"]
     if approval is not None:
         asks = pending is not None and pending.state == "waiting" and pending.approval.approval_id == approval["approval_id"]
-        approval = {k: approval.get(k) for k in ("approval_id", "tool", "risk", "prompt", "expires_in", "yes_by")}
+        approval = {k: approval.get(k) for k in ("approval_id", "run_id", "tool", "risk", "prompt", "expires_in",
+                                                 "hold", "yes_by")}
         approval["where"] = "config" if asks else "runs"
+        approval["file"] = pending.file if asks else None   # config.toml, input.toml or apps.toml: its tab shows it
     files = []
     problems = d.persona.status()["error"]
     if problems:
@@ -1230,8 +1232,9 @@ def _input_asks(request: web.Request, ui: BrainUI, data: dict[str, Any], text: s
     if not findings:
         return None
     desk = request.app[configui.DESK]
-    if desk.busy(ui) is not None:
-        return web.json_response({"error": desk.busy(ui), "busy": True}, status=409)
+    refused = desk.refusal(ui)
+    if refused is not None:
+        return refused
     store = d.input.store
 
     def write(new: str, base: str) -> Path | None:
