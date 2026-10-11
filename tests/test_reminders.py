@@ -11,6 +11,7 @@ import logging
 import subprocess
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import pytest
@@ -38,8 +39,13 @@ def helsinki(monkeypatch):
     time.tzset()
 
 
+HELSINKI = ZoneInfo("Europe/Helsinki")
+
+
 def at(y: int, mo: int, d: int, h: int = 12, mi: int = 0, s: int = 0) -> float:
-    return datetime(y, mo, d, h, mi, s).timestamp()
+    """A Helsinki wall-clock time, whatever the machine's own zone: module-level times like NOW are made before
+    the `helsinki` fixture sets TZ, so they must not lean on it (CI runs in UTC)."""
+    return datetime(y, mo, d, h, mi, s, tzinfo=HELSINKI).timestamp()
 
 
 NOW = at(2026, 10, 14, 14, 3, 27)        # a Wednesday, 14:03:27
