@@ -9,6 +9,16 @@ package and the widget binary.
 
 ### Added
 
+- **Her living mood.** Two dials, energy (calm to lively) and feeling (grumpy to pleased), drift with what
+  happens and ease back to her temperament: the music's tempo and its drops and breaks, your pats and
+  thanks, pokes in a row and "no, wrong", tools that work or fail, the time of day and quiet stretches, each
+  a small step with a cap a minute. It shows only in expression: her idle sway and dance a little bigger or
+  smaller, her posture, eyes, blinks and gaze, her voice up to 8 % faster or slower, and one sentence for the
+  small model's word choice. It never changes what she decides, and a notification's or a track's words
+  never move it. Her temperament is a new optional `## Temperament` section in persona.md; `[mood] enabled`
+  turns it off; it is kept across restarts in the state dir. A **Mood** view in the Brain UI (under Her)
+  shows the dials, a graph of the last hours and what moved them, with a reset. Bodies that ask get a new
+  `mood` message (PROTOCOL Part 1e), and the crab reports a finger held on her as a `pat` touch. WIRING §29.
 - **Edit config.toml in the Brain UI.** A new **Config file** tab (under Settings) shows every setting as
   a form, built from the code's own settings with their defaults and descriptions, or as raw TOML. Your
   comments and the file's order are kept (tomlkit, a new dependency). Each change is checked as at start,
