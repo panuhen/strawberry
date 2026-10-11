@@ -9,6 +9,8 @@ One file holds her persona for both models and her fixed lines. The shipped defa
     ## Examples         what the reaction model copies: event fields, her line, its emotion
     ## Lines            her phrasebook: "### key" and "- variant" items (cover lines, "Okay,
                         stopped.", the poke lines, the no-music-add-on lines, ...)
+    ## Temperament      optional: her mood's resting point and how fast it moves (mood.py, WIRING.md
+                        §29); a file without it gets the shipped values. No model reads it
 
 `parse` reads a file into a `Persona` and checks it: every section there, each under its token cap,
 examples with a known source, their fields and an emotion of neutral/happy/alert/angry, lines short
@@ -45,6 +47,9 @@ from .contract import EMOTIONS
 log = logging.getLogger("strawberryd.persona")
 
 SECTIONS = ("Who she is", "How she talks", "Examples", "Lines")
+# Sections a persona.md may leave out (the shipped values stand in): her temperament, read by the living mood
+# (mood.py), never by a model.
+OPTIONAL = ("Temperament",)
 # Token caps per section, by the thinker's estimate (3 characters a token, on the safe side): the
 # reaction model reads the first three on every event, and the shipped persona is well under them.
 CAPS = {"Who she is": 120, "How she talks": 300, "Examples": 2000, "Lines": 1500}
@@ -149,6 +154,25 @@ class Example:
         return {"event": describe(self.event()), "line": self.line, "emotion": self.emotion}
 
 
+# Her temperament (## Temperament; the living mood, mood.py, WIRING.md §29): each key's range. `energy` and
+# `feeling` are where the two dials rest (-1 calm or grumpy … 1 lively or pleased); `recovery` is how many minutes
+# a mood takes to come about two thirds of the way back to rest, `sulk` the same for a dip in feeling.
+TEMPERAMENT_RANGES: dict[str, tuple[float, float]] = {"energy": (-0.8, 0.8), "feeling": (-0.8, 0.8),
+                                                      "recovery": (1.0, 120.0), "sulk": (1.0, 240.0)}
+MINUTES = re.compile(r"^(-?\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)?$")
+
+
+@dataclass(frozen=True)
+class Temperament:
+    energy: float = 0.1          # where her energy rests: -1 calm … 1 lively
+    feeling: float = 0.25        # where her feeling rests: -1 grumpy … 1 pleased
+    recovery: float = 8.0        # minutes: a mood comes about two thirds of the way back to rest in this long
+    sulk: float = 20.0           # minutes: the same for a dip in feeling (a sulk lingers)
+
+    def to_dict(self) -> dict[str, float]:
+        return {"energy": self.energy, "feeling": self.feeling, "recovery": self.recovery, "sulk": self.sulk}
+
+
 @dataclass(frozen=True)
 class Persona:
     who: str
@@ -157,6 +181,7 @@ class Persona:
     lines: dict[str, tuple[str, ...]]
     warnings: tuple[str, ...] = ()
     text: str = field(default="", compare=False, repr=False)
+    temperament: Temperament | None = None    # None: the file has no ## Temperament (the shipped one stands in)
 
     @property
     def name(self) -> str:
@@ -203,9 +228,10 @@ def _sections(text: str) -> tuple[dict[str, list[str]], list[str]]:
         heading = re.match(r"^##\s+(.+?)\s*#*\s*$", raw)
         if heading and not raw.startswith("###"):
             title = heading.group(1).strip()
-            known = next((s for s in SECTIONS if s.lower() == title.lower()), None)
+            known = next((s for s in SECTIONS + OPTIONAL if s.lower() == title.lower()), None)
             if known is None:
-                problems.append(f"unknown section \"## {title}\" (the sections are {', '.join(SECTIONS)})")
+                problems.append(f"unknown section \"## {title}\" (the sections are {', '.join(SECTIONS)}, "
+                                f"and {', '.join(OPTIONAL)} if you like)")
                 current = None
                 continue
             if known in out:
@@ -320,6 +346,59 @@ def _lines(lines: list[str]) -> tuple[dict[str, tuple[str, ...]], list[str]]:
     return {k: tuple(v) for k, v in out.items() if v}, problems
 
 
+def _temperament(lines: list[str]) -> tuple[Temperament | None, list[str]]:
+    """## Temperament: "- key: value" lines (energy, feeling, recovery, sulk; the last two in minutes, "8" or
+    "8 minutes"), each within TEMPERAMENT_RANGES, sulk at least recovery. A key left out keeps the shipped value."""
+    values: dict[str, float] = {}
+    problems: list[str] = []
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        body = stripped[2:].strip() if stripped.startswith(("- ", "* ")) else stripped
+        if ":" not in body:
+            problems.append(f"Temperament: \"{body[:40]}\" is not a \"- key: value\" line")
+            continue
+        key, value = (part.strip() for part in body.split(":", 1))
+        key = key.lower()
+        if key not in TEMPERAMENT_RANGES:
+            problems.append(f"Temperament: \"{key[:24]}\" is not one of {', '.join(TEMPERAMENT_RANGES)}")
+            continue
+        if key in values:
+            problems.append(f"Temperament: \"{key}\" is there twice")
+            continue
+        found = MINUTES.match(value.lower()) if key in ("recovery", "sulk") else None
+        try:
+            number = float(found.group(1)) if found else float(value)
+        except ValueError:
+            problems.append(f"Temperament: {key} must be a number (got \"{value[:24]}\")")
+            continue
+        low, high = TEMPERAMENT_RANGES[key]
+        if not low <= number <= high:   # NaN fails this too
+            unit = " minutes" if key in ("recovery", "sulk") else ""
+            problems.append(f"Temperament: {key} must be from {low:g} to {high:g}{unit} (got {value[:24]})")
+            continue
+        values[key] = number
+    if problems:
+        return None, problems
+    temperament = Temperament(**(shipped_temperament().to_dict() | values))
+    if temperament.sulk < temperament.recovery:
+        return None, [f"Temperament: sulk ({temperament.sulk:g} minutes) must be at least recovery "
+                      f"({temperament.recovery:g} minutes)"]
+    return temperament, []
+
+
+_shipped_temperament: Temperament | None = None
+_reading_shipped = False
+
+
+def shipped_temperament() -> Temperament:
+    """The shipped persona.md's temperament (the dataclass's defaults while that file itself is being read)."""
+    if _shipped_temperament is None and not _reading_shipped:
+        shipped()
+    return _shipped_temperament or Temperament()
+
+
 def parse(text: str, known: tuple[str, ...] | None = None) -> Persona:
     """A persona.md read and checked; PersonaError with every problem when it does not check out.
     `known`: the phrasebook keys the code uses (the shipped file's); a key outside them, or one of them
@@ -337,6 +416,8 @@ def parse(text: str, known: tuple[str, ...] | None = None) -> Persona:
     problems += found
     lines, found = _lines(sections.get("Lines", [])) if "Lines" in sections else ({}, [])
     problems += found
+    temperament, found = _temperament(sections["Temperament"]) if "Temperament" in sections else (None, [])
+    problems += found
     warnings: list[str] = []
     if known is not None and "Lines" in sections:
         unknown = sorted(set(lines) - set(known))
@@ -346,7 +427,7 @@ def parse(text: str, known: tuple[str, ...] | None = None) -> Persona:
         missing = [key for key in known if key not in lines]
         if missing:
             warnings.append(f"Lines: {', '.join(missing)} not in the file; the shipped lines are used")
-    persona = Persona(who, talks, tuple(examples), lines, tuple(warnings), text)
+    persona = Persona(who, talks, tuple(examples), lines, tuple(warnings), text, temperament)
     if not problems:
         for section, size in persona.sizes().items():
             if size > CAPS[section]:
@@ -363,8 +444,15 @@ def shipped_path() -> Path:
 @lru_cache(maxsize=1)
 def shipped() -> Persona:
     """The persona the package ships (data/persona.md). It must parse: the tests hold it to that."""
+    global _shipped_temperament, _reading_shipped
     text = shipped_path().read_text(encoding="utf-8")
-    return parse(text)
+    _reading_shipped = True
+    try:
+        persona = parse(text)
+    finally:
+        _reading_shipped = False
+    _shipped_temperament = persona.temperament
+    return persona
 
 
 def known_keys() -> tuple[str, ...]:
@@ -421,6 +509,10 @@ class PersonaStore:
 
     def variants(self, key: str) -> tuple[str, ...]:
         return self.current().variants(key)
+
+    def temperament(self) -> Temperament:
+        """Her temperament (the living mood, mood.py): the file's ## Temperament, else the shipped one."""
+        return self.current().temperament or shipped_temperament()
 
     def line(self, key: str, rng: Any = None) -> str:
         """One of the key's lines, at random (`rng.choice`), or the first."""
