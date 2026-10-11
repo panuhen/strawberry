@@ -118,8 +118,9 @@ def _apps_asks(request: web.Request, ui: BrainUI, text: str) -> web.Response | N
     if not findings:
         return None
     desk = request.app[configui.DESK]
-    if desk.busy(ui) is not None:
-        return web.json_response({"error": desk.busy(ui), "busy": True}, status=409)
+    refused = desk.refusal(ui)
+    if refused is not None:
+        return refused
 
     def write(new: str, base: str) -> Any:
         if configform.tag(store.text()) != base:

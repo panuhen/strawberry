@@ -440,6 +440,8 @@ async def test_a_refusal_from_the_loop_is_a_409_with_its_reason(client):
 async def test_train_now_starts_the_daemons_own_run_once(client, monkeypatch):
     daemon = client.server.app[brainui.UI].daemon
     signed = await sign_in(client)
+    # The page disables Train now with the trainer's own reason, the same one the route refuses with.
+    assert (await (await signed.get("/ui/api/learning")).json())["trainer"]["blocked"] == "the gate is not ready"
     response = await signed.post("/ui/api/train")
     assert response.status == 409 and (await response.json())["error"] == "the gate is not ready"
     started = []
@@ -451,7 +453,9 @@ async def test_train_now_starts_the_daemons_own_run_once(client, monkeypatch):
     monkeypatch.setattr(daemon.trainer, "run", run)
     monkeypatch.setattr(daemon.gate, "ready", True, raising=False)
     monkeypatch.setattr(daemon.gate, "embedder", object(), raising=False)
+    assert daemon.trainer.blocked() is None
     assert (await signed.post("/ui/api/train")).status == 200
+    assert daemon.trainer.health()["trainer"]["blocked"] == "a run is going already"
     busy = await signed.post("/ui/api/train")
     assert busy.status == 409 and "already" in (await busy.json())["error"]
     await asyncio.sleep(0.25)

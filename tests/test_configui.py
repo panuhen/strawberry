@@ -19,7 +19,7 @@ from strawberry_crab.events import CannedReactor
 from strawberry_crab.server import create_app
 from strawberry_crab.tools import ToolSpec, Toolbox
 from tests.test_brainui import quiet_config, sign_in
-from tests.test_runs import until
+from tests.test_runs import HELLO_V2, until, v2_sink
 
 SECRET = "sk-kestrel-0429"          # a token: it may be in config.toml, never on the page, in a diff or in a log
 FILE = f"""\
@@ -267,9 +267,19 @@ def test_the_camera_is_never_switched_from_the_editor():
 # ----------------------------------------------------------------------------- the routes
 
 
+# A body that shows her approval card and may answer it: a loosening save asks only while one is connected.
+CARD_HELLO = HELLO_V2 | {"body": {"id": "card"}, "capabilities": HELLO_V2["capabilities"] | {
+    "approvals": True, "sends": {"heard": True, "approval": True}}}
+
+
+def with_card(daemon: Daemon) -> Daemon:
+    v2_sink(daemon, CARD_HELLO)
+    return daemon
+
+
 @pytest.fixture
 async def client(aiohttp_client):
-    return await aiohttp_client(create_app(Daemon(reactor=CannedReactor(), config=quiet_config())))
+    return await aiohttp_client(create_app(with_card(Daemon(reactor=CannedReactor(), config=quiet_config()))))
 
 
 def daemon_of(client) -> Daemon:
@@ -399,6 +409,61 @@ async def test_a_change_that_loosens_safety_waits_for_a_yes_on_her_card_never_fr
     after = await (await signed.get("/ui/api/config")).json()
     assert after["pending"]["state"] == "saved" and after["pending"]["by"] == "body"
     assert approval.run.done and SECRET not in caplog.text
+
+
+async def test_a_loosening_save_is_refused_while_no_body_shows_her_card(aiohttp_client):
+    """Only a held Yes on her card takes a loosening change: with no body showing the card the question could only
+    lapse, so config.toml, input.toml and apps.toml all refuse to ask (409, `no_card`) and say what to do. A neutral
+    change still saves at once, and the page is told how many cards there are."""
+    path = write_config(FILE)
+    daemon = Daemon(reactor=CannedReactor(), config=quiet_config())
+    client = await aiohttp_client(create_app(daemon))
+    signed = await sign_in(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    assert view["cards"] == 0
+    loose = view["text"].replace('body = "off"', 'body = "glance"')
+    refused = await signed.post("/ui/api/config/save", {"text": loose, "base": view["base"]["tag"]})
+    body = await refused.json()
+    assert refused.status == 409 and body["no_card"] and "her card isn't on screen" in body["error"]
+    assert daemon.approvals.open is None and desk_of(client).pending is None and path.read_text() == FILE
+    settings = (await (await signed.get("/ui/api/input")).json())["settings"]
+    easier = {**settings, "gestures": {**settings["gestures"], "hold_ms": settings["gestures"]["hold_ms"] - 100}}
+    refused = await signed.post("/ui/api/input/save", {"settings": easier})
+    assert refused.status == 409 and (await refused.json())["no_card"]                 # apps.toml: test_apps
+    assert daemon.approvals.open is None and desk_of(client).pending is None
+    neutral = view["text"].replace("port = 8770", "port = 8771")
+    assert (await signed.post("/ui/api/config/save", {"text": neutral, "base": view["base"]["tag"]})).status == 200
+    # With her card on a screen the same change asks; GET config says one card is there.
+    with_card(daemon)
+    view = await (await signed.get("/ui/api/config")).json()
+    assert view["cards"] == 1
+    loose = view["text"].replace('body = "off"', 'body = "glance"')
+    assert (await signed.post("/ui/api/config/save", {"text": loose, "base": view["base"]["tag"]})).status == 202
+    daemon.approvals.answer(daemon.approvals.open.approval_id, "no", "ui")
+    await until(lambda: desk_of(client).pending.state != "waiting")
+
+
+async def test_the_page_shows_a_waiting_change_as_her_card_does(client):
+    """GET config's `pending` carries what her card shows (its line, tier, hold, who may say yes, the run), and GET
+    now names the file whose tab holds the change, so the header, Now, Runs and that tab show it the same way."""
+    write_config(FILE)
+    signed = await sign_in(client)
+    daemon = daemon_of(client)
+    view = await (await signed.get("/ui/api/config")).json()
+    draft = view["text"].replace('body = "off"', 'body = "glance"')
+    reply = await signed.post("/ui/api/config/save", {"text": draft, "base": view["base"]["tag"]})
+    pending = (await reply.json())["pending"]
+    approval = daemon.approvals.open
+    assert pending["prompt"] == approval.prompt == "Settings change: less privacy ×1."
+    assert pending["risk"] == "change" and pending["hold"] is True and pending["yes_by"] == ["body"]
+    assert pending["run_id"] == approval.run_id and 0 < pending["expires_in"] <= configui.CONFIRM_S
+    now = (await (await signed.get("/ui/api/now")).json())["approval"]
+    assert now["where"] == "config" and now["file"] == "config.toml" and now["run_id"] == approval.run_id
+    assert now["prompt"] == pending["prompt"] and now["hold"] is True
+    daemon.approvals.answer(approval.approval_id, "no", "ui")
+    await until(lambda: desk_of(client).pending.state != "waiting")
+    after = (await (await signed.get("/ui/api/config")).json())["pending"]
+    assert after["state"] == "left" and after["expires_in"] is None and after["prompt"] == pending["prompt"]
 
 
 async def test_a_no_or_no_answer_or_a_file_changed_meanwhile_writes_nothing(client):
@@ -679,7 +744,7 @@ async def test_the_input_tab_asks_on_her_card_before_a_thumb_may_answer_it(aioht
     from tests.test_gestures import gesture_daemon
 
     daemon, _ = gesture_daemon(approvals=False)
-    client = await aiohttp_client(create_app(daemon))
+    client = await aiohttp_client(create_app(with_card(daemon)))
     signed = await sign_in(client)
     settings = (await (await signed.get("/ui/api/input")).json())["settings"]
     calm = {**settings, "gestures": {**settings["gestures"], "hold_ms": 500}}
