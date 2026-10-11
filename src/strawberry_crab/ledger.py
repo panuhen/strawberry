@@ -19,7 +19,8 @@ written in a run that was foreign, or from what a tool or the player said (a tra
 sees a foreign entry asks before anything above `playback`, as with a foreign situation line (`timeline`
 says so), and a foreign entry stops counting after `foreign_age_s` and is then left out of both models'
 lines. Everything expires by count (`max_turns`, `max_notices`) and by age
-(`max_age_s`), and lives in memory only: a restart forgets it.
+(`max_age_s`), and lives in memory only: a restart forgets it. Each entry is also handed to `sink` as it is
+recorded: her history (history.py, WIRING §30) keeps it on disk, and only the look-back tool reads it back.
 
     ledger.record("skip this song", "Skipped. Now Blue Monday by New Order.", did="skipped to the next track")
     ledger.notice("git", 'a commit in strawberry: "Add websocket"', "Ooh, websockets.")
@@ -29,10 +30,13 @@ lines. Everything expires by count (`max_turns`, `max_notices`) and by age
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
+
+log = logging.getLogger("strawberryd.ledger")
 
 # The thinker's lines are kept within this many tokens (its own estimate: 3 characters a token), the oldest
 # going first; the thinker trims further when its whole prompt would not fit num_ctx (Thinker.fit_prompt).
@@ -94,10 +98,21 @@ class Ledger:
         self.clock = clock
         self.turns: deque[Turn] = deque(maxlen=max_turns)
         self.notices: deque[Notice] = deque(maxlen=max(1, max_notices))
+        # Told of each entry as it is recorded (her history, history.py: the one place a turn or a notice is written
+        # down for later). Called in the recording task, so it sees that sentence's context; it must not raise.
+        self.sink: Callable[[Turn | Notice], None] | None = None
+
+    def _sink(self, entry: Turn | Notice) -> None:
+        if self.sink is not None:
+            try:
+                self.sink(entry)
+            except Exception as exc:   # noqa: BLE001 - her short memory never fails for the long one
+                log.warning("ledger: the history hook failed (%s)", type(exc).__name__)
 
     def record(self, said: str, reply: str, did: str = "", foreign: bool = False) -> None:
         """A turn. `foreign`: her reply carries text a tool or a player gave (a track's name)."""
         self.turns.append(Turn(self.clock(), said.strip(), reply.strip(), did.strip(), bool(foreign)))
+        self._sink(self.turns[-1])
 
     def notice(self, source: str, about: str, line: str, foreign: bool = True) -> None:
         """Something she reacted to on her own. `about` is what the privacy mode lets through (never a
@@ -109,6 +124,7 @@ class Ledger:
         line = " ".join(line.split())[:MAX_FIELD * 2]
         if about or line:
             self.notices.append(Notice(self.clock(), source, about, line, bool(foreign)))
+            self._sink(self.notices[-1])
 
     def recent(self) -> list[Turn]:
         cutoff = self.clock() - self.max_age_s

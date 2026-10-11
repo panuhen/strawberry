@@ -31,7 +31,7 @@ import time
 from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 log = logging.getLogger("strawberryd.runs")
 
@@ -182,6 +182,8 @@ class RunBook:
         self.sinks: set[asyncio.Queue] = set()
         self.started = 0
         self.dropped = 0
+        # Told of each run as it ends (her history, history.py: the tools it called and how it ended); must not raise.
+        self.on_finish: Callable[[Run], None] | None = None
 
     def start(self, source: str, foreground: bool | None = None) -> Run:
         if source not in SOURCES:
@@ -312,6 +314,11 @@ class RunBook:
         self.recent_runs.append(run)
         log.info("run %s (%s): %s %s in %.2fs; tools %s", run.run_id, run.source, run.outcome, detail, duration,
                  ", ".join(run.tools) or "none")
+        if self.on_finish is not None:
+            try:
+                self.on_finish(run)
+            except Exception as exc:   # noqa: BLE001 - a run's end never fails for the history
+                log.warning("run %s: the history hook failed (%s)", run.run_id, type(exc).__name__)
         return message
 
     def stats(self) -> dict[str, Any]:

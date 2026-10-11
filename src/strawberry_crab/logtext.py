@@ -30,8 +30,9 @@ _from_web: ContextVar[bool] = ContextVar("from_web", default=False)
 # logged as its length only, as the user's sentence is.
 _about_profile: ContextVar[bool] = ContextVar("about_profile", default=False)
 # Set once her answer comes from a server that is both private and foreign (her inbox, inbox.py: the user's
-# messages, written by others): her line is then logged as its length only, whatever log_sentences says.
-_from_private: ContextVar[bool] = ContextVar("from_private", default=False)
+# messages, written by others), or from her history (history.py: the user's past sentences): her line is then logged
+# as its length only, whatever log_sentences says. The value says where from ("the user's messages").
+_from_private: ContextVar[str] = ContextVar("from_private", default="")
 
 
 # Sentences that stay out of the journal whatever log_sentences says, and whose answer does too: one asking her
@@ -86,7 +87,7 @@ def hearing(text: str) -> Iterator[None]:
     token = _hearing.set(text)
     web = _from_web.set(False)
     about = _about_profile.set(private(text))   # a sentence for the profile: her answer is withheld too
-    inbox = _from_private.set(False)
+    inbox = _from_private.set("")
     try:
         yield
     finally:
@@ -111,10 +112,21 @@ def about_profile() -> None:
     _about_profile.set(True)
 
 
-def from_private() -> None:
+def from_private(source: str = "the user's messages") -> None:
     """Her line for the sentence being answered was written from a private and foreign server's results (the
-    user's messages): see line()."""
-    _from_private.set(True)
+    user's messages), or from her history: see line()."""
+    if not _from_private.get():
+        _from_private.set(source)
+
+
+def withheld() -> str:
+    """Why her line for the sentence being answered stays out of the journal whatever log_sentences says, and out of
+    her history in her words (history.py): "messages" (from the user's inbox), "history" (from her history),
+    "profile" (it says back a change to the profile, or the sentence is one for it); "" when it does not."""
+    source = _from_private.get()
+    if source:
+        return "messages" if source == "the user's messages" else "history"
+    return "profile" if _about_profile.get() else ""
 
 
 def line(text: str) -> str:
@@ -122,7 +134,7 @@ def line(text: str) -> str:
     placeholder when log_sentences is off."""
     heard = _hearing.get()
     if text and _from_private.get():
-        return f"<her line from the user's messages, {len(text)} chars>"   # whatever log_sentences says
+        return f"<her line from {_from_private.get()}, {len(text)} chars>"   # whatever log_sentences says
     if not LOG_SENTENCES and text and _from_web.get():
         return f"<her line from web results, {len(text)} chars>"
     if text and _about_profile.get():

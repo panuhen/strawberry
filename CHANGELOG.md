@@ -9,6 +9,19 @@ package and the widget binary.
 
 ### Added
 
+- **Her history, the first memory that outlives a restart.** What you said and she answered, what she
+  did, what played and what she reacted to are kept on disk in `strawberry.db` in the state directory
+  (readable only by you): as they were for 14 days, then as a short digest of each day for 6 months. The
+  digests are written by her thinking model when she is idle, one day at a time, from what you said and
+  what she did; a sender, a track or a web page never goes into one (notifications and music only as
+  counts), and a digest that copies one is replaced by a plain count of the day. A day's raw rows go only
+  after its digest is written. When your sentence is about the past ("what were we doing this morning?",
+  "what did I ask you yesterday?"), she can look back with a new read-only tool, at most about 500 tokens
+  of it; text others wrote that comes back makes her ask before any change, as it does when it is fresh.
+  `[history]` (`enabled`, `sentences`, `keep_days`, `digest_months`, `lookback_tokens`) sets it, and an
+  edit that keeps more asks on her card. A message's text is never kept, nothing of it is logged, and
+  `/health` gets counts only. A `timers` table is ready for reminders. WIRING §30.
+
 - **Her living mood.** Two dials, energy (calm to lively) and feeling (grumpy to pleased), drift with what
   happens and ease back to her temperament: the music's tempo and its drops and breaks, your pats and
   thanks, pokes in a row and "no, wrong", tools that work or fail, the time of day and quiet stretches, each

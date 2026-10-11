@@ -586,7 +586,7 @@ class Thinker:
             metering.reset(metered)
         if run is not None and not outcome.ok:
             run.error = error or "other"
-        if foreign_context or self.used_foreign(outcome):
+        if foreign_context or self.used_foreign(outcome) or any(getattr(c, "asks", False) for c in outcome.calls):
             # The run's final trust state, for the timeline: her reply may carry what strangers wrote.
             outcome = replace(outcome, foreign=True)
         self.last_s = time.perf_counter() - started
@@ -599,8 +599,11 @@ class Thinker:
             logtext.about_profile()  # she says back what she saved of the user's words: its length only
         # From the user's messages (a private and foreign server: inbox.py): her line in no log and not in /health.
         inbox = any(self.toolbox.private(c.server) and self.toolbox.foreign(c.server) for c in outcome.calls)
-        if inbox:
-            logtext.from_private()
+        # From her history (history.py): the user's past sentences, kept out of the log and /health the same way.
+        past = any(getattr(self.toolbox.adapters.get(c.server), "private_reply", False) is True for c in outcome.calls)
+        if inbox or past:
+            logtext.from_private("the user's messages" if inbox else "her history")
+        inbox = inbox or past
         self.last = {
             "asked": text, "did": outcome.did, "said": f"<{len(outcome.fact)} chars>" if inbox else outcome.fact,
             "emotion": outcome.emotion, "ok": outcome.ok,
@@ -803,6 +806,11 @@ class Thinker:
                         log.warning("thinker: %s adapter could not note a result (%s)", spec.server, exc)
                 tool_message = {"role": "tool", "tool_name": name,
                                 "content": result.text or ("ok" if result.ok else "failed")}
+                if result.asks and not asks:
+                    # Timeline entries others wrote (her history's foreign rows): from here every call above
+                    # `playback` asks and her profile tools refuse, as with a foreign entry in the live timeline.
+                    asks = True
+                    log.info("thinker: a result carries timeline entries others wrote; every call above playback asks")
                 # A foreign server's result, or one its adapter says carries strangers' text (Spotify: a
                 # description, a name worded as an instruction): the conversation is tainted from here.
                 foreign = foreign or result.foreign

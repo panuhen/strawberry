@@ -31,6 +31,10 @@ earns once you use it every day:
     view, reads_as_foreign
                     a result as the thinker reads it and whether it carries strangers' text, in one pass,
                     for a server that is not foreign; and the final text read once more
+    timeline_foreign
+                    a result carries timeline entries others wrote (her history): the run asks before changes
+                    from there on, as a foreign timeline entry makes it
+    private_reply   her answer from its results is logged as its length only (her history)
     reflex_tools    which of its tools each reflex calls, so a tier that needs a yes hands the
                     sentence to the thinker instead (actions.Actor)
     volume_level, set_volume_level
@@ -121,6 +125,10 @@ class Adapter:
     #: True: the journal may say what this server's calls carry (the first 160 characters of a result,
     #: the arguments); only for a server that is neither private nor foreign. Off: counts and sizes
     log_detail: bool = False
+    #: True: her answer written from this server's results is logged as its length only and kept out of /health's
+    #: `thinker.last`, whatever log_sentences says (her history: the user's past sentences). A private and foreign
+    #: server's (her inbox) always is
+    private_reply: bool = False
     #: reflex (the gate's option, or a said reflex's name) -> the server tools it calls. A reflex whose
     #: tools include one that waits for a yes ([approvals] risk raised it, or its confirm list) is not
     #: run: the sentence goes to the thinker, which asks (actions.Actor)
@@ -218,6 +226,13 @@ class Adapter:
     def reads_as_foreign(self, text: str) -> bool:
         """Read the very text the model gets (after `view` and the cut to `result_chars`) once more: True when
         it reads as strangers' text all the same. False by default; an exception counts as True."""
+        return False
+
+    def timeline_foreign(self, name: str, text: str) -> bool:
+        """Does this result (the text the model gets) carry timeline entries others wrote, as her history's foreign
+        rows do (a sender, a track)? Then from here the run asks before anything above `playback`, exactly as a foreign
+        entry in the live timeline makes it (Thinker.run `foreign_context`, WIRING §23), without taking the user's
+        context out as a foreign result does. False by default; an exception counts as True."""
         return False
 
     def log_result(self, name: str, text: str, ok: bool) -> str | None:
