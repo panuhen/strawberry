@@ -300,12 +300,13 @@ class Daemon:
         self.reminders.say = self.say_reminder
         self.reminders.busy = self._busy_for_reminder
         self.reminders.bodies = lambda: self.hub.count
+        self.reminders_adapter: RemindersAdapter | None = None
         if not hasattr(self.toolbox, "add_builtin"):
             return
         if reminding.SERVER in self.toolbox.servers:
             log.warning("tools: a configured server is called %s; her own reminders are not added", reminding.SERVER)
             return
-        adapter = RemindersAdapter(self.reminders)
+        adapter = self.reminders_adapter = RemindersAdapter(self.reminders)
         session = RemindersSession(self.reminders, adapter)
 
         async def open_reminders() -> RemindersSession:
@@ -634,7 +635,7 @@ class Daemon:
     async def handle_event(self, event: Event) -> tuple[Performance, int]:
         # The body is never logged: a notification's text stays out of the journal (§4).
         # A voice event's title is the user's own sentence (logtext.py, [daemon] log_sentences).
-        title = sentence(event.title) if event.source == "voice" else repr(event.title)
+        title = sentence(event.title, self.answering()) if event.source == "voice" else repr(event.title)
         log.info("event %s app=%r title=%s urgency=%s body_len=%d", event.source, event.app, title,
                  event.urgency, len(event.body))
         if event.source == "media" and event.title and self.history is not None:
@@ -851,7 +852,8 @@ class Daemon:
                 await previous.finished.wait()
             if self.unmade_line:   # a yes this sentence overtook before its call started (_await_answer)
                 preface, self.unmade_line = f"{self.unmade_line} {preface}".strip(), ""
-            with logtext.hearing(event.title):   # her lines in the log leave it out (log_sentences)
+            # Her lines in the log leave it out (log_sentences); private if it may answer her "when?" (as it begins).
+            with logtext.hearing(event.title, self.answering()):
                 work = self._stopped(event, previous) if stop else self._talk_again(event, preface) if talk \
                     else self._handle_voice(event, live, run, preface)
                 return await self._in_run(run, work)
@@ -888,6 +890,13 @@ class Daemon:
             return approval.reply or (Performance(state=self.rest_state), 0)
         finally:
             self.feed.done(live)
+
+    def answering(self) -> bool:
+        """Is her reminders' "when?" out? The user's next sentence may then be its answer, and is a private one: it and
+        her answer are logged as their lengths (logtext.sentence, logtext.hearing). This daemon's own state, asked per
+        sentence: never a flag another daemon in the process could set (tests run many)."""
+        adapter = self.reminders_adapter
+        return adapter is not None and adapter.expecting()
 
     def answers_question(self, text: str) -> bool:
         """Is this sentence a yes or no to her question (open, or dropped a moment ago)? It never

@@ -236,3 +236,14 @@ def no_real_hotkey(monkeypatch):
         return real(hwnd, hotkey_id, modifiers, vk)
 
     monkeypatch.setattr(wintray, "register_hotkey", only_f24)
+
+
+@pytest.fixture(autouse=True)
+def log_sentences_off():
+    """`[daemon] log_sentences` is one switch for the process (logtext.configure, set by a daemon from its config): a
+    test that turns it on, or makes a daemon whose config does, leaves it off again for the next one."""
+    from strawberry_crab import logtext
+
+    logtext.configure(False)
+    yield
+    logtext.configure(False)

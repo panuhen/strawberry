@@ -706,7 +706,8 @@ class Listener:
                 else:
                     await daemon.perform(Performance(state="talking", text=line))
                 return {"transcript": "", "seconds": rec.seconds}
-            log.info("voice: heard %s in %.0f ms", sentence(text), self.last_ms)
+            answering = getattr(daemon, "answering", None)   # her "when?" is out: a private sentence (Daemon.answering)
+            log.info("voice: heard %s in %.0f ms", sentence(text, bool(answering and answering())), self.last_ms)
             performance, _sent = await daemon.handle_event(Event(source="voice", title=text, spoken=True))
             return {"transcript": text, "seconds": rec.seconds, "performance": performance.to_dict()}
         finally:

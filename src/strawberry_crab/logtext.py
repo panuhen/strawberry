@@ -36,8 +36,10 @@ _from_private: ContextVar[str] = ContextVar("from_private", default="")
 
 
 # Sentences that stay out of the journal whatever log_sentences says, and whose answer does too: one asking her
-# to remember something about the user (profile.ASKS, registered by profile.py). Their words end up in the
-# profile, which is never logged.
+# to remember something about the user (profile.ASKS, registered by profile.py), or about her reminders
+# (reminders.ASKS). Their words end up in the profile or the reminders, which are never logged. Fixed patterns
+# only: a sentence that is private because of a daemon's state (her reminders' "when?" is out) is said so by that
+# daemon, for that sentence (`answering`, Daemon.answering), never through a list every daemon in the process reads.
 _private: list[re.Pattern] = []
 
 
@@ -56,9 +58,10 @@ def configure(log_sentences: bool) -> None:
     LOG_SENTENCES = log_sentences
 
 
-def sentence(text: str) -> str:
-    """The user's sentence for a log line: quoted when log_sentences is on, else only its length."""
-    if LOG_SENTENCES and not private(text) and not _about_profile.get():   # private as its handling began, too
+def sentence(text: str, answering: bool = False) -> str:
+    """The user's sentence for a log line: quoted when log_sentences is on, else only its length. `answering`: it
+    may answer a private question of hers (Daemon.answering), so it is withheld as a private one is."""
+    if LOG_SENTENCES and not answering and not private(text) and not _about_profile.get():   # or as its handling began
         return repr(text)
     return f"<sentence, {len(text)} chars>"
 
@@ -82,11 +85,12 @@ def names(values: dict[str, Any]) -> str:
 
 
 @contextmanager
-def hearing(text: str) -> Iterator[None]:
-    """Mark `text` as the sentence being answered while the block runs."""
+def hearing(text: str, answering: bool = False) -> Iterator[None]:
+    """Mark `text` as the sentence being answered while the block runs. `answering`: it may answer a private
+    question of hers (sentence()), decided by the daemon as its handling begins; it holds for this block only."""
     token = _hearing.set(text)
     web = _from_web.set(False)
-    about = _about_profile.set(private(text))   # a sentence for the profile: her answer is withheld too
+    about = _about_profile.set(answering or private(text))   # a sentence for the profile: her answer is withheld too
     inbox = _from_private.set("")
     try:
         yield

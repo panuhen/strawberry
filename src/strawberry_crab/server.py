@@ -633,9 +633,10 @@ async def _on_widget_message(daemon: Daemon, ws: web.WebSocketResponse, raw: str
         if text and await _untrusted_input(daemon, ws, kind):
             return
         if text:
-            log.info("widget typed: %s", sentence(text))
-            daemon.background(daemon.handle_event(Event.from_dict({"source": "voice", "title": text})),
-                              f"typed {sentence(text)}")
+            answering = getattr(daemon, "answering", None)   # her "when?" is out: a private sentence (Daemon.answering)
+            said = sentence(text, bool(answering and answering()))
+            log.info("widget typed: %s", said)
+            daemon.background(daemon.handle_event(Event.from_dict({"source": "voice", "title": text})), f"typed {said}")
     elif kind == "poked":
         if not await _untrusted_input(daemon, ws, kind):
             _poked(daemon, data)
