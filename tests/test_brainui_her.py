@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import pytest
 
@@ -168,3 +169,67 @@ def test_the_page_has_the_new_groups_and_puts_text_in_as_text():
         assert f'data-section="{gone}"' not in page and f'<section id="{gone}"' not in page
     assert ('const MOVED = { router: ["runs", "router"], data: ["learning", "evaluation"], settings: ["privacy", null],\n'
             '                  system: ["health", null] };') in script
+
+
+def test_one_waiting_change_is_drawn_one_way_and_the_form_marks_what_the_file_sets():
+    """The header, Now, Runs and the tab holding a settings change draw it with the same pieces; the time left counts
+    down from when the answer came; with no card on screen it says so; after a No or no answer the form shows the
+    file, its ✎ marks are the file's, and a draft's own changes are marked apart."""
+    script = (brainui.UI_DIR / "app.js").read_text(encoding="utf-8")
+    for piece in ("function approvalBlock(m)", "function approvalLine(m)", "function asked(a, P)", "function stamp(a)",
+                  "setInterval(tickTimes, 1000)", "function markConfChanges()", "function setAsideEdits(file)",
+                  "Put my edits back", "function differs(inFile, draft, key)", "own(inFile, f.key)"):
+        assert piece in script, piece
+    assert "Her card isn't on screen: start the crab, or press No. This change will lapse." in script
+    assert script.count("approvalBlock(asked(") == 2 and "approvalLine(detail)" in script     # Runs and the tab; Now
+    assert "left when loaded" not in script and "loaded ${when(Date.now()" not in script
+    assert 'id="announce"' in (brainui.UI_DIR / "index.html").read_text(encoding="utf-8")
+
+
+def _tokens(css: str, selector: str) -> dict[str, str]:
+    block = css[css.index(selector + " {") + len(selector) + 2:]
+    block = block[:block.index("}")]
+    return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", block))
+
+
+def _rgba(value: str) -> tuple[float, ...]:
+    if value.startswith("#"):
+        return int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16), 1.0
+    return tuple(float(x) for x in re.findall(r"[\d.]+", value))
+
+
+def _over(top: tuple[float, ...], below: tuple[float, ...]) -> tuple[float, ...]:
+    a = top[3]
+    return tuple(t * a + b * (1 - a) for t, b in zip(top[:3], below[:3])) + (1.0,)
+
+
+def _contrast(fg: tuple[float, ...], bg: tuple[float, ...]) -> float:
+    def lum(c: tuple[float, ...]) -> float:
+        def ch(v: float) -> float:
+            v /= 255
+            return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+        return 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2])
+    hi, lo = sorted((lum(fg), lum(bg)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_text_colours_reach_aa_contrast_on_every_ground_in_both_themes():
+    """--ink-faint and the other text tokens, over the ground and a panel's glass (and the glass in a panel: a stat,
+    a field), reach 4.5:1 in both themes; so does the primary button's cream on its fill. The system-light block
+    is the light theme's."""
+    css = (brainui.UI_DIR / "style.css").read_text(encoding="utf-8")
+    dark = _tokens(css, ":root")
+    light = _tokens(css, ':root[data-theme="light"]')
+    system = _tokens(css, ':root:not([data-theme="dark"])')
+    assert system == light
+    for theme in (dark, dark | light):
+        grounds = []
+        for ground in ("--ground", "--ground-2"):
+            base = _rgba(theme[ground])
+            panel = _over(_rgba(theme["--glass"]), base)
+            grounds += [base, panel, _over(_rgba(theme["--glass"]), panel), _over(_rgba(theme["--glass-strong"]), panel)]
+        for name in ("--ink", "--ink-dim", "--ink-faint", "--good", "--warn", "--berry-ink"):
+            for bg in grounds:
+                assert _contrast(_over(_rgba(theme[name]), bg), bg) >= 4.5, (name, theme[name], bg)
+        assert _contrast(_rgba("#fff7ec"), _rgba(theme["--berry-fill"])) >= 4.5
+    assert "::placeholder { color: var(--ink-faint)" in css and "button.primary { background: var(--berry-fill)" in css
