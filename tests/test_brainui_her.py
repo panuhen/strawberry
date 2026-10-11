@@ -233,3 +233,17 @@ def test_text_colours_reach_aa_contrast_on_every_ground_in_both_themes():
                 assert _contrast(_over(_rgba(theme[name]), bg), bg) >= 4.5, (name, theme[name], bg)
         assert _contrast(_rgba("#fff7ec"), _rgba(theme["--berry-fill"])) >= 4.5
     assert "::placeholder { color: var(--ink-faint)" in css and "button.primary { background: var(--berry-fill)" in css
+
+
+def test_the_page_speaks_plainly_and_folds_what_is_seldom_needed():
+    """Plain words before terms of art, ids out of the rows, the option walls folded or searched, bulk review through
+    the per-row route (reject asks once more), and the config form's own words from the schema."""
+    script = (brainui.UI_DIR / "app.js").read_text(encoding="utf-8")
+    for gone in ('"Gate ms"', '"Head it beat"', 'td("AUROC")', "Piper's length scale", "APPS_SHOWN", 'actionButton("Default"',
+                 "timeCell(r.at, true, r.run_id)", "timeCell(a.at, true, a.approval_id)", "Loading..."):
+        assert gone not in script, gone
+    for piece in ('term("Router version in use", "head")', 'folded("tuning", "Tuning"', 'folded("calib", "Calibrate"',
+                  'api("review", { key: e.key, verdict })', 'confirmButton("Reject selected", "Delete them for good?"',
+                  "function renderAppsFound()", 'id: "conf-filter"', "f.label || f.key", "section.group",
+                  "Gate off in config", "events.filter((e) => !TERMINAL[e.type])", "fold.open = true"):
+        assert piece in script, piece
