@@ -426,6 +426,41 @@ async def test_no_time_she_asks_and_the_answer_alone_sets_it():
         await daemon.close()
 
 
+async def test_her_when_makes_the_next_sentence_private_in_her_own_daemon_only(caplog):
+    """Her "when?" makes the user's next sentence a private one for the daemon that asked it (Daemon.answering), and
+    no other: a daemon still waiting (another test's, closed but not yet collected) once made every sentence in the
+    process private for two minutes, so a later test that expected a sentence in the journal failed now and then."""
+    from strawberry_crab import logtext
+
+    caplog.set_level(logging.INFO)
+    asking, _, _, _ = await remind_daemon(routes={"at 16:00": reading("at 16:00", kind="other")})
+    other, _, _, _ = await remind_daemon(["[happy] Nina Simone, Feeling Good."])
+    logtext.configure(True)
+    try:
+        assert await say(asking, "remind me about that song") == "When should I remind you?"
+        # Another daemon's sentence, and a sentence handled anywhere else in the process, are logged as they are.
+        assert logtext.sentence("put on some jazz") == "'put on some jazz'"
+        with logtext.hearing("put on some jazz"):
+            assert logtext.withheld() == "" and logtext.line("Playing it.") == "Playing it."
+        assert asking.answering() and not other.answering()
+        caplog.clear()
+        assert await say(other, "put on some jazz") == "Nina Simone, Feeling Good."
+        said = [r.getMessage() for r in caplog.records]
+        assert any("'put on some jazz'" in m for m in said) and any("Nina Simone, Feeling Good." in m for m in said)
+        assert other.thinker.last["asked"] == "put on some jazz"
+        # Hers, the answer to her "when?", is a private sentence still: its length, and her answer's.
+        caplog.clear()
+        assert (await say(asking, "at 16:00")).startswith("Okay, at 16:00: that song.")
+        said = [r.getMessage() for r in caplog.records]
+        assert any("<sentence, 8 chars>" in m for m in said) and not any("'at 16:00'" in m for m in said)
+        assert not any("that song" in m for m in said)
+        assert not asking.answering()
+    finally:
+        logtext.configure(False)
+        await asking.close()
+        await other.close()
+
+
 async def test_a_reminder_fires_into_her_bubble_marked_fired_and_into_the_timeline():
     daemon, sink, qwen, clock = await remind_daemon()
     try:

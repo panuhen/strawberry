@@ -35,7 +35,6 @@ import json
 import logging
 import re
 import time
-import weakref
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
@@ -463,22 +462,6 @@ CANCEL_ONE = re.compile(r"^(?:the|my|that|this)?\s*(?P<before>.*?)\s*reminder(?:
 # A sentence about reminders at all: the thinker's offer (`wanted`), and what keeps it out of the journal.
 ASKS = re.compile(r"\bremind\s+me\b|\breminders?\b", re.IGNORECASE)
 logtext.private_sentences(ASKS)   # such a sentence, and her answer, are logged as their lengths only
-
-
-class _Answering:
-    """Read as a pattern by logtext.private: while her "when?" is out, the user's next sentence (a bare "at 16:00"
-    that sets a reminder, its words in her answer) is kept out of the journal too. Asked as the sentence's handling
-    starts (logtext.hearing), before the said reflex reads it."""
-
-    def __init__(self) -> None:
-        self.adapters: weakref.WeakSet[RemindersAdapter] = weakref.WeakSet()
-
-    def search(self, text: str) -> bool:
-        return any(adapter.expecting() for adapter in list(self.adapters))
-
-
-ANSWERING = _Answering()
-logtext.private_sentences(ANSWERING)   # type: ignore[arg-type] - duck-typed: only `search` is used
 _MATCH_STOP = frozenset("the a an my that this to about for at on of reminder reminders one".split())
 
 
@@ -1040,7 +1023,6 @@ class RemindersAdapter(Adapter):
     def __init__(self, reminders: Reminders) -> None:
         self.reminders = reminders
         self.awaiting: _Waiting | None = None
-        ANSWERING.adapters.add(self)
 
     def waiting(self, text: str, when: When) -> None:
         """Her question about the time is out: the user's next sentence may be just a time (AWAIT_S)."""
@@ -1095,7 +1077,8 @@ class RemindersAdapter(Adapter):
 
     def expecting(self) -> bool:
         """Her "when?" is out and fresh: the next sentence is read for a time even when the gate reads it as a
-        fragment (Actor.said_reflex_for)."""
+        fragment (Actor.said_reflex_for), and is a private one (Daemon.answering: it and her answer stay out of the
+        journal, logtext.sentence). Asked as the sentence's handling starts, before the said reflex ends the wait."""
         return self.awaiting is not None and self.reminders.monotonic() < self.awaiting.until
 
     def wanted(self, text: str, route: Any) -> bool | None:
