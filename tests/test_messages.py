@@ -484,7 +484,14 @@ async def test_no_message_text_or_sender_in_any_log_record_or_file(aiohttp_clien
         for folder, _dirs, files in os.walk(root):
             for name in files:
                 data = open(os.path.join(folder, name), "rb").read()
-                assert CANARY.encode() not in data and b"Kestrel" not in data, os.path.join(folder, name)
+                assert CANARY.encode() not in data, os.path.join(folder, name)
+                # Her history (history.py) keeps the notice as the timeline does: the app and the sender, never the text.
+                if not name.startswith("strawberry.db"):
+                    assert b"Kestrel" not in data, os.path.join(folder, name)
+    assert daemon.history.open()
+    rows = [r.to_dict() for d in daemon.history.days() for r in daemon.history.rows(d["day"])]
+    assert [r["text"] for r in rows if r["kind"] == "notice"][0] == f"Signal, from {sender}"
+    assert CANARY not in json.dumps(rows)
 
 
 async def test_brain_ui_gets_counts_only(aiohttp_client):

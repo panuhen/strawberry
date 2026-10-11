@@ -252,6 +252,8 @@ async def health(request: web.Request) -> web.Response:
             "ledger": daemon.ledger.to_list(notices=True),
             # her inbox (inbox.py): counts only, never an app, a sender or a text
             "messages": daemon.inbox.stats() if daemon.inbox is not None else {"enabled": False},
+            # her history (history.py): counts only, never a sentence, a row or a digest
+            "history": daemon.history_stats(),
             "state": daemon.current_state(),
             "rest_state": daemon.rest_state,
             "tempo": daemon.fresh_tempo(),

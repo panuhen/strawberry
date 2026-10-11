@@ -135,6 +135,9 @@ class ApprovalBook:
         self.history: deque[Approval] = deque(maxlen=HISTORY)
         self.asked = 0
         self.refused = 0
+        # Told of each approval as it is resolved (her history, history.py: the tool, its tier, the answer); must
+        # not raise.
+        self.on_resolve: Callable[[Approval], None] | None = None
 
     @property
     def open(self) -> Approval | None:
@@ -213,6 +216,11 @@ class ApprovalBook:
             approval.future.set_result(outcome)
         log.info("approvals: %s %s%s after %.1fs", approval.approval_id, outcome, f" by {approval.by}" if approval.by else "",
                  approval.resolved_at - approval.asked)
+        if self.on_resolve is not None:
+            try:
+                self.on_resolve(approval)
+            except Exception as exc:   # noqa: BLE001 - an answer never fails for the history
+                log.warning("approvals: the history hook failed (%s)", type(exc).__name__)
         return True
 
     async def wait(self, approval: Approval, busy: Callable[[], bool] = lambda: False) -> str:

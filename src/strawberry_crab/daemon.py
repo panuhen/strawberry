@@ -18,13 +18,14 @@ from . import bodylink
 from .bodylink import Pointing, Targets, Touch
 from . import bussecret, confirm
 from .confirm import Held
-from .config import Config
+from .config import RISKS, Config
 from .contract import Performance
 from .events import CannedReactor, Event, Reactor
 from .gestures import GestureDesk
 from .hub import WidgetHub
+from .history import Digester, History, HistoryAdapter, HistorySession
 from .learning import IdleTrainer
-from .ledger import Ledger
+from .ledger import Ledger, Notice, Turn
 from .logtext import sentence
 from . import logtext, media, privacy
 from . import persona as personas
@@ -188,6 +189,74 @@ class Daemon:
         # (inputs.py, WIRING.md §17, §26).
         self.input = InputDesk(self)
         self._living_mood()
+        self._history()
+
+    def _history(self) -> None:
+        """Her history (history.py, WIRING §30): every ledger entry, run end, approval and play as a row on disk, a
+        daily digest written when she is idle, and a read-only look-back tool for a sentence about the past. Opened
+        at start, on its own writer thread."""
+        self.history: History | None = None
+        self.digester: Digester | None = None
+        if not self.config.history.enabled:
+            return
+        history = self.history = History(self.config.history)
+        self.ledger.sink = self._remember
+        self.runs.on_finish = self._run_ended
+        self.approvals.on_resolve = lambda a: history.submit(history.approval, a.held.key, a.risk, a.outcome, a.by,
+                                                             a.run_id)
+        thinker = self.config.thinker
+        self.digester = Digester(history, chat=getattr(self.thinker, "chat", None) if thinker.enabled else None,
+                                 model=getattr(self.thinker, "model", ""), busy=self._busy_for_history,
+                                 quiet_since=lambda: self.voice_at, keep_alive=thinker.keep_alive)
+        if not thinker.enabled or not hasattr(self.toolbox, "add_builtin"):
+            return
+        if "history" in self.toolbox.servers:
+            log.warning("tools: a configured server is called history; her own look-back tool is not added")
+            return
+        session = HistorySession(history, lambda: self.config.history.lookback_tokens)
+
+        async def open_history() -> HistorySession:
+            return session
+
+        self.toolbox.add_builtin("history", "other", open_history, adapter=HistoryAdapter())
+
+    def _remember(self, entry: Turn | Notice) -> None:
+        """A ledger entry into her history, with the run it belongs to; her reply in her words only when it carries
+        nothing of the user's messages or profile (logtext.withheld)."""
+        assert self.history is not None
+        run = runs.active.get()
+        run_id, source = (run.run_id, run.source) if run is not None else ("", "")
+        if isinstance(entry, Turn):
+            self.history.submit(self.history.turn, entry.said, entry.reply, entry.did, entry.foreign, run_id, source,
+                                logtext.withheld())
+        else:
+            self.history.submit(self.history.notice, entry.source, entry.about, entry.foreign, run_id)
+
+    def _run_ended(self, run: Run) -> None:
+        """A run that called tools (or failed) into her history: the tool names, the highest tier, the outcome."""
+        if self.history is None or not (run.tools or run.outcome == "failed"):
+            return
+        tiers = []
+        for key in run.tools:
+            server, _, tool = key.partition(".")
+            try:
+                tiers.append(self.toolbox.risk(server, tool))
+            except Exception:   # noqa: BLE001 - a stand-in toolbox in the tests
+                tiers.append("change")
+        tier = max(tiers, key=lambda t: RISKS.index(t) if t in RISKS else 2) if tiers else ""
+        self.history.submit(self.history.run_ended, run.source, list(run.tools), tier, run.outcome, run.detail,
+                            run.run_id)
+
+    def history_stats(self) -> dict[str, Any]:
+        """/health's `history`: counts only."""
+        if self.history is None:
+            return {"enabled": False}
+        return self.history.stats() | ({"digester": self.digester.stats()} if self.digester is not None else {})
+
+    def _busy_for_history(self) -> bool:
+        """The digester waits: someone is talking, a sentence is being handled, a run is going or a question is open."""
+        return (bool(getattr(self.listener, "busy", False)) or self.voice_handling > 0 or self.runs.busy() is not None
+                or self.approvals.open is not None)
 
     def _living_mood(self) -> None:
         """Her living mood (mood.py, WIRING §29): expression only. It goes to the bodies that ask, into Piper's pace
@@ -271,6 +340,8 @@ class Daemon:
             self.hub.pump_task = asyncio.get_running_loop().create_task(self.hub.pump(self.phases))
         self.outcomes.start()
         self.trainer.start()
+        if self.history is not None and await self.history.start() and self.digester is not None:
+            self.digester.start()
         self.input.store.start()
         self.apps.start()
         self.mood.start(self.runs)
@@ -331,6 +402,10 @@ class Daemon:
         await self.mood.close()
         await self.trainer.close()
         self.outcomes.close()
+        if self.digester is not None:
+            await self.digester.close()
+        if self.history is not None:
+            await self.history.stop()
         # Each part is closed even if another one fails: an HTTP session left open is an
         # "Unclosed client session" error in the journal at exit.
         parts = [("reactor", self.reactor), ("speaker", self.speaker), ("listener", self.listener),
@@ -512,6 +587,9 @@ class Daemon:
         title = sentence(event.title) if event.source == "voice" else repr(event.title)
         log.info("event %s app=%r title=%s urgency=%s body_len=%d", event.source, event.app, title,
                  event.urgency, len(event.body))
+        if event.source == "media" and event.title and self.history is not None:
+            # What started playing, whoever started it: a row of its own in her history, strangers' text (foreign).
+            self.history.submit(self.history.play, event.app, event.title)
         if event.source == "media" and time.monotonic() < self.quiet_media_until:
             log.info("media event swallowed: she caused it (%r)", event.title)
             return Performance(state=self.rest_state), 0
