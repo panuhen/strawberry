@@ -549,6 +549,9 @@ package and the widget binary.
 
 ### Fixed
 
+- Her reaction model no longer stays in VRAM after she quits. Pinned with `keep_alive = -1`, it
+  stayed loaded until Ollama restarted; shutdown now asks Ollama to unload it. A timed `keep_alive`
+  ("10m") is left to expire as before.
 - WIRING.md §18-§23 (runs, approvals, the trust model, persona.md, profile.md, the shared timeline)
   are back: the Brain UI facelift had cut them off.
 - Dance styles: for the beat before each new tempo estimate's `next_beat` the beat's parity came

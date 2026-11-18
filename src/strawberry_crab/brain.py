@@ -178,8 +178,28 @@ class OllamaReactor:
             self.rewarm.cancel()
             await asyncio.gather(self.rewarm, return_exceptions=True)
         if self.session:
+            await self.unload_if_pinned()
             await self.session.close()
             self.session = None
+
+    async def unload_if_pinned(self) -> None:
+        """At shutdown: a model she pinned (keep_alive -1) would otherwise stay in VRAM with no one using it, until
+        Ollama restarts. Asks Ollama to drop it now; a model kept for a set time is left to expire as usual."""
+        keep = self.brain.keep_alive
+        pinned = (isinstance(keep, (int, float)) and keep < 0) or (isinstance(keep, str) and keep.strip().startswith("-"))
+        if not pinned or not self.loaded:
+            return
+        try:
+            async with self.session.post(
+                "/api/generate",
+                json={"model": self.brain.reaction_model, "keep_alive": 0},
+                timeout=aiohttp.ClientTimeout(total=3),
+            ) as response:
+                await response.read()
+            self.loaded = False
+            log.info("brain: %s unloaded at shutdown", self.brain.reaction_model)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:   # Ollama gone: nothing to free
+            log.info("brain: unload at shutdown skipped (%r)", exc)
 
     async def warm_up(self, reason: str = "at start") -> None:
         """Load the model now, so the first event isn't the one that waits for a cold load."""

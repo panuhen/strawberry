@@ -53,6 +53,30 @@ async def test_warm_up_loads_the_model_with_keep_alive(aiohttp_server):
     await reactor.close()
 
 
+async def test_close_unloads_a_pinned_model(aiohttp_server):
+    app, calls = fake_ollama({"line": "x", "emotion": "neutral"})
+    reactor = await make_reactor(aiohttp_server, app, keep_alive=-1)
+    await reactor.close()
+    assert calls["generate"][-1] == {"model": "gemma3:1b", "keep_alive": 0}
+    assert not reactor.loaded
+
+
+async def test_close_leaves_a_timed_model_to_expire(aiohttp_server):
+    app, calls = fake_ollama({"line": "x", "emotion": "neutral"})
+    reactor = await make_reactor(aiohttp_server, app, keep_alive="10m")
+    await reactor.close()
+    assert calls["generate"] == [{"model": "gemma3:1b", "keep_alive": "10m"}]
+
+
+async def test_close_survives_ollama_being_gone(aiohttp_server):
+    app, calls = fake_ollama({"line": "x", "emotion": "neutral"})
+    reactor = await make_reactor(aiohttp_server, app, keep_alive=-1)
+    await reactor.session.close()
+    reactor.session = __import__("aiohttp").ClientSession(base_url="http://127.0.0.1:9")
+    await reactor.close()   # no exception
+    assert reactor.session is None
+
+
 async def test_model_line_becomes_a_talking_performance(aiohttp_server):
     app, calls = fake_ollama({"line": "A fix! Reconnects all round.", "emotion": "happy"})
     reactor = await make_reactor(aiohttp_server, app)
